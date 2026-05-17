@@ -1,18 +1,12 @@
-# Social Washing Scan Hostable v6
+# Social Washing Scan Hostable v7
 
-This version fixes the v5 deployment issue by separating the frontend from app.py.
-
-Upload all five files to the ROOT of your GitHub repository:
-
+Upload these files to the root of GitHub:
 - app.py
 - frontend.html
 - requirements.txt
 - render.yaml
 - README.md
 
-Render settings:
-- Runtime: Python
-- Build command: pip install -r requirements.txt
-- Start command: python app.py
+Then redeploy on Render.
 
-Then use Manual Deploy > Deploy latest commit.
+V7 aligns output with the Durably SocialCheck proposal: sector-risk approach, 0-100 sub-scores, detailed company assessment, benchmark mapping, claim-level findings and audit-ready export fields.
