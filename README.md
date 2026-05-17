@@ -1,12 +1,25 @@
-# Social Washing Scan Hostable v7
+# Social Claim Risk Scan Hostable v8
 
-Upload these files to the root of GitHub:
+No references to Durably or external product names.
+
+Upload these five files to the ROOT of GitHub:
+
 - app.py
 - frontend.html
 - requirements.txt
 - render.yaml
 - README.md
 
-Then redeploy on Render.
+Render:
+- Runtime: Python
+- Build command: pip install -r requirements.txt
+- Start command: python app.py
+- Manual Deploy > Deploy latest commit
 
-V7 aligns output with the Durably SocialCheck proposal: sector-risk approach, 0-100 sub-scores, detailed company assessment, benchmark mapping, claim-level findings and audit-ready export fields.
+New in v8:
+- No brand reference to the previous benchmark document.
+- No manual sector or controversy selector.
+- Sector and company/context sensitivity are inferred by the tool.
+- More compact report with fewer sections.
+- More attractive colour palette and layout.
+- Output is inspired by the uploaded report’s logic but not a duplicate.
