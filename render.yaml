@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: social-washing-scan
+    name: social-washing-scan-python
     env: python
     plan: free
     buildCommand: ""
