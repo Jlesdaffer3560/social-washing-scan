@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Social Washing Scan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+:root {
+  --bg:#f6f7fb; --surface:#ffffff; --text:#172033; --muted:#667085; --border:#d0d5dd;
+  --brand:#1f3a5f; --brand2:#2d5d8c; --green-bg:#dcfce7; --green:#166534;
+  --yellow-bg:#fef9c3; --yellow:#854d0e; --orange-bg:#ffedd5; --orange:#9a3412; --red-bg:#fee2e2; --red:#991b1b;
+}
+* { box-sizing:border-box; }
+body { font-family: Inter, Arial, sans-serif; background:var(--bg); color:var(--text); margin:0; }
+header { background:linear-gradient(135deg, var(--brand), var(--brand2)); color:white; padding:30px 32px; }
+.header-inner { max-width:1220px; margin:0 auto; display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
+h1 { margin:0; font-size:32px; letter-spacing:-.4px; }
+h2 { margin:0 0 14px; font-size:20px; }
+h3 { margin:18px 0 8px; font-size:16px; }
+p { line-height:1.55; }
+main { max-width:1220px; margin:0 auto; padding:28px; }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:22px; margin-bottom:22px; box-shadow:0 4px 14px rgba(16,24,40,.06); }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+.grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+textarea,input { width:100%; border:1px solid var(--border); border-radius:14px; padding:12px; font:inherit; background:white; }
+textarea { min-height:230px; }
+label { font-weight:700; display:block; margin:12px 0 7px; }
+button { border:0; background:var(--brand); color:white; border-radius:14px; padding:10px 14px; font-weight:800; cursor:pointer; margin:4px 6px 4px 0; }
+button.secondary { background:white; color:var(--brand); border:1px solid var(--border); }
+.status { border-left:5px solid var(--brand2); }
+.score { font-size:68px; line-height:1; font-weight:900; letter-spacing:-2px; }
+.badge { display:inline-block; border-radius:999px; padding:6px 11px; font-size:12px; font-weight:900; white-space:nowrap; }
+.low { background:var(--green-bg); color:var(--green); }
+.medium { background:var(--yellow-bg); color:var(--yellow); }
+.high { background:var(--orange-bg); color:var(--orange); }
+.veryhigh { background:var(--red-bg); color:var(--red); }
+.kpi { background:#f8fafc; border:1px solid #e4e7ec; border-radius:16px; padding:14px; }
+.kpi strong { font-size:24px; }
+.muted { color:var(--muted); }
+.small { font-size:13px; }
+.bar { height:12px; background:#e4e7ec; border-radius:999px; overflow:hidden; }
+.bar > div { height:100%; background:var(--brand); border-radius:999px; }
+.reportbox { width:100%; min-height:520px; white-space:pre-wrap; background:#f8fafc; border:1px solid var(--border); border-radius:14px; padding:16px; font-family:Consolas, monospace; font-size:12px; line-height:1.5; }
+.finding-card { border:1px solid var(--border); border-radius:18px; padding:18px; margin-bottom:18px; background:#fff; }
+.finding-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; border-bottom:1px solid #e4e7ec; padding-bottom:12px; margin-bottom:12px; }
+.claim-box { background:#f8fafc; border-left:4px solid var(--brand); padding:12px; border-radius:10px; margin:10px 0; }
+.analysis-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.analysis-block { background:#f8fafc; border:1px solid #e4e7ec; border-radius:14px; padding:14px; }
+.error { color:var(--red); font-weight:800; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th,td { border:1px solid var(--border); padding:10px; vertical-align:top; }
+th { background:#eef2f7; text-align:left; color:#344054; }
+.report-header { border-bottom:4px solid var(--brand); padding-bottom:16px; margin-bottom:20px; }
+.report-title { font-size:28px; margin:0; color:var(--brand); }
+.report-section { margin:24px 0; page-break-inside:avoid; }
+.onlyprint { display:none; }
+@media (max-width:950px) { .grid,.grid3,.analysis-grid,.header-inner { grid-template-columns:1fr; display:block; } .grid > *, .grid3 > *, .analysis-grid > * { margin-bottom:14px; } }
+@media print {
+  header, .noprint, #inputSection, #statusCard { display:none !important; }
+  body { background:white; }
+  main { max-width:none; padding:0; }
+  .card { border:none; box-shadow:none; padding:0; }
+  .onlyprint { display:block !important; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <div>
+      <h1>Social Washing Scan</h1>
+      <p style="margin-bottom:0;opacity:.92;">Structured prototype for social, labour, human rights, diversity and value-chain claim risk assessment.</p>
+    </div>
+    <div class="small" style="text-align:right;opacity:.9;">Hostable v6<br/>Structured report output</div>
+  </div>
+</header>
+
+<main>
+  <div class="card status noprint" id="statusCard"><strong>Status:</strong> <span id="status">Ready. Use text scan or URL scan.</span></div>
+
+  <section class="grid noprint" id="inputSection">
+    <div class="card">
+      <h2>1. Scan input</h2>
+      <label>Website URL</label>
+      <input id="urlInput" value="https://www.kbc.com" placeholder="https://www.company.com/sustainability"/>
+      <button onclick="scanUrl()">Scan URL</button>
+      <p class="muted small">The server fetches one public webpage and analyses visible text. Some websites may block automated requests.</p>
+
+      <label>Text input</label>
+      <textarea id="textInput">At Company X, we put people first. We are fully committed to fair work, diversity, equality and human rights across our entire value chain. Our suppliers respect the highest labour standards and we ensure safe and inclusive working conditions for everyone.</textarea>
+      <button onclick="scanText()">Run text scan</button>
+      <button class="secondary" onclick="loadSample()">Use sample</button>
+    </div>
+
+    <div class="card">
+      <h2>2. Report actions</h2>
+      <button class="secondary" onclick="checkBackend()">Check backend</button>
+      <hr style="border:0;border-top:1px solid var(--border);margin:18px 0;"/>
+      <button onclick="downloadProfessionalHtml()">Download professional HTML report</button>
+      <button class="secondary" onclick="printReport()">Print / Save as PDF</button>
+      <button class="secondary" onclick="selectReport()">Select text report</button>
+      <button class="secondary" onclick="copyReport()">Copy text report</button>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Risk overview</h2>
+      <div class="score" id="score">--</div>
+      <div id="riskBadge" class="badge">Not scanned</div>
+      <p id="sourceLabel" class="muted"></p>
+      <p id="engine" class="muted"></p>
+      <div class="grid3">
+        <div class="kpi"><strong id="claimCount">0</strong><br/><span class="muted small">Findings</span></div>
+        <div class="kpi"><strong id="highCount">0</strong><br/><span class="muted small">High/very high</span></div>
+        <div class="kpi"><strong id="immediateCount">0</strong><br/><span class="muted small">Immediate</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Executive interpretation</h2>
+      <p id="mainConclusion" class="muted">No scan completed yet.</p>
+      <h3>Top priorities</h3>
+      <ul id="topPriorities" class="muted"><li>No priorities yet.</li></ul>
+    </div>
+  </section>
+
+  <section class="card" id="breakdownCard" style="display:none;">
+    <h2>Score breakdown</h2>
+    <div id="breakdown"></div>
+  </section>
+
+  <section class="card">
+    <h2>Claim-level findings</h2>
+    <p class="muted small">Structured assessment per detected issue, including risk rationale, evidence gap and recommended correction.</p>
+    <div id="findings">No findings yet.</div>
+  </section>
+
+  <section class="card">
+    <h2>Governance recommendations</h2>
+    <div id="governance">No governance actions yet.</div>
+  </section>
+
+  <section class="card noprint">
+    <h2>Text report preview</h2>
+    <textarea id="reportPreview" class="reportbox" readonly>No report yet.</textarea>
+  </section>
+
+  <section id="printableReport" class="card onlyprint"></section>
+</main>
+
+<script>
+let lastResult = null;
+
+function setStatus(msg, isError=false){
+  document.getElementById("status").innerHTML = isError ? "<span class='error'>" + esc(msg) + "</span>" : msg;
+}
+function esc(v){ return String(v || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;"); }
+function riskClass(r){ r=String(r||"").toLowerCase(); if(r.includes("very"))return"veryhigh"; if(r.includes("high"))return"high"; if(r.includes("medium"))return"medium"; return"low"; }
+function badge(r){ return `<span class="badge ${riskClass(r)}">${esc(r)}</span>`; }
+
+async function checkBackend(){
+  try{
+    setStatus("Checking backend...");
+    const res = await fetch("/api/health");
+    const data = await res.json();
+    if(!res.ok) throw new Error(JSON.stringify(data));
+    setStatus("Backend OK. Version: " + data.version + ".");
+  } catch(e){ setStatus("Backend not reachable. Check deployment logs.", true); }
+}
+
+async function scanText(){
+  try{
+    const text = document.getElementById("textInput").value;
+    if(!text.trim()){ setStatus("Please paste text before scanning.", true); return; }
+    setStatus("Scanning text...");
+    const res = await fetch("/api/scan/text", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:text, source_label:"Manual text input"}) });
+    const data = await res.json();
+    if(!res.ok || data.error) throw new Error(data.error || res.statusText);
+    render(data);
+    setStatus("Text scan completed.");
+  } catch(e){ setStatus("Error: " + e.message, true); }
+}
+
+async function scanUrl(){
+  try{
+    const url = document.getElementById("urlInput").value;
+    if(!url.trim()){ setStatus("Please enter a URL.", true); return; }
+    setStatus("Fetching live URL and analysing page text. This can take 10-20 seconds...");
+    const res = await fetch("/api/scan/url", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url:url}) });
+    const data = await res.json();
+    if(!res.ok || data.error) throw new Error(data.error || res.statusText);
+    render(data);
+    setStatus("URL scan completed.");
+  } catch(e){ setStatus("Error: " + e.message + ". Some websites block automated scans. Copy page text and use text scan if this happens.", true); }
+}
+
+function render(result){
+  lastResult = result;
+  document.getElementById("score").textContent = result.overall_score + "/100";
+  const rb = document.getElementById("riskBadge");
+  rb.textContent = result.overall_risk;
+  rb.className = "badge " + riskClass(result.overall_risk);
+  document.getElementById("sourceLabel").textContent = "Source: " + result.source_label;
+  document.getElementById("engine").textContent = "Engine: " + result.engine + " | Date: " + (result.analysis_date || "");
+  document.getElementById("mainConclusion").textContent = result.summary?.executive_interpretation || result.summary?.main_conclusion || "Scan completed.";
+  document.getElementById("topPriorities").innerHTML = (result.summary?.top_priorities || []).map(p => "<li>" + esc(p) + "</li>").join("") || "<li>No priorities identified.</li>";
+
+  const findings = result.findings || [];
+  document.getElementById("claimCount").textContent = findings.length;
+  document.getElementById("highCount").textContent = findings.filter(f => ["High","Very high"].includes(f.risk)).length;
+  document.getElementById("immediateCount").textContent = findings.filter(f => f.priority === "Immediate").length;
+
+  renderBreakdown(result.score_breakdown || []);
+  renderFindings(findings);
+  renderGovernance(result.governance_actions || []);
+  document.getElementById("reportPreview").value = buildTextReport(result);
+  document.getElementById("printableReport").innerHTML = buildProfessionalReportHtml(result, false);
+}
+
+function renderBreakdown(rows){
+  const card = document.getElementById("breakdownCard");
+  if(!rows.length){ card.style.display = "none"; return; }
+  card.style.display = "block";
+  document.getElementById("breakdown").innerHTML = rows.map(r => `
+    <div style="margin-bottom:15px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;"><strong>${esc(r.label)}</strong><span class="muted">${r.value}/100 · weight ${r.weight}% · weighted ${r.weighted}</span></div>
+      <div class="bar"><div style="width:${Number(r.value || 0)}%"></div></div>
+      <p class="muted small">${esc(r.explanation || "")}</p>
+    </div>
+  `).join("");
+}
+
+function renderFindings(findings){
+  if(!findings.length){ document.getElementById("findings").innerHTML = "No findings."; return; }
+  document.getElementById("findings").innerHTML = findings.map((f,i)=>`
+    <div class="finding-card">
+      <div class="finding-head">
+        <div>
+          <h3 style="margin-top:0;">${i+1}. ${esc(f.issue_type || f.category)}</h3>
+          <p class="muted small" style="margin:0;">Category: ${esc(f.category)}</p>
+        </div>
+        <div style="text-align:right;">${badge(f.risk)}<br/><span class="muted small">Priority: ${esc(f.priority)}</span></div>
+      </div>
+      <strong>Detected text</strong>
+      <div class="claim-box">“${esc(f.detected_text)}”</div>
+      <p><strong>Assessment</strong><br/>${esc(f.assessment_text || f.risk_rationale || f.main_issue)}</p>
+      <div class="analysis-grid">
+        <div class="analysis-block"><strong>Detected issue</strong><p class="muted">${esc(f.detected_issue || f.main_issue)}</p></div>
+        <div class="analysis-block"><strong>Why this matters</strong><p class="muted">${esc(f.risk_rationale || f.legal_sensitivity)}</p></div>
+        <div class="analysis-block"><strong>Evidence gap</strong><p class="muted">${esc(f.evidence_required)}</p></div>
+        <div class="analysis-block"><strong>Recommended correction</strong><p class="muted">${esc(f.recommended_action)}</p></div>
+      </div>
+      <p><strong>Suggested revised wording</strong></p>
+      <div class="claim-box">“${esc(f.suggested_rewrite)}”</div>
+    </div>
+  `).join("");
+}
+
+function renderGovernance(actions){
+  document.getElementById("governance").innerHTML = "<ul>" + actions.map(a => "<li>" + esc(a) + "</li>").join("") + "</ul>";
+}
+
+function buildTextReport(result){
+  const lines = [];
+  lines.push("SOCIAL WASHING SCAN REPORT");
+  lines.push("================================");
+  lines.push("Source: " + result.source_label);
+  lines.push("Engine: " + result.engine);
+  lines.push("Analysis date: " + (result.analysis_date || ""));
+  lines.push("Overall score: " + result.overall_score + "/100");
+  lines.push("Overall risk: " + result.overall_risk);
+  lines.push("");
+  lines.push("1. EXECUTIVE SUMMARY");
+  lines.push(result.summary?.main_conclusion || "");
+  lines.push("");
+  lines.push("Interpretation");
+  lines.push(result.summary?.executive_interpretation || "");
+  lines.push("");
+  lines.push("Top priorities");
+  (result.summary?.top_priorities || []).forEach(p => lines.push("- " + p));
+  lines.push("");
+  if(result.score_breakdown && result.score_breakdown.length){
+    lines.push("2. SCORE BREAKDOWN");
+    result.score_breakdown.forEach(b => lines.push("- " + b.label + ": " + b.value + "/100, weight " + b.weight + "%, weighted contribution " + b.weighted + ". " + (b.explanation || "")));
+    lines.push("");
+  }
+  lines.push("3. CLAIM-LEVEL FINDINGS");
+  (result.findings || []).forEach((f,i)=>{
+    lines.push("");
+    lines.push((i+1) + ". " + (f.issue_type || f.category));
+    lines.push("Risk level: " + f.risk + " | Priority: " + f.priority);
+    lines.push('Detected text: "' + f.detected_text + '"');
+    lines.push("Assessment: " + (f.assessment_text || ""));
+    lines.push("Detected issue: " + (f.detected_issue || f.main_issue || ""));
+    lines.push("Why this matters: " + (f.risk_rationale || f.legal_sensitivity || ""));
+    lines.push("Evidence gap: " + f.evidence_required);
+    lines.push("Recommended correction: " + f.recommended_action);
+    lines.push('Suggested revised wording: "' + f.suggested_rewrite + '"');
+  });
+  lines.push("");
+  lines.push("4. GOVERNANCE RECOMMENDATIONS");
+  (result.governance_actions || []).forEach(a => lines.push("- " + a));
+  lines.push("");
+  lines.push("5. ANALYSED TEXT EXCERPT");
+  lines.push(result.analysed_text_excerpt || "");
+  lines.push("");
+  lines.push("DISCLAIMER");
+  lines.push(result.disclaimer || "Indicative assessment only.");
+  return lines.join("\n");
+}
+
+function buildProfessionalReportHtml(result, fullDoc=true){
+  const findings = result.findings || [];
+  const breakdownRows = (result.score_breakdown || []).map(b => `<tr><td>${esc(b.label)}</td><td>${b.weight}%</td><td>${b.value}/100</td><td>${b.weighted}</td><td>${esc(b.explanation || "")}</td></tr>`).join("");
+  const findingCards = findings.map((f,i)=>`
+    <div class="finding-card">
+      <h3>${i+1}. ${esc(f.issue_type || f.category)} ${badge(f.risk)}</h3>
+      <p><strong>Priority:</strong> ${esc(f.priority)}</p>
+      <div class="claim-box">“${esc(f.detected_text)}”</div>
+      <p><strong>Assessment:</strong> ${esc(f.assessment_text || "")}</p>
+      <p><strong>Detected issue:</strong> ${esc(f.detected_issue || f.main_issue || "")}</p>
+      <p><strong>Evidence gap:</strong> ${esc(f.evidence_required)}</p>
+      <p><strong>Recommended correction:</strong> ${esc(f.recommended_action)}</p>
+      <p><strong>Suggested revised wording:</strong></p>
+      <div class="claim-box">“${esc(f.suggested_rewrite)}”</div>
+    </div>
+  `).join("");
+  const html = `
+    <div class="report-header">
+      <h1 class="report-title">Social Washing Scan Report</h1>
+      <p class="muted">Structured review of social, labour, human rights, diversity and value-chain claims</p>
+    </div>
+    <div class="report-section">
+      <h2>1. Executive summary</h2>
+      <div class="grid3">
+        <div class="kpi"><strong>${result.overall_score}/100</strong><br/><span class="muted">Overall score</span></div>
+        <div class="kpi"><strong>${esc(result.overall_risk)}</strong><br/><span class="muted">Risk level</span></div>
+        <div class="kpi"><strong>${findings.length}</strong><br/><span class="muted">Findings</span></div>
+      </div>
+      <p>${esc(result.summary?.main_conclusion || "")}</p>
+      <p>${esc(result.summary?.executive_interpretation || "")}</p>
+      <h3>Top priorities</h3>
+      <ul>${(result.summary?.top_priorities || []).map(p => "<li>" + esc(p) + "</li>").join("")}</ul>
+      <p class="muted small"><strong>Source:</strong> ${esc(result.source_label)}<br/><strong>Engine:</strong> ${esc(result.engine)}<br/><strong>Date:</strong> ${esc(result.analysis_date || "")}</p>
+    </div>
+    <div class="report-section">
+      <h2>2. Score breakdown</h2>
+      <table><thead><tr><th>Criterion</th><th>Weight</th><th>Risk score</th><th>Weighted contribution</th><th>Assessment focus</th></tr></thead><tbody>${breakdownRows}</tbody></table>
+    </div>
+    <div class="report-section">
+      <h2>3. Claim-level findings</h2>
+      ${findingCards}
+    </div>
+    <div class="report-section">
+      <h2>4. Governance recommendations</h2>
+      <ul>${(result.governance_actions || []).map(a => "<li>" + esc(a) + "</li>").join("")}</ul>
+    </div>
+    <div class="report-section">
+      <h2>5. Analysed text excerpt</h2>
+      <p class="small">${esc(result.analysed_text_excerpt || "")}</p>
+    </div>
+    <div class="report-section">
+      <h2>Disclaimer</h2>
+      <p class="small muted">${esc(result.disclaimer || "")}</p>
+    </div>`;
+  if(!fullDoc) return html;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Social Washing Scan Report</title><style>${document.querySelector("style").innerHTML}</style></head><body><main>${html}</main></body></html>`;
+}
+
+function downloadProfessionalHtml(){
+  if(!lastResult){ setStatus("No report yet. Run a scan first.", true); return; }
+  download("social-washing-scan-report.html", buildProfessionalReportHtml(lastResult, true), "text/html");
+}
+function printReport(){
+  if(!lastResult){ setStatus("No report yet. Run a scan first.", true); return; }
+  document.getElementById("printableReport").innerHTML = buildProfessionalReportHtml(lastResult, false);
+  window.print();
+}
+function selectReport(){
+  const box = document.getElementById("reportPreview");
+  box.focus(); box.select();
+  setStatus("Text report selected. Press Ctrl+C to copy.");
+}
+async function copyReport(){
+  try{ await navigator.clipboard.writeText(document.getElementById("reportPreview").value); setStatus("Text report copied to clipboard."); }
+  catch(e){ selectReport(); }
+}
+function download(filename, content, type){
+  const blob = new Blob([content], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  setStatus("Download triggered. If blocked, use Select text report or Print / Save as PDF.");
+}
+function loadSample(){
+  document.getElementById("textInput").value = "At Company X, we put people first. We are fully committed to fair work, diversity, equality and human rights across our entire value chain. Our suppliers respect the highest labour standards and we ensure safe and inclusive working conditions for everyone.";
+  setStatus("Sample loaded. Click Run text scan.");
+}
+checkBackend();
+</script>
+</body>
+</html>
