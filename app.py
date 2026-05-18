@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v11"
+APP_VERSION="hostable_v12"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -38,6 +38,49 @@ CLAIMS=[
  (["accessibility","vulnerable customers","customer care","fair treatment","customer protection","affordable for all","financial inclusion","digital inclusion"],"Customer welfare or accessibility claim","Medium","The claim concerns customer welfare or inclusion but may not show measurable access, complaints, remedy or vulnerable-customer safeguards.","Add evidence, for example: 'We track accessibility and customer inclusion through service metrics, complaint handling and improvement actions for vulnerable groups.'"),
  (["everyone","all employees","all workers","all suppliers","for all","highest","best","fully","guarantee","zero","always","never","100%"],"Absolute or broad wording","High","Absolute terms may overstate coverage, control or outcomes and create a high evidence burden.","Qualify the wording, for example: replace 'all suppliers meet our highest standards' with 'selected higher-risk suppliers are assessed against our supplier code, with limitations and corrective actions disclosed.'")
 ]
+
+
+STANDARDS=[
+ {"name":"CSRD / ESRS S1-S4","use":"Connect social claims to policies, actions, targets, metrics and affected stakeholder groups: own workforce, value-chain workers, affected communities, consumers and end-users."},
+ {"name":"CSDDD","use":"Support human-rights and supply-chain claims with risk-based due diligence, prevention, mitigation, tracking and remediation."},
+ {"name":"OECD Guidelines","use":"Check whether responsible-business claims are backed by identification, prevention, mitigation and accounting for adverse impacts."},
+ {"name":"UN Guiding Principles on Business and Human Rights","use":"Support human-rights claims with policy commitment, due diligence, grievance channels and remedy."},
+ {"name":"UN Global Compact","use":"Check consistency with principles on human rights, labour, environment and anti-corruption when responsible-business conduct is invoked."},
+ {"name":"ILO Fundamental Principles and Rights at Work","use":"Check worker and supplier claims against freedom of association, collective bargaining, forced labour, child labour, non-discrimination and safe work."},
+ {"name":"GRI Standards","use":"Check whether claims are balanced, evidence-based and supported by impacts, management approach, indicators and corrective actions."}
+]
+def standards_for_claim(t):
+    x=(t or "").lower()
+    if "human" in x or "labour" in x or "labor" in x: return ["CSRD/ESRS S1-S2","CSDDD","OECD Guidelines","UNGPs","ILO","UNGC"]
+    if "supply" in x or "supplier" in x: return ["CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO"]
+    if "diversity" in x or "inclusion" in x: return ["CSRD/ESRS S1","ILO","GRI","UNGC"]
+    if "customer" in x or "accessibility" in x: return ["CSRD/ESRS S4","OECD Guidelines","GRI"]
+    if "worker" in x or "safety" in x: return ["CSRD/ESRS S1","ILO","GRI"]
+    if "impact" in x or "community" in x: return ["CSRD/ESRS S3","UNGPs","OECD Guidelines","GRI"]
+    return ["CSRD/ESRS S1-S4","OECD Guidelines","UNGC","GRI"]
+def clean_excerpt(text,trig):
+    if not trig: return text[:360]+("..." if len(text)>360 else "")
+    low=text.lower(); i=low.find(trig.lower())
+    if i<0: return text[:360]+("..." if len(text)>360 else "")
+    starts=[text.rfind(".",0,i), text.rfind("\n",0,i)]
+    s=max(starts)
+    s=0 if s<0 else s+1
+    ends=[p for p in [text.find(".",i+len(trig)), text.find("\n",i+len(trig))] if p!=-1]
+    e=(min(ends)+1) if ends else min(len(text), i+len(trig)+260)
+    out=" ".join(text[s:e].split())
+    if len(out)<45: out=" ".join(text[max(0,i-130):min(len(text),i+len(trig)+240)].split())
+    return out[:560]+("..." if len(out)>560 else "")
+def compact_sources(results,limit=6):
+    out=[]
+    for r in results[:limit]:
+        txt=(r.get("title","")+" "+r.get("url","")+" "+r.get("content","")).lower()
+        cat="Public web"
+        if any(v in txt for v in ["ngo","amnesty","oxfam","human rights watch","clean clothes"]): cat="NGO / civil society"
+        elif any(v in txt for v in ["gov","europa","regulator","authority","commission","oecd","ncp"]): cat="Government / regulator"
+        elif any(v in txt for v in ["lawsuit","court","legal","complaint"]): cat="Legal / complaint"
+        elif any(v in txt for v in ["reuters","ft.com","bbc","guardian","press"]): cat="Press"
+        out.append({"title":r.get("title","")[:150],"url":r.get("url",""),"content":r.get("content","")[:220],"category":cat})
+    return out
 
 class Parser(HTMLParser):
     def __init__(self):
@@ -76,7 +119,7 @@ def fetch_html(url):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/11.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/12.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -130,7 +173,7 @@ def external(company):
                 if r["url"] and r["url"] not in seen: r["query"]=q; allr.append(r); seen.add(r["url"])
         except Exception as e: allr.append({"title":"External search query failed","url":"","content":str(e)[:240],"score":0,"query":q})
     summary=summarise_ext(allr)
-    return {"enabled":True,"summary":summary,"results":allr[:16]}
+    return {"enabled":True,"summary":summary,"results":allr[:16],"compact_sources":compact_sources(allr,6)}
 def summarise_ext(results):
     if not results: return "No external public-source results were returned."
     combo=" ".join((r.get("title","")+" "+r.get("content","")).lower() for r in results)
@@ -146,17 +189,15 @@ def infer_context(company,text,ext):
     note=company.get("context","")+" External public-source layer: "+ext.get("summary","")
     return {"level":level,"note":note.strip()}
 def snip(text,trig):
-    l=text.lower(); i=l.find(trig.lower())
-    if i<0: return ""
-    return " ".join(text[max(0,i-100):min(len(text),i+len(trig)+190)].split())
+    return clean_excerpt(text,trig)
 def detect_claims(text):
     low=text.lower(); fs=[]; seen=set()
     for triggers,typ,risk,issue,rewrite in CLAIMS:
         trig=next((t for t in triggers if t in low),None)
         if trig and typ not in seen:
             seen.add(typ); score=78 if risk=="High" else 52
-            fs.append({"type":typ,"risk":risk,"claim":snip(text,trig),"issue":issue,"rewrite":rewrite,"claim_score":score})
-    if not fs: fs.append({"type":"No major high-risk social claim detected","risk":"Low","claim":text[:320]+("..." if len(text)>320 else ""),"issue":"The crawler did not detect obvious high-risk social-claim wording in the reviewed company pages.","rewrite":"Keep social claims specific, scoped and supported by measurable evidence.","claim_score":18})
+            fs.append({"type":typ,"risk":risk,"claim":snip(text,trig),"issue":issue,"rewrite":rewrite,"claim_score":score,"standards":standards_for_claim(typ),"action":"Substantiate the claim with scope, evidence, reporting period, limitations and remediation steps."})
+    if not fs: fs.append({"type":"No major high-risk social claim detected","risk":"Low","claim":text[:320]+("..." if len(text)>320 else ""),"issue":"The crawler did not detect obvious high-risk social-claim wording in the reviewed company pages.","rewrite":"Keep social claims specific, scoped and supported by measurable evidence.","claim_score":18,"standards":["General claim-quality review"],"action":"Keep the claim specific, scoped and supported by measurable evidence."})
     return sorted(fs,key=lambda f:f["claim_score"],reverse=True)
 def level(score):
     return "Very high" if score>=75 else "High" if score>=50 else "Medium" if score>=25 else "Low"
@@ -171,10 +212,10 @@ def build_report(company,sector,context,findings,score,pages):
     top=", ".join(f["type"] for f in findings[:3]); language="high-sensitivity" if any(f["risk"]=="High" for f in findings) else "moderate or low-sensitivity"
     summary=f"{company['company']} receives a {level(score).lower()} social-claim risk score of {score}/100. The assessment is mainly driven by {language} wording around {top}, combined with {sector['level'].lower()} sector exposure and {context['level'].lower()} context sensitivity. The key improvement is to replace broad reassurance language with scoped, measurable and evidence-backed statements."
     rationale=f"Sector risk: {sector['risks']} Basis: {sector['basis']}. Context: {context['note']} The reviewed company pages were screened for social, labour, human-rights, inclusion, customer and value-chain wording. The Tavily layer adds NGO, press, regulator/government and legal/context signals when configured."
-    return {"summary":summary,"rationale":rationale,"rewrite_guidance":guidance(findings,sector),"pages_reviewed":pages}
+    return {"summary":summary,"rationale":rationale,"rewrite_guidance":guidance(findings,sector),"pages_reviewed":pages,"standards_overview":STANDARDS}
 def analyse_url(raw):
     url=norm_url(raw); txt,pages=crawl(url); comp=infer_company(url,txt); ext=external(comp["company"]); exttext=" ".join(r.get("title","")+" "+r.get("content","") for r in ext.get("results",[])); sec=infer_sector(comp,txt+"\n"+exttext); ctx=infer_context(comp,txt,ext); fs=detect_claims(txt); score=calc_score(fs,sec,ctx)
-    return {"version":APP_VERSION,"source_label":url,"analysis_date":datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),"overall_score":score,"overall_risk":level(score),"company":comp,"sector":sec,"context":ctx,"findings":fs,"report":build_report(comp,sec,ctx,fs,score,pages),"external_research":ext,"disclaimer":"Indicative first-pass assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.","analysed_text_excerpt":txt[:2200],"ai_used":False,"ai_note":"AI refinement is not enabled in this clean V11 build unless added later."}
+    return {"version":APP_VERSION,"source_label":url,"analysis_date":datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),"overall_score":score,"overall_risk":level(score),"company":comp,"sector":sec,"context":ctx,"findings":fs,"report":build_report(comp,sec,ctx,fs,score,pages),"external_research":ext,"disclaimer":"Indicative first-pass assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.","analysed_text_excerpt":txt[:2200],"quality_improvements":["Use claim-specific wording rather than broad reassurance language.","Connect each claim to scope, metrics, reporting period and limitations.","For supplier, human-rights or worker claims, add due-diligence, grievance and remediation evidence.","Review public-source signals and document how they were considered."],"ai_used":False,"ai_note":"AI refinement is not enabled in V12 unless added later."}
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self,body,ctype="text/html; charset=utf-8",status=200):
@@ -198,5 +239,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Social Claim Risk Scan Hostable v11"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Social Claim Risk Scan Hostable v12"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()

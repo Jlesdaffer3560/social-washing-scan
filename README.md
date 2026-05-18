@@ -1,4 +1,4 @@
-# Social Claim Risk Scan Hostable V11
+# Social Claim Risk Scan Hostable V12
 
 Upload these five files to the ROOT of your GitHub repository:
 
@@ -17,4 +17,11 @@ Environment variable for external search:
 - TAVILY_API_KEY
 
 After deployment, click Check backend. It should show:
-Backend OK. Version: hostable_v11. AI configured: false. Tavily configured: true
+Backend OK. Version: hostable_v12. AI configured: false. Tavily configured: true
+
+
+V12 improvements:
+- Standards lens: CSRD/ESRS, CSDDD, OECD Guidelines, UNGPs, UNGC, ILO and GRI.
+- Shorter public-source signals while keeping source links.
+- Clearer claim excerpts and more actionable claim-level findings.
+- More concise, executive-style report output.
