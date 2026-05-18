@@ -1,6 +1,4 @@
-# Social Claim Risk Scan Hostable v8
-
-No references to Durably or external product names.
+# Social Claim Risk Scan Hostable v9
 
 Upload these five files to the ROOT of GitHub:
 
@@ -16,10 +14,11 @@ Render:
 - Start command: python app.py
 - Manual Deploy > Deploy latest commit
 
-New in v8:
-- No brand reference to the previous benchmark document.
-- No manual sector or controversy selector.
-- Sector and company/context sensitivity are inferred by the tool.
-- More compact report with fewer sections.
-- More attractive colour palette and layout.
-- Output is inspired by the uploaded report’s logic but not a duplicate.
+V9 changes:
+- Website URL only. No paste-text scan.
+- Cleaner scoring: one overall score and simple risk drivers.
+- Sector and company/context risk are assessed by the tool.
+- Compact, readable report.
+- Claim-level findings are simplified into concise paragraphs.
+- Optional AI refinement via Render environment variable OPENAI_API_KEY.
+- Full open-web screening of NGO/government/press sources requires a search API integration and is not performed by this basic hosted version.
