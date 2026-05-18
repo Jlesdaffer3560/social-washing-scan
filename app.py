@@ -80,7 +80,7 @@ def fetch_html(u):
  pr=urlparse(u)
  if pr.scheme not in ('http','https') or not pr.hostname: raise ValueError('Invalid URL.')
  if private_host(pr.hostname): raise ValueError('Private, local and internal URLs are blocked for safety.')
- req=Request(u,headers={'User-Agent':'Mozilla/5.0 SocialClaimRiskScan/9.0','Accept':'text/html,application/xhtml+xml'})
+ req=Request(u,headers={'User-Agent':'Mozilla/5.0 SocialClaimRiskScan/10.0','Accept':'text/html,application/xhtml+xml'})
  with urlopen(req,timeout=18,context=ssl.create_default_context()) as resp:
   ctype=resp.headers.get('content-type','')
   if 'html' not in ctype.lower(): raise ValueError('This URL does not seem to return an HTML page.')
@@ -200,4 +200,4 @@ class Handler(BaseHTTPRequestHandler):
    self._json({'error':'Unknown endpoint'},404)
   except Exception as exc: self._json({'error':str(exc)},500)
 if __name__=='__main__':
- print('Social Claim Risk Scan Hostable v9'); print(f'Serving on http://{HOST}:{PORT}'); print('AI configured:', bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+ print('Social Claim Risk Scan Hostable v10'); print(f'Serving on http://{HOST}:{PORT}'); print('AI configured:', bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
