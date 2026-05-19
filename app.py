@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v16"
+APP_VERSION="hostable_v17"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -121,7 +121,7 @@ def fetch_html(url):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/16.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/17.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -172,7 +172,7 @@ def google_search(query, max_results=5):
         return []
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/16.0"},method="GET")
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/17.0"},method="GET")
     with urlopen(req,timeout=35) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
@@ -251,7 +251,7 @@ def level(score):
     return "Very high" if score>=80 else "High" if score>=60 else "Medium" if score>=30 else "Low"
 def external_relevance_score(findings, external_research):
     """
-    V14: external signals can materially affect the score when they are relevant
+    V17: external signals can materially affect the score when they are relevant
     to the same company and thematically connected to the detected claim areas.
     The contribution is capped so that external sources do not replace claim analysis.
     """
@@ -304,7 +304,7 @@ def external_relevance_score(findings, external_research):
 
 def calc_score(findings,sector,context,external_research=None):
     """
-    V14 balanced scoring:
+    V17 balanced scoring:
     - Website claim wording remains the anchor.
     - Sector risk is a small modifier.
     - Public-source signals can weigh materially when relevant to the concrete company and detected claim themes.
@@ -346,7 +346,7 @@ def build_report(company,sector,context,findings,score,pages):
         driver="mainly moderate claim wording, with no clear high-risk social-washing wording detected"
     summary=f"{company['company']} receives a {level(score).lower()} social-claim risk score of {score}/100. The score is primarily based on actual wording found on the reviewed company pages, especially {top}. Relevant external public-source signals may materially increase the score when they relate to the same company and the same social-risk themes. The main improvement is to make broad social claims more specific, measurable and evidence-backed."
     rationale=f"Claim focus: the rating gives most weight to website wording that could create an unsupported impression of social performance. Sector context: {sector['risks']} Basis: {sector['basis']}. Public-source context: {context['note']} External signals are considered more strongly when they are relevant to the concrete company and align with detected claim themes such as workers, suppliers, human rights, inclusion, customer protection or communities."
-    return {"summary":summary,"rationale":rationale,"rewrite_guidance":guidance(findings,sector),"pages_reviewed":pages,"standards_overview":STANDARDS,"scoring_note":"V14 uses balanced scoring: website claims remain the anchor, while relevant external public-source signals can meaningfully adjust the score when they relate to the same company and claim theme."}
+    return {"summary":summary,"rationale":rationale,"rewrite_guidance":guidance(findings,sector),"pages_reviewed":pages,"standards_overview":STANDARDS,"scoring_note":"V17 uses balanced scoring: the overall score is shown as an integrated view of claim wording risk, external context risk and sector baseline risk."}
 
 def source_credibility(result):
     text=(result.get("title","")+" "+result.get("url","")+" "+result.get("content","")).lower()
@@ -416,9 +416,90 @@ def split_scores(findings,sector,context,external_modifier):
     claim=max(f.get("claim_score",0) for f in findings)
     return {"claim_wording_risk":min(100,round(claim*.75)),"external_context_risk":min(100,round((external_modifier or 0)*4+{"Low":5,"Medium":25,"High":50,"Very high":70}.get(context.get("level","Low"),5))),"sector_baseline_risk":{"Low":10,"Medium":35,"High":60}.get(sector.get("level","Medium"),35)}
 
+
+def concise_standards_lens():
+    return [
+        {"name":"CSRD / ESRS", "use":"Are social claims linked to stakeholder impacts, policies, actions, targets and metrics?"},
+        {"name":"CSDDD / OECD / UNGPs", "use":"Are human-rights and value-chain claims supported by due diligence, prevention, mitigation and remedy?"},
+        {"name":"ILO / UNGC / GRI", "use":"Are labour, inclusion and responsible-business claims specific, balanced and evidence-based?"}
+    ]
+
+def strict_external_context_risk(external_research, company_name=""):
+    """
+    V17: external context risk is only very high where there are serious AND repeated
+    public-source allegations focused on the concrete company.
+    """
+    results = external_research.get("results", []) if external_research else []
+    if not results:
+        return {"score":0, "level":"Low", "note":"No usable external public-source signals were found."}
+
+    company_key = (company_name or "").lower().split("/")[0].strip()
+    serious_terms = ["forced labour","forced labor","child labour","child labor","modern slavery","human rights","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage","complaint","oecd","ncp"]
+    medium_terms = ["supplier","workers","supply chain","accessibility","grievance","ngo","audit","wage","safety","customer protection"]
+
+    serious_hits = 0
+    medium_hits = 0
+    company_hits = 0
+    credible_sources = 0
+    urls = set()
+
+    for r in results:
+        txt = (r.get("title","") + " " + r.get("content","") + " " + r.get("url","")).lower()
+        if r.get("url"):
+            urls.add(r.get("url"))
+        if company_key and company_key in txt:
+            company_hits += 1
+        if any(t in txt for t in serious_terms):
+            serious_hits += 1
+        if any(t in txt for t in medium_terms):
+            medium_hits += 1
+        if r.get("credibility") in ["High","Medium-high"] or any(x in txt for x in ["oecd","europa.eu",".gov","reuters","bbc","ft.com","amnesty","human rights watch"]):
+            credible_sources += 1
+
+    repeated = len(urls) >= 3 and (serious_hits + medium_hits) >= 3
+    serious_and_repeated = serious_hits >= 3 and repeated and (company_hits >= 2 or not company_key) and credible_sources >= 1
+
+    if serious_and_repeated:
+        return {"score":85, "level":"Very high", "note":"Serious and repeated external allegations appear focused on the company and are supported by multiple public sources."}
+    if serious_hits >= 2 and repeated:
+        return {"score":65, "level":"High", "note":"Several serious external signals were found, but they should be verified before being treated as established facts."}
+    if serious_hits >= 1 or medium_hits >= 2:
+        return {"score":40, "level":"Medium", "note":"Some external signals are relevant to the company or claim themes, but the pattern is not severe or repeated enough for a very high context score."}
+    return {"score":15, "level":"Low", "note":"External search returned limited or weakly relevant context signals."}
+
+def integrated_score_view(overall_score, split_scores, external_context):
+    claim = split_scores.get("claim_wording_risk", 0)
+    ext = external_context.get("score", split_scores.get("external_context_risk", 0))
+    sector = split_scores.get("sector_baseline_risk", 0)
+    return {
+        "overall": overall_score,
+        "claim_wording_risk": claim,
+        "external_context_risk": ext,
+        "sector_baseline_risk": sector,
+        "formula": "Overall score combines claim wording, relevant external context and sector baseline risk. Website claims remain the anchor; external context can increase the result only when it is relevant to the company and claim themes.",
+        "weights": "Indicative weighting: claim wording is primary; external context and sector baseline are modifiers."
+    }
+
+def merge_claim_sections(findings):
+    rows = []
+    for f in findings:
+        rows.append({
+            "claim_text": f.get("claim",""),
+            "claim_type": f.get("type",""),
+            "risk_level": f.get("risk",""),
+            "claim_score": f.get("claim_score",0),
+            "standards": f.get("standards", []),
+            "analysis": (f.get("issue","") + " " + f.get("action","")).strip(),
+            "evidence_needed": evidence_checklist(f) if "evidence_checklist" in globals() else [],
+            "suggested_rewrite": f.get("rewrite","")
+        })
+    return rows
+
 def analyse_url(raw):
     url=norm_url(raw); txt,pages=crawl(url); comp=infer_company(url,txt); ext=external(comp["company"]); exttext=" ".join(r.get("title","")+" "+r.get("content","") for r in ext.get("results",[])); sec=infer_sector(comp,txt+"\n"+exttext); ctx=infer_context(comp,txt,ext); fs=detect_claims(txt); score, external_modifier, external_modifier_note = calc_score(fs,sec,ctx,ext)
-    return {"version":APP_VERSION,"source_label":url,"analysis_date":datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),"overall_score":score,"overall_risk":level(score),"company":comp,"sector":sec,"context":ctx,"findings":fs,"report":build_report(comp,sec,ctx,fs,score,pages),"external_research":ext,"external_modifier":external_modifier,"external_modifier_note":external_modifier_note,"split_scores":split_scores(fs,sec,ctx,external_modifier),"claim_inventory":build_claim_inventory(fs),"investor_red_flags":build_red_flags(fs,ext,sec,ctx),"company_action_plan":build_company_action_plan(fs,sec,ext),"engagement_questions":build_engagement_questions(fs,ext),"confidence":build_confidence(pages,ext,fs),"disclaimer":"Indicative first-pass assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.","analysed_text_excerpt":txt[:2200],"quality_improvements":["Use claim-specific wording rather than broad reassurance language.","Connect each claim to scope, metrics, reporting period and limitations.","For supplier, human-rights or worker claims, add due-diligence, grievance and remediation evidence.","Review public-source signals and document how they were considered."],"ai_used":False,"ai_note":"AI refinement is not enabled in V12 unless added later."}
+    external_context_v17 = strict_external_context_risk(ext, comp.get("company",""))
+    # Replace split external context score with stricter V17 score where split scores exist.
+    return {"version":APP_VERSION,"source_label":url,"analysis_date":datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),"overall_score":score,"overall_risk":level(score),"company":comp,"sector":sec,"context":ctx,"findings":fs,"report":build_report(comp,sec,ctx,fs,score,pages),"concise_standards_lens":concise_standards_lens(),"merged_claims":merge_claim_sections(fs),"external_research":ext,"external_context_assessment":external_context_v17,"external_modifier":external_modifier,"external_modifier_note":external_modifier_note,"split_scores":dict(split_scores(fs,sec,ctx,external_modifier), external_context_risk=external_context_v17["score"]),"integrated_score":integrated_score_view(score, dict(split_scores(fs,sec,ctx,external_modifier), external_context_risk=external_context_v17["score"]), external_context_v17),"integrated_score":integrated_score_view(score, dict(split_scores(fs,sec,ctx,0), external_context_risk=external_context_v17["score"]), external_context_v17),"claim_inventory":build_claim_inventory(fs),"investor_red_flags":build_red_flags(fs,ext,sec,ctx),"company_action_plan":build_company_action_plan(fs,sec,ext),"engagement_questions":build_engagement_questions(fs,ext),"confidence":build_confidence(pages,ext,fs),"disclaimer":"Indicative first-pass assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.","analysed_text_excerpt":txt[:2200],"quality_improvements":["Use claim-specific wording rather than broad reassurance language.","Connect each claim to scope, metrics, reporting period and limitations.","For supplier, human-rights or worker claims, add due-diligence, grievance and remediation evidence.","Review public-source signals and document how they were considered."],"ai_used":False,"ai_note":"AI refinement is not enabled in V12 unless added later."}
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self,body,ctype="text/html; charset=utf-8",status=200):
@@ -442,5 +523,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Social Claim Risk Scan Hostable v16"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Social Claim Risk Scan Hostable v17"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
