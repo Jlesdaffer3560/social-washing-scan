@@ -17,7 +17,7 @@ Environment variable for external search:
 - TAVILY_API_KEY
 
 After deployment, click Check backend. It should show:
-Backend OK. Version: hostable_v17. AI configured: false. Tavily configured: true
+Backend OK. Version: hostable_v18. AI configured: false. Tavily configured: true
 
 
 V15 improvements:
@@ -66,3 +66,11 @@ V17 improvements:
 - Detected social claims and claim-level findings merged into one claims review section.
 - Professional report rewritten to be clearer, shorter and more executive.
 - Footer added: produced by Jordi Lesaffer, Novarisq Consulting, May 2026.
+
+V18 improvements:
+- Result and integrated score sections merged; the overall score remains visually dominant.
+- “Investor” terminology replaced by “Stakeholder”.
+- Company website input is empty on page load.
+- Scan subtitle now explains social washing as the social/human-rights equivalent of greenwashing.
+- Claims review remains merged and company wording is clearly quoted.
+- Professional report layout rewritten for a clearer, concise PDF-style output.

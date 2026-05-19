@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v17"
+APP_VERSION="hostable_v18"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -121,7 +121,7 @@ def fetch_html(url):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/17.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/18.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -172,7 +172,7 @@ def google_search(query, max_results=5):
         return []
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/17.0"},method="GET")
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/18.0"},method="GET")
     with urlopen(req,timeout=35) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
@@ -375,8 +375,8 @@ def build_red_flags(findings,ext,sector,context):
     if any(("human" in f.get("type","").lower() or "labour" in f.get("type","").lower() or "labor" in f.get("type","").lower()) for f in findings): flags.append("Human-rights or labour-rights claims require evidence of due diligence, grievance channels and remedy.")
     if ext.get("enabled") and ext.get("results"): flags.append("External public-source signals were found and should be verified before relying on the company's wording.")
     if sector.get("level")=="High": flags.append("The sector has structurally higher exposure to labour, supplier, worker or vulnerable-stakeholder issues.")
-    if context.get("level") in ["High","Very high"]: flags.append("Company/context sensitivity is elevated and should be considered in investor due diligence.")
-    if not flags: flags.append("No major investor red flag was detected from available website and public-source signals, but manual verification remains necessary.")
+    if context.get("level") in ["High","Very high"]: flags.append("Company/context sensitivity is elevated and should be considered in stakeholder due diligence.")
+    if not flags: flags.append("No major stakeholder red flag was detected from available website and public-source signals, but manual verification remains necessary.")
     return flags[:6]
 
 def build_company_action_plan(findings,sector,ext):
@@ -499,7 +499,7 @@ def analyse_url(raw):
     url=norm_url(raw); txt,pages=crawl(url); comp=infer_company(url,txt); ext=external(comp["company"]); exttext=" ".join(r.get("title","")+" "+r.get("content","") for r in ext.get("results",[])); sec=infer_sector(comp,txt+"\n"+exttext); ctx=infer_context(comp,txt,ext); fs=detect_claims(txt); score, external_modifier, external_modifier_note = calc_score(fs,sec,ctx,ext)
     external_context_v17 = strict_external_context_risk(ext, comp.get("company",""))
     # Replace split external context score with stricter V17 score where split scores exist.
-    return {"version":APP_VERSION,"source_label":url,"analysis_date":datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),"overall_score":score,"overall_risk":level(score),"company":comp,"sector":sec,"context":ctx,"findings":fs,"report":build_report(comp,sec,ctx,fs,score,pages),"concise_standards_lens":concise_standards_lens(),"merged_claims":merge_claim_sections(fs),"external_research":ext,"external_context_assessment":external_context_v17,"external_modifier":external_modifier,"external_modifier_note":external_modifier_note,"split_scores":dict(split_scores(fs,sec,ctx,external_modifier), external_context_risk=external_context_v17["score"]),"integrated_score":integrated_score_view(score, dict(split_scores(fs,sec,ctx,external_modifier), external_context_risk=external_context_v17["score"]), external_context_v17),"integrated_score":integrated_score_view(score, dict(split_scores(fs,sec,ctx,0), external_context_risk=external_context_v17["score"]), external_context_v17),"claim_inventory":build_claim_inventory(fs),"investor_red_flags":build_red_flags(fs,ext,sec,ctx),"company_action_plan":build_company_action_plan(fs,sec,ext),"engagement_questions":build_engagement_questions(fs,ext),"confidence":build_confidence(pages,ext,fs),"disclaimer":"Indicative first-pass assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.","analysed_text_excerpt":txt[:2200],"quality_improvements":["Use claim-specific wording rather than broad reassurance language.","Connect each claim to scope, metrics, reporting period and limitations.","For supplier, human-rights or worker claims, add due-diligence, grievance and remediation evidence.","Review public-source signals and document how they were considered."],"ai_used":False,"ai_note":"AI refinement is not enabled in V12 unless added later."}
+    return {"version":APP_VERSION,"source_label":url,"analysis_date":datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),"overall_score":score,"overall_risk":level(score),"company":comp,"sector":sec,"context":ctx,"findings":fs,"report":build_report(comp,sec,ctx,fs,score,pages),"concise_standards_lens":concise_standards_lens(),"merged_claims":merge_claim_sections(fs),"external_research":ext,"external_context_assessment":external_context_v17,"external_modifier":external_modifier,"external_modifier_note":external_modifier_note,"split_scores":dict(split_scores(fs,sec,ctx,external_modifier), external_context_risk=external_context_v17["score"]),"integrated_score":integrated_score_view(score, dict(split_scores(fs,sec,ctx,external_modifier), external_context_risk=external_context_v17["score"]), external_context_v17),"integrated_score":integrated_score_view(score, dict(split_scores(fs,sec,ctx,0), external_context_risk=external_context_v17["score"]), external_context_v17),"claim_inventory":build_claim_inventory(fs),"stakeholder_red_flags":build_red_flags(fs,ext,sec,ctx),"stakeholder_red_flags":build_red_flags(fs,ext,sec,ctx),"company_action_plan":build_company_action_plan(fs,sec,ext),"engagement_questions":build_engagement_questions(fs,ext),"confidence":build_confidence(pages,ext,fs),"disclaimer":"Indicative first-pass assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.","analysed_text_excerpt":txt[:2200],"quality_improvements":["Use claim-specific wording rather than broad reassurance language.","Connect each claim to scope, metrics, reporting period and limitations.","For supplier, human-rights or worker claims, add due-diligence, grievance and remediation evidence.","Review public-source signals and document how they were considered."],"ai_used":False,"ai_note":"AI refinement is not enabled in V12 unless added later."}
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self,body,ctype="text/html; charset=utf-8",status=200):
@@ -523,5 +523,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Social Claim Risk Scan Hostable v17"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Social Claim Risk Scan Hostable v18"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
