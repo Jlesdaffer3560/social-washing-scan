@@ -17,7 +17,7 @@ Environment variable for external search:
 - TAVILY_API_KEY
 
 After deployment, click Check backend. It should show:
-Backend OK. Version: hostable_v18. AI configured: false. Tavily configured: true
+Backend OK. Version: hostable_v19. AI configured: false. Tavily configured: true
 
 
 V15 improvements:
@@ -74,3 +74,12 @@ V18 improvements:
 - Scan subtitle now explains social washing as the social/human-rights equivalent of greenwashing.
 - Claims review remains merged and company wording is clearly quoted.
 - Professional report layout rewritten for a clearer, concise PDF-style output.
+
+V19 improvements:
+- Social-washing risk review label made more visible.
+- Assessment summary is company-specific and based on detected claims, sector context and negative external signals.
+- Removed stale AI/scoring generic text.
+- Why-this-score section now has bold categories: claim wording, external context, sector context and interpretation.
+- Public-source section retains only negative or risk-relevant signals.
+- Claims review analysis is more concrete and tied to company wording.
+- Professional report rewritten with clearer numbering, stronger executive layout and concise content.
