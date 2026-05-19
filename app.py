@@ -6,12 +6,14 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v15"
+APP_VERSION="hostable_v16"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
 TAVILY_API_KEY=os.environ.get("TAVILY_API_KEY","").strip()
 OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY","").strip()
+GOOGLE_SEARCH_API_KEY=os.environ.get("GOOGLE_SEARCH_API_KEY","").strip()
+GOOGLE_SEARCH_CX=os.environ.get("GOOGLE_SEARCH_CX","").strip()
 
 PROFILES={
  "kbc":("KBC","Banking and financial services","Medium","Responsible-finance, customer-protection, accessibility and financial-inclusion claims can be sensitive because financing decisions may create indirect social impacts."),
@@ -79,7 +81,7 @@ def compact_sources(results,limit=6):
         elif any(v in txt for v in ["gov","europa","regulator","authority","commission","oecd","ncp"]): cat="Government / regulator"
         elif any(v in txt for v in ["lawsuit","court","legal","complaint"]): cat="Legal / complaint"
         elif any(v in txt for v in ["reuters","ft.com","bbc","guardian","press"]): cat="Press"
-        out.append({"title":r.get("title","")[:150],"url":r.get("url",""),"content":r.get("content","")[:220],"category":cat,"credibility":source_credibility(r)})
+        out.append({"title":r.get("title","")[:150],"url":r.get("url",""),"content":r.get("content","")[:220],"category":cat,"credibility":source_credibility(r),"provider":r.get("provider","")})
     return out
 
 class Parser(HTMLParser):
@@ -119,7 +121,7 @@ def fetch_html(url):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/15.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/16.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -163,17 +165,63 @@ def tavily_search(q,max_results=5):
     req=Request("https://api.tavily.com/search",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json","Authorization":"Bearer "+TAVILY_API_KEY},method="POST")
     with urlopen(req,timeout=35) as r: data=json.loads(r.read().decode("utf-8",errors="ignore"))
     return [{"title":i.get("title",""),"url":i.get("url",""),"content":i.get("content",""),"score":i.get("score",0)} for i in data.get("results",[])]
-def external(company):
-    if not TAVILY_API_KEY: return {"enabled":False,"summary":"External public-source search is not enabled because TAVILY_API_KEY is not configured.","results":[]}
-    qs=[company+" human rights labour rights controversy NGO report",company+" workers union strike discrimination lawsuit",company+" supplier supply chain forced labour child labour",company+" regulator complaint customer protection accessibility",company+" social responsibility criticism press investigation"]
-    allr=[]; seen=set()
-    for q in qs:
+
+def google_search(query, max_results=5):
+    """Google Custom Search JSON API fallback. Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX."""
+    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX:
+        return []
+    from urllib.parse import urlencode
+    params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/16.0"},method="GET")
+    with urlopen(req,timeout=35) as r:
+        data=json.loads(r.read().decode("utf-8",errors="ignore"))
+    out=[]
+    for item in data.get("items",[]):
+        out.append({"title":item.get("title",""),"url":item.get("link",""),"content":item.get("snippet",""),"score":0,"provider":"Google Custom Search"})
+    return out
+
+def search_public_sources(query,max_results=4):
+    """Provider cascade: Tavily primary, Google Custom Search fallback."""
+    attempts=[]
+    if TAVILY_API_KEY:
         try:
-            for r in tavily_search(q,4):
-                if r["url"] and r["url"] not in seen: r["query"]=q; allr.append(r); seen.add(r["url"])
-        except Exception as e: allr.append({"title":"External search query failed","url":"","content":str(e)[:240],"score":0,"query":q})
+            res=tavily_search(query,max_results)
+            for r in res: r["provider"]="Tavily"
+            attempts.append({"provider":"Tavily","status":"ok","results":len(res)})
+            if res: return res,attempts
+        except Exception as e:
+            attempts.append({"provider":"Tavily","status":"failed","error":str(e)[:180]})
+    else:
+        attempts.append({"provider":"Tavily","status":"not_configured"})
+    if GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX:
+        try:
+            res=google_search(query,max_results)
+            attempts.append({"provider":"Google Custom Search","status":"ok","results":len(res)})
+            if res: return res,attempts
+        except Exception as e:
+            attempts.append({"provider":"Google Custom Search","status":"failed","error":str(e)[:180]})
+    else:
+        attempts.append({"provider":"Google Custom Search","status":"not_configured"})
+    return [],attempts
+
+def external(company):
+    qs=[company+" human rights labour rights controversy NGO report",company+" workers union strike discrimination lawsuit",company+" supplier supply chain forced labour child labour",company+" regulator complaint customer protection accessibility",company+" social responsibility criticism press investigation"]
+    allr=[]; seen=set(); provider_attempts=[]; providers=set()
+    for q in qs:
+        res,attempts=search_public_sources(q,4)
+        provider_attempts.extend([dict(a,query=q) for a in attempts])
+        for r in res:
+            u=r.get("url","")
+            if u and u not in seen:
+                r["query"]=q; allr.append(r); seen.add(u)
+                if r.get("provider"): providers.add(r.get("provider"))
+    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
+        return {"enabled":False,"summary":"External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.","results":[],"compact_sources":[],"providers_used":[],"provider_attempts":provider_attempts}
     summary=summarise_ext(allr)
-    return {"enabled":True,"summary":summary,"results":allr[:16],"compact_sources":compact_sources(allr,6)}
+    if providers: summary += " Search provider(s) used: "+", ".join(sorted(providers))+"."
+    else: summary += " No usable external results were returned by the configured providers."
+    return {"enabled":True,"summary":summary,"results":allr[:16],"compact_sources":compact_sources(allr,6) if "compact_sources" in globals() else allr[:6],"providers_used":sorted(providers),"provider_attempts":provider_attempts}
+
 def summarise_ext(results):
     if not results: return "No external public-source results were returned."
     combo=" ".join((r.get("title","")+" "+r.get("content","")).lower() for r in results)
@@ -381,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self): self._json({"ok":True})
     def do_GET(self):
         if self.path=="/" or self.path.startswith("/?"): self._send((APP_DIR/"frontend.html").read_text(encoding="utf-8"))
-        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"ai_configured":bool(OPENAI_API_KEY),"tavily_configured":bool(TAVILY_API_KEY)})
+        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"ai_configured":bool(OPENAI_API_KEY),"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX)})
         else: self._json({"error":"Not found"},404)
     def do_POST(self):
         try:
@@ -394,5 +442,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Social Claim Risk Scan Hostable v15"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Social Claim Risk Scan Hostable v16"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()

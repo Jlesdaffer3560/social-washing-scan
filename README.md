@@ -17,7 +17,7 @@ Environment variable for external search:
 - TAVILY_API_KEY
 
 After deployment, click Check backend. It should show:
-Backend OK. Version: hostable_v15. AI configured: false. Tavily configured: true
+Backend OK. Version: hostable_v16. AI configured: false. Tavily configured: true
 
 
 V15 improvements:
@@ -48,3 +48,10 @@ V15 improvements:
 - Adds source credibility labels for external public-source signals.
 - Adds assessment confidence level.
 - Improves HTML/text report structure.
+
+
+V16 improvements:
+- Adds Google Custom Search JSON API as fallback when Tavily fails, returns no results, is not configured, or hits a limit.
+- Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX in Render.
+- Backend health check reports Google Search configuration.
+- External source cards and reports show which provider was used.
