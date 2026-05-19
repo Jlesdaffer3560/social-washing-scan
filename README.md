@@ -17,7 +17,7 @@ Environment variable for external search:
 - TAVILY_API_KEY
 
 After deployment, click Check backend. It should show:
-Backend OK. Version: hostable_v19. AI configured: false. Tavily configured: true
+Backend OK. Version: hostable_v20. AI configured: false. Tavily configured: true
 
 
 V15 improvements:
@@ -83,3 +83,10 @@ V19 improvements:
 - Public-source section retains only negative or risk-relevant signals.
 - Claims review analysis is more concrete and tied to company wording.
 - Professional report rewritten with clearer numbering, stronger executive layout and concise content.
+
+V20 improvements:
+- Removed duplicate social-washing label from top-right header.
+- Assessment summary made more reader-friendly.
+- Public-source section keeps only company-targeted negative signals.
+- PDF-style report is shorter and cleaner.
+- Layout consistency improved.
