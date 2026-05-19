@@ -17,7 +17,7 @@ Environment variable for external search:
 - TAVILY_API_KEY
 
 After deployment, click Check backend. It should show:
-Backend OK. Version: hostable_v16. AI configured: false. Tavily configured: true
+Backend OK. Version: hostable_v17. AI configured: false. Tavily configured: true
 
 
 V15 improvements:
@@ -55,3 +55,14 @@ V16 improvements:
 - Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX in Render.
 - Backend health check reports Google Search configuration.
 - External source cards and reports show which provider was used.
+
+
+V17 improvements:
+- Overall score is now explicitly shown as an integrated score made up of claim wording risk, external context risk and sector baseline risk.
+- External context risk is stricter: very high only where serious and repeated allegations focus on the company.
+- Company wording is shown between quotation marks.
+- Engagement section removed.
+- Standards lens moved higher and shortened.
+- Detected social claims and claim-level findings merged into one claims review section.
+- Professional report rewritten to be clearer, shorter and more executive.
+- Footer added: produced by Jordi Lesaffer, Novarisq Consulting, May 2026.
