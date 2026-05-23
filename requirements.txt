@@ -1,0 +1,2 @@
+# No external Python packages required for V21.
+# The application uses only Python standard-library modules.
