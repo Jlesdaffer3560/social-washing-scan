@@ -1,35 +1,52 @@
 # Social Claim Risk Scan - Hostable V21
 
-This package contains the hostable V21 version of the Social Washing / Social Claim Risk Scan.
-
-## Main V21 updates
-
-- Version updated to `hostable_v21`.
-- More conservative scoring, calibrated against the Durably SocialCheck benchmark.
-- Lower claim-severity scores: High = 56, Medium = 32, Low = 18.
-- Evidence-quality credit reduces risk where claims are supported by scope, metrics, targets, due diligence, grievance/remedy or verification signals.
-- Sector, context and external controversy modifiers are capped to avoid inflated scores.
-- Very High risk is exceptional and requires high-risk sector + multiple high-risk claims + strong external relevance.
-- Automatic `.com` to `.be` fallback: when a `.com` website is inaccessible, the scan retries the equivalent `.be` domain and reports this in `fallback_note`.
+This package contains the complete hostable V21 version of the Social Washing Scan.
 
 ## Files
 
-- `app.py` - main web application.
-- `frontend.html` - user interface served by the app.
-- `requirements.txt` - dependency file for deployment.
-- `render.yaml` - optional Render deployment configuration.
+- `app.py` - backend and API server
+- `frontend.html` - user interface served by `app.py`
+- `requirements.txt` - Python dependencies
+- `render.yaml` - Render deployment configuration
+- `README.md` - instructions
+- `__pycache__/` - included only to mirror the previous V20 package structure; it is not required for deployment
+
+## V21 changes
+
+- Calibrated social-washing scoring to avoid overly high risk scores.
+- Lower claim-severity scores: High=56, Medium=32, Low=18.
+- Evidence-quality credit lowers risk when claims include concrete evidence.
+- Reduced sector and external-context modifiers.
+- Stricter caps for High and Very High scores.
+- Very High risk is reserved for exceptional cases with strong claim, sector and controversy alignment.
+- Automatic `.com` to `.be` fallback when the original `.com` website is not accessible.
 
 ## Render deployment
 
-1. Upload or commit these files to the GitHub repository used by Render.
-2. Ensure `app.py` is at the root of the repository.
-3. In Render, use:
-   - Build command: `pip install -r requirements.txt`
-   - Start command: `python app.py`
-4. Redeploy the service.
-5. Open the app URL and check that the page reports version `hostable_v21`.
+Render must see these files in the root of the GitHub repository:
 
-## Optional environment variables
+- app.py
+- frontend.html
+- requirements.txt
+- render.yaml
+- README.md
 
-- `TAVILY_API_KEY` - used when available for external research.
-- `OPENAI_API_KEY` - reserved for AI-supported logic when configured.
+Do not upload only the zip file to GitHub. Extract the zip first, open the folder, and upload the individual files to the repository root.
+
+Render start command:
+
+```bash
+python app.py
+```
+
+Health check:
+
+```text
+/api/health
+```
+
+Expected version response:
+
+```text
+hostable_v21
+```
