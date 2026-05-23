@@ -1,52 +1,33 @@
-# Social Claim Risk Scan - Hostable V21
+# Social Claim Risk Scan - hostable_v22
 
-This package contains the complete hostable V21 version of the Social Washing Scan.
+This package keeps the same layout and structure as the previous hostable version, while refining only the scoring methodology.
+
+## V22 changes
+
+- App version: `hostable_v22`
+- Keeps the frontend flow and output structure unchanged, except for version labels.
+- Refines the scoring logic to avoid inflated risk scores.
+- Claim wording remains the anchor of the score.
+- Sector, context and external-source signals are capped modifiers.
+- Evidence-quality credit lowers the score where claims are supported by policy, scope, KPIs, targets, due diligence, grievance/remedy or verification signals.
+- Very High is reserved for exceptional cases with strong alignment between high-risk claims, high-risk sector and relevant external controversy/context.
+- The `.com` to `.be` fallback remains available when the original `.com` website is inaccessible.
 
 ## Files
 
-- `app.py` - backend and API server
-- `frontend.html` - user interface served by `app.py`
-- `requirements.txt` - Python dependencies
-- `render.yaml` - Render deployment configuration
-- `README.md` - instructions
-- `__pycache__/` - included only to mirror the previous V20 package structure; it is not required for deployment
+- `app.py`
+- `frontend.html`
+- `requirements.txt`
+- `render.yaml`
+- `README.md`
+- `__pycache__/`
 
-## V21 changes
+## Deployment
 
-- Calibrated social-washing scoring to avoid overly high risk scores.
-- Lower claim-severity scores: High=56, Medium=32, Low=18.
-- Evidence-quality credit lowers risk when claims include concrete evidence.
-- Reduced sector and external-context modifiers.
-- Stricter caps for High and Very High scores.
-- Very High risk is reserved for exceptional cases with strong claim, sector and controversy alignment.
-- Automatic `.com` to `.be` fallback when the original `.com` website is not accessible.
+Upload the files to the root of the GitHub repository used by Render. Render must see `app.py`, `frontend.html`, `requirements.txt` and `render.yaml` directly in the repository root.
 
-## Render deployment
+After deployment, verify the active version at:
 
-Render must see these files in the root of the GitHub repository:
+`/api/health`
 
-- app.py
-- frontend.html
-- requirements.txt
-- render.yaml
-- README.md
-
-Do not upload only the zip file to GitHub. Extract the zip first, open the folder, and upload the individual files to the repository root.
-
-Render start command:
-
-```bash
-python app.py
-```
-
-Health check:
-
-```text
-/api/health
-```
-
-Expected version response:
-
-```text
-hostable_v21
-```
+Expected version: `hostable_v22`.

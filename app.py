@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Durably Social Washing Scan - hostable_v21
-Calibrated scoring + .com to .be fallback.
+Durably Social Washing Scan - hostable_v22
+V20-style layout/structure + refined scoring method only.
 
-Main V21 changes:
-- More conservative scoring, aligned with the Durably SocialCheck benchmark.
-- Lower claim-severity scores: High=56, Medium=32, Low=18.
-- Evidence-quality credit lowers risk when claims include scope, metrics, targets, due diligence, grievance/remedy or verification signals.
-- Sector/context/external modifiers are capped so scores do not become too high based only on sector or snippets.
-- Very High is exceptional and requires high-risk sector + multiple high-risk claims + strong external relevance.
-- If a .com website is inaccessible, the tool automatically retries the equivalent .be domain.
+Main V22 changes:
+- Keeps the same app structure and frontend flow as the prior hostable package.
+- Refines only the social-washing scoring methodology.
+- Uses claim wording as the anchor, with sector/context/external signals as capped modifiers.
+- Applies evidence credits where claims are substantiated by policies, scope, targets, KPIs, due diligence, grievance/remedy or verification.
+- Prevents inflated scores by capping Very High risk to exceptional cases.
+- Keeps automatic .com to .be fallback when a .com website is inaccessible.
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION = "hostable_v21"
+APP_VERSION = "hostable_v22"
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = "0.0.0.0"
 APP_DIR = Path(__file__).resolve().parent
@@ -27,12 +27,12 @@ TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
 VERSION_NOTES = [
-    "Calibrated social-washing scoring to avoid overly high risk scores.",
-    "Added evidence-quality credit for substantiated claims.",
-    "Reduced sector and external-context modifiers.",
-    "Introduced stricter caps for High and Very High scores.",
+    "V22 keeps the V20 layout and output structure; only the scoring logic has been refined.",
+    "Claim wording remains the main score driver.",
+    "Sector, context and external public-source signals are capped modifiers, not dominant score drivers.",
+    "Evidence-quality credit reduces the score when claims include concrete scope, KPIs, targets, due diligence, grievance/remedy or verification signals.",
     "Very High risk is reserved for exceptional cases with strong claim, sector and controversy alignment.",
-    "Added automatic .com to .be fallback when the original .com website is not accessible."
+    "Automatic .com to .be fallback remains available when the original .com website is not accessible."
 ]
 
 PROFILES = {
@@ -374,7 +374,7 @@ def detect_claims(text):
         trig = next((t for t in triggers if t in low), None)
         if trig and typ not in seen:
             seen.add(typ)
-            score = 56 if risk == "High" else 32
+            score = 58 if risk == "High" else 34
             fs.append({"type": typ, "risk": risk, "claim": clean_excerpt(text, trig), "issue": issue, "rewrite": rewrite, "claim_score": score, "standards": standards_for_claim(typ), "action": "Substantiate the claim with scope, evidence, reporting period, limitations and remediation steps."})
     if not fs:
         fs.append({"type": "No major high-risk social claim detected", "risk": "Low", "claim": text[:320] + ("..." if len(text) > 320 else ""), "issue": "The crawler did not detect obvious high-risk social-claim wording in the reviewed company pages.", "rewrite": "Keep social claims specific, scoped and supported by measurable evidence.", "claim_score": 18, "standards": ["General claim-quality review"], "action": "Keep the claim specific, scoped and supported by measurable evidence."})
@@ -448,32 +448,61 @@ def external_relevance_score(findings, external_research):
 
 
 def calc_score(findings, sector, context, external_research=None, analysed_text=""):
+    """
+    V22 refined scoring, designed to keep the V20 app structure while reducing inflated scores.
+
+    Principle:
+    - Website claim wording is the anchor.
+    - Sector risk, entity context and external-source signals are modifiers.
+    - Good substantiation lowers the score.
+    - Very High is exceptional and should normally only occur for high-risk sectors with multiple
+      high-risk claims and relevant negative external context.
+    """
     if not findings:
         return 0, 0, "No relevant social-washing claims detected."
+
     claim = max(f.get("claim_score", 0) for f in findings)
     high_claims = len([f for f in findings if f.get("risk") == "High"])
     medium_claims = len([f for f in findings if f.get("risk") == "Medium"])
-    base = claim * 0.42
-    sector_mod = {"Low": 0, "Medium": 2, "High": 5}.get(sector.get("level", "Medium"), 2)
-    context_mod = {"Low": 0, "Medium": 2, "High": 5, "Very high": 8}.get(context.get("level", "Low"), 0)
-    multiple_claim_mod = min(5, max(0, high_claims - 1) * 2 + max(0, medium_claims - 2))
+
+    # Claim wording remains the anchor, but only part of the claim severity flows through.
+    base = claim * 0.45
+
+    # Capped modifiers. These are deliberately smaller than in the earlier aggressive versions.
+    sector_mod = {"Low": 0, "Medium": 3, "High": 6}.get(sector.get("level", "Medium"), 3)
+    context_mod = {"Low": 0, "Medium": 3, "High": 6, "Very high": 9}.get(context.get("level", "Low"), 0)
+
+    # Several risky claim categories increase review priority, but only modestly.
+    multiple_claim_mod = min(6, max(0, high_claims - 1) * 2 + max(0, medium_claims - 2))
+
     external_mod, external_note = external_relevance_score(findings, external_research or {})
     evidence_credit = evidence_quality_credit(findings, analysed_text)
+
     raw = round(base + sector_mod + context_mod + multiple_claim_mod + external_mod - evidence_credit)
 
-    # Conservative caps calibrated to the SocialCheck benchmark.
+    # Conservative caps to avoid over-scoring clean or only moderately risky pages.
     if high_claims == 0:
         raw = min(raw, 49)
+
+    if high_claims == 0 and external_mod >= 12:
+        raw = min(raw, 58)
+
     if external_mod < 8 and context.get("level") in ["Low", "Medium"]:
         raw = min(raw, 59)
+
     if findings and findings[0]["type"].lower().startswith("no major"):
         raw = min(raw, 24 if external_mod < 8 else 35)
-    if raw >= 75:
-        if not (sector.get("level") == "High" and high_claims >= 2 and external_mod >= 12):
-            raw = min(raw, 74)
+
+    # Very High is exceptional: it requires strong alignment between claim wording, sector and external context.
+    if raw >= 75 and not (
+        sector.get("level") == "High"
+        and high_claims >= 2
+        and external_mod >= 10
+    ):
+        raw = 74
+
     raw = max(0, min(100, raw))
     return raw, external_mod, external_note
-
 
 def guidance(findings, sector):
     txt = " ".join(f["rewrite"] for f in findings[:2])
@@ -488,9 +517,9 @@ def build_report(company, sector, context, findings, score, pages):
         driver = "claim wording that may overstate social performance, coverage, control or substantiation"
     else:
         driver = "mainly moderate claim wording, with no clear high-risk social-washing wording detected"
-    summary = f"{company['company']} receives a {level(score).lower()} social-claim risk score of {score}/100. The score is primarily based on actual wording found on the reviewed company pages, especially {top}. V21 uses calibrated scoring so that sector and external context modify the result but do not dominate the claim assessment."
+    summary = f"{company['company']} receives a {level(score).lower()} social-claim risk score of {score}/100. The score is primarily based on actual wording found on the reviewed company pages, especially {top}. V22 uses calibrated scoring so that sector and external context modify the result but do not dominate the claim assessment."
     rationale = f"Claim focus: {driver}. Sector context: {sector['risks']} Basis: {sector['basis']}. Public-source context: {context['note']} External signals are considered more strongly when they are relevant to the concrete company and align with detected claim themes such as workers, suppliers, human rights, inclusion, customer protection or communities."
-    return {"summary": summary, "rationale": rationale, "rewrite_guidance": guidance(findings, sector), "pages_reviewed": pages, "standards_overview": STANDARDS, "scoring_note": "V21 calibrated scoring: claim wording remains the anchor; evidence can reduce risk; sector/context/external signals are capped; Very High is exceptional."}
+    return {"summary": summary, "rationale": rationale, "rewrite_guidance": guidance(findings, sector), "pages_reviewed": pages, "standards_overview": STANDARDS, "scoring_note": "V22 calibrated scoring: claim wording remains the anchor; evidence can reduce risk; sector/context/external signals are capped; Very High is exceptional."}
 
 
 def evidence_checklist(f):
@@ -644,7 +673,7 @@ def analyse_url(raw):
             "Review public-source signals and document how they were considered.",
         ],
         "ai_used": False,
-        "ai_note": "AI refinement is not enabled in V21 unless added later.",
+        "ai_note": "AI refinement is not enabled in V22 unless added later.",
     }
 
 
@@ -697,7 +726,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print("Social Claim Risk Scan Hostable v21")
+    print("Social Claim Risk Scan Hostable v22")
     print(f"Serving on http://{HOST}:{PORT}")
     print("Tavily configured:", bool(TAVILY_API_KEY))
     print("AI configured:", bool(OPENAI_API_KEY))
