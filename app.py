@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Durably Social Washing Scan - hostable_v22
+Durably Social Washing Scan - hostable_v23
 V20-style layout/structure + refined scoring method only.
 
-Main V22 changes:
+Main V23 changes:
 - Keeps the same app structure and frontend flow as the prior hostable package.
 - Refines only the social-washing scoring methodology.
 - Uses claim wording as the anchor, with sector/context/external signals as capped modifiers.
@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION = "hostable_v22"
+APP_VERSION = "hostable_v23"
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = "0.0.0.0"
 APP_DIR = Path(__file__).resolve().parent
@@ -27,7 +27,7 @@ TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
 VERSION_NOTES = [
-    "V22 keeps the V20 layout and output structure; only the scoring logic has been refined.",
+    "V23 keeps the V20 layout and output structure; only the scoring logic has been refined.",
     "Claim wording remains the main score driver.",
     "Sector, context and external public-source signals are capped modifiers, not dominant score drivers.",
     "Evidence-quality credit reduces the score when claims include concrete scope, KPIs, targets, due diligence, grievance/remedy or verification signals.",
@@ -449,7 +449,7 @@ def external_relevance_score(findings, external_research):
 
 def calc_score(findings, sector, context, external_research=None, analysed_text=""):
     """
-    V22 refined scoring, designed to keep the V20 app structure while reducing inflated scores.
+    V23 refined scoring, designed to keep the V20 app structure while reducing inflated scores.
 
     Principle:
     - Website claim wording is the anchor.
@@ -517,10 +517,40 @@ def build_report(company, sector, context, findings, score, pages):
         driver = "claim wording that may overstate social performance, coverage, control or substantiation"
     else:
         driver = "mainly moderate claim wording, with no clear high-risk social-washing wording detected"
-    summary = f"{company['company']} receives a {level(score).lower()} social-claim risk score of {score}/100. The score is primarily based on actual wording found on the reviewed company pages, especially {top}. V22 uses calibrated scoring so that sector and external context modify the result but do not dominate the claim assessment."
+    summary = f"{company['company']} receives a {level(score).lower()} social-claim risk score of {score}/100. The score is primarily based on actual wording found on the reviewed company pages, especially {top}. V23 uses calibrated scoring so that sector and external context modify the result but do not dominate the claim assessment."
     rationale = f"Claim focus: {driver}. Sector context: {sector['risks']} Basis: {sector['basis']}. Public-source context: {context['note']} External signals are considered more strongly when they are relevant to the concrete company and align with detected claim themes such as workers, suppliers, human rights, inclusion, customer protection or communities."
-    return {"summary": summary, "rationale": rationale, "rewrite_guidance": guidance(findings, sector), "pages_reviewed": pages, "standards_overview": STANDARDS, "scoring_note": "V22 calibrated scoring: claim wording remains the anchor; evidence can reduce risk; sector/context/external signals are capped; Very High is exceptional."}
+    return {"summary": summary, "rationale": rationale, "rewrite_guidance": guidance(findings, sector), "pages_reviewed": pages, "standards_overview": STANDARDS, "scoring_note": "V23 calibrated scoring: claim wording remains the anchor; evidence can reduce risk; sector/context/external signals are capped; Very High is exceptional."}
 
+
+
+def build_report_text(company, sector, context, findings, score, pages, ext, external_modifier_note, evidence_credit):
+    """Plain-text report preview for frontend compatibility with V20-style report section."""
+    lines = []
+    lines.append(f"Social Washing Scan report – {company.get('company', 'Company reviewed')}")
+    lines.append("")
+    lines.append("1. Assessment summary")
+    lines.append(f"Overall risk score: {score}/100 ({level(score)})")
+    lines.append(f"Company / sector: {company.get('company', '')} – {company.get('sector', '')}")
+    lines.append(f"Sector baseline risk: {sector.get('level', '')} ({sector.get('basis', '')})")
+    lines.append("")
+    lines.append("2. Main rationale")
+    lines.append(f"The score is based primarily on social-claim wording identified on the reviewed website pages. Sector, public-source context and external signals are used as capped modifiers. Evidence quality can reduce the score. Evidence credit applied: {evidence_credit} points.")
+    lines.append(f"External-source note: {external_modifier_note}")
+    lines.append("")
+    lines.append("3. Main claim-level findings")
+    for i, f in enumerate(findings[:6], 1):
+        lines.append(f"{i}. {f.get('type', '')} – {f.get('risk', '')} risk")
+        lines.append(f"   Claim excerpt: {f.get('claim', '')}")
+        lines.append(f"   Issue: {f.get('issue', '')}")
+        lines.append(f"   Safer wording direction: {f.get('rewrite', '')}")
+    lines.append("")
+    lines.append("4. Pages reviewed")
+    for page in pages[:8]:
+        lines.append(f"- {page}")
+    lines.append("")
+    lines.append("5. Important limitation")
+    lines.append("This is an indicative desktop assessment, not legal advice and not a definitive finding of social washing. Public-source signals require manual verification.")
+    return "\n".join(lines)
 
 def evidence_checklist(f):
     t = (f.get("type", "") + " " + f.get("issue", "")).lower()
@@ -640,6 +670,8 @@ def analyse_url(raw):
     fs = detect_claims(txt)
     score, external_modifier, external_modifier_note = calc_score(fs, sec, ctx, ext, txt)
     evidence_credit = evidence_quality_credit(fs, txt)
+    report_obj = build_report(comp, sec, ctx, fs, score, pages)
+    report_text = build_report_text(comp, sec, ctx, fs, score, pages, ext, external_modifier_note, evidence_credit)
     return {
         "version": APP_VERSION,
         "version_notes": VERSION_NOTES,
@@ -653,7 +685,8 @@ def analyse_url(raw):
         "sector": sec,
         "context": ctx,
         "findings": fs,
-        "report": build_report(comp, sec, ctx, fs, score, pages),
+        "report": report_obj,
+        "report_text": report_text,
         "external_research": ext,
         "external_modifier": external_modifier,
         "external_modifier_note": external_modifier_note,
@@ -673,7 +706,7 @@ def analyse_url(raw):
             "Review public-source signals and document how they were considered.",
         ],
         "ai_used": False,
-        "ai_note": "AI refinement is not enabled in V22 unless added later.",
+        "ai_note": "AI refinement is not enabled in V23 unless added later.",
     }
 
 
@@ -726,7 +759,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print("Social Claim Risk Scan Hostable v22")
+    print("Social Claim Risk Scan Hostable v23")
     print(f"Serving on http://{HOST}:{PORT}")
     print("Tavily configured:", bool(TAVILY_API_KEY))
     print("AI configured:", bool(OPENAI_API_KEY))

@@ -3,182 +3,61 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Durably Social Washing Scan V22</title>
+  <title>Durably Social Washing Scan V23</title>
   <style>
-    :root {
-      --bg: #f5f7fb;
-      --card: #ffffff;
-      --text: #172033;
-      --muted: #5e6a7d;
-      --line: #d9e1ec;
-      --blue: #1f5b8f;
-      --green: #2f855a;
-      --amber: #b7791f;
-      --red: #c53030;
-      --shadow: 0 10px 30px rgba(17, 38, 70, 0.08);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
-    }
-    .wrap { max-width: 1120px; margin: 0 auto; padding: 38px 22px 60px; }
-    .hero {
-      background: linear-gradient(135deg, #153e63, #245b8e);
-      color: white;
-      padding: 34px;
-      border-radius: 22px;
-      box-shadow: var(--shadow);
-    }
-    .hero h1 { margin: 0 0 10px; font-size: 32px; letter-spacing: -0.03em; }
-    .hero p { margin: 0; max-width: 900px; color: #e8f2ff; }
-    .badge { display: inline-flex; gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; font-size: 13px; margin-bottom: 16px; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 20px; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; box-shadow: var(--shadow); }
-    label { font-weight: 700; display: block; margin-bottom: 8px; }
-    .inputrow { display: flex; gap: 10px; flex-wrap: wrap; }
-    input[type=url] { flex: 1 1 520px; min-width: 260px; border: 1px solid var(--line); border-radius: 14px; padding: 14px 15px; font-size: 16px; }
-    button { border: 0; border-radius: 14px; padding: 14px 18px; background: var(--blue); color: white; font-weight: 800; cursor: pointer; }
-    button:disabled { opacity: .55; cursor: not-allowed; }
-    .hint { color: var(--muted); font-size: 14px; margin-top: 8px; }
-    .status { margin-top: 14px; font-weight: 700; color: var(--blue); }
-    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
-    .metric { border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #fbfdff; }
-    .metric .k { color: var(--muted); font-size: 13px; }
-    .metric .v { font-size: 22px; font-weight: 850; margin-top: 3px; }
-    .risk-low { color: var(--green); }
-    .risk-medium { color: var(--amber); }
-    .risk-high, .risk-very-high { color: var(--red); }
-    h2 { margin: 0 0 12px; font-size: 22px; }
-    h3 { margin: 18px 0 8px; font-size: 17px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
-    th, td { border-bottom: 1px solid var(--line); padding: 10px; text-align: left; vertical-align: top; }
-    th { background: #eef4fa; color: #143b5c; }
-    .pill { display: inline-block; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 800; background: #eef4fa; }
-    .note { background: #edf7f0; border: 1px solid #c8e6d2; color: #22543d; border-radius: 14px; padding: 12px; margin-top: 12px; }
-    .warning { background: #fff7ed; border-color: #fed7aa; color: #7c2d12; }
-    pre { white-space: pre-wrap; background: #0f172a; color: #e5e7eb; border-radius: 16px; padding: 16px; overflow: auto; }
-    .footer { color: var(--muted); font-size: 13px; margin-top: 20px; }
-    @media (max-width: 760px) { .summary { grid-template-columns: 1fr 1fr; } .hero { padding: 24px; } }
-    @media (max-width: 520px) { .summary { grid-template-columns: 1fr; } }
+    :root{--bg:#f4f7fb;--card:#fff;--text:#172033;--muted:#5d687a;--line:#d9e2ee;--blue:#1f5b8f;--blue2:#163f66;--green:#2f855a;--amber:#b7791f;--red:#c53030;--soft:#eef5fb;--softgreen:#eef8f1;--shadow:0 10px 26px rgba(20,45,80,.08)}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);line-height:1.45}.wrap{max-width:1160px;margin:0 auto;padding:34px 22px 60px}.hero{background:linear-gradient(135deg,#153e63,#245b8e);color:#fff;padding:32px;border-radius:22px;box-shadow:var(--shadow)}.badge{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border:1px solid rgba(255,255,255,.28);border-radius:999px;font-size:13px;margin-bottom:14px}.hero h1{margin:0 0 9px;font-size:32px;letter-spacing:-.03em}.hero p{margin:0;color:#eaf4ff;max-width:930px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow);margin-top:18px}.grid{display:grid;grid-template-columns:1fr;gap:18px}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}label{font-weight:800;display:block;margin-bottom:8px}.inputrow{display:flex;gap:10px;flex-wrap:wrap}input[type=url]{flex:1 1 520px;min-width:260px;border:1px solid var(--line);border-radius:14px;padding:14px 15px;font-size:16px}button{border:0;border-radius:14px;padding:14px 18px;background:var(--blue);color:#fff;font-weight:850;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.hint{color:var(--muted);font-size:14px}.status{margin-top:14px;font-weight:800;color:var(--blue)}.metric{border:1px solid var(--line);border-radius:16px;padding:14px;background:#fbfdff}.metric .k{color:var(--muted);font-size:13px}.metric .v{font-size:22px;font-weight:850;margin-top:3px}.risk-low{color:var(--green)}.risk-medium{color:var(--amber)}.risk-high,.risk-very-high{color:var(--red)}h2{margin:0 0 12px;font-size:22px;color:#143b5c}h3{margin:16px 0 8px;font-size:17px;color:#173a5a}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}th,td{border-bottom:1px solid var(--line);padding:10px;text-align:left;vertical-align:top}th{background:#eaf2fa;color:#143b5c}.pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:850;background:#eef4fa}.note{background:#edf7f0;border:1px solid #c8e6d2;color:#22543d;border-radius:14px;padding:12px;margin-top:12px}.warning{background:#fff7ed;border-color:#fed7aa;color:#7c2d12}.box{background:#f8fbff;border:1px solid var(--line);border-radius:14px;padding:13px}.small{font-size:13px;color:var(--muted)}pre{white-space:pre-wrap;background:#0f172a;color:#e5e7eb;border-radius:16px;padding:16px;overflow:auto}.footer{color:var(--muted);font-size:13px;margin-top:20px}ul{margin-top:7px}.source-list li{margin-bottom:7px;word-break:break-word}@media(max-width:850px){.four,.three,.two{grid-template-columns:1fr}.hero{padding:24px}}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <section class="hero">
-      <div class="badge">Durably SocialCheck · hostable_v22</div>
-      <h1>Social Washing Scan</h1>
-      <p>Indicative desktop assessment of social-washing risk. V22 keeps the V20 layout/structure and refines only the scoring method, with evidence credits and .com to .be fallback.</p>
-    </section>
+<div class="wrap">
+  <section class="hero">
+    <div class="badge">Durably SocialCheck · hostable_v23</div>
+    <h1>Social Washing Scan</h1>
+    <p>Indicative desktop assessment of social-washing risk. V23 restores the fuller V20-style output structure and only refines the scoring method so that scores are more proportionate.</p>
+  </section>
 
-    <section class="card">
-      <label for="url">Company website URL</label>
-      <div class="inputrow">
-        <input id="url" type="url" placeholder="https://www.example.com" />
-        <button id="scanBtn">Run scan</button>
-      </div>
-      <div class="hint">The scan checks social claims, sector context, external signals, substantiation quality and potential safer wording.</div>
-      <div id="status" class="status"></div>
-    </section>
+  <section class="card">
+    <label for="url">Company website URL</label>
+    <div class="inputrow">
+      <input id="url" type="url" placeholder="https://www.example.com" />
+      <button id="scanBtn">Run scan</button>
+    </div>
+    <div class="hint">The scan reviews social claims, substantiation signals, sector context, external public-source signals and safer wording options. If a .com domain is inaccessible, the tool tries the .be domain automatically.</div>
+    <div id="status" class="status"></div>
+  </section>
 
-    <section id="result" class="grid" style="display:none"></section>
-
-    <div class="footer">Disclaimer: indicative first-pass assessment only. Not legal advice and not a definitive finding of social washing.</div>
-  </div>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const riskClass = (risk) => 'risk-' + String(risk || '').toLowerCase().replace(/\s+/g, '-');
-    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-    async function runScan() {
-      const url = $('url').value.trim();
-      if (!url) { $('status').textContent = 'Please enter a URL.'; return; }
-      $('scanBtn').disabled = true;
-      $('status').textContent = 'Scanning website. This may take up to one minute...';
-      $('result').style.display = 'none';
-      $('result').innerHTML = '';
-      try {
-        const res = await fetch('/api/scan/url', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({url})
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || 'Scan failed');
-        render(data);
-        $('status').textContent = 'Scan completed.';
-      } catch (e) {
-        $('status').textContent = 'Error: ' + e.message;
-      } finally {
-        $('scanBtn').disabled = false;
-      }
-    }
-
-    function render(d) {
-      const findings = d.findings || [];
-      const rows = findings.map(f => `
-        <tr>
-          <td><span class="pill ${riskClass(f.risk)}">${esc(f.risk)}</span></td>
-          <td><strong>${esc(f.type)}</strong><br><span class="hint">${esc(f.trigger)}</span></td>
-          <td>${esc(f.issue)}</td>
-          <td>${esc(f.rewrite)}</td>
-        </tr>`).join('') || '<tr><td colspan="4">No material social-washing claim findings detected.</td></tr>';
-
-      const fallback = d.fallback_note ? `<div class="note warning"><strong>Domain fallback:</strong> ${esc(d.fallback_note)}</div>` : '';
-      const notes = (d.version_notes || []).map(n => `<li>${esc(n)}</li>`).join('');
-      const split = d.split_scores || {};
-      const redFlags = (d.investor_red_flags || []).map(x => `<li>${esc(x)}</li>`).join('');
-      const actionPlan = (d.company_action_plan || []).map(x => `<li>${esc(x)}</li>`).join('');
-      const questions = (d.engagement_questions || []).map(x => `<li>${esc(x)}</li>`).join('');
-
-      $('result').innerHTML = `
-        <section class="card">
-          <h2>Assessment summary</h2>
-          <div class="summary">
-            <div class="metric"><div class="k">Overall score</div><div class="v">${esc(d.overall_score)}/100</div></div>
-            <div class="metric"><div class="k">Overall risk</div><div class="v ${riskClass(d.overall_risk)}">${esc(d.overall_risk)}</div></div>
-            <div class="metric"><div class="k">Company</div><div class="v" style="font-size:18px">${esc(d.company?.company)}</div></div>
-            <div class="metric"><div class="k">Sector risk</div><div class="v ${riskClass(d.sector?.level)}">${esc(d.sector?.level)}</div></div>
-          </div>
-          ${fallback}
-          <h3>Score drivers</h3>
-          <table>
-            <tr><th>Component</th><th>Value</th></tr>
-            <tr><td>Claim score</td><td>${esc(split.claim_score)}</td></tr>
-            <tr><td>Sector modifier</td><td>${esc(split.sector_modifier)}</td></tr>
-            <tr><td>Context modifier</td><td>${esc(split.context_modifier)}</td></tr>
-            <tr><td>External modifier</td><td>${esc(d.external_modifier)} — ${esc(d.external_modifier_note)}</td></tr>
-            <tr><td>Evidence credit</td><td>-${esc(d.evidence_credit)}</td></tr>
-          </table>
-        </section>
-        <section class="card">
-          <h2>Claim-level findings</h2>
-          <table><tr><th>Risk</th><th>Finding</th><th>Issue</th><th>Safer rewrite direction</th></tr>${rows}</table>
-        </section>
-        <section class="card">
-          <h2>Practical outputs</h2>
-          <h3>Investor / due diligence red flags</h3>
-          <ul>${redFlags || '<li>No specific red flags generated.</li>'}</ul>
-          <h3>Company action plan</h3>
-          <ul>${actionPlan || '<li>Strengthen substantiation and claim scope.</li>'}</ul>
-          <h3>Engagement questions</h3>
-          <ul>${questions || '<li>Ask for claim evidence, scope and limitations.</li>'}</ul>
-        </section>
-        <section class="card">
-          <h2>Report preview</h2>
-          <pre>${esc(d.report)}</pre>
-          <h3>Version notes</h3>
-          <ul>${notes}</ul>
-        </section>`;
-      $('result').style.display = 'grid';
-    }
-
-    $('scanBtn').addEventListener('click', runScan);
-    $('url').addEventListener('keydown', e => { if (e.key === 'Enter') runScan(); });
-  </script>
+  <section id="result" class="grid" style="display:none"></section>
+  <div class="footer">Disclaimer: indicative first-pass assessment only. Not legal advice and not a definitive finding of social washing.</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const riskClass=r=>'risk-'+String(r||'').toLowerCase().replace(/\s+/g,'-');
+const li=arr=>(arr||[]).map(x=>`<li>${typeof x==='string'?esc(x):esc(x.action||x.title||JSON.stringify(x))}</li>`).join('');
+const safeList=(arr,empty)=>li(arr)||`<li>${esc(empty)}</li>`;
+function actionList(arr){return (arr||[]).map(x=>`<li><strong>${esc(x.priority||'')}</strong>${x.title?': <strong>'+esc(x.title)+'</strong>':''}${x.action?' — '+esc(x.action):''}</li>`).join('')||'<li>No specific action plan generated.</li>'}
+function sources(ext){const rs=(ext&&ext.compact_sources)||[]; if(!rs.length) return '<li>No external public-source list available or search not configured.</li>'; return rs.map(s=>`<li><strong>${esc(s.title||'Source')}</strong>${s.url?' — '+esc(s.url):''}<br><span class="small">${esc(s.content||s.snippet||'')}</span></li>`).join('')}
+function renderReportObject(r){ if(!r) return ''; if(typeof r==='string') return `<pre>${esc(r)}</pre>`; return `<div class="box"><h3>Summary</h3><p>${esc(r.summary)}</p><h3>Rationale</h3><p>${esc(r.rationale)}</p><h3>Rewrite guidance</h3><p>${esc(r.rewrite_guidance)}</p><h3>Scoring note</h3><p>${esc(r.scoring_note)}</p></div>` }
+async function runScan(){const url=$('url').value.trim(); if(!url){$('status').textContent='Please enter a URL.';return} $('scanBtn').disabled=true;$('status').textContent='Scanning website. This may take up to one minute...';$('result').style.display='none';$('result').innerHTML='';try{const res=await fetch('/api/scan/url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});const data=await res.json(); if(!res.ok||data.error) throw new Error(data.error||'Scan failed'); render(data); $('status').textContent='Scan completed.'}catch(e){$('status').textContent='Error: '+e.message}finally{$('scanBtn').disabled=false}}
+function render(d){const f=d.findings||[], inv=d.claim_inventory||[], split=d.split_scores||{}, ext=d.external_research||{}, conf=d.confidence||{};
+const fallback=d.fallback_note?`<div class="note warning"><strong>Domain fallback:</strong> ${esc(d.fallback_note)}</div>`:'';
+const findingRows=f.map(x=>`<tr><td><span class="pill ${riskClass(x.risk)}">${esc(x.risk)}</span></td><td><strong>${esc(x.type)}</strong><br><span class="small">${esc(x.claim)}</span></td><td>${esc(x.issue)}</td><td>${esc(x.rewrite)}</td></tr>`).join('')||'<tr><td colspan="4">No material social-washing claim findings detected.</td></tr>';
+const invRows=inv.map(x=>`<tr><td>${esc(x.claim_type)}</td><td><span class="pill ${riskClass(x.risk_level)}">${esc(x.risk_level)}</span></td><td>${esc(x.claim_text)}</td><td><ul>${safeList(x.evidence_needed,'Evidence to be confirmed')}</ul></td></tr>`).join('')||'<tr><td colspan="4">No claim inventory generated.</td></tr>';
+$('result').innerHTML=`
+<section class="card"><h2>Assessment summary</h2><div class="four"><div class="metric"><div class="k">Overall score</div><div class="v">${esc(d.overall_score)}/100</div></div><div class="metric"><div class="k">Overall risk</div><div class="v ${riskClass(d.overall_risk)}">${esc(d.overall_risk)}</div></div><div class="metric"><div class="k">Company</div><div class="v" style="font-size:18px">${esc(d.company?.company)}</div></div><div class="metric"><div class="k">Sector risk</div><div class="v ${riskClass(d.sector?.level)}">${esc(d.sector?.level)}</div></div></div>${fallback}<p class="hint">${esc(d.disclaimer)}</p></section>
+<section class="card"><h2>Score breakdown</h2><div class="two"><div class="box"><h3>Risk components</h3><table><tr><th>Component</th><th>Score / modifier</th></tr><tr><td>Claim wording risk</td><td>${esc(split.claim_wording_risk)}</td></tr><tr><td>External context risk</td><td>${esc(split.external_context_risk)}</td></tr><tr><td>Sector baseline risk</td><td>${esc(split.sector_baseline_risk)}</td></tr><tr><td>External modifier</td><td>${esc(d.external_modifier)} — ${esc(d.external_modifier_note)}</td></tr><tr><td>Evidence credit</td><td>-${esc(d.evidence_credit)}</td></tr></table></div><div class="box"><h3>Methodology note</h3><p>V23 keeps the V20-style report structure. The refined score is anchored in claim wording and adjusted only moderately for sector, context and external signals. Evidence quality reduces the score. Very high risk is capped unless broad claims, high-risk sector exposure and relevant external risk signals strongly align.</p><p><strong>Sector rationale:</strong> ${esc(d.sector?.risks)} Basis: ${esc(d.sector?.basis)}</p></div></div></section>
+<section class="card"><h2>Text report preview</h2>${renderReportObject(d.report)}<h3>Plain text export preview</h3><pre>${esc(d.report_text||'No report text generated.')}</pre></section>
+<section class="card"><h2>Claim-level findings</h2><table><tr><th>Risk</th><th>Finding / claim excerpt</th><th>Issue</th><th>Safer rewrite direction</th></tr>${findingRows}</table></section>
+<section class="card"><h2>Claim inventory and evidence checklist</h2><table><tr><th>Claim type</th><th>Risk</th><th>Claim excerpt</th><th>Evidence needed</th></tr>${invRows}</table></section>
+<section class="card"><h2>External context and public-source signals</h2><p>${esc(ext.summary||'External public-source search not configured or no summary available.')}</p><h3>Sources / signals to verify</h3><ul class="source-list">${sources(ext)}</ul></section>
+<section class="card"><h2>Investor / due diligence red flags</h2><ul>${safeList(d.investor_red_flags,'No specific investor red flags generated.')}</ul></section>
+<section class="card"><h2>Company action plan</h2><ul>${actionList(d.company_action_plan)}</ul></section>
+<section class="card"><h2>Engagement questions</h2><ul>${safeList(d.engagement_questions,'Ask for claim evidence, scope, methodology and limitations.')}</ul></section>
+<section class="card"><h2>Confidence and limitations</h2><div class="two"><div class="box"><h3>Assessment confidence</h3><p><strong>${esc(conf.level||'Not available')}</strong></p><ul>${safeList(conf.reasons,'No confidence rationale generated.')}</ul></div><div class="box"><h3>Quality improvements</h3><ul>${safeList(d.quality_improvements,'Strengthen substantiation and claim scope.')}</ul></div></div><h3>Pages reviewed</h3><ul>${safeList(d.report?.pages_reviewed,'No pages listed.')}</ul></section>
+<section class="card"><h2>Version notes</h2><ul>${safeList(d.version_notes,'No version notes available.')}</ul><p class="small">Version: ${esc(d.version)} · Analysis date: ${esc(d.analysis_date)} · Source: ${esc(d.source_label)}</p></section>`;
+$('result').style.display='grid'; window.scrollTo({top:$('result').offsetTop-10,behavior:'smooth'});}
+$('scanBtn').addEventListener('click',runScan);$('url').addEventListener('keydown',e=>{if(e.key==='Enter')runScan()});
+</script>
 </body>
 </html>
