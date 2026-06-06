@@ -1,8 +1,8 @@
-# Green & Social Claims Risk Triage — Hostable v27
+# Green & Social Claims Risk Triage — Hostable v28
 
 This version expands the previous Social Washing Risk Triage into a combined **Green & Social Claims Scan**.
 
-## What changed in v27
+## What changed in v28
 
 - Adds a dedicated **green-claims module** based on the logic of the EU Empowering Consumers for the Green Transition Directive, **Directive (EU) 2024/825 / EmpCo**.
 - Keeps the existing social-claims methodology.
@@ -64,3 +64,9 @@ It covers supplier responsibility, labour rights, human rights, diversity and in
 ## Important limitation
 
 This is an indicative first-pass triage tool. It is not legal advice and does not determine that greenwashing or social washing has occurred. External search results are signals for manual review.
+
+
+## v28 update
+
+- Merged the former separate “Score composition” and “Risk driver table” sections into one integrated “Score composition and risk drivers” section.
+- The combined section now shows green/social score components and qualitative explanations in one place to reduce repetition.

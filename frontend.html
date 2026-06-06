@@ -16,7 +16,7 @@
       <h1>Green & social claims scan</h1>
       <p>Strict first-pass triage for potentially misleading green and social claims. The green-claims module is based on EmpCo / Directive (EU) 2024/825 logic.</p>
     </div>
-    <div class="small">Hostable v27</div>
+    <div class="small">Hostable v28</div>
   </div>
 </header>
 <main>
@@ -53,8 +53,7 @@
 <section id="results" class="hidden">
 <div class="card"><div class="eyebrow">Executive summary</div><h2 id="companyTitle"></h2><div class="grid4" id="threeScores"></div><p><strong id="conclusion"></strong></p><p id="summary"></p><div id="meta"></div></div>
 <div class="card"><h2>Document / audience classification</h2><div id="audienceBox" class="soft"></div></div>
-<div class="card"><h2>Score composition</h2><div id="scoreComposition" class="grid"></div><p class="small muted">Each dimension uses the same logic: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity. The global score integrates the green and social scores.</p></div>
-<div class="card"><h2>Risk driver table</h2><div id="whyScoreBlocks"></div></div>
+<div class="card"><h2>Score composition and risk drivers</h2><p class="small muted">This section combines the numerical score build-up with the qualitative risk-driver explanation. Each dimension uses the same logic: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity. The global score integrates the green and social scores.</p><div id="scoreRiskCombined"></div></div>
 <div class="card"><h2>Key green & social claims signals</h2><div id="claimInventory"></div></div>
 <div class="card"><h2>External public-source signals</h2><div id="externalSources"></div></div>
 <div class="grid"><div class="card"><h2>Stakeholder red flags</h2><ul id="redFlags"></ul></div><div class="card"><h2>Recommended actions</h2><div id="actions"></div></div></div>
@@ -110,8 +109,7 @@ function render(d){
   document.getElementById('summary').textContent=d.assessment_summary_specific||'';
   document.getElementById('meta').innerHTML=[d.version,d.company?.sector,'Sector: '+(d.sector?.level||''),'Pages: '+(d.report?.pages_reviewed||[]).length,d.fallback_note].filter(Boolean).map(x=>`<span class="pill">${esc(x)}</span>`).join('');
   document.getElementById('audienceBox').innerHTML=`<p><strong>${esc(d.document_audience?.audience||'Unknown')}</strong> — EmpCo relevance: <strong>${esc(d.document_audience?.empco_relevance||'Unknown')}</strong></p><p>${esc(d.document_audience?.note||'')}</p>`;
-  renderScores(d.split_scores||{});
-  renderWhy(d.why_score||{});
+  renderScoreRiskCombined(d.split_scores||{}, d.why_score||{});
   renderClaims(d.merged_claims||d.claim_inventory||[]);
   renderExternal(d.external_research||{});
   renderList('redFlags',d.stakeholder_red_flags||[]);
@@ -123,14 +121,28 @@ function render(d){
   document.getElementById('printableReport').innerHTML=buildHtmlReport(d);
   setTimeout(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}),100)
 }
-function renderScores(s){
+function renderScoreRiskCombined(s,w){
   const green=s.green||{}; const social=s.social||{};
-  function table(obj,label){const rows=[['Claim wording',obj.claim_wording_risk],['Substantiation gap',obj.substantiation_risk],['External contradiction',obj.external_context_risk],['Sector sensitivity',obj.sector_baseline_risk]];return `<div class="soft"><h3>${label}</h3><table><thead><tr><th>Driver</th><th>Score</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r[0])}</td><td><strong>${esc(r[1]??0)}/100</strong></td></tr>`).join('')}</tbody></table></div>`}
-  document.getElementById('scoreComposition').innerHTML=table(green,'Green score composition')+table(social,'Social score composition')
-}
-function renderWhy(w){
-  const rows=[['Global score',w.global],['Green risk',w.green],['Social risk',w.social],['Audience classification',w.audience],['Interpretation',w.interpretation]];
-  document.getElementById('whyScoreBlocks').innerHTML=`<table><thead><tr><th>Driver</th><th>Explanation</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'')}</td></tr>`).join('')}</tbody></table>`
+  function scoreRows(obj){
+    return [
+      ['Claim wording',obj.claim_wording_risk,'Risk from broad, absolute, generic or sensitive claim wording.'],
+      ['Substantiation gap',obj.substantiation_risk,'Risk from missing scope, methodology, KPIs, verification, limits or evidence.'],
+      ['External contradiction',obj.external_context_risk,'Risk from public-source signals that may contradict the claim area.'],
+      ['Sector sensitivity',obj.sector_baseline_risk,'Baseline sensitivity linked to sector exposure; this should not drive high risk on its own.']
+    ];
+  }
+  function scoreTable(obj,label){
+    return `<div class="soft"><h3>${label}</h3><table><thead><tr><th>Component</th><th>Score</th><th>Interpretation</th></tr></thead><tbody>${scoreRows(obj).map(r=>`<tr><td>${esc(r[0])}</td><td><strong>${esc(r[1]??0)}/100</strong></td><td>${esc(r[2])}</td></tr>`).join('')}</tbody></table></div>`
+  }
+  const explanations=[
+    ['Global score',w.global],
+    ['Green risk',w.green],
+    ['Social risk',w.social],
+    ['Audience classification',w.audience],
+    ['Interpretation',w.interpretation]
+  ];
+  const whyTable=`<div class="soft"><h3>Qualitative risk-driver explanation</h3><table><thead><tr><th>Driver</th><th>Explanation</th></tr></thead><tbody>${explanations.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'')}</td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById('scoreRiskCombined').innerHTML=`<div class="grid">${scoreTable(green,'Green score composition')}${scoreTable(social,'Social score composition')}</div>${whyTable}`;
 }
 function renderClaims(rows){if(!rows.length){document.getElementById('claimInventory').innerHTML='<p class="muted">No claims retained.</p>';return}document.getElementById('claimInventory').innerHTML=rows.slice(0,8).map((r,i)=>`<div class="soft claim"><h3>${i+1}. ${esc(r.washing_type||r.claim_type||'Claim')} <span class="badge ${riskClass(r.risk_level)}">${esc(r.risk_level||'Low')}</span></h3><p><strong>Company wording:</strong> “${esc(r.claim_text||'')}”</p><p><strong>Analysis:</strong> ${esc(r.analysis||r.risk_reason||'')}</p><p class="small"><strong>Evidence needed:</strong> ${(r.evidence_needed||[]).map(esc).join(', ')}</p><p><strong>Safer wording:</strong> ${esc(r.suggested_rewrite||'')}</p></div>`).join('')}
 function renderExternal(ext){
