@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Social Washing Risk Triage</title>
+<title>Green & Social Claims Risk Triage</title>
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--ink:#0f172a;--muted:#64748b;--border:#dbe3ef;--primary:#4338ca;--primary2:#2563eb;--soft:#eef2ff;--ok:#047857;--warn:#b45309;--bad:#b91c1c;--header1:#101827;--header2:#28495a}*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}header{background:linear-gradient(110deg,var(--header1),var(--header2));color:#fff;padding:38px 0}.top{max-width:1320px;margin:auto;display:grid;grid-template-columns:1fr auto;gap:20px;padding:0 22px;align-items:end}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-weight:800;font-size:13px;color:#a7f3d0}h1{font-size:38px;line-height:1.05;margin:10px 0 12px}h2{margin:0 0 14px;font-size:22px}h3{margin:0 0 8px;font-size:17px}p{line-height:1.55}.small{font-size:13px}.muted{color:var(--muted)}main{max-width:1280px;margin:28px auto;padding:0 22px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:22px;margin:18px 0;box-shadow:0 12px 32px rgba(15,23,42,.06)}.introgrid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.soft{background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:14px;margin:10px 0}.notice{border-left:5px solid var(--primary);background:#eef2ff}.warnbox{border-left:5px solid var(--warn);background:#fff7ed}.okbox{border-left:5px solid var(--ok);background:#ecfdf5}.badbox{border-left:5px solid var(--bad);background:#fef2f2}.inputrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}input{flex:1;min-width:280px;border:1px solid var(--border);border-radius:13px;padding:15px 16px;font-size:16px}button{border:0;border-radius:13px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;font-weight:800;padding:14px 20px;cursor:pointer;font-size:15px}button.secondary{background:#e8edf5;color:#111827}button:disabled{opacity:.55;cursor:not-allowed}.statusbox{display:none;margin-top:16px;padding:14px;border-radius:14px;border:1px solid var(--border);background:#f8fafc}.statusbox.visible{display:block}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #cbd5e1;border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}.score{font-size:58px;font-weight:900}.pill{display:inline-block;border:1px solid var(--border);background:#f8fafc;border-radius:999px;padding:6px 10px;margin:4px;font-size:12px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;background:#e5e7eb}.Veryhigh,.VeryHigh{background:#fee2e2;color:#991b1b}.High{background:#ffedd5;color:#9a3412}.Medium{background:#fef3c7;color:#92400e}.Low{background:#dcfce7;color:#166534}.kpi{background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:14px}table{width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden}th,td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}th{background:#f1f5f9}textarea{width:100%;min-height:360px;border:1px solid var(--border);border-radius:14px;padding:14px;font-family:ui-monospace,Consolas,monospace;font-size:12px}.claim{border-left:4px solid #0f766e;padding-left:12px}.hidden{display:none}.steps{margin:0;padding-left:20px}.steps li{margin:7px 0}.mini{font-size:12px;color:#64748b}.checklist{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.checkitem{background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:10px;font-size:13px}@media(max-width:900px){.grid,.grid4,.top,.introgrid{grid-template-columns:1fr}.score{font-size:42px}.inputrow{display:block}input,button{width:100%;margin:6px 0}}@media print{.noprint{display:none!important}body{background:white}.card{box-shadow:none;break-inside:avoid}}
 </style>
@@ -12,35 +12,35 @@
 <header>
   <div class="top">
     <div>
-      <div class="eyebrow">Social Washing Risk Triage</div>
-      <h1>Social claims scan</h1>
-      <p>Strict first-pass triage for potentially misleading social, labour, human-rights, supplier, diversity, customer or community claims.</p>
+      <div class="eyebrow">Green & Social Claims Risk Triage</div>
+      <h1>Green & social claims scan</h1>
+      <p>Strict first-pass triage for potentially misleading green and social claims. The green-claims module is based on EmpCo / Directive (EU) 2024/825 logic.</p>
     </div>
-    <div class="small">Hostable v26</div>
+    <div class="small">Hostable v27</div>
   </div>
 </header>
 <main>
 <section class="introgrid noprint">
   <div class="card notice">
     <h2>Purpose of this scan</h2>
-    <p>This tool reviews a company website for <strong>social-washing risk signals</strong>. It is not a broad ESG score and it does not conclude that social washing has occurred. It helps users identify claims that may be too broad, insufficiently evidenced or potentially contradicted by public-source context.</p>
+    <p>This tool reviews a company website, folder or report-style page for <strong>greenwashing and social-washing risk signals</strong>. It is not a broad ESG score and it does not conclude that greenwashing or social washing has occurred. It helps users identify claims that may be too broad, insufficiently evidenced or potentially contradicted by public-source context.</p>
     <div class="checklist">
-      <div class="checkitem"><strong>1. Claim wording</strong><br>Are there broad or absolute social claims?</div>
-      <div class="checkitem"><strong>2. Evidence gap</strong><br>Are scope, KPIs, limits, grievance/remedy or audit coverage missing?</div>
+      <div class="checkitem"><strong>1. Claim wording</strong><br>Are there broad, generic or absolute green/social claims?</div>
+      <div class="checkitem"><strong>2. Evidence gap</strong><br>Are scope, methodology, KPIs, limits, verification, grievance/remedy or audit coverage missing?</div>
       <div class="checkitem"><strong>3. External context</strong><br>Are there relevant public signals that may contradict the claim?</div>
-      <div class="checkitem"><strong>4. Sector sensitivity</strong><br>Does the sector increase the evidence burden?</div>
+      <div class="checkitem"><strong>4. Audience & sector</strong><br>Is the material consumer-facing, or mainly investor/stakeholder reporting?</div>
     </div>
   </div>
   <div class="card warnbox">
     <h2>How to interpret the result</h2>
-    <p><strong>High risk</strong> should only appear where a sensitive/broad claim is combined with a clear substantiation gap and relevant contradictory context. Sector risk alone should not drive a high score.</p>
-    <p class="small muted">Some corporate websites block automated crawlers. If that happens, the scan will show an error message. Try the national website, the sustainability page, or a specific social/supplier/human-rights page instead of the homepage.</p>
+    <p><strong>High risk</strong> should only appear where a sensitive/broad claim is combined with a clear substantiation gap and relevant contradictory context. The scan distinguishes consumer-facing material, where EmpCo relevance is highest, from annual/sustainability reports used mainly as evidence sources.</p>
+    <p class="small muted">Some corporate websites block automated crawlers. If that happens, the scan will show an error message. Try the national website, the sustainability page, or a specific green, social, supplier, product, sustainability or human-rights page instead of the homepage.</p>
   </div>
 </section>
 
 <section class="card noprint">
   <h2>Run a website scan</h2>
-  <p class="muted">Enter a company website or a specific sustainability/social-responsibility page. For example: <em>https://www.company.com/sustainability</em>.</p>
+  <p class="muted">Enter a company website, product page, folder/brochure page, or a specific sustainability/social-responsibility page. For example: <em>https://www.company.com/sustainability</em>.</p>
   <div class="inputrow">
     <input id="urlInput" placeholder="https://www.company.com" autocomplete="url" />
     <button id="scanBtn" type="button">Run website scan</button>
@@ -51,10 +51,11 @@
 </section>
 
 <section id="results" class="hidden">
-<div class="card"><div class="eyebrow">Executive summary</div><h2 id="companyTitle"></h2><div class="score" id="score"></div><p><strong id="conclusion"></strong></p><p id="summary"></p><div id="meta"></div></div>
-<div class="card"><h2>Score composition</h2><div id="scoreComposition" class="grid4"></div><p class="small muted">Formula: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity.</p></div>
+<div class="card"><div class="eyebrow">Executive summary</div><h2 id="companyTitle"></h2><div class="grid4" id="threeScores"></div><p><strong id="conclusion"></strong></p><p id="summary"></p><div id="meta"></div></div>
+<div class="card"><h2>Document / audience classification</h2><div id="audienceBox" class="soft"></div></div>
+<div class="card"><h2>Score composition</h2><div id="scoreComposition" class="grid"></div><p class="small muted">Each dimension uses the same logic: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity. The global score integrates the green and social scores.</p></div>
 <div class="card"><h2>Risk driver table</h2><div id="whyScoreBlocks"></div></div>
-<div class="card"><h2>Key social-washing signals</h2><div id="claimInventory"></div></div>
+<div class="card"><h2>Key green & social claims signals</h2><div id="claimInventory"></div></div>
 <div class="card"><h2>External public-source signals</h2><div id="externalSources"></div></div>
 <div class="grid"><div class="card"><h2>Stakeholder red flags</h2><ul id="redFlags"></ul></div><div class="card"><h2>Recommended actions</h2><div id="actions"></div></div></div>
 <div class="card"><h2>Methodology and limitations</h2><p id="methodology"></p><p id="confidence"></p><p class="small muted" id="disclaimer"></p></div>
@@ -97,19 +98,54 @@ async function scanUrl(){
     setStatus(msg,'error','Common causes: the company blocks crawlers, the page is not HTML, Render is still waking up, or external search credentials are timing out.');
   }finally{setBusy(false)}
 }
-function render(d){document.getElementById('results').classList.remove('hidden');document.getElementById('companyTitle').textContent=(d.company?.company||'Company')+' — Social Washing Risk Triage';document.getElementById('score').textContent=(d.overall_score??0)+'/100';document.getElementById('conclusion').textContent=d.screening_conclusion||d.overall_risk;document.getElementById('summary').textContent=d.assessment_summary_specific||'';document.getElementById('meta').innerHTML=[d.version,d.company?.sector,'Sector: '+(d.sector?.level||''),'Pages: '+(d.report?.pages_reviewed||[]).length,d.fallback_note].filter(Boolean).map(x=>`<span class="pill">${esc(x)}</span>`).join('');renderScores(d.split_scores||{});renderWhy(d.why_score||{});renderClaims(d.merged_claims||d.claim_inventory||[]);renderExternal(d.external_research||{});renderList('redFlags',d.stakeholder_red_flags||[]);renderActions(d.company_action_plan||[]);document.getElementById('methodology').textContent=d.methodology||'';document.getElementById('confidence').textContent=`Confidence: ${d.confidence?.level||'Unknown'} — ${(d.confidence?.reasons||[]).join('; ')}`;document.getElementById('disclaimer').textContent=d.disclaimer||'';document.getElementById('reportPreview').value=buildTextReport(d);document.getElementById('printableReport').innerHTML=buildHtmlReport(d);setTimeout(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}),100)}
-function renderScores(s){const labels=[['claim_wording_risk','Claim wording risk'],['substantiation_risk','Substantiation / evidence-gap risk'],['external_context_risk','External contradiction risk'],['sector_baseline_risk','Sector sensitivity']];document.getElementById('scoreComposition').innerHTML=labels.map(([k,l])=>`<div class="kpi"><strong>${esc(s[k]??0)}/100</strong><br><span class="small muted">${l}</span></div>`).join('')}
-function renderWhy(w){const rows=[['Claim wording',w.claim_wording],['Substantiation gap',w.substantiation],['External context',w.external_context],['Sector context',w.sector_context],['Interpretation',w.interpretation]];document.getElementById('whyScoreBlocks').innerHTML=`<table><thead><tr><th>Driver</th><th>Explanation</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'')}</td></tr>`).join('')}</tbody></table>`}
+function render(d){
+  document.getElementById('results').classList.remove('hidden');
+  document.getElementById('companyTitle').textContent=(d.company?.company||'Company')+' — Green & Social Claims Risk Triage';
+  document.getElementById('threeScores').innerHTML=`
+    <div class="kpi"><strong>${esc(d.global_score??d.overall_score??0)}/100</strong><br><span class="small muted">Global green + social score</span></div>
+    <div class="kpi"><strong>${esc(d.green_score??0)}/100</strong><br><span class="small muted">Green risk score</span></div>
+    <div class="kpi"><strong>${esc(d.social_score??0)}/100</strong><br><span class="small muted">Social risk score</span></div>
+    <div class="kpi"><strong>${esc(d.document_audience?.audience||'Unknown')}</strong><br><span class="small muted">Document audience</span></div>`;
+  document.getElementById('conclusion').textContent=d.screening_conclusion||d.overall_risk;
+  document.getElementById('summary').textContent=d.assessment_summary_specific||'';
+  document.getElementById('meta').innerHTML=[d.version,d.company?.sector,'Sector: '+(d.sector?.level||''),'Pages: '+(d.report?.pages_reviewed||[]).length,d.fallback_note].filter(Boolean).map(x=>`<span class="pill">${esc(x)}</span>`).join('');
+  document.getElementById('audienceBox').innerHTML=`<p><strong>${esc(d.document_audience?.audience||'Unknown')}</strong> — EmpCo relevance: <strong>${esc(d.document_audience?.empco_relevance||'Unknown')}</strong></p><p>${esc(d.document_audience?.note||'')}</p>`;
+  renderScores(d.split_scores||{});
+  renderWhy(d.why_score||{});
+  renderClaims(d.merged_claims||d.claim_inventory||[]);
+  renderExternal(d.external_research||{});
+  renderList('redFlags',d.stakeholder_red_flags||[]);
+  renderActions(d.company_action_plan||[]);
+  document.getElementById('methodology').textContent=d.methodology||'';
+  document.getElementById('confidence').textContent=`Confidence: ${d.confidence?.level||'Unknown'} — ${(d.confidence?.reasons||[]).join('; ')}`;
+  document.getElementById('disclaimer').textContent=d.disclaimer||'';
+  document.getElementById('reportPreview').value=buildTextReport(d);
+  document.getElementById('printableReport').innerHTML=buildHtmlReport(d);
+  setTimeout(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}),100)
+}
+function renderScores(s){
+  const green=s.green||{}; const social=s.social||{};
+  function table(obj,label){const rows=[['Claim wording',obj.claim_wording_risk],['Substantiation gap',obj.substantiation_risk],['External contradiction',obj.external_context_risk],['Sector sensitivity',obj.sector_baseline_risk]];return `<div class="soft"><h3>${label}</h3><table><thead><tr><th>Driver</th><th>Score</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r[0])}</td><td><strong>${esc(r[1]??0)}/100</strong></td></tr>`).join('')}</tbody></table></div>`}
+  document.getElementById('scoreComposition').innerHTML=table(green,'Green score composition')+table(social,'Social score composition')
+}
+function renderWhy(w){
+  const rows=[['Global score',w.global],['Green risk',w.green],['Social risk',w.social],['Audience classification',w.audience],['Interpretation',w.interpretation]];
+  document.getElementById('whyScoreBlocks').innerHTML=`<table><thead><tr><th>Driver</th><th>Explanation</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'')}</td></tr>`).join('')}</tbody></table>`
+}
 function renderClaims(rows){if(!rows.length){document.getElementById('claimInventory').innerHTML='<p class="muted">No claims retained.</p>';return}document.getElementById('claimInventory').innerHTML=rows.slice(0,8).map((r,i)=>`<div class="soft claim"><h3>${i+1}. ${esc(r.washing_type||r.claim_type||'Claim')} <span class="badge ${riskClass(r.risk_level)}">${esc(r.risk_level||'Low')}</span></h3><p><strong>Company wording:</strong> “${esc(r.claim_text||'')}”</p><p><strong>Analysis:</strong> ${esc(r.analysis||r.risk_reason||'')}</p><p class="small"><strong>Evidence needed:</strong> ${(r.evidence_needed||[]).map(esc).join(', ')}</p><p><strong>Safer wording:</strong> ${esc(r.suggested_rewrite||'')}</p></div>`).join('')}
-function renderExternal(ext){const rows=(ext.targeted_negative_sources||ext.compact_sources||[]);const provider=(ext.providers_used||[]).join(', ');let html=`<p class="small muted">${esc(ext.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${esc(r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';document.getElementById('externalSources').innerHTML=html}
+function renderExternal(ext){
+  function block(title, e){const rows=(e?.targeted_negative_sources||e?.compact_sources||[]);const provider=(e?.providers_used||[]).join(', ');let html=`<div class="soft"><h3>${esc(title)}</h3><p class="small muted">${esc(e?.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${esc(r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';return html+'</div>'}
+  if(ext.green||ext.social){document.getElementById('externalSources').innerHTML=block('Green external signals',ext.green)+block('Social external signals',ext.social);return}
+  const rows=(ext.targeted_negative_sources||ext.compact_sources||[]);const provider=(ext.providers_used||[]).join(', ');let html=`<p class="small muted">${esc(ext.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${esc(r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';document.getElementById('externalSources').innerHTML=html
+}
 function renderList(id,items){document.getElementById(id).innerHTML=(items||[]).map(x=>`<li>${esc(x)}</li>`).join('')}
 function renderActions(items){document.getElementById('actions').innerHTML=(items||[]).map(a=>`<div class="soft"><strong>${esc(a.priority||'')}: ${esc(a.title||'Action')}</strong><p>${esc(a.action||'')}</p></div>`).join('')}
-function buildTextReport(d){const claims=d.merged_claims||d.claim_inventory||[];const src=d.external_research?.targeted_negative_sources||[];let lines=[`${d.company?.company||'Company'} — Social Washing Risk Triage`,`Score: ${d.overall_score}/100`,`Conclusion: ${d.screening_conclusion||d.overall_risk}`,'',d.assessment_summary_specific||'','',`Methodology: ${d.methodology||''}`,'',`Score components: claim wording ${d.split_scores?.claim_wording_risk}/100; substantiation risk ${d.split_scores?.substantiation_risk}/100; external contradiction ${d.split_scores?.external_context_risk}/100; sector sensitivity ${d.split_scores?.sector_baseline_risk}/100.`,'','Key social-washing signals'];claims.slice(0,6).forEach((r,i)=>lines.push(`${i+1}. ${r.washing_type||r.claim_type} (${r.risk_level}) — wording: “${r.claim_text||''}” — evidence needed: ${(r.evidence_needed||[]).join(', ')}`));lines.push('','External public-source signals');if(!src.length)lines.push('- No targeted negative public-source signal retained.');src.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Recommended actions');(d.company_action_plan||[]).forEach(a=>lines.push(`- ${a.title}: ${a.action}`));lines.push('','Disclaimer',d.disclaimer||'');return lines.join('\n')}
+function buildTextReport(d){const claims=d.merged_claims||d.claim_inventory||[];const gsrc=d.external_research?.green?.targeted_negative_sources||[];const ssrc=d.external_research?.social?.targeted_negative_sources||[];let lines=[`${d.company?.company||'Company'} — Green & Social Claims Risk Triage`,`Global score: ${d.global_score??d.overall_score}/100`,`Green risk score: ${d.green_score}/100`,`Social risk score: ${d.social_score}/100`,`Document audience: ${d.document_audience?.audience||'Unknown'} — EmpCo relevance: ${d.document_audience?.empco_relevance||'Unknown'}`,'',d.assessment_summary_specific||'','',`Methodology: ${d.methodology||''}`,'','Key green & social claim signals'];claims.slice(0,10).forEach((r,i)=>lines.push(`${i+1}. [${r.dimension||''}] ${r.washing_type||r.claim_type} (${r.risk_level}) — wording: “${r.claim_text||''}” — evidence needed: ${(r.evidence_needed||[]).join(', ')}`));lines.push('','Green external signals');if(!gsrc.length)lines.push('- No targeted negative green public-source signal retained.');gsrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Social external signals');if(!ssrc.length)lines.push('- No targeted negative social public-source signal retained.');ssrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Recommended actions');(d.company_action_plan||[]).forEach(a=>lines.push(`- ${a.title}: ${a.action}`));lines.push('','Disclaimer',d.disclaimer||'');return lines.join('\n')}
 function buildHtmlReport(d){return `<div>${document.getElementById('results').innerHTML}</div>`}
 function copyReport(){navigator.clipboard.writeText(document.getElementById('reportPreview').value).then(()=>setStatus('Report copied.','ok')).catch(()=>setStatus('Could not copy automatically.','error'))}
-function downloadHtml(){if(!lastResult){setStatus('Run a scan first.','error');return}const blob=new Blob([`<!doctype html><html><head><meta charset="utf-8"><title>Social Washing Risk Report</title><style>${document.querySelector('style').innerHTML}</style></head><body><main>${buildHtmlReport(lastResult)}</main></body></html>`],{type:'text/html'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='social-washing-risk-report.html';a.click();URL.revokeObjectURL(url)}
+function downloadHtml(){if(!lastResult){setStatus('Run a scan first.','error');return}const blob=new Blob([`<!doctype html><html><head><meta charset="utf-8"><title>Social Washing Risk Report</title><style>${document.querySelector('style').innerHTML}</style></head><body><main>${buildHtmlReport(lastResult)}</main></body></html>`],{type:'text/html'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='green-social-claims-risk-report.html';a.click();URL.revokeObjectURL(url)}
 function printReport(){window.print()}
-function loadSample(){document.getElementById('urlInput').value='https://www.zara.com';setStatus('Sample loaded. Click Run website scan.','ok')}
+function loadSample(){document.getElementById('urlInput').value='https://www.kbc.com';setStatus('Sample loaded. Click Run website scan.','ok')}
 scanBtn.addEventListener('click',scanUrl); sampleBtn.addEventListener('click',loadSample); backendBtn.addEventListener('click',checkBackend); document.getElementById('urlInput').addEventListener('keydown',e=>{if(e.key==='Enter')scanUrl()}); checkBackend();
 </script>
 </body>

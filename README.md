@@ -1,78 +1,66 @@
-# Social Washing Risk Triage — Hostable V26
+# Green & Social Claims Risk Triage — Hostable v27
 
-Upload these files to the root of your GitHub repository:
+This version expands the previous Social Washing Risk Triage into a combined **Green & Social Claims Scan**.
 
-- `app.py`
-- `frontend.html`
-- `requirements.txt`
-- `render.yaml`
-- `README.md`
+## What changed in v27
 
-Render settings:
+- Adds a dedicated **green-claims module** based on the logic of the EU Empowering Consumers for the Green Transition Directive, **Directive (EU) 2024/825 / EmpCo**.
+- Keeps the existing social-claims methodology.
+- Produces three scores:
+  - **Global green + social claims risk score**
+  - **Green risk score**
+  - **Social risk score**
+- Adds a document/audience classification:
+  - **Consumer-facing / commercial communication**
+  - **Investor / stakeholder report**
+  - **Mixed or unclear**
+- Treats EmpCo relevance as strongest for B2C/consumer-facing material such as websites, product pages, marketing pages, folders and brochures.
+- Treats annual reports, ESG reports and sustainability reports mainly as evidence sources, unless the same claims are reused in consumer-facing communications.
 
-- Runtime: Python
-- Build command: `pip install -r requirements.txt`
-- Start command: `python app.py`
+## Green-claims methodology
 
-Optional environment variables for external search:
+The green module uses the same triage logic as the social module:
 
-- `TAVILY_API_KEY`
-- `GOOGLE_SEARCH_API_KEY`
-- `GOOGLE_SEARCH_CX`
+- 30% claim wording risk
+- 30% substantiation / evidence-gap risk
+- 25% external contradictory-context risk
+- 15% sector sensitivity
 
-After deployment, click **Check backend**. It should show version `hostable_v26_social_washing_triage_frontend_bugfix`.
+The module looks for EmpCo-relevant green-claim risk areas, including:
 
-## V26 changes
+- generic environmental claims such as “green”, “sustainable” or “environmentally friendly”;
+- climate-neutrality, net-zero and offsetting claims;
+- circularity, durability, recyclability and repairability claims;
+- comparative environmental claims;
+- sustainability labels and certification claims;
+- future environmental-performance claims;
+- absolute or purity wording such as “zero impact”, “100% sustainable” or “chemical-free”.
 
-### 1. Frontend scan bug / usability fix
+## Social-claims methodology
 
-The scan button is now bound through explicit JavaScript event listeners instead of relying on inline click handling only. The interface also disables buttons while the scan is running and shows clear progress/error messages.
+The social module continues to assess:
 
-### 2. Better opening page
+- claim wording risk;
+- substantiation gaps;
+- relevant contradictory public-source signals;
+- sector sensitivity.
 
-The landing page now explains:
+It covers supplier responsibility, labour rights, human rights, diversity and inclusion, worker welfare, customer fairness/accessibility and community/social-impact claims.
 
-- what the tool is for;
-- what social-washing triage means;
-- what the four score components are;
-- how to interpret the result;
-- why some websites may fail because they block automated crawlers.
+## How to deploy on Render
 
-### 3. More visible status messages
-
-The old small status line has been replaced by a prominent status box with:
-
-- backend status;
-- running status;
-- timeout/error explanation;
-- practical hints for the user.
-
-### 4. Faster and less fragile scan behavior
-
-The backend now uses shorter network timeouts and fewer crawler/external-search calls to reduce the risk that Render appears to hang:
-
-- main website page timeout reduced;
-- internal page crawl reduced to the top 3 relevant pages;
-- claim-specific external queries reduced to the top 5 themes;
-- public-source provider timeout reduced.
-
-## Methodology retained from V25
-
-The scan treats social washing as a triage signal based on three core elements:
-
-1. a social, human-rights, labour, customer, community or supplier claim;
-2. a substantiation / evidence gap;
-3. relevant external contradictory context.
-
-Sector sensitivity is only a modifier. It cannot create a High risk result by itself.
-
-The integrated score remains:
-
-- 30% claim wording risk;
-- 30% substantiation / evidence-gap risk;
-- 25% external contradictory-context risk;
-- 15% sector sensitivity.
+1. Upload/replace the project files in your GitHub repository:
+   - `app.py`
+   - `frontend.html`
+   - `requirements.txt`
+   - `render.yaml`
+   - `README.md`
+2. Commit the changes.
+3. Wait for Render to redeploy automatically.
+4. Open the app URL.
+5. Click **Check backend**.
+6. Run a test scan with a company website or a specific sustainability/product page.
 
 ## Important limitation
 
-This is an indicative first-pass triage tool. It is not legal advice and does not establish that social washing occurred. External public-source signals must be manually verified.
+This is an indicative first-pass triage tool. It is not legal advice and does not determine that greenwashing or social washing has occurred. External search results are signals for manual review.
