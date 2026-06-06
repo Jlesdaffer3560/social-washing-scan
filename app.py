@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v25_social_washing_triage"
+APP_VERSION="hostable_v26_social_washing_triage_frontend_bugfix"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -146,7 +146,7 @@ def fetch_html(url):
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
     req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/25.0","Accept":"text/html,application/xhtml+xml"})
-    with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
+    with urlopen(req,timeout=12,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
 def same_domain(u,base):
@@ -161,7 +161,7 @@ def crawl(url):
     for href in links:
         full=urljoin(url,href).split("#")[0]
         if same_domain(full,host) and relevant(full) and full not in cands and full!=url: cands.append(full)
-    for link in cands[:5]:
+    for link in cands[:3]:
         try:
             t,_=parse_html(fetch_html(link))
             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
@@ -187,7 +187,7 @@ def tavily_search(q,max_results=5):
     if not TAVILY_API_KEY: return []
     payload={"query":q,"search_depth":"basic","max_results":max_results,"include_answer":False,"include_raw_content":False,"topic":"general"}
     req=Request("https://api.tavily.com/search",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json","Authorization":"Bearer "+TAVILY_API_KEY},method="POST")
-    with urlopen(req,timeout=35) as r: data=json.loads(r.read().decode("utf-8",errors="ignore"))
+    with urlopen(req,timeout=12) as r: data=json.loads(r.read().decode("utf-8",errors="ignore"))
     return [{"title":i.get("title",""),"url":i.get("url",""),"content":i.get("content",""),"score":i.get("score",0)} for i in data.get("results",[])]
 
 def google_search(query, max_results=5):
@@ -197,7 +197,7 @@ def google_search(query, max_results=5):
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
     req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/25.0"},method="GET")
-    with urlopen(req,timeout=35) as r:
+    with urlopen(req,timeout=12) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
     for item in data.get("items",[]):
@@ -248,8 +248,8 @@ def external(company, findings=None):
     qs=[f'{company} {theme}' for theme in themes]
     qs.append(f'{company} social washing greenwashing misleading social claims')
     allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:8]:
-        res,attempts=search_public_sources(q,4)
+    for q in qs[:5]:
+        res,attempts=search_public_sources(q,3)
         provider_attempts.extend([dict(a,query=q) for a in attempts])
         for r in res:
             u=r.get("url","")
@@ -803,5 +803,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Social Washing Risk Triage v25"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Social Washing Risk Triage v26"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
