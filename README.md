@@ -1,91 +1,32 @@
-# Green & Social Claims Risk Triage — Hostable v29
+# Green & Social Claims Risk Triage - Hostable v31
 
-This version expands the previous Social Washing Risk Triage into a combined **Green & Social Claims Scan**.
+This hostable version scans a company website or webpage for green and social claims risk signals.
 
-## What changed in v29
+## What changed in v31
 
-- Adds a dedicated **green-claims module** based on the logic of the EU Empowering Consumers for the Green Transition Directive, **Directive (EU) 2024/825 / EmpCo**.
-- Keeps the existing social-claims methodology and adds a dedicated **Forced Labour Regulation lens** for the social module, based on **Regulation (EU) 2024/3015**.
-- Produces three scores:
-  - **Global green + social claims risk score**
-  - **Green risk score**
-  - **Social risk score**
-- Adds a document/audience classification:
-  - **Consumer-facing / commercial communication**
-  - **Investor / stakeholder report**
-  - **Mixed or unclear**
-- Treats EmpCo relevance as strongest for B2C/consumer-facing material such as websites, product pages, marketing pages, folders and brochures.
-- Treats annual reports, ESG reports and sustainability reports mainly as evidence sources, unless the same claims are reused in consumer-facing communications.
+- The printable/downloadable report has been redesigned as a concise, professional two-page PDF-style report.
+- The report now focuses on executive summary, three scores, audience classification, score drivers, priority claim signals, evidence requests, external-source signals, recommended actions, methodology and limitations.
+- The report is shorter and more board/client friendly: less technical detail, fewer repeated sections and clearer visual hierarchy.
+- The scan keeps the v29 logic: green claims assessed with an EmpCo-style lens and social claims assessed with a social-washing plus Forced Labour Regulation lens where relevant.
 
-## Green-claims methodology
+## How to use
 
-The green module uses the same triage logic as the social module:
-
-- 30% claim wording risk
-- 30% substantiation / evidence-gap risk
-- 25% external contradictory-context risk
-- 15% sector sensitivity
-
-The module looks for EmpCo-relevant green-claim risk areas, including:
-
-- generic environmental claims such as “green”, “sustainable” or “environmentally friendly”;
-- climate-neutrality, net-zero and offsetting claims;
-- circularity, durability, recyclability and repairability claims;
-- comparative environmental claims;
-- sustainability labels and certification claims;
-- future environmental-performance claims;
-- absolute or purity wording such as “zero impact”, “100% sustainable” or “chemical-free”.
-
-## Social-claims methodology
-
-The social module continues to assess:
-
-- claim wording risk;
-- substantiation gaps;
-- relevant contradictory public-source signals;
-- sector sensitivity.
-
-It covers supplier responsibility, labour rights, human rights, diversity and inclusion, worker welfare, customer fairness/accessibility and community/social-impact claims.
-
-### Forced Labour Regulation lens
-
-The social module now also detects and assesses forced-labour/product-market claim areas, including:
-
-- “forced labour free” or “forced labor free” wording;
-- modern-slavery-free supply-chain claims;
-- product or supplier traceability claims;
-- import/export control wording;
-- responsible-sourcing claims that imply forced-labour risk control.
-
-Where those signals are detected, the scan asks for evidence such as product/supplier traceability, forced-labour risk assessment by product/geography, grievance and remediation processes, mitigation/escalation steps and withdrawal/customs response readiness under Regulation (EU) 2024/3015.
-
-## How to deploy on Render
-
-1. Upload/replace the project files in your GitHub repository:
-   - `app.py`
-   - `frontend.html`
-   - `requirements.txt`
-   - `render.yaml`
-   - `README.md`
-2. Commit the changes.
-3. Wait for Render to redeploy automatically.
-4. Open the app URL.
-5. Click **Check backend**.
-6. Run a test scan with a company website or a specific sustainability/product page.
+1. Deploy on Render or run locally.
+2. Open the app.
+3. Click **Check backend**.
+4. Enter a company website or specific claims page.
+5. Click **Run website scan**.
+6. Click **Create 2-page PDF report** and choose **Save as PDF** in the browser print dialog.
 
 ## Important limitation
 
-This is an indicative first-pass triage tool. It is not legal advice and does not determine that greenwashing or social washing has occurred. The Forced Labour Regulation module is an indicative social-claims/product-market risk lens, not a legal compliance assessment. External search results are signals for manual review.
+The tool provides an indicative first-pass triage. It is not legal advice and does not conclude that greenwashing or social washing occurred. External-source signals and all claim assessments require human verification.
 
 
-## v28 update
+## v31 claim governance update
 
-- Merged the former separate “Score composition” and “Risk driver table” sections into one integrated “Score composition and risk drivers” section.
-- The combined section now shows green/social score components and qualitative explanations in one place to reduce repetition.
-
-
-## v29 update
-
-- Integrated the EU Forced Labour Regulation — Regulation (EU) 2024/3015 into the social-claims module.
-- Added forced-labour-specific claim detection, evidence requirements, public-source search themes, red flags and recommended actions.
-- Added a specific frontend explanation of the forced-labour lens.
+- Adds claim governance maturity: Basic / Developing / Advanced.
+- Adds per-claim decision status: Acceptable, Needs substantiation, Reword, Escalate legal review.
+- Adds a client-ready conclusion for advisory use.
+- Adds CSV claim-register export.
+- Keeps the PDF report focused on a compact two-page professional layout.
