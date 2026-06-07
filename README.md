@@ -1,39 +1,34 @@
-# Green & Social Claims Risk Triage - Hostable v32
+# Green & Social Claims Risk Triage - Hostable v33
 
-This hostable version scans a company website or webpage for green and social claims risk signals.
+Professional hostable version of the Green & Social Claims Risk Triage tool.
 
-## What changed in v32
+## What changed in v33
 
-- The printable/downloadable report has been redesigned as a concise, professional two-page PDF-style report.
-- The report now focuses on executive summary, three scores, audience classification, score drivers, priority claim signals, evidence requests, external-source signals, recommended actions, methodology and limitations.
-- The report is shorter and more board/client friendly: less technical detail, fewer repeated sections and clearer visual hierarchy.
-- The scan keeps the v29 logic: green claims assessed with an EmpCo-style lens and social claims assessed with a social-washing plus Forced Labour Regulation lens where relevant.
+- Clearer **Documents / websites checked** section, listing the specific pages reviewed by the crawler.
+- Document/audience assessment is now more concrete and distinguishes consumer-facing material from investor/stakeholder reporting.
+- Merged and shortened the previous overlapping score/risk-driver explanations.
+- Added a concise **sector exposure** explanation, because some sectors are structurally more exposed to greenwashing or social-washing allegations.
+- Added links to the reviewed website/documents in the claim-signal section where available.
+- Added clickable external-source links in the green/social source-signal section.
+- Added a downloadable `/methodology.pdf` with detailed methodology, references to EU frameworks and international standards, score logic, claim taxonomy and limitations.
+- Kept the 2-page client-ready PDF/print report and claim-register CSV export.
 
-## How to use
+## Core scoring model
 
-1. Deploy on Render or run locally.
-2. Open the app.
-3. Click **Check backend**.
-4. Enter a company website or specific claims page.
-5. Click **Run website scan**.
-6. Click **Create 2-page PDF report** and choose **Save as PDF** in the browser print dialog.
+Each green and social score uses the same high-level model:
 
-## Important limitation
+- 30% claim wording risk
+- 30% substantiation / evidence-gap risk
+- 25% external contradictory-context risk
+- 15% sector exposure
 
-The tool provides an indicative first-pass triage. It is not legal advice and does not conclude that greenwashing or social washing occurred. External-source signals and all claim assessments require human verification.
+The global score integrates the green and social scores. Sector exposure is a context factor and should not create a High-risk result on its own.
 
+## Main regulatory lenses
 
-## v32 claim governance update
+- Green claims: Directive (EU) 2024/825 / EmpCo logic for consumer-facing environmental claims.
+- Social claims: social-washing triage, human-rights/labour-rights logic and Regulation (EU) 2024/3015 forced-labour product/supply-chain lens where relevant.
 
-- Adds claim governance maturity: Basic / Developing / Advanced.
-- Adds per-claim decision status: Acceptable, Needs substantiation, Reword, Escalate legal review.
-- Adds a client-ready conclusion for advisory use.
-- Adds CSV claim-register export.
-- Keeps the PDF report focused on a compact two-page professional layout.
+## Deployment
 
-
-## v32 frontend render fix
-- Fixes a missing `governanceBox` element that caused the browser error `Cannot set properties of null (setting innerHTML)`.
-- Adds a dedicated Claim governance maturity / client-ready conclusion section.
-- Adds clearer placeholder text when a page returns few or no claim signals, actions or red flags.
-- Keeps the two-page PDF report and claim-register CSV export introduced in v31.
+Replace the files in your GitHub repository with the files in this folder, commit to `main`, and push. Render should automatically redeploy if your service is connected to the repository.

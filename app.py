@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v31_claim_governance"
+APP_VERSION="hostable_v33_professional_methodology"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -832,6 +832,42 @@ def classify_document_audience(url, text, pages=None):
         return {'audience':'Consumer-facing / commercial communication','empco_relevance':'Direct / high','note':'The reviewed material appears consumer-facing. EmpCo-style green-claim scrutiny is directly relevant, especially for product, brand, marketing or homepage claims.'}
     return {'audience':'Mixed or unclear','empco_relevance':'Medium','note':'The reviewed material may contain both corporate and market-facing wording. Treat homepage/product/brochure wording as higher EmpCo relevance than investor-report language.'}
 
+
+def page_name_from_url(u):
+    try:
+        parsed=urlparse(u)
+        path=(parsed.path or '').strip('/')
+        if not path:
+            return parsed.netloc or u
+        name=path.split('/')[-1] or path.split('/')[-2]
+        name=name.replace('-', ' ').replace('_',' ')
+        return name[:90] or u
+    except Exception:
+        return u
+
+def document_type_from_url(u):
+    low=(u or '').lower()
+    if any(t in low for t in ['annual-report','annual_report','integrated-report','sustainability-report','esg-report','investor','csrd','report']):
+        return 'Investor / stakeholder report or evidence source'
+    if any(t in low for t in ['product','shop','buy','brochure','folder','campaign','customer','consumer','store']):
+        return 'Consumer-facing / commercial communication'
+    if low.endswith('.pdf'):
+        return 'PDF document / manual review recommended'
+    return 'Website page'
+
+def build_documents_checked(pages, audience):
+    seen=set(); out=[]
+    for p in pages or []:
+        if not p or p in seen: continue
+        seen.add(p)
+        out.append({
+            'name': page_name_from_url(p),
+            'url': p,
+            'document_type': document_type_from_url(p),
+            'audience_assessment': audience.get('audience','Unknown') if audience else 'Unknown'
+        })
+    return out
+
 def detect_green_claims(text):
     low=(text or '').lower(); fs=[]; seen=set()
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
@@ -1035,7 +1071,10 @@ def analyse_url_v27(raw):
     social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5)
     green_targeted=compact_sources([r for r in green_ext.get('results',[]) if is_green_negative_source(r) and source_mentions_company(r,comp.get('company',''))],5)
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
-    methodology='Green & Social Claims Risk Triage. Green-claim module is based on EmpCo / Directive (EU) 2024/825 logic for consumer-facing environmental claims. Social module uses claim wording + evidence gap + relevant contradictory context, with an added Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims under Regulation (EU) 2024/3015. Each dimension is scored separately; the global score is an integrated green/social triage score.'
+    for c in all_claims:
+        c.setdefault('source_url', url)
+        c.setdefault('source_label', 'Reviewed website / document')
+    methodology='Green & Social Claims Risk Triage. Green-claim module is based on EmpCo / Directive (EU) 2024/825 logic for consumer-facing environmental claims. Social module uses claim wording + evidence gap + relevant contradictory context, with an added Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims under Regulation (EU) 2024/3015. Each dimension is scored separately; the global score is an integrated green/social triage score. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     summary=(f"{comp['company']} receives a global green & social claims risk score of {overall}/100. "
              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
              f"Document audience classification: {audience['audience']} — {audience['note']}")
@@ -1046,6 +1085,7 @@ def analyse_url_v27(raw):
         'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}',
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
+        'documents_checked':build_documents_checked(pages,audience),
         'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
         'merged_claims':all_claims,'claim_inventory':all_claims,
@@ -1075,6 +1115,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self): self._json({"ok":True})
     def do_GET(self):
         if self.path=="/" or self.path.startswith("/?"): self._send((APP_DIR/"frontend.html").read_text(encoding="utf-8"))
+        elif self.path=="/methodology.pdf":
+            pdf=APP_DIR/"methodology.pdf"
+            if pdf.exists(): self._send(pdf.read_bytes(),"application/pdf")
+            else: self._json({"error":"Methodology PDF not found"},404)
         elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"ai_configured":bool(OPENAI_API_KEY),"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX)})
         else: self._json({"error":"Not found"},404)
     def do_POST(self):
@@ -1088,5 +1132,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Green & Social Claims Risk Triage v30"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Green & Social Claims Risk Triage v33"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
