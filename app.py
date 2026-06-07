@@ -819,18 +819,90 @@ EMPCO_LENS=[
  {'name':'Consumer-facing communications','use':'EmpCo has strongest relevance for B2C/commercial communications; investor reports remain relevant as source evidence but are not treated the same as consumer marketing material.'}
 ]
 
-CONSUMER_TERMS=['shop','buy','product','products','service','services','customers','consumer','pricing','offer','promotion','campaign','brochure','leaflet','folder','advertising','marketing','homepage','store','brand']
-INVESTOR_TERMS=['annual report','sustainability report','integrated report','esg report','investor','shareholder','csrd','esrs','financial report','non-financial statement','taxonomy','management report']
+CONSUMER_TERMS=['shop','buy','product','products','service','services','customers','consumer','pricing','offer','promotion','campaign','brochure','leaflet','folder','advertising','marketing','homepage','store','brand','claims','landing page','commercial']
+INVESTOR_TERMS=['annual report','sustainability report','integrated report','esg report','investor','shareholder','csrd','esrs','financial report','non-financial statement','taxonomy','management report','remuneration report','annualreview']
+INTERNAL_TERMS=['policy','code of conduct','supplier code','internal','procedure','manual','guideline','governance','standard','due diligence statement','modern slavery statement']
+
+def _term_hits(blob, terms):
+    return sum(1 for t in terms if t in blob)
+
+def classify_page_audience(url, text=''):
+    """Classify an individual checked URL/document into the channel used in the analysis."""
+    blob=((url or '')+' '+(text or '')[:6000]).lower()
+    consumer=_term_hits(blob, CONSUMER_TERMS)
+    investor=_term_hits(blob, INVESTOR_TERMS)
+    internal=_term_hits(blob, INTERNAL_TERMS)
+    if investor>=2 and investor>=consumer:
+        return {
+            'audience':'Investor / stakeholder reporting',
+            'group':'investor',
+            'empco_relevance':'Indirect / evidence source',
+            'interpretation':'Used mainly as substantiation evidence for claims; not treated like consumer advertising unless the same wording is reused in market-facing material.'
+        }
+    if internal>=2 and internal>consumer:
+        return {
+            'audience':'Policy / internal governance document',
+            'group':'internal',
+            'empco_relevance':'Indirect / governance evidence',
+            'interpretation':'Used as internal-control or due-diligence evidence. The scan does not treat internal governance language as consumer-facing marketing.'
+        }
+    if consumer>=2 or any(x in blob for x in ['product','shop','brochure','campaign','advertising','customer','consumer','homepage']):
+        return {
+            'audience':'Client-facing / consumer-facing communication',
+            'group':'client_facing',
+            'empco_relevance':'Direct / high',
+            'interpretation':'Assessed as external market-facing wording. EmpCo-style scrutiny is directly relevant for green claims and the wording burden is higher.'
+        }
+    return {
+        'audience':'Mixed or unclear external communication',
+        'group':'mixed',
+        'empco_relevance':'Medium',
+        'interpretation':'May combine corporate, commercial and stakeholder language. Treat product, homepage or brochure wording as higher-risk than report-style background text.'
+    }
+
+def extract_page_segments(full_text, pages):
+    """Return approximate text segment per crawled page so audience and claim-source links can be more precise."""
+    pages=pages or []
+    if not pages:
+        return []
+    text=full_text or ''
+    segments=[]
+    # First page is text before first PAGE marker.
+    first=text.split('\n\nPAGE: ',1)[0]
+    segments.append({'url':pages[0], 'text':first})
+    for part in text.split('\n\nPAGE: ')[1:]:
+        line, _, rest=part.partition('\n')
+        url=line.strip()
+        if url:
+            segments.append({'url':url, 'text':rest})
+    # Ensure every page has a segment, even when parsing failed.
+    known={x['url'] for x in segments}
+    for p in pages:
+        if p not in known:
+            segments.append({'url':p, 'text':''})
+    return segments
 
 def classify_document_audience(url, text, pages=None):
-    blob=(url+' '+" ".join(pages or [])+' '+(text or '')[:20000]).lower()
-    consumer=sum(1 for t in CONSUMER_TERMS if t in blob)
-    investor=sum(1 for t in INVESTOR_TERMS if t in blob)
-    if investor>consumer and investor>=2:
-        return {'audience':'Investor / stakeholder report','empco_relevance':'Indirect / evidence source','note':'The reviewed material appears closer to an annual, ESG or sustainability report. EmpCo is primarily consumer-facing; use these documents mainly to verify evidence behind claims used in consumer communications.'}
-    if consumer>=2:
-        return {'audience':'Consumer-facing / commercial communication','empco_relevance':'Direct / high','note':'The reviewed material appears consumer-facing. EmpCo-style green-claim scrutiny is directly relevant, especially for product, brand, marketing or homepage claims.'}
-    return {'audience':'Mixed or unclear','empco_relevance':'Medium','note':'The reviewed material may contain both corporate and market-facing wording. Treat homepage/product/brochure wording as higher EmpCo relevance than investor-report language.'}
+    segments=extract_page_segments(text, pages or [url])
+    if not segments:
+        segments=[{'url':url,'text':text or ''}]
+    classifications=[classify_page_audience(x.get('url'), x.get('text','')) for x in segments]
+    counts={}
+    for c in classifications:
+        counts[c['group']]=counts.get(c['group'],0)+1
+    if counts.get('client_facing',0)>0 and counts.get('investor',0)==0 and counts.get('internal',0)==0:
+        aud='Client-facing / consumer-facing communication'; emp='Direct / high'
+        note='The reviewed material is mainly market-facing. Green claims should be assessed with stronger EmpCo-style consumer-communication controls.'
+    elif counts.get('investor',0)>0 and counts.get('client_facing',0)==0:
+        aud='Investor / stakeholder reporting'; emp='Indirect / evidence source'
+        note='The reviewed material is mainly annual, ESG, sustainability or investor reporting. Treat it primarily as evidence or context, not as consumer advertising, unless the same claims are reused externally.'
+    elif counts.get('internal',0)>0 and counts.get('client_facing',0)==0:
+        aud='Policy / internal governance material'; emp='Indirect / governance evidence'
+        note='The reviewed material appears to be policy or governance material. It is useful as substantiation evidence, but wording risk is lower than in consumer-facing material.'
+    else:
+        aud='Mixed channel set'; emp='Mixed'
+        note='The scan includes more than one communication channel. The analysis separates client-facing communication from investor/stakeholder reporting and policy/internal governance material.'
+    return {'audience':aud,'empco_relevance':emp,'note':note,'channel_counts':counts}
 
 
 def page_name_from_url(u):
@@ -848,25 +920,79 @@ def page_name_from_url(u):
 def document_type_from_url(u):
     low=(u or '').lower()
     if any(t in low for t in ['annual-report','annual_report','integrated-report','sustainability-report','esg-report','investor','csrd','report']):
-        return 'Investor / stakeholder report or evidence source'
+        return 'Investor / stakeholder report'
+    if any(t in low for t in ['policy','code-of-conduct','supplier-code','procedure','manual','governance','modern-slavery-statement']):
+        return 'Policy / internal governance document'
     if any(t in low for t in ['product','shop','buy','brochure','folder','campaign','customer','consumer','store']):
-        return 'Consumer-facing / commercial communication'
+        return 'Client-facing / consumer-facing communication'
     if low.endswith('.pdf'):
         return 'PDF document / manual review recommended'
     return 'Website page'
 
-def build_documents_checked(pages, audience):
+def build_documents_checked(pages, audience, full_text=None):
+    segments=extract_page_segments(full_text or '', pages or [])
+    seg_by_url={x['url']:x.get('text','') for x in segments}
     seen=set(); out=[]
     for p in pages or []:
         if not p or p in seen: continue
         seen.add(p)
+        cls=classify_page_audience(p, seg_by_url.get(p,''))
         out.append({
             'name': page_name_from_url(p),
             'url': p,
             'document_type': document_type_from_url(p),
-            'audience_assessment': audience.get('audience','Unknown') if audience else 'Unknown'
+            'audience_assessment': cls.get('audience','Unknown'),
+            'audience_group': cls.get('group','mixed'),
+            'empco_relevance': cls.get('empco_relevance','Unknown'),
+            'interpretation': cls.get('interpretation','')
         })
     return out
+
+def build_channel_analysis(documents):
+    docs=documents or []
+    def pick(group): return [d for d in docs if d.get('audience_group')==group]
+    client=pick('client_facing'); investor=pick('investor'); internal=pick('internal'); mixed=pick('mixed')
+    def short(dlist): return [{'name':d.get('name'), 'url':d.get('url'), 'type':d.get('document_type')} for d in dlist[:8]]
+    return {
+        'client_facing':{
+            'count':len(client), 'documents':short(client),
+            'analysis_lens':'Higher wording and substantiation burden. For green claims, EmpCo-style consumer-protection scrutiny is directly relevant; broad, generic, comparative, label, climate-neutrality or future-performance wording should be tightly scoped and evidenced.'
+        },
+        'investor_stakeholder':{
+            'count':len(investor), 'documents':short(investor),
+            'analysis_lens':'Used mainly as substantiation and consistency evidence. Investor or sustainability reports can support claims, but report-style disclosure should not be scored as consumer advertising unless reused in market-facing channels.'
+        },
+        'policy_internal':{
+            'count':len(internal), 'documents':short(internal),
+            'analysis_lens':'Used as governance and due-diligence evidence. Internal policies, codes and procedures help substantiate social and forced-labour claims but are not in themselves client-facing promotional claims.'
+        },
+        'mixed_unclear':{
+            'count':len(mixed), 'documents':short(mixed),
+            'analysis_lens':'Manual channel review recommended. Where a page combines marketing and reporting language, apply stricter controls to statements that a customer or end-user is likely to see before purchase or engagement.'
+        }
+    }
+
+def assign_claim_sources(claims, page_segments, documents):
+    docs_by_url={d.get('url'):d for d in documents or []}
+    for c in claims:
+        txt=(c.get('claim_text') or '').strip().lower()
+        best=None
+        if txt:
+            probe=' '.join(txt.split()[:10])
+            for seg in page_segments or []:
+                hay=(seg.get('text') or '').lower()
+                if probe and probe in hay:
+                    best=seg.get('url'); break
+        if not best and page_segments:
+            best=page_segments[0].get('url')
+        if best:
+            c['source_url']=best
+            c['source_label']=page_name_from_url(best)
+            d=docs_by_url.get(best,{})
+            c['audience_group']=d.get('audience_group','mixed')
+            c['audience_lens']=d.get('audience_assessment','Mixed or unclear')
+            c['source_interpretation']=d.get('interpretation','')
+    return claims
 
 def detect_green_claims(text):
     low=(text or '').lower(); fs=[]; seen=set()
@@ -1051,7 +1177,10 @@ def analyse_url_v27(raw):
         else:
             raise first_error
     comp=infer_company(url,txt)
+    page_segments=extract_page_segments(txt,pages)
     audience=classify_document_audience(url,txt,pages)
+    documents_checked=build_documents_checked(pages,audience,txt)
+    channel_analysis=build_channel_analysis(documents_checked)
     social_fs=detect_claims(txt)
     green_fs=detect_green_claims(txt)
     social_ext=external(comp['company'], social_fs)
@@ -1071,13 +1200,16 @@ def analyse_url_v27(raw):
     social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5)
     green_targeted=compact_sources([r for r in green_ext.get('results',[]) if is_green_negative_source(r) and source_mentions_company(r,comp.get('company',''))],5)
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
+    all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
         c.setdefault('source_url', url)
         c.setdefault('source_label', 'Reviewed website / document')
+        c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
+        c.setdefault('audience_group', 'mixed')
     methodology='Green & Social Claims Risk Triage. Green-claim module is based on EmpCo / Directive (EU) 2024/825 logic for consumer-facing environmental claims. Social module uses claim wording + evidence gap + relevant contradictory context, with an added Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims under Regulation (EU) 2024/3015. Each dimension is scored separately; the global score is an integrated green/social triage score. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     summary=(f"{comp['company']} receives a global green & social claims risk score of {overall}/100. "
              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
-             f"Document audience classification: {audience['audience']} — {audience['note']}")
+             f"Document/channel classification: {audience['audience']} — {audience['note']}")
     return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
@@ -1085,7 +1217,7 @@ def analyse_url_v27(raw):
         'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}',
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
-        'documents_checked':build_documents_checked(pages,audience),
+        'documents_checked':documents_checked,'channel_analysis':channel_analysis,
         'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
         'merged_claims':all_claims,'claim_inventory':all_claims,
