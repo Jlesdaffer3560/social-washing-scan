@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v33_professional_methodology"
+APP_VERSION="hostable_v35_professional_assessment"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -126,6 +126,50 @@ def norm_url(u):
     if not u: raise ValueError("Please enter a company website URL.")
     return u if u.startswith(("http://","https://")) else "https://"+u
 
+def related_company_sites(url, max_sites=2):
+    """Return a small set of likely related corporate/national domains.
+    Example: www.lidl.be -> www.lidl.com. This is a cautious heuristic: it does not
+    crawl the open web, it only tests common corporate TLD variants for the same brand.
+    """
+    parsed=urlparse(url)
+    host=(parsed.hostname or '').lower()
+    if not host: return []
+    parts=host.split('.')
+    if len(parts)<2: return []
+    # Strip www and use the brand/core domain. Handles simple cases like www.lidl.be.
+    core_parts=[x for x in parts if x not in {'www','m'}]
+    if len(core_parts)<2: return []
+    brand=core_parts[-2]
+    if not brand or len(brand)<3: return []
+    candidates=[]
+    for tld in ['com','eu','be','nl','fr','de']:
+        cand=f"https://www.{brand}.{tld}"
+        if cand.rstrip('/') != url.rstrip('/') and (urlparse(cand).hostname or '') != host:
+            candidates.append(cand)
+    seen=[]
+    for c in candidates:
+        if c not in seen: seen.append(c)
+    return seen[:max_sites]
+
+def crawl_with_related_sites(original_url):
+    """Crawl the requested URL plus a small number of likely related company sites.
+    The requested URL remains the primary source. Related domains are added only when reachable.
+    """
+    txt,pages=crawl(original_url)
+    source_notes=[]
+    all_text=[txt]
+    all_pages=list(pages)
+    for candidate in related_company_sites(original_url):
+        try:
+            rt,rpages=crawl(candidate)
+            if len(rt)>500:
+                all_text.append('\n\nRELATED COMPANY SITE: '+candidate+'\n'+rt)
+                all_pages.extend([p for p in rpages if p not in all_pages])
+                source_notes.append(f"Related company site also checked: {candidate}")
+        except Exception:
+            pass
+    return '\n\n'.join(all_text)[:140000], all_pages[:12], source_notes
+
 def replace_tld_with_be(url):
     """If a .com domain cannot be reached, try the same host with .be."""
     parsed=urlparse(url)
@@ -149,7 +193,7 @@ def fetch_html(url):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/25.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/35.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=12,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -200,7 +244,7 @@ def google_search(query, max_results=5):
         return []
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 SocialClaimRiskScan/25.0"},method="GET")
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/35.0"},method="GET")
     with urlopen(req,timeout=12) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
@@ -409,7 +453,7 @@ def washing_conclusion(score, findings, evidence_gap, external_score):
 
 def calc_score(findings,sector,context,external_research=None,page_text=""):
     """
-    V25 social-washing triage scoring:
+    V25 social-washing assessment scoring:
     - 30% claim wording risk
     - 30% substantiation / evidence-gap risk
     - 25% external contradictory-context risk
@@ -671,7 +715,7 @@ def structured_why_score(company, sector, context, findings, external_context, s
         "substantiation": f"Substantiation risk is {split_scores.get('substantiation_risk',0)}/100. " + (" ".join(ev_notes) if ev_notes else "This reflects whether website evidence supports the claim with scope, metrics, reporting period, limitations and remedy."),
         "external_context": f"External contradictory-context risk is {split_scores.get('external_context_risk',0)}/100. {external_context.get('note','Only negative or risk-relevant public-source signals are retained in the concise source section.')}",
         "sector_context": f"Sector baseline risk is {split_scores.get('sector_baseline_risk',0)}/100. The sector assessment is {sector.get('level','Medium')} because {sector.get('risks','sector exposure was identified from the company profile and page content')}.",
-        "interpretation": "The result is a screening signal for social-washing triage. It is not a legal finding and should be verified manually before use in external communications."
+        "interpretation": "The result is a screening signal for social-washing assessment. It is not a legal finding and should be verified manually before use in external communications."
     }
 
 def company_terms_for_filter(company_name):
@@ -689,9 +733,25 @@ def source_mentions_company(result, company_name):
     terms = company_terms_for_filter(company_name)
     return bool(terms) and any(t in text for t in terms)
 
+def is_company_owned_source(result, company_name):
+    """Exclude company-owned websites/documents from external public-source signals.
+    These pages may still be used as reviewed documents or evidence sources, but not as external signals.
+    """
+    host=(urlparse(result.get('url','')).hostname or '').lower().replace('www.','')
+    if not host: return False
+    terms=company_terms_for_filter(company_name)
+    cleaned=[]
+    for t in terms:
+        t=t.lower().replace(' / ',' ').replace('/',' ').replace('-',' ')
+        cleaned.extend([x for x in t.split() if len(x)>=3])
+    cleaned=list(dict.fromkeys(cleaned))
+    return any(host==f'{t}.com' or host==f'{t}.be' or host==f'{t}.eu' or host.endswith(f'.{t}.com') or host.endswith(f'.{t}.be') or host.endswith(f'.{t}.eu') or (t in host.split('.')) for t in cleaned)
+
 def targeted_negative_sources(results, company_name, limit=5):
     kept = []
     for r in results:
+        if is_company_owned_source(r, company_name):
+            continue
         if is_negative_external_source(r) and source_mentions_company(r, company_name):
             kept.append(r)
     if "compact_sources" in globals():
@@ -716,7 +776,7 @@ def reader_friendly_summary(company, sector, findings, external_research, score,
     if targeted:
         source_part = f"{len(targeted)} targeted negative public-source signal(s) were retained for review."
     return (
-        f"{name} receives a social-washing triage score of {score}/100: {conclusion}. "
+        f"{name} receives a social-washing assessment score of {score}/100: {conclusion}. "
         f"{claim_part}{quote} The substantiation-risk component is {comps.get('substantiation_risk','n/a')}/100. "
         f"The sector context is {sector.get('level','Medium').lower()} for {sector_name}. "
         f"{source_part} The priority is to check whether the claim is specific, evidenced, scoped and consistent with public information."
@@ -726,13 +786,13 @@ def analyse_url(raw):
     original_url=norm_url(raw)
     fallback_note=""
     try:
-        txt,pages=crawl(original_url)
+        txt,pages,related_notes=crawl_with_related_sites(original_url)
         url=original_url
     except Exception as first_error:
         fallback_url=replace_tld_with_be(original_url)
         if fallback_url:
             try:
-                txt,pages=crawl(fallback_url)
+                txt,pages,related_notes=crawl_with_related_sites(fallback_url)
                 url=fallback_url
                 fallback_note=f"The original .com website was not accessible. The scan was automatically performed on {fallback_url}."
             except Exception as second_error:
@@ -761,7 +821,7 @@ def analyse_url(raw):
         "overall_score":score,
         "overall_risk":level(score),
         "screening_conclusion":conclusion,
-        "methodology":"Social Washing Risk Triage: claim + evidence gap + relevant contradictory context. Sector sensitivity is a modifier, not a standalone risk trigger.",
+        "methodology":"Social Washing Risk Assessment: claim + evidence gap + relevant contradictory context. Sector sensitivity is a modifier, not a standalone risk trigger.",
         "company":comp,
         "sector":sec,
         "context":ctx,
@@ -784,7 +844,7 @@ def analyse_url(raw):
         "company_action_plan":build_company_action_plan(fs,sec,ext),
         "engagement_questions":build_engagement_questions(fs,ext),
         "confidence":build_confidence(pages,ext,fs),
-        "disclaimer":"Indicative first-pass social-washing triage only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.",
+        "disclaimer":"Indicative first-pass social-washing assessment only. It is not legal advice and not a finding that social washing occurred. External search results are review signals that require verification.",
         "analysed_text_excerpt":txt[:2200],
         "quality_improvements":["Use claim-specific wording rather than broad reassurance language.","Connect each claim to scope, metrics, reporting period and limitations.","For supplier, human-rights or worker claims, add due-diligence, grievance and remediation evidence.","Check whether external public-source signals contradict or qualify the claim."],
         "ai_used":False,
@@ -1154,24 +1214,41 @@ def social_claim_inventory_with_dimension(findings):
     return rows
 
 def build_green_social_actions(green_findings, social_findings, audience):
-    actions=[{'priority':'Priority 1','title':'Create a green & social claims register','action':'Map all external claims by channel, audience, owner, evidence file, approval date and review date.'}]
-    if audience.get('audience')=='Consumer-facing / commercial communication':
-        actions.append({'priority':'Priority 2','title':'Apply EmpCo controls to consumer-facing green claims','action':'Check generic environmental claims, labels, comparisons, future-performance claims and climate-neutrality/offset wording against EmpCo criteria.'})
-    actions.append({'priority':'Priority 3','title':'Separate consumer marketing from investor reporting','action':'Use annual and sustainability reports as evidence sources, but apply stricter B2C wording controls to websites, product pages, brochures, folders and campaigns.'})
-    if any(f.get('risk')=='High' for f in green_findings): actions.append({'priority':'Priority 4','title':'Substantiate high-risk green claims','action':'Add scope, methodology, data source, verification, limitations and, for climate claims, clear separation of reductions and offsets.'})
-    if any(('forced' in f.get('type','').lower() or 'modern slavery' in f.get('type','').lower()) for f in social_findings): actions.append({'priority':'Priority 5','title':'Apply Forced Labour Regulation controls','action':'For forced-labour, modern-slavery, product, import/export or supplier claims, document product/supplier traceability, risk assessment, mitigation, remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.'})
-    if any(f.get('risk')=='High' for f in social_findings): actions.append({'priority':'Priority 6','title':'Substantiate high-risk social claims','action':'Add stakeholder scope, KPIs, grievance/remedy, supplier coverage, audit methodology, forced-labour controls or workforce/customer evidence as applicable.'})
+    actions=[]
+    client_facing=(audience.get('audience')=='Consumer-facing / commercial communication')
+    all_findings=(green_findings or [])+(social_findings or [])
+    high_green=[f for f in (green_findings or []) if f.get('risk')=='High']
+    high_social=[f for f in (social_findings or []) if f.get('risk')=='High']
+    claim_types='; '.join(dict.fromkeys([f.get('type','claim') for f in all_findings if f.get('type')]))[:220]
+    if client_facing or high_green:
+        actions.append({'priority':'Priority 1','title':'Review client-facing green claims under EmpCo','action':f"Check the exact wording of the detected green claim areas ({claim_types or 'environmental claims'}) on websites/product pages/folders. For each claim, document scope, product coverage, methodology, evidence source, verification basis and limitations before reuse."})
+    else:
+        actions.append({'priority':'Priority 1','title':'Confirm which scanned claims are client-facing','action':'Separate website/product/folder wording from annual or sustainability report language. Treat client-facing claims as higher priority for EmpCo-style substantiation and approval controls.'})
+    if high_social:
+        forced=any(('forced' in f.get('type','').lower() or 'modern slavery' in f.get('type','').lower() or 'supply' in f.get('type','').lower()) for f in high_social)
+        if forced:
+            actions.append({'priority':'Priority 2','title':'Validate forced-labour and supplier claims','action':'For supplier, responsible-sourcing, modern-slavery or forced-labour wording, prepare evidence on product/supplier traceability, risk assessment by geography/product, mitigation, grievance/remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.'})
+        else:
+            actions.append({'priority':'Priority 2','title':'Substantiate high-priority social claims','action':'For the detected social claim areas, collect stakeholder scope, KPIs, grievance/remedy evidence, audit or workforce data and clear limits to avoid overstatement.'})
+    actions.append({'priority':'Priority 3','title':'Build a claim evidence file','action':'Create one evidence file per priority claim with the approved wording, source URL/document, owner, evidence link, date, legal/compliance review status and review deadline.'})
+    if any('comparative' in f.get('type','').lower() for f in green_findings or []):
+        actions.append({'priority':'Priority 4','title':'Check comparative green claims','action':'For reduced impact, lower emissions or better product wording, identify the comparator, baseline year, methodology, equivalent product basis and data date.'})
+    if any(('climate' in f.get('type','').lower() or 'offset' in f.get('type','').lower() or 'net zero' in f.get('claim','').lower()) for f in green_findings or []):
+        actions.append({'priority':'Priority 4','title':'Clarify climate and offset claims','action':'Separate actual emission reductions from offsetting/compensation, and disclose scopes, baseline, residual emissions, implementation plan and progress indicators.'})
+    if any(('label' in f.get('type','').lower() or 'certification' in f.get('type','').lower()) for f in green_findings or []):
+        actions.append({'priority':'Priority 4','title':'Verify labels and certifications','action':'Name the scheme owner, criteria, certification scope, verification body and validity period for any green/social label or certification reference.'})
+    actions.append({'priority':'Priority 5','title':'Align reporting and marketing language','action':'Use sustainability and annual reports as supporting evidence, but avoid copying broad report language into consumer-facing pages unless the claim is specific, current, substantiated and audience-appropriate.'})
     return actions[:6]
 
 def analyse_url_v27(raw):
-    original_url=norm_url(raw); fallback_note=''
+    original_url=norm_url(raw); fallback_note=''; related_notes=[]
     try:
-        txt,pages=crawl(original_url); url=original_url
+        txt,pages,related_notes=crawl_with_related_sites(original_url); url=original_url
     except Exception as first_error:
         fallback_url=replace_tld_with_be(original_url)
         if fallback_url:
             try:
-                txt,pages=crawl(fallback_url); url=fallback_url; fallback_note=f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
+                txt,pages,related_notes=crawl_with_related_sites(fallback_url); url=fallback_url; fallback_note=f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
             except Exception as second_error:
                 raise ValueError(f'The .com website could not be accessed and the .be fallback also failed. Original error: {first_error}. Fallback error: {second_error}.')
         else:
@@ -1198,7 +1275,7 @@ def analyse_url_v27(raw):
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5)
-    green_targeted=compact_sources([r for r in green_ext.get('results',[]) if is_green_negative_source(r) and source_mentions_company(r,comp.get('company',''))],5)
+    green_targeted=compact_sources([r for r in green_ext.get('results',[]) if is_green_negative_source(r) and source_mentions_company(r,comp.get('company','')) and not is_company_owned_source(r,comp.get('company',''))],5)
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
@@ -1206,10 +1283,10 @@ def analyse_url_v27(raw):
         c.setdefault('source_label', 'Reviewed website / document')
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
-    methodology='Green & Social Claims Risk Triage. Green-claim module is based on EmpCo / Directive (EU) 2024/825 logic for consumer-facing environmental claims. Social module uses claim wording + evidence gap + relevant contradictory context, with an added Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims under Regulation (EU) 2024/3015. Each dimension is scored separately; the global score is an integrated green/social triage score. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
+    methodology='Green & Social Claims Risk Assessment. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims. Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     summary=(f"{comp['company']} receives a global green & social claims risk score of {overall}/100. "
              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
-             f"Document/channel classification: {audience['audience']} — {audience['note']}")
+             f"Document/channel classification: {audience['audience']} — {audience['note']}" + (" "+"; ".join(related_notes) if related_notes else ""))
     return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
@@ -1217,7 +1294,7 @@ def analyse_url_v27(raw):
         'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}',
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
-        'documents_checked':documents_checked,'channel_analysis':channel_analysis,
+        'documents_checked':documents_checked,'channel_analysis':channel_analysis,'related_source_notes':related_notes,
         'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
         'merged_claims':all_claims,'claim_inventory':all_claims,
@@ -1227,10 +1304,10 @@ def analyse_url_v27(raw):
         'why_score':{'global':f'Global score is {overall}/100, calculated from the green and social risk scores with a slight consumer-facing adjustment where applicable.',
                      'green':f"Green risk is {green_score}/100. Claim wording {green_splits.get('claim_wording_risk')}/100; substantiation risk {green_splits.get('substantiation_risk')}/100; external context {green_splits.get('external_context_risk')}/100; sector baseline {green_splits.get('sector_baseline_risk')}/100. {' '.join(green_components.get('evidence_notes',[]))}",
                      'social':f"Social risk is {social_score}/100. Claim wording {social_splits.get('claim_wording_risk')}/100; substantiation risk {social_splits.get('substantiation_risk')}/100; external context {social_splits.get('external_context_risk')}/100; sector baseline {social_splits.get('sector_baseline_risk')}/100. {' '.join(social_components.get('evidence_notes',[]))} Forced-labour/product-supply-chain claims are assessed against Regulation (EU) 2024/3015 readiness where relevant.",
-                     'audience':audience['note'],'interpretation':'This is a triage signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications.'},
+                     'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications.'},
         'stakeholder_red_flags':build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.'] if any(f.get('risk')=='High' for f in green_fs) else []),
         'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
-        'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass green & social claims triage only. It is not legal advice and not a finding that greenwashing or social washing occurred. EmpCo-based assessment is strongest for B2C commercial communications. The Forced Labour Regulation lens is an indicative social-claims and product-market compliance lens only, not a legal compliance assessment. External search results are review signals that require verification.',
+        'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass green & social claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
         'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a claims register distinguishing green and social claims.','Classify each claim by audience: consumer-facing marketing vs investor/stakeholder reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals.'],
         'ai_used':False,'ai_note':''}
 
@@ -1264,5 +1341,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Green & Social Claims Risk Triage v33"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Green & Social Claims Risk Assessment v35"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
