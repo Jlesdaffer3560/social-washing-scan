@@ -1,4 +1,4 @@
-# Green & Social Claims Scan - Hostable v35
+# Green & Social Claims Scan - Hostable v36
 
 Professional hostable version of the Green & Social Claims Risk Assessment tool.
 
@@ -9,9 +9,11 @@ Professional hostable version of the Green & Social Claims Risk Assessment tool.
 - Three scores: global green + social score, green risk score and social risk score.
 - Clearer score interpretation: direct EmpCo and EU Forced Labour Regulation signals are weighted more strongly than broader responsible-business expectations.
 - Related-domain checking: when a national website is entered, the scanner cautiously tests a small number of likely related company domains, such as .com or .eu corporate sites.
-- External public-source signals exclude company-owned documents and websites.
+- External public-source signals exclude company-owned documents, policies, reports and websites; these remain reviewed documents/evidence sources, not external signals.
 - More specific recommended actions based on detected claim types.
 - Downloadable two-page PDF report, claim register CSV export and detailed methodology PDF.
+- Disclaimer moved to the end of the web page and the PDF report.
+- “Red Flags” section now includes explicit potential EmpCo and Forced Labour Regulation red flags where relevant.
 
 ## Main regulatory lenses
 

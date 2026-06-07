@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v35_professional_assessment"
+APP_VERSION="hostable_v36_professional_refinements"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -526,13 +526,30 @@ def build_red_flags(findings,ext,sector,context):
     flags=[]
     if any(f.get("risk")=="High" for f in findings): flags.append("Broad or high-sensitivity social claims appear on the website and may require stronger substantiation.")
     if any(("supplier" in f.get("type","").lower() or "supply" in f.get("type","").lower()) for f in findings): flags.append("Supply-chain wording should be checked against supplier coverage, audit quality, worker voice and remediation evidence.")
-    if any(("forced" in f.get("type","").lower() or "modern slavery" in f.get("type","").lower()) for f in findings): flags.append("Forced-labour or modern-slavery claims require product/supplier traceability, risk assessment, remediation and EU Forced Labour Regulation response readiness.")
+    if any(("forced" in f.get("type","").lower() or "modern slavery" in f.get("type","").lower()) for f in findings): flags.append("Potential EU Forced Labour Regulation red flag: forced-labour or modern-slavery wording should not imply product/supply-chain assurance unless product/supplier traceability, risk assessment, remediation and withdrawal/customs response readiness are evidenced.")
     if any(("human" in f.get("type","").lower() or "labour" in f.get("type","").lower() or "labor" in f.get("type","").lower()) for f in findings): flags.append("Human-rights or labour-rights claims require evidence of due diligence, grievance channels and remedy.")
     if ext.get("enabled") and ext.get("results"): flags.append("External public-source signals were found and should be verified before relying on the company's wording.")
     if sector.get("level")=="High": flags.append("The sector has structurally higher exposure to labour, supplier, worker or vulnerable-stakeholder issues.")
     if context.get("level") in ["High","Very high"]: flags.append("Company/context sensitivity is elevated and should be considered in stakeholder due diligence.")
-    if not flags: flags.append("No major stakeholder red flag was detected from available website and public-source signals, but manual verification remains necessary.")
+    if not flags: flags.append("No major red flag was detected from available website and public-source signals, but manual verification remains necessary.")
     return flags[:6]
+
+def regulatory_red_flags(green_findings, social_findings, audience):
+    """Add explicit regulatory red flags where the claim wording falls directly under EmpCo or the EU Forced Labour Regulation lens."""
+    flags=[]
+    aud=(audience or {}).get('audience','').lower()
+    direct_consumer=('client-facing' in aud or 'consumer-facing' in aud or 'mixed' in aud)
+    for f in green_findings or []:
+        typ=(f.get('type','')+' '+f.get('issue','')+' '+f.get('claim','')).lower()
+        if f.get('risk')=='High' and direct_consumer and any(t in typ for t in ['generic environmental','climate-neutrality','offset','comparative','future environmental','absolute','sustainable','greenwashing','empco']):
+            flags.append('Potential EmpCo red flag: a high-sensitivity consumer-facing green claim appears to require stronger substantiation, clearer scope or safer wording before external use.')
+            break
+    for f in social_findings or []:
+        typ=(f.get('type','')+' '+f.get('issue','')+' '+f.get('claim','')).lower()
+        if f.get('risk')=='High' and any(t in typ for t in ['forced labour','forced labor','modern slavery','product traceability','import controls','supplier traceability']):
+            flags.append('Potential EU Forced Labour Regulation red flag: forced-labour, modern-slavery, traceability or product/supplier assurance wording should be escalated for legal/compliance review.')
+            break
+    return flags
 
 def build_company_action_plan(findings,sector,ext):
     actions=[{"priority":"Priority 1","title":"Create a social-claim register","action":"List all external social, labour, human-rights, diversity, customer and supplier claims and assign an internal owner."}]
@@ -1305,7 +1322,7 @@ def analyse_url_v27(raw):
                      'green':f"Green risk is {green_score}/100. Claim wording {green_splits.get('claim_wording_risk')}/100; substantiation risk {green_splits.get('substantiation_risk')}/100; external context {green_splits.get('external_context_risk')}/100; sector baseline {green_splits.get('sector_baseline_risk')}/100. {' '.join(green_components.get('evidence_notes',[]))}",
                      'social':f"Social risk is {social_score}/100. Claim wording {social_splits.get('claim_wording_risk')}/100; substantiation risk {social_splits.get('substantiation_risk')}/100; external context {social_splits.get('external_context_risk')}/100; sector baseline {social_splits.get('sector_baseline_risk')}/100. {' '.join(social_components.get('evidence_notes',[]))} Forced-labour/product-supply-chain claims are assessed against Regulation (EU) 2024/3015 readiness where relevant.",
                      'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications.'},
-        'stakeholder_red_flags':build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.'] if any(f.get('risk')=='High' for f in green_fs) else []),
+        'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),
         'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
         'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass green & social claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
         'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a claims register distinguishing green and social claims.','Classify each claim by audience: consumer-facing marketing vs investor/stakeholder reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals.'],
