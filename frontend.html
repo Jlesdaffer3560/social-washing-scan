@@ -14,9 +14,9 @@
     <div>
       <div class="eyebrow">Green & Social Claims Risk Triage</div>
       <h1>Green & social claims scan</h1>
-      <p>Strict first-pass triage for potentially misleading green and social claims. The green-claims module is based on EmpCo / Directive (EU) 2024/825 logic.</p>
+      <p>Strict first-pass triage for potentially misleading green and social claims. The green-claims module is based on EmpCo / Directive (EU) 2024/825 logic; the social module now also includes an EU Forced Labour Regulation — Regulation (EU) 2024/3015 lens for product, supplier, import/export and modern-slavery claims.</p>
     </div>
-    <div class="small">Hostable v28</div>
+    <div class="small">Hostable v29</div>
   </div>
 </header>
 <main>
@@ -26,14 +26,14 @@
     <p>This tool reviews a company website, folder or report-style page for <strong>greenwashing and social-washing risk signals</strong>. It is not a broad ESG score and it does not conclude that greenwashing or social washing has occurred. It helps users identify claims that may be too broad, insufficiently evidenced or potentially contradicted by public-source context.</p>
     <div class="checklist">
       <div class="checkitem"><strong>1. Claim wording</strong><br>Are there broad, generic or absolute green/social claims?</div>
-      <div class="checkitem"><strong>2. Evidence gap</strong><br>Are scope, methodology, KPIs, limits, verification, grievance/remedy or audit coverage missing?</div>
+      <div class="checkitem"><strong>2. Evidence gap</strong><br>Are scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, product traceability or forced-labour due-diligence evidence missing?</div>
       <div class="checkitem"><strong>3. External context</strong><br>Are there relevant public signals that may contradict the claim?</div>
-      <div class="checkitem"><strong>4. Audience & sector</strong><br>Is the material consumer-facing, or mainly investor/stakeholder reporting?</div>
+      <div class="checkitem"><strong>4. Audience, sector & regulation</strong><br>Is the material consumer-facing, or mainly investor/stakeholder reporting? Are product/supplier claims exposed to forced-labour regulation expectations?</div>
     </div>
   </div>
   <div class="card warnbox">
     <h2>How to interpret the result</h2>
-    <p><strong>High risk</strong> should only appear where a sensitive/broad claim is combined with a clear substantiation gap and relevant contradictory context. The scan distinguishes consumer-facing material, where EmpCo relevance is highest, from annual/sustainability reports used mainly as evidence sources.</p>
+    <p><strong>High risk</strong> should only appear where a sensitive/broad claim is combined with a clear substantiation gap and relevant contradictory context. The scan distinguishes consumer-facing material, where EmpCo relevance is highest, from annual/sustainability reports used mainly as evidence sources. For social claims, the forced-labour lens is especially relevant where wording refers to products, suppliers, responsible sourcing, imports/exports, traceability, modern slavery or forced-labour-free supply chains.</p>
     <p class="small muted">Some corporate websites block automated crawlers. If that happens, the scan will show an error message. Try the national website, the sustainability page, or a specific green, social, supplier, product, sustainability or human-rights page instead of the homepage.</p>
   </div>
 </section>
@@ -53,7 +53,7 @@
 <section id="results" class="hidden">
 <div class="card"><div class="eyebrow">Executive summary</div><h2 id="companyTitle"></h2><div class="grid4" id="threeScores"></div><p><strong id="conclusion"></strong></p><p id="summary"></p><div id="meta"></div></div>
 <div class="card"><h2>Document / audience classification</h2><div id="audienceBox" class="soft"></div></div>
-<div class="card"><h2>Score composition and risk drivers</h2><p class="small muted">This section combines the numerical score build-up with the qualitative risk-driver explanation. Each dimension uses the same logic: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity. The global score integrates the green and social scores.</p><div id="scoreRiskCombined"></div></div>
+<div class="card"><h2>Score composition and risk drivers</h2><p class="small muted">This section combines the numerical score build-up with the qualitative risk-driver explanation. Each dimension uses the same logic: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity. The social score now includes a Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims. The global score integrates the green and social scores.</p><div id="scoreRiskCombined"></div></div>
 <div class="card"><h2>Key green & social claims signals</h2><div id="claimInventory"></div></div>
 <div class="card"><h2>External public-source signals</h2><div id="externalSources"></div></div>
 <div class="grid"><div class="card"><h2>Stakeholder red flags</h2><ul id="redFlags"></ul></div><div class="card"><h2>Recommended actions</h2><div id="actions"></div></div></div>
@@ -139,6 +139,7 @@ function renderScoreRiskCombined(s,w){
     ['Green risk',w.green],
     ['Social risk',w.social],
     ['Audience classification',w.audience],
+    ['Forced Labour Regulation lens','For social claims involving products, suppliers, imports/exports, traceability, modern slavery or forced-labour-free wording, the scan checks whether the claim is supported by forced-labour risk assessment, supplier/product traceability, mitigation, remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.'],
     ['Interpretation',w.interpretation]
   ];
   const whyTable=`<div class="soft"><h3>Qualitative risk-driver explanation</h3><table><thead><tr><th>Driver</th><th>Explanation</th></tr></thead><tbody>${explanations.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'')}</td></tr>`).join('')}</tbody></table></div>`;
@@ -152,7 +153,7 @@ function renderExternal(ext){
 }
 function renderList(id,items){document.getElementById(id).innerHTML=(items||[]).map(x=>`<li>${esc(x)}</li>`).join('')}
 function renderActions(items){document.getElementById('actions').innerHTML=(items||[]).map(a=>`<div class="soft"><strong>${esc(a.priority||'')}: ${esc(a.title||'Action')}</strong><p>${esc(a.action||'')}</p></div>`).join('')}
-function buildTextReport(d){const claims=d.merged_claims||d.claim_inventory||[];const gsrc=d.external_research?.green?.targeted_negative_sources||[];const ssrc=d.external_research?.social?.targeted_negative_sources||[];let lines=[`${d.company?.company||'Company'} — Green & Social Claims Risk Triage`,`Global score: ${d.global_score??d.overall_score}/100`,`Green risk score: ${d.green_score}/100`,`Social risk score: ${d.social_score}/100`,`Document audience: ${d.document_audience?.audience||'Unknown'} — EmpCo relevance: ${d.document_audience?.empco_relevance||'Unknown'}`,'',d.assessment_summary_specific||'','',`Methodology: ${d.methodology||''}`,'','Key green & social claim signals'];claims.slice(0,10).forEach((r,i)=>lines.push(`${i+1}. [${r.dimension||''}] ${r.washing_type||r.claim_type} (${r.risk_level}) — wording: “${r.claim_text||''}” — evidence needed: ${(r.evidence_needed||[]).join(', ')}`));lines.push('','Green external signals');if(!gsrc.length)lines.push('- No targeted negative green public-source signal retained.');gsrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Social external signals');if(!ssrc.length)lines.push('- No targeted negative social public-source signal retained.');ssrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Recommended actions');(d.company_action_plan||[]).forEach(a=>lines.push(`- ${a.title}: ${a.action}`));lines.push('','Disclaimer',d.disclaimer||'');return lines.join('\n')}
+function buildTextReport(d){const claims=d.merged_claims||d.claim_inventory||[];const gsrc=d.external_research?.green?.targeted_negative_sources||[];const ssrc=d.external_research?.social?.targeted_negative_sources||[];let lines=[`${d.company?.company||'Company'} — Green & Social Claims Risk Triage`,`Global score: ${d.global_score??d.overall_score}/100`,`Green risk score: ${d.green_score}/100`,`Social risk score: ${d.social_score}/100`,`Document audience: ${d.document_audience?.audience||'Unknown'} — EmpCo relevance: ${d.document_audience?.empco_relevance||'Unknown'}`,'',d.assessment_summary_specific||'','',`Methodology: ${d.methodology||''}`,'Forced Labour Regulation lens: social claims involving products, suppliers, imports/exports, traceability, modern slavery or forced-labour-free wording are assessed for evidence of risk assessment, traceability, remediation and response readiness under Regulation (EU) 2024/3015.','','Key green & social claim signals'];claims.slice(0,10).forEach((r,i)=>lines.push(`${i+1}. [${r.dimension||''}] ${r.washing_type||r.claim_type} (${r.risk_level}) — wording: “${r.claim_text||''}” — evidence needed: ${(r.evidence_needed||[]).join(', ')}`));lines.push('','Green external signals');if(!gsrc.length)lines.push('- No targeted negative green public-source signal retained.');gsrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Social external signals');if(!ssrc.length)lines.push('- No targeted negative social public-source signal retained.');ssrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Recommended actions');(d.company_action_plan||[]).forEach(a=>lines.push(`- ${a.title}: ${a.action}`));lines.push('','Disclaimer',d.disclaimer||'');return lines.join('\n')}
 function buildHtmlReport(d){return `<div>${document.getElementById('results').innerHTML}</div>`}
 function copyReport(){navigator.clipboard.writeText(document.getElementById('reportPreview').value).then(()=>setStatus('Report copied.','ok')).catch(()=>setStatus('Could not copy automatically.','error'))}
 function downloadHtml(){if(!lastResult){setStatus('Run a scan first.','error');return}const blob=new Blob([`<!doctype html><html><head><meta charset="utf-8"><title>Social Washing Risk Report</title><style>${document.querySelector('style').innerHTML}</style></head><body><main>${buildHtmlReport(lastResult)}</main></body></html>`],{type:'text/html'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='green-social-claims-risk-report.html';a.click();URL.revokeObjectURL(url)}

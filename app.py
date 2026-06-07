@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v27_green_social_claims_empco"
+APP_VERSION="hostable_v29_green_social_claims_empco_flr"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -34,7 +34,8 @@ CLAIMS=[
  (["positive impact","social impact","people first","support society","better for everyone","social value","community impact"],"Broad social-impact claim","Medium","The wording suggests positive social outcomes but does not clearly define scope, affected stakeholders, metrics, outcomes or limitations.","Use scoped wording linked to measurable outcomes, for example: 'We track access to services for identified customer groups and report annual progress against defined inclusion indicators.'"),
  (["ethical","fair","responsible","trusted","socially responsible","caring","worker-friendly"],"Broad ethical or responsible-business claim","High","The wording reassures users about responsible conduct, but may not specify criteria, scope, exclusions, verification method or evidence.","Replace broad wording with evidence-based language, for example: 'We apply defined responsible-sourcing criteria to selected high-risk categories and disclose audit coverage and corrective-action progress.'"),
  (["human rights","labour rights","labor rights","decent work","forced labour","forced labor","child labour","child labor","living wage","modern slavery"],"Human-rights or labour-rights claim","High","The claim refers to sensitive rights topics but may not show due diligence, salient risks, grievance channels, tracking or remedy.","State the process and limits, for example: 'We assess selected human-rights risks in priority supply chains and report actions, grievance channels and remediation progress.'"),
- (["supply chain","value chain","all suppliers","supplier","responsible sourcing","ethical sourcing","audited","certified","traceable","supplier code"],"Supply-chain or supplier-responsibility claim","High","The claim may imply supplier control or responsible value-chain coverage without showing supplier tiers, audit quality, worker voice or remediation.","Scope the claim, for example: 'We assess higher-risk suppliers through a risk-based process and disclose supplier coverage, key findings and corrective-action closure rates.'"),
+ (["forced labour free","forced labor free","free from forced labour","free from forced labor","no forced labour","no forced labor","modern slavery free","forced labour due diligence","forced labor due diligence","product traceability","import controls","supplier traceability"],"Forced-labour product or supply-chain claim","High","EU Forced Labour Regulation risk: the wording may imply that products, imports, exports or supply chains are free from forced labour. Such claims require robust product/supplier traceability, forced-labour risk assessment, mitigation, remediation and response procedures.","Scope the wording, for example: 'We apply a risk-based forced-labour due-diligence process to selected higher-risk products and suppliers, with traceability, escalation and remediation steps disclosed.'"),
+  (["supply chain","value chain","all suppliers","supplier","responsible sourcing","ethical sourcing","audited","certified","traceable","supplier code"],"Supply-chain or supplier-responsibility claim","High","The claim may imply supplier control or responsible value-chain coverage without showing supplier tiers, audit quality, worker voice or remediation.","Scope the claim, for example: 'We assess higher-risk suppliers through a risk-based process and disclose supplier coverage, key findings and corrective-action closure rates.'"),
  (["diversity","inclusion","inclusive","equality","equal opportunities","pay equity","gender equality","non-discrimination"],"Diversity, equality and inclusion claim","Medium","The claim refers to inclusion or equality but may not provide workforce data, baseline, targets, pay-equity information or progress evidence.","Add measurable evidence, for example: 'We monitor diversity and inclusion through workforce data, employee feedback and targeted action plans, with progress reported annually.'"),
  (["safe workplace","safe working","health and safety","well-being","wellbeing","worker welfare","quality of life","care for employees"],"Health, safety or worker-welfare claim","High","The claim suggests safe or positive working conditions but may not provide incident data, contractor coverage, workload evidence, worker feedback or remedy.","Link to controls and outcomes, for example: 'We monitor health and safety through incident reporting, training, contractor coverage and corrective actions.'"),
  (["accessibility","vulnerable customers","customer care","fair treatment","customer protection","affordable for all","financial inclusion","digital inclusion"],"Customer welfare or accessibility claim","Medium","The claim concerns customer welfare or inclusion but may not show measurable access, complaints, remedy or vulnerable-customer safeguards.","Add evidence, for example: 'We track accessibility and customer inclusion through service metrics, complaint handling and improvement actions for vulnerable groups.'"),
@@ -46,6 +47,7 @@ SOCIAL_WASHING_TAXONOMY={
  "Broad social-impact claim":"Community or social-impact washing",
  "Broad ethical or responsible-business claim":"Responsible-business washing",
  "Human-rights or labour-rights claim":"Human-rights or labour-rights washing",
+ "Forced-labour product or supply-chain claim":"Forced-labour / product-market compliance washing",
  "Supply-chain or supplier-responsibility claim":"Supplier responsibility washing",
  "Diversity, equality and inclusion claim":"Diversity or inclusion washing",
  "Health, safety or worker-welfare claim":"Worker welfare washing",
@@ -57,6 +59,7 @@ SOCIAL_WASHING_TAXONOMY={
 STANDARDS=[
  {"name":"CSRD / ESRS S1-S4","use":"Connect social claims to policies, actions, targets, metrics and affected stakeholder groups: own workforce, value-chain workers, affected communities, consumers and end-users."},
  {"name":"CSDDD","use":"Support human-rights and supply-chain claims with risk-based due diligence, prevention, mitigation, tracking and remediation."},
+ {"name":"EU Forced Labour Regulation — Regulation (EU) 2024/3015","use":"Check product, supplier and import/export claims against the EU prohibition on placing, making available on the Union market, or exporting products made with forced labour. Evidence should cover forced-labour risk assessment, supplier/product traceability, preventive actions, remediation and withdrawal/response readiness."},
  {"name":"OECD Guidelines","use":"Check whether responsible-business claims are backed by identification, prevention, mitigation and accounting for adverse impacts."},
  {"name":"UN Guiding Principles on Business and Human Rights","use":"Support human-rights claims with policy commitment, due diligence, grievance channels and remedy."},
  {"name":"UN Global Compact","use":"Check consistency with principles on human rights, labour, environment and anti-corruption when responsible-business conduct is invoked."},
@@ -65,7 +68,8 @@ STANDARDS=[
 ]
 def standards_for_claim(t):
     x=(t or "").lower()
-    if "human" in x or "labour" in x or "labor" in x: return ["CSRD/ESRS S1-S2","CSDDD","OECD Guidelines","UNGPs","ILO","UNGC"]
+    if "forced" in x or "modern slavery" in x: return ["EU Forced Labour Regulation 2024/3015","CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO","UNGC"]
+    if "human" in x or "labour" in x or "labor" in x: return ["CSRD/ESRS S1-S2","CSDDD","EU Forced Labour Regulation 2024/3015","OECD Guidelines","UNGPs","ILO","UNGC"]
     if "supply" in x or "supplier" in x: return ["CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO"]
     if "diversity" in x or "inclusion" in x: return ["CSRD/ESRS S1","ILO","GRI","UNGC"]
     if "customer" in x or "accessibility" in x: return ["CSRD/ESRS S4","OECD Guidelines","GRI"]
@@ -231,7 +235,8 @@ def search_public_sources(query,max_results=4):
 def query_themes_from_findings(findings):
     themes=set()
     joined=" ".join((f.get("type","")+" "+f.get("claim","")).lower() for f in (findings or []))
-    if "supplier" in joined or "supply" in joined: themes.update(["supplier labour rights controversy", "forced labour supply chain", "audit failure worker voice remediation"])
+    if "supplier" in joined or "supply" in joined: themes.update(["supplier labour rights controversy", "forced labour supply chain", "audit failure worker voice remediation", "EU forced labour regulation supply chain product import"])
+    if "forced" in joined or "modern slavery" in joined: themes.update(["forced labour products regulation investigation", "modern slavery supply chain import ban", "forced labour product withdrawal customs EU"])
     if "human" in joined or "labour" in joined or "labor" in joined: themes.update(["human rights complaint", "labour rights lawsuit", "modern slavery forced labour"])
     if "diversity" in joined or "inclusion" in joined or "equality" in joined: themes.update(["discrimination lawsuit", "diversity inclusion controversy", "pay gap equal opportunity complaint"])
     if "safety" in joined or "worker" in joined or "welfare" in joined: themes.update(["worker safety accident", "union strike working conditions", "employee welfare complaint"])
@@ -266,12 +271,12 @@ def external(company, findings=None):
 def summarise_ext(results):
     if not results: return "No external public-source results were returned."
     combo=" ".join((r.get("title","")+" "+r.get("content","")).lower() for r in results)
-    terms=["forced labour","forced labor","child labour","child labor","lawsuit","complaint","strike","union","ngo","discrimination","human rights","supplier","workers","controversy","regulator"]
+    terms=["forced labour","forced labor","EU forced labour regulation","product ban","import ban","child labour","child labor","lawsuit","complaint","strike","union","ngo","discrimination","human rights","supplier","workers","controversy","regulator","customs","withdrawal"]
     hits=[t for t in terms if t in combo]
     return ("External results contain potentially relevant social-risk signals, including: "+", ".join(hits[:8])+". These require verification.") if hits else "External results were found, but no strong social-risk signal was detected from snippets alone."
 def infer_context(company,text,ext):
     combo=(company.get("context","")+" "+text[:20000]+" "+ext.get("summary","")).lower(); level="Medium" if "No recognised" not in company.get("context","") else "Low"
-    high=["forced labour","forced labor","child labour","child labor","modern slavery","living wage","lawsuit","strike","union","human rights complaint","discrimination","regulator"]
+    high=["forced labour","forced labor","EU forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","living wage","lawsuit","strike","union","human rights complaint","discrimination","regulator"]
     med=["complaint","supplier","workers","controversy","ngo","accessibility","vulnerable customers","subcontractor","franchise"]
     if any(t in combo for t in high): level="Medium" if level=="Low" else level
     elif any(t in combo for t in med) and level=="Low": level="Medium"
@@ -284,8 +289,8 @@ def detect_claims(text):
     for triggers,typ,risk,issue,rewrite in CLAIMS:
         trig=next((t for t in triggers if t in low),None)
         if trig and typ not in seen:
-            seen.add(typ); score=56 if risk=="High" else 32
-            fs.append({"type":typ,"risk":risk,"claim":snip(text,trig),"issue":issue,"rewrite":rewrite,"claim_score":score,"standards":standards_for_claim(typ),"action":"Substantiate the claim with scope, evidence, reporting period, limitations and remediation steps."})
+            seen.add(typ); score=72 if typ=="Forced-labour product or supply-chain claim" else (56 if risk=="High" else 32)
+            fs.append({"type":typ,"risk":risk,"claim":snip(text,trig),"issue":issue,"rewrite":rewrite,"claim_score":score,"standards":standards_for_claim(typ),"action":("Document product/supplier traceability, forced-labour risk assessment, mitigation, remediation and withdrawal/customs response readiness." if typ=="Forced-labour product or supply-chain claim" else "Substantiate the claim with scope, evidence, reporting period, limitations and remediation steps.")})
     if not fs: fs.append({"type":"No major high-risk social claim detected","risk":"Low","claim":text[:320]+("..." if len(text)>320 else ""),"issue":"The crawler did not detect obvious high-risk social-claim wording in the reviewed company pages.","rewrite":"Keep social claims specific, scoped and supported by measurable evidence.","claim_score":18,"standards":["General claim-quality review"],"action":"Keep the claim specific, scoped and supported by measurable evidence."})
     return sorted(fs,key=lambda f:f["claim_score"],reverse=True)
 def level(score):
@@ -306,7 +311,7 @@ def external_relevance_score(findings, external_research):
 
     claim_text = " ".join((f.get("type","") + " " + f.get("issue","")).lower() for f in findings)
 
-    severe_terms = ["forced labour","forced labor","child labour","child labor","modern slavery","human rights complaint","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage"]
+    severe_terms = ["forced labour","forced labor","EU forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","human rights complaint","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage"]
     relevant_terms = ["human rights","labour","labor","workers","supplier","supply chain","accessibility","customer protection","discrimination","grievance","complaint","ngo","oecd","ncp","audit","wage","safety"]
 
     severe_hits = [t for t in severe_terms if t in text]
@@ -357,14 +362,17 @@ def evidence_signal_score(page_text, findings):
         "grievance mechanism","complaints mechanism","remediation","remedy","corrective action",
         "closure rate","due diligence","salient human rights","worker voice","collective bargaining",
         "pay equity","incident rate","lost time injury","ltir","assurance","verified","independent audit",
-        "limited assurance","reasonable assurance","methodology","limitations","exclusions"
+        "limited assurance","reasonable assurance","methodology","limitations","exclusions",
+        "traceability","chain of custody","supplier traceability","product traceability","import controls","export controls",
+        "forced-labour risk assessment","forced labour risk assessment","modern slavery statement",
+        "withdrawal procedure","customs procedure","remediation plan"
     ]
     weak_terms=["policy","policies","commitment","principles","code of conduct","training","programme","program","progress","initiative"]
     strong_hits=[t for t in strong_terms if t in text]
     weak_hits=[t for t in weak_terms if t in text]
     # Numeric data near social terms is a strong substantiation proxy.
     import re
-    social_window_terms=["supplier","worker","employee","human rights","diversity","inclusion","safety","customer","community","labour","labor"]
+    social_window_terms=["supplier","worker","employee","human rights","diversity","inclusion","safety","customer","community","labour","labor","forced labour","forced labor","modern slavery","traceability","import","export","product"]
     numeric_social_hits=0
     for m in re.finditer(r'(\b\d{1,4}(?:[.,]\d+)?\s?%\b|\b20\d{2}\b)', text):
         win=text[max(0,m.start()-160):m.end()+160]
@@ -459,8 +467,9 @@ def source_credibility(result):
 def evidence_checklist(f):
     t=(f.get("type","")+" "+f.get("issue","")).lower()
     base=["scope of the claim","reporting period","underlying policy or process","metrics or KPIs","limitations and exclusions"]
-    if "supply" in t or "supplier" in t: return base+["supplier-tier coverage","audit/assessment methodology","worker voice or grievance mechanism","corrective-action closure rate","remediation examples"]
-    if "human" in t or "labour" in t or "labor" in t: return base+["salient human-rights risk assessment","due-diligence steps","grievance channels","tracking of outcomes","remedy process"]
+    if "forced" in t or "modern slavery" in t: return base+["forced-labour risk assessment by product and geography","supplier and product traceability","import/export and withdrawal response procedure","worker voice or grievance mechanism","remediation and disengagement criteria","governance owner for Regulation (EU) 2024/3015 readiness"]
+    if "supply" in t or "supplier" in t: return base+["supplier-tier coverage","audit/assessment methodology","forced-labour risk assessment where relevant","worker voice or grievance mechanism","corrective-action closure rate","remediation examples"]
+    if "human" in t or "labour" in t or "labor" in t: return base+["salient human-rights risk assessment","due-diligence steps","forced-labour risk controls where products/supply chains are relevant","grievance channels","tracking of outcomes","remedy process"]
     if "diversity" in t or "inclusion" in t: return base+["workforce diversity data","baseline and targets","pay-equity data where relevant","employee feedback","progress against action plan"]
     if "customer" in t or "accessibility" in t: return base+["customer outcome metrics","complaint data","vulnerable-customer safeguards","accessibility measures","remedy process"]
     if "safety" in t or "worker" in t: return base+["incident rates","contractor coverage","training data","safety audit results","corrective actions"]
@@ -473,6 +482,7 @@ def build_red_flags(findings,ext,sector,context):
     flags=[]
     if any(f.get("risk")=="High" for f in findings): flags.append("Broad or high-sensitivity social claims appear on the website and may require stronger substantiation.")
     if any(("supplier" in f.get("type","").lower() or "supply" in f.get("type","").lower()) for f in findings): flags.append("Supply-chain wording should be checked against supplier coverage, audit quality, worker voice and remediation evidence.")
+    if any(("forced" in f.get("type","").lower() or "modern slavery" in f.get("type","").lower()) for f in findings): flags.append("Forced-labour or modern-slavery claims require product/supplier traceability, risk assessment, remediation and EU Forced Labour Regulation response readiness.")
     if any(("human" in f.get("type","").lower() or "labour" in f.get("type","").lower() or "labor" in f.get("type","").lower()) for f in findings): flags.append("Human-rights or labour-rights claims require evidence of due diligence, grievance channels and remedy.")
     if ext.get("enabled") and ext.get("results"): flags.append("External public-source signals were found and should be verified before relying on the company's wording.")
     if sector.get("level")=="High": flags.append("The sector has structurally higher exposure to labour, supplier, worker or vulnerable-stakeholder issues.")
@@ -523,6 +533,7 @@ def concise_standards_lens():
     return [
         {"name":"CSRD / ESRS", "use":"Are social claims linked to stakeholder impacts, policies, actions, targets and metrics?"},
         {"name":"CSDDD / OECD / UNGPs", "use":"Are human-rights and value-chain claims supported by due diligence, prevention, mitigation and remedy?"},
+        {"name":"EU Forced Labour Regulation 2024/3015", "use":"For product, supplier, import/export or modern-slavery claims: is there evidence of forced-labour risk assessment, traceability, remediation and withdrawal/customs response readiness?"},
         {"name":"ILO / UNGC / GRI", "use":"Are labour, inclusion and responsible-business claims specific, balanced and evidence-based?"}
     ]
 
@@ -536,7 +547,7 @@ def strict_external_context_risk(external_research, company_name=""):
         return {"score":0, "level":"Low", "note":"No usable external public-source signals were found."}
 
     company_key = (company_name or "").lower().split("/")[0].strip()
-    serious_terms = ["forced labour","forced labor","child labour","child labor","modern slavery","human rights","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage","complaint","oecd","ncp"]
+    serious_terms = ["forced labour","forced labor","EU forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","human rights","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage","complaint","oecd","ncp"]
     medium_terms = ["supplier","workers","supply chain","accessibility","grievance","ngo","audit","wage","safety","customer protection"]
 
     serious_hits = 0
@@ -986,7 +997,8 @@ def build_green_social_actions(green_findings, social_findings, audience):
         actions.append({'priority':'Priority 2','title':'Apply EmpCo controls to consumer-facing green claims','action':'Check generic environmental claims, labels, comparisons, future-performance claims and climate-neutrality/offset wording against EmpCo criteria.'})
     actions.append({'priority':'Priority 3','title':'Separate consumer marketing from investor reporting','action':'Use annual and sustainability reports as evidence sources, but apply stricter B2C wording controls to websites, product pages, brochures, folders and campaigns.'})
     if any(f.get('risk')=='High' for f in green_findings): actions.append({'priority':'Priority 4','title':'Substantiate high-risk green claims','action':'Add scope, methodology, data source, verification, limitations and, for climate claims, clear separation of reductions and offsets.'})
-    if any(f.get('risk')=='High' for f in social_findings): actions.append({'priority':'Priority 5','title':'Substantiate high-risk social claims','action':'Add stakeholder scope, KPIs, grievance/remedy, supplier coverage, audit methodology or workforce/customer evidence as applicable.'})
+    if any(('forced' in f.get('type','').lower() or 'modern slavery' in f.get('type','').lower()) for f in social_findings): actions.append({'priority':'Priority 5','title':'Apply Forced Labour Regulation controls','action':'For forced-labour, modern-slavery, product, import/export or supplier claims, document product/supplier traceability, risk assessment, mitigation, remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.'})
+    if any(f.get('risk')=='High' for f in social_findings): actions.append({'priority':'Priority 6','title':'Substantiate high-risk social claims','action':'Add stakeholder scope, KPIs, grievance/remedy, supplier coverage, audit methodology, forced-labour controls or workforce/customer evidence as applicable.'})
     return actions[:6]
 
 def analyse_url_v27(raw):
@@ -1023,7 +1035,7 @@ def analyse_url_v27(raw):
     social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5)
     green_targeted=compact_sources([r for r in green_ext.get('results',[]) if is_green_negative_source(r) and source_mentions_company(r,comp.get('company',''))],5)
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
-    methodology='Green & Social Claims Risk Triage. Green-claim module is based on EmpCo / Directive (EU) 2024/825 logic for consumer-facing environmental claims. Social module uses claim wording + evidence gap + relevant contradictory context. Each dimension is scored separately; the global score is an integrated green/social triage score.'
+    methodology='Green & Social Claims Risk Triage. Green-claim module is based on EmpCo / Directive (EU) 2024/825 logic for consumer-facing environmental claims. Social module uses claim wording + evidence gap + relevant contradictory context, with an added Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims under Regulation (EU) 2024/3015. Each dimension is scored separately; the global score is an integrated green/social triage score.'
     summary=(f"{comp['company']} receives a global green & social claims risk score of {overall}/100. "
              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
              f"Document audience classification: {audience['audience']} — {audience['note']}")
@@ -1034,7 +1046,7 @@ def analyse_url_v27(raw):
         'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}',
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
-        'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
+        'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
         'merged_claims':all_claims,'claim_inventory':all_claims,
         'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Green and social external-source layers are reported separately.'},
@@ -1042,12 +1054,12 @@ def analyse_url_v27(raw):
         'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},
         'why_score':{'global':f'Global score is {overall}/100, calculated from the green and social risk scores with a slight consumer-facing adjustment where applicable.',
                      'green':f"Green risk is {green_score}/100. Claim wording {green_splits.get('claim_wording_risk')}/100; substantiation risk {green_splits.get('substantiation_risk')}/100; external context {green_splits.get('external_context_risk')}/100; sector baseline {green_splits.get('sector_baseline_risk')}/100. {' '.join(green_components.get('evidence_notes',[]))}",
-                     'social':f"Social risk is {social_score}/100. Claim wording {social_splits.get('claim_wording_risk')}/100; substantiation risk {social_splits.get('substantiation_risk')}/100; external context {social_splits.get('external_context_risk')}/100; sector baseline {social_splits.get('sector_baseline_risk')}/100. {' '.join(social_components.get('evidence_notes',[]))}",
+                     'social':f"Social risk is {social_score}/100. Claim wording {social_splits.get('claim_wording_risk')}/100; substantiation risk {social_splits.get('substantiation_risk')}/100; external context {social_splits.get('external_context_risk')}/100; sector baseline {social_splits.get('sector_baseline_risk')}/100. {' '.join(social_components.get('evidence_notes',[]))} Forced-labour/product-supply-chain claims are assessed against Regulation (EU) 2024/3015 readiness where relevant.",
                      'audience':audience['note'],'interpretation':'This is a triage signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications.'},
         'stakeholder_red_flags':build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.'] if any(f.get('risk')=='High' for f in green_fs) else []),
-        'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?'],
-        'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass green & social claims triage only. It is not legal advice and not a finding that greenwashing or social washing occurred. EmpCo-based assessment is strongest for B2C commercial communications. External search results are review signals that require verification.',
-        'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a claims register distinguishing green and social claims.','Classify each claim by audience: consumer-facing marketing vs investor/stakeholder reporting.','Attach objective evidence, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals.'],
+        'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
+        'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass green & social claims triage only. It is not legal advice and not a finding that greenwashing or social washing occurred. EmpCo-based assessment is strongest for B2C commercial communications. The Forced Labour Regulation lens is an indicative social-claims and product-market compliance lens only, not a legal compliance assessment. External search results are review signals that require verification.',
+        'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a claims register distinguishing green and social claims.','Classify each claim by audience: consumer-facing marketing vs investor/stakeholder reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals.'],
         'ai_used':False,'ai_note':''}
 
 # Override v26 endpoint implementation with v27 implementation.
