@@ -18,7 +18,7 @@
       <h1>Green & social claims scan</h1>
       <p>Strict first-pass triage for potentially misleading green and social claims. The green-claims module is based on EmpCo / Directive (EU) 2024/825 logic; the social module now also includes an EU Forced Labour Regulation — Regulation (EU) 2024/3015 lens for product, supplier, import/export and modern-slavery claims.</p>
     </div>
-    <div class="small">Hostable v31</div>
+    <div class="small">Hostable v32</div>
   </div>
 </header>
 <main>
@@ -55,6 +55,7 @@
 <section id="results" class="hidden">
 <div class="card"><div class="eyebrow">Executive summary</div><h2 id="companyTitle"></h2><div class="grid4" id="threeScores"></div><p><strong id="conclusion"></strong></p><p id="summary"></p><div id="meta"></div></div>
 <div class="card"><h2>Document / audience classification</h2><div id="audienceBox" class="soft"></div></div>
+<div class="card"><h2>Claim governance maturity and client-ready conclusion</h2><div id="governanceBox" class="soft"></div></div>
 <div class="card"><h2>Score composition and risk drivers</h2><p class="small muted">This section combines the numerical score build-up with the qualitative risk-driver explanation. Each dimension uses the same logic: 30% claim wording + 30% substantiation/evidence-gap + 25% external contradictory context + 15% sector sensitivity. The social score now includes a Forced Labour Regulation lens for product, supplier, import/export and modern-slavery claims. The global score integrates the green and social scores.</p><div id="scoreRiskCombined"></div></div>
 <div class="card"><h2>Key green & social claims signals</h2><div id="claimInventory"></div></div>
 <div class="card"><h2>External public-source signals</h2><div id="externalSources"></div></div>
@@ -100,6 +101,7 @@ async function scanUrl(){
   }finally{setBusy(false)}
 }
 function render(d){
+  try{
   document.getElementById('results').classList.remove('hidden');
   document.getElementById('companyTitle').textContent=(d.company?.company||'Company')+' — Green & Social Claims Risk Triage';
   document.getElementById('threeScores').innerHTML=`
@@ -117,12 +119,13 @@ function render(d){
   renderExternal(d.external_research||{});
   renderList('redFlags',d.stakeholder_red_flags||[]);
   renderActions(d.company_action_plan||[]);
-  document.getElementById('methodology').textContent=d.methodology||'';
-  document.getElementById('confidence').textContent=`Confidence: ${d.confidence?.level||'Unknown'} — ${(d.confidence?.reasons||[]).join('; ')}`;
-  document.getElementById('disclaimer').textContent=d.disclaimer||'';
+  document.getElementById('methodology').textContent=d.methodology||'Indicative first-pass triage based on claim wording, substantiation gap, external public-source context and sector sensitivity. Green claims are assessed through an EmpCo lens; social claims include a Forced Labour Regulation lens where relevant.';
+  document.getElementById('confidence').textContent=`Confidence: ${d.confidence?.level||'Unknown'} — ${((d.confidence?.reasons||[]).join('; ')||'No detailed confidence notes returned.')}`;
+  document.getElementById('disclaimer').textContent=d.disclaimer||'This is not a legal opinion or a definitive greenwashing/social-washing finding. It is a screening output for claim governance and further verification.';
   document.getElementById('reportPreview').value=buildTextReport(d);
   document.getElementById('printableReport').innerHTML=buildHtmlReport(d);
   setTimeout(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}),100)
+  }catch(e){console.error(e); setStatus('The scan returned results, but the page could not render one section: '+e.message,'error','The result is still available in the text/PDF output when possible. This should be fixed in v32.')}
 }
 
 function claimDecision(c){
@@ -148,9 +151,10 @@ function clientReadyConclusion(d){
   return `Overall, the reviewed material shows a ${glob.toLowerCase()} green & social claims risk profile, with ${g.toLowerCase()} green risk and ${s.toLowerCase()} social risk. Claim governance maturity is assessed as ${gov}. Priority should be given to narrowing broad claims, adding claim-specific substantiation and maintaining a claim register before using these statements in consumer-facing communication.`;
 }
 function renderGovernance(d){
+  const box=document.getElementById('governanceBox'); if(!box) return;
   const g=governanceMaturity(d);
   const conclusion=clientReadyConclusion(d);
-  document.getElementById('governanceBox').innerHTML=`<div class="grid"><div class="soft okbox"><h3>${esc(g.level)}</h3><p>${esc(g.note)}</p></div><div class="soft notice"><h3>Client-ready conclusion</h3><p>${esc(conclusion)}</p></div></div>`;
+  box.innerHTML=`<div class="grid"><div class="soft okbox"><h3>${esc(g.level)}</h3><p>${esc(g.note)}</p></div><div class="soft notice"><h3>Client-ready conclusion</h3><p>${esc(conclusion)}</p></div></div>`;
 }
 function csvEscape(v){v=String(v??''); return '"'+v.replace(/"/g,'""')+'"'}
 function downloadClaimRegisterCsv(){
@@ -187,14 +191,14 @@ function renderScoreRiskCombined(s,w){
   const whyTable=`<div class="soft"><h3>Qualitative risk-driver explanation</h3><table><thead><tr><th>Driver</th><th>Explanation</th></tr></thead><tbody>${explanations.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'')}</td></tr>`).join('')}</tbody></table></div>`;
   document.getElementById('scoreRiskCombined').innerHTML=`<div class="grid">${scoreTable(green,'Green score composition')}${scoreTable(social,'Social score composition')}</div>${whyTable}`;
 }
-function renderClaims(rows){if(!rows.length){document.getElementById('claimInventory').innerHTML='<p class="muted">No claims retained.</p>';return}document.getElementById('claimInventory').innerHTML=rows.slice(0,8).map((r,i)=>`<div class="soft claim"><h3>${i+1}. ${esc(r.washing_type||r.claim_type||'Claim')} <span class="badge ${riskClass(r.risk_level)}">${esc(r.risk_level||'Low')}</span> <span class="badge">${esc(claimDecision(r))}</span></h3><p><strong>Company wording:</strong> “${esc(r.claim_text||'')}”</p><p><strong>Analysis:</strong> ${esc(r.analysis||r.risk_reason||'')}</p><p class="small"><strong>Evidence needed:</strong> ${(r.evidence_needed||[]).map(esc).join(', ')}</p><p><strong>Safer wording:</strong> ${esc(r.suggested_rewrite||'')}</p></div>`).join('')}
+function renderClaims(rows){if(!rows.length){document.getElementById('claimInventory').innerHTML='<p class="muted">No priority green or social claim signals were retained. This can happen when the scanned page is a generic homepage, when the company blocks crawler access, or when the page contains limited claim wording. Try a product, sustainability, supplier-responsibility or brochure page for a more meaningful result.</p>';return}document.getElementById('claimInventory').innerHTML=rows.slice(0,8).map((r,i)=>`<div class="soft claim"><h3>${i+1}. ${esc(r.washing_type||r.claim_type||'Claim')} <span class="badge ${riskClass(r.risk_level)}">${esc(r.risk_level||'Low')}</span> <span class="badge">${esc(claimDecision(r))}</span></h3><p><strong>Company wording:</strong> “${esc(r.claim_text||'')}”</p><p><strong>Analysis:</strong> ${esc(r.analysis||r.risk_reason||'')}</p><p class="small"><strong>Evidence needed:</strong> ${(r.evidence_needed||[]).map(esc).join(', ')}</p><p><strong>Safer wording:</strong> ${esc(r.suggested_rewrite||'')}</p></div>`).join('')}
 function renderExternal(ext){
   function block(title, e){const rows=(e?.targeted_negative_sources||e?.compact_sources||[]);const provider=(e?.providers_used||[]).join(', ');let html=`<div class="soft"><h3>${esc(title)}</h3><p class="small muted">${esc(e?.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${esc(r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';return html+'</div>'}
   if(ext.green||ext.social){document.getElementById('externalSources').innerHTML=block('Green external signals',ext.green)+block('Social external signals',ext.social);return}
   const rows=(ext.targeted_negative_sources||ext.compact_sources||[]);const provider=(ext.providers_used||[]).join(', ');let html=`<p class="small muted">${esc(ext.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${esc(r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';document.getElementById('externalSources').innerHTML=html
 }
-function renderList(id,items){document.getElementById(id).innerHTML=(items||[]).map(x=>`<li>${esc(x)}</li>`).join('')}
-function renderActions(items){document.getElementById('actions').innerHTML=(items||[]).map(a=>`<div class="soft"><strong>${esc(a.priority||'')}: ${esc(a.title||'Action')}</strong><p>${esc(a.action||'')}</p></div>`).join('')}
+function renderList(id,items){const el=document.getElementById(id); if(!el)return; const arr=items||[]; el.innerHTML=arr.length?arr.map(x=>`<li>${esc(x)}</li>`).join(''):'<li class="muted">No specific red flags retained in this first-pass scan.</li>'}
+function renderActions(items){const el=document.getElementById('actions'); if(!el)return; const arr=items||[]; el.innerHTML=arr.length?arr.map(a=>`<div class="soft"><strong>${esc(a.priority||'')}: ${esc(a.title||'Action')}</strong><p>${esc(a.action||'')}</p></div>`).join(''):'<p class="muted">No specific action plan was generated. Treat this as a low-signal scan and request claim-level substantiation before external reuse.</p>'}
 function buildTextReport(d){const claims=d.merged_claims||d.claim_inventory||[];const gsrc=d.external_research?.green?.targeted_negative_sources||[];const ssrc=d.external_research?.social?.targeted_negative_sources||[];let lines=[`${d.company?.company||'Company'} — Green & Social Claims Risk Triage`,`Global score: ${d.global_score??d.overall_score}/100`,`Green risk score: ${d.green_score}/100`,`Social risk score: ${d.social_score}/100`,`Document audience: ${d.document_audience?.audience||'Unknown'} — EmpCo relevance: ${d.document_audience?.empco_relevance||'Unknown'}`,`Claim governance maturity: ${governanceMaturity(d).level}`,`Client-ready conclusion: ${clientReadyConclusion(d)}`,'',d.assessment_summary_specific||'','',`Methodology: ${d.methodology||''}`,'Forced Labour Regulation lens: social claims involving products, suppliers, imports/exports, traceability, modern slavery or forced-labour-free wording are assessed for evidence of risk assessment, traceability, remediation and response readiness under Regulation (EU) 2024/3015.','','Key green & social claim signals'];claims.slice(0,10).forEach((r,i)=>lines.push(`${i+1}. [${r.dimension||''}] ${r.washing_type||r.claim_type} (${r.risk_level}) — wording: “${r.claim_text||''}” — evidence needed: ${(r.evidence_needed||[]).join(', ')}`));lines.push('','Green external signals');if(!gsrc.length)lines.push('- No targeted negative green public-source signal retained.');gsrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Social external signals');if(!ssrc.length)lines.push('- No targeted negative social public-source signal retained.');ssrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Recommended actions');(d.company_action_plan||[]).forEach(a=>lines.push(`- ${a.title}: ${a.action}`));lines.push('','Disclaimer',d.disclaimer||'');return lines.join('\n')}
 function shortText(s,n=260){s=String(s||'').replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
 function scoreLabel(score){score=Number(score||0); if(score>=75)return 'High'; if(score>=45)return 'Medium'; return 'Low'}
@@ -210,7 +214,7 @@ function buildHtmlReport(d){
   const global=d.global_score??d.overall_score??0, green=d.green_score??0, social=d.social_score??0;
   const gov=governanceMaturity(d); const clientConclusion=clientReadyConclusion(d);
   const page1=`<section class="report-page"><div class="report-watermark">TRIAGE</div><div class="report-content">
-    <div class="report-head"><div><div class="report-eyebrow">Green & Social Claims Risk Triage</div><div class="report-title">${company} - claims risk report</div><div class="report-sub">Two-page screening report | ${esc(today)} | ${url}</div></div><div><span class="report-badge">Hostable v31</span></div></div>
+    <div class="report-head"><div><div class="report-eyebrow">Green & Social Claims Risk Triage</div><div class="report-title">${company} - claims risk report</div><div class="report-sub">Two-page screening report | ${esc(today)} | ${url}</div></div><div><span class="report-badge">Hostable v32</span></div></div>
     <div class="report-kpis"><div class="report-kpi"><strong>${esc(global)}/100</strong><span>Global risk score</span><br><span class="report-risk ${riskClass(scoreLabel(global))}">${scoreLabel(global)}</span></div><div class="report-kpi"><strong>${esc(green)}/100</strong><span>Green risk score</span><br><span class="report-risk ${riskClass(scoreLabel(green))}">${scoreLabel(green)}</span></div><div class="report-kpi"><strong>${esc(social)}/100</strong><span>Social risk score</span><br><span class="report-risk ${riskClass(scoreLabel(social))}">${scoreLabel(social)}</span></div></div>
     <div class="report-section"><h3>Executive summary</h3><div class="report-callout"><strong>${esc(d.screening_conclusion||'Screening conclusion')}</strong><br>${esc(shortText(d.assessment_summary_specific||d.report?.summary||'',420))}</div></div>
     <div class="report-section"><h3>Claim governance maturity</h3><div class="report-governance"><div class="report-box"><strong>${esc(gov.level)}</strong><br><span class="report-small">${esc(shortText(gov.note,220))}</span></div><div class="report-box"><strong>Client-ready conclusion</strong><br><span class="report-small">${esc(shortText(clientConclusion,260))}</span></div></div></div>
