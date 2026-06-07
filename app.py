@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime
 
-APP_VERSION="hostable_v36_professional_refinements"
+APP_VERSION="hostable_v37_professional_green_social_claims"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -750,26 +750,58 @@ def source_mentions_company(result, company_name):
     terms = company_terms_for_filter(company_name)
     return bool(terms) and any(t in text for t in terms)
 
-def is_company_owned_source(result, company_name):
+def _root_domain(url_or_host):
+    host=(urlparse(url_or_host).hostname or url_or_host or '').lower().replace('www.','').strip()
+    if not host: return ''
+    parts=[x for x in host.split('.') if x]
+    if len(parts) >= 3 and parts[-2] in {'co','com','org','net','ac','gov'} and len(parts[-1]) == 2:
+        return '.'.join(parts[-3:])
+    if len(parts) >= 2:
+        return '.'.join(parts[-2:])
+    return host
+
+def company_owned_roots(reviewed_pages=None):
+    roots=set()
+    for u in reviewed_pages or []:
+        root=_root_domain(u)
+        if root:
+            roots.add(root)
+    return roots
+
+def is_company_owned_source(result, company_name, reviewed_pages=None):
     """Exclude company-owned websites/documents from external public-source signals.
-    These pages may still be used as reviewed documents or evidence sources, but not as external signals.
+    Company sustainability reports, policies, supplier codes and own human-rights documents may be evidence,
+    but they are not external stakeholder signals.
     """
-    host=(urlparse(result.get('url','')).hostname or '').lower().replace('www.','')
+    url=result.get('url','') or ''
+    host=(urlparse(url).hostname or '').lower().replace('www.','')
     if not host: return False
+    root=_root_domain(host)
+    if root and root in company_owned_roots(reviewed_pages):
+        return True
     terms=company_terms_for_filter(company_name)
     cleaned=[]
     for t in terms:
-        t=t.lower().replace(' / ',' ').replace('/',' ').replace('-',' ')
-        cleaned.extend([x for x in t.split() if len(x)>=3])
+        t=t.lower().replace(' / ',' ').replace('/',' ').replace('-',' ').replace('&',' ')
+        cleaned.extend([x for x in t.split() if len(x)>=3 and x not in {'group','company','holding','holdings','corporate'}])
     cleaned=list(dict.fromkeys(cleaned))
-    return any(host==f'{t}.com' or host==f'{t}.be' or host==f'{t}.eu' or host.endswith(f'.{t}.com') or host.endswith(f'.{t}.be') or host.endswith(f'.{t}.eu') or (t in host.split('.')) for t in cleaned)
+    host_labels=set(host.split('.'))
+    if any(t in host_labels for t in cleaned):
+        return True
+    # Also exclude obvious company-hosted policy/report pages even where the host uses a country/corporate subdomain.
+    text=(result.get('title','')+' '+result.get('content','')+' '+url).lower()
+    own_doc_terms=['sustainability report','annual report','human rights policy','human-rights policy','supplier code','code of conduct','modern slavery statement','due diligence statement','policy','our responsibility','our sustainability']
+    if any(t in text for t in own_doc_terms) and any(t in text for t in cleaned):
+        return True
+    return False
 
-def targeted_negative_sources(results, company_name, limit=5):
+def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=None, negative_fn=None):
     kept = []
+    negative_fn = negative_fn or is_negative_external_source
     for r in results:
-        if is_company_owned_source(r, company_name):
+        if is_company_owned_source(r, company_name, reviewed_pages):
             continue
-        if is_negative_external_source(r) and source_mentions_company(r, company_name):
+        if negative_fn(r) and source_mentions_company(r, company_name):
             kept.append(r)
     if "compact_sources" in globals():
         return compact_sources(kept, limit)
@@ -1291,8 +1323,8 @@ def analyse_url_v27(raw):
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
-    social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5)
-    green_targeted=compact_sources([r for r in green_ext.get('results',[]) if is_green_negative_source(r) and source_mentions_company(r,comp.get('company','')) and not is_company_owned_source(r,comp.get('company',''))],5)
+    social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5, pages, is_negative_external_source)
+    green_targeted=targeted_negative_sources(green_ext.get('results',[]), comp.get('company',''), 5, pages, is_green_negative_source)
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
@@ -1300,7 +1332,7 @@ def analyse_url_v27(raw):
         c.setdefault('source_label', 'Reviewed website / document')
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
-    methodology='Green & Social Claims Risk Assessment. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims. Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
+    methodology='Green & Social Claims Risk Assessment. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims. Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     summary=(f"{comp['company']} receives a global green & social claims risk score of {overall}/100. "
              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
              f"Document/channel classification: {audience['audience']} — {audience['note']}" + (" "+"; ".join(related_notes) if related_notes else ""))
@@ -1318,9 +1350,9 @@ def analyse_url_v27(raw):
         'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Green and social external-source layers are reported separately.'},
         'green_external_context_assessment':green_external_context,'social_external_context_assessment':social_external_context,
         'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},
-        'why_score':{'global':f'Global score is {overall}/100, calculated from the green and social risk scores with a slight consumer-facing adjustment where applicable.',
-                     'green':f"Green risk is {green_score}/100. Claim wording {green_splits.get('claim_wording_risk')}/100; substantiation risk {green_splits.get('substantiation_risk')}/100; external context {green_splits.get('external_context_risk')}/100; sector baseline {green_splits.get('sector_baseline_risk')}/100. {' '.join(green_components.get('evidence_notes',[]))}",
-                     'social':f"Social risk is {social_score}/100. Claim wording {social_splits.get('claim_wording_risk')}/100; substantiation risk {social_splits.get('substantiation_risk')}/100; external context {social_splits.get('external_context_risk')}/100; sector baseline {social_splits.get('sector_baseline_risk')}/100. {' '.join(social_components.get('evidence_notes',[]))} Forced-labour/product-supply-chain claims are assessed against Regulation (EU) 2024/3015 readiness where relevant.",
+        'why_score':{'global':f'Global score is {overall}/100. It combines green and social scores and gives extra attention to client-facing materials where EmpCo relevance is strongest.',
+                     'green':f"Green risk is {green_score}/100 because the scan detected {', '.join([f.get('type','green claim') for f in green_fs[:3]])}. Driver scores: claim wording {green_splits.get('claim_wording_risk')}/100, evidence gap {green_splits.get('substantiation_risk')}/100, external context {green_splits.get('external_context_risk')}/100, sector exposure {green_splits.get('sector_baseline_risk')}/100. {' '.join(green_components.get('evidence_notes',[]))}",
+                     'social':f"Social risk is {social_score}/100 because the scan detected {', '.join([f.get('type','social claim') for f in social_fs[:3]])}. Driver scores: claim wording {social_splits.get('claim_wording_risk')}/100, evidence gap {social_splits.get('substantiation_risk')}/100, external context {social_splits.get('external_context_risk')}/100, sector exposure {social_splits.get('sector_baseline_risk')}/100. {' '.join(social_components.get('evidence_notes',[]))} Forced-labour/product-supply-chain claims are assessed against Regulation (EU) 2024/3015 readiness where relevant.",
                      'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications.'},
         'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),
         'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
@@ -1358,5 +1390,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Green & Social Claims Risk Assessment v35"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Green & Social Claims Risk Assessment v37"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
