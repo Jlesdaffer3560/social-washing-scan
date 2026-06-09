@@ -6,7 +6,7 @@ Professional hostable web app for screening company websites and claim-related d
 
 - Reviews green and social claims on company websites and related company pages.
 - Separates green claim signals from social claim signals.
-- Distinguishes client-facing communication from investor/stakeholder reporting and policy/internal governance documents.
+- Distinguishes client-facing communication from investor/internal reporting and policy/internal governance documents.
 - Assesses green claims through an EmpCo / Directive (EU) 2024/825 lens.
 - Assesses social claims through claim wording, evidence gap, external context, sector exposure and, where relevant, Regulation (EU) 2024/3015 on forced-labour products.
 - Excludes company-owned documents from the external public-source signals section.
