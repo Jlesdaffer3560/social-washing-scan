@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v39_internal_document_upload"
+APP_VERSION="hostable_v40_separate_upload_professional_ui"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -193,7 +193,7 @@ def fetch_html(url):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/39.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=12,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -244,7 +244,7 @@ def google_search(query, max_results=5):
         return []
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/39.0"},method="GET")
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"},method="GET")
     with urlopen(req,timeout=12) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
@@ -1266,25 +1266,39 @@ def has_forced_labour_regulatory_signal(findings):
     return False
 
 def recalibrate_dimension_score(raw_score, components, findings, targeted_sources, regulatory_signal=False, dimension='green'):
-    raw=int(raw_score or 0)
+    """Conservative dimension score used for v40.
+    A high score should require more than broad wording or sector exposure. It normally
+    requires sensitive wording, a material evidence gap and either a direct regulatory
+    signal or retained external contradiction.
+    """
     comps=components or {}
     evidence_gap=int(comps.get('substantiation_risk',0) or 0)
     claim_wording=int(comps.get('claim_wording_risk',0) or 0)
+    sector_score=int(comps.get('sector_baseline_risk',0) or 0)
     ext_count=len(targeted_sources or [])
-    # Only retained external stakeholder sources count for external-context scoring.
-    comps['external_context_risk']=min(100, 25 + 15*ext_count) if ext_count else 0
-    base=round(claim_wording*0.30 + evidence_gap*0.30 + comps['external_context_risk']*0.25 + int(comps.get('sector_baseline_risk',0) or 0)*0.15)
+    # Only retained, external stakeholder sources count for external-context scoring.
+    comps['external_context_risk']=min(100, 20 + 15*ext_count) if ext_count else 0
+    base=round(claim_wording*0.30 + evidence_gap*0.30 + comps['external_context_risk']*0.25 + sector_score*0.15)
     no_major=findings and findings[0].get('type','').lower().startswith('no major')
+    high_claims=len([f for f in (findings or []) if f.get('risk')=='High'])
     if no_major:
-        base=min(base,24 if not ext_count else 34)
-    if not regulatory_signal and ext_count==0:
-        base=min(base,62)
-    if regulatory_signal and evidence_gap>=55:
-        base=max(base,55)
-    if base>=75 and not (regulatory_signal and evidence_gap>=65 and (ext_count>=1 or claim_wording>=80)):
-        base=68
-    if base>=85 and not (regulatory_signal and evidence_gap>=75 and ext_count>=2):
-        base=74
+        base=min(base,22 if not ext_count else 32)
+    if high_claims==0:
+        base=min(base,48)
+    if evidence_gap < 45:
+        base=min(base,48)
+    if ext_count==0 and not regulatory_signal:
+        base=min(base,52)
+    elif ext_count==0:
+        base=min(base,56)
+    # Regulatory language raises the floor only where the evidence gap is material.
+    if regulatory_signal and evidence_gap>=60 and claim_wording>=60:
+        base=max(base,52)
+    # High risk is reserved for strong, substantiation-heavy, externally relevant cases.
+    if base>=70 and not (regulatory_signal and evidence_gap>=70 and claim_wording>=70 and ext_count>=1):
+        base=64
+    if base>=80 and not (regulatory_signal and evidence_gap>=75 and claim_wording>=75 and ext_count>=2):
+        base=72
     return max(0,min(100,base)), comps
 
 def combine_green_social(green_score, social_score, audience):
@@ -1484,7 +1498,7 @@ def fetch_document_text(url):
     p=urlparse(url)
     if p.scheme not in ('http','https') or not p.hostname or is_private(p.hostname):
         return ''
-    req=Request(url,headers={'User-Agent':'Mozilla/5.0 GreenSocialClaimsAssessment/39.0','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
+    req=Request(url,headers={'User-Agent':'Mozilla/5.0 GreenSocialClaimsAssessment/40.0','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
     with urlopen(req,timeout=10,context=ssl.create_default_context()) as r:
         ctype=(r.headers.get('content-type','') or '').lower()
         data=r.read(2500000)
@@ -1524,12 +1538,13 @@ def analyse_uploaded_document(filename, text):
     documents_checked=[{'name':filename or 'uploaded document','url':source,'document_type':'Uploaded internal document','audience_assessment':audience.get('audience','Internal document'),'audience_group':audience.get('group','internal'),'empco_relevance':audience.get('empco_relevance','Indirect'),'interpretation':'User-uploaded internal company document scanned for claim wording and substantiation gaps.'}]
     social_fs=detect_claims(text)
     green_fs=detect_green_claims(text)
-    social_ext=external(comp['company'], social_fs)
-    green_ext=external_green(comp['company'], green_fs)
-    social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5, [], is_negative_external_source)
-    green_targeted=targeted_negative_sources(green_ext.get('results',[]), comp.get('company',''), 5, [], is_green_negative_source)
-    exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
-    sec=infer_sector(comp,text+'\n'+exttext)
+    # Separate internal-document scan: no website content and no external public-source search.
+    social_ext={'enabled':False,'results':[],'compact_sources':[],'targeted_negative_sources':[],'summary':'External public-source search is not performed for internal-document scans.'}
+    green_ext={'enabled':False,'results':[],'compact_sources':[],'targeted_negative_sources':[],'summary':'External public-source search is not performed for internal-document scans.'}
+    social_targeted=[]
+    green_targeted=[]
+    exttext=''
+    sec=infer_sector(comp,text)
     ctx=infer_context(comp,text,social_ext)
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text)
     social_reg=has_forced_labour_regulatory_signal(social_fs)
@@ -1545,10 +1560,10 @@ def analyse_uploaded_document(filename, text):
         c.setdefault('source_url', source); c.setdefault('source_label', filename or 'Uploaded document'); c.setdefault('audience_lens', audience.get('audience','Internal document')); c.setdefault('audience_group', audience.get('group','internal'))
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
-    methodology='Green & Social Claims Risk Assessment. Uploaded internal documents are scanned for claim wording and evidence gaps, and treated primarily as internal evidence/governance sources unless they are clearly client-facing materials. Direct EmpCo and Forced Labour Regulation risk signals carry more weight than broader OECD, UNGC or UNGP expectations.'
+    methodology='Green & Social Claims Risk Assessment. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Direct EmpCo and Forced Labour Regulation risk signals carry more weight than broader OECD, UNGC or UNGP expectations.'
     summary=f"{comp['company']} receives a global green & social claims risk score of {overall}/100 for the uploaded internal document. Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion})."
     return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Green and social external-source layers are reported separately.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':strict_external_context_risk(social_ext, comp.get('company','')),'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It is the conservative average of the green and social score and does not exceed the highest dimension score.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':build_confidence([source],social_ext,social_fs),'disclaimer':'Indicative first-pass green & social claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a claims register distinguishing green and social claims.','Attach objective evidence, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a conservative average of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass green & social claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a claims register distinguishing green and social claims.','Attach objective evidence, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def analyse_url_v27(raw):
     original_url=norm_url(raw); fallback_note=''; related_notes=[]
@@ -1580,8 +1595,9 @@ def analyse_url_v27(raw):
     channel_analysis=build_channel_analysis(documents_checked)
     social_fs=detect_claims(txt)
     green_fs=detect_green_claims(txt)
-    social_ext=external(comp['company'], social_fs)
-    green_ext=external_green(comp['company'], green_fs)
+    # Separate internal-document scan: no website content and no external public-source search.
+    social_ext={'enabled':False,'results':[],'compact_sources':[],'targeted_negative_sources':[],'summary':'External public-source search is not performed for internal-document scans.'}
+    green_ext={'enabled':False,'results':[],'compact_sources':[],'targeted_negative_sources':[],'summary':'External public-source search is not performed for internal-document scans.'}
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
     sec=infer_sector(comp,txt+'\n'+exttext)
     ctx=infer_context(comp,txt,social_ext)
@@ -1671,5 +1687,5 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: self._json({"error":str(e)},500)
 
 def main():
-    print("Green & Social Claims Risk Assessment v39"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print("Green & Social Claims Risk Assessment v40"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()

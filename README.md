@@ -31,3 +31,12 @@ Commit and push to the connected branch. Render will redeploy automatically.
 ## Notes
 
 The scan is an indicative first-pass assessment. It is not legal advice and does not establish a breach of EmpCo, the Forced Labour Regulation or any other law.
+
+
+## v40 refinements
+
+- Website scans and uploaded internal-document scans are separate. Results are not combined.
+- Internal document scans focus only on the uploaded file and do not run external public-source search.
+- The user interface has been simplified with smaller professional buttons and consistent typography.
+- The scoring logic is more conservative: sector exposure and broad wording cannot by themselves create a high-risk result.
+- Red flags remain split between green-claim and social-claim red flags.
