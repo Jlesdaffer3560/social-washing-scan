@@ -1,334 +1,159 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Green & Social Claims Risk Assessment</title>
-<style>
-:root{--bg:#f5f7fb;--card:#fff;--ink:#0f172a;--muted:#64748b;--border:#dbe3ef;--primary:#4338ca;--primary2:#2563eb;--soft:#eef2ff;--ok:#047857;--warn:#b45309;--bad:#b91c1c;--header1:#101827;--header2:#28495a}*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}header{background:linear-gradient(110deg,var(--header1),var(--header2));color:#fff;padding:30px 0}.top{max-width:1320px;margin:auto;display:grid;grid-template-columns:1fr auto;gap:20px;padding:0 22px;align-items:end}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-weight:800;font-size:13px;color:#a7f3d0}h1{font-size:32px;line-height:1.05;margin:10px 0 12px}h2{margin:0 0 12px;font-size:20px}h3{margin:0 0 8px;font-size:16px}p{line-height:1.5}.small{font-size:13px}.muted{color:var(--muted)}main{max-width:1280px;margin:28px auto;padding:0 22px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:22px;margin:18px 0;box-shadow:0 12px 32px rgba(15,23,42,.06)}.introgrid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.soft{background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:14px;margin:10px 0}.notice{border-left:5px solid var(--primary);background:#eef2ff}.warnbox{border-left:5px solid var(--warn);background:#fff7ed}.okbox{border-left:5px solid var(--ok);background:#ecfdf5}.badbox{border-left:5px solid var(--bad);background:#fef2f2}.inputrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}input{flex:1;min-width:260px;border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:14px}button{border:0;border-radius:10px;background:linear-gradient(90deg,var(--primary),var(--primary2));color:#fff;font-weight:750;padding:10px 15px;cursor:pointer;font-size:13px;letter-spacing:.01em}button.secondary{background:#e8edf5;color:#111827}button:disabled{opacity:.55;cursor:not-allowed}.statusbox{display:none;margin-top:16px;padding:14px;border-radius:14px;border:1px solid var(--border);background:#f8fafc}.statusbox.visible{display:block}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #cbd5e1;border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}.score{font-size:58px;font-weight:900}.pill{display:inline-block;border:1px solid var(--border);background:#f8fafc;border-radius:999px;padding:6px 10px;margin:4px;font-size:12px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;background:#e5e7eb}.Veryhigh,.VeryHigh{background:#fee2e2;color:#991b1b}.High{background:#ffedd5;color:#9a3412}.Medium{background:#fef3c7;color:#92400e}.Low{background:#dcfce7;color:#166534}.kpi{background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:14px}table{width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden}th,td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}th{background:#f1f5f9}textarea{width:100%;min-height:360px;border:1px solid var(--border);border-radius:14px;padding:14px;font-family:ui-monospace,Consolas,monospace;font-size:12px}.claim{border-left:4px solid #0f766e;padding-left:12px}.hidden{display:none}.steps{margin:0;padding-left:20px}.steps li{margin:7px 0}.mini{font-size:12px;color:#64748b}.checklist{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.checkitem{background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:10px;font-size:13px}.scan-card{margin-top:-18px;border:2px solid #c7d2fe;box-shadow:0 18px 45px rgba(79,70,229,.14)}.scan-card h2{font-size:22px}.disclaimer-card{margin-top:28px;background:#f8fafc;border-style:dashed}.redflag-grid{display:grid;grid-template-columns:1fr;gap:10px}.redflag-card{display:flex;gap:12px;align-items:flex-start;border:1px solid #fecaca;background:#fff7f7;border-left:6px solid var(--bad);border-radius:14px;padding:12px}.redflag-icon{width:28px;height:28px;border-radius:999px;background:#fee2e2;color:#991b1b;display:inline-flex;align-items:center;justify-content:center;font-weight:900;flex:0 0 28px}.redflag-card p{margin:0}.redflag-card.regulatory{border-left-color:#7c2d12;background:#fff7ed}.redflag-card.regulatory .redflag-icon{background:#ffedd5;color:#9a3412}.redflag-columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.upload-panel{margin-top:12px;border-top:1px solid var(--border);padding-top:12px}.fileinput{border:1px dashed var(--border);border-radius:13px;padding:12px;background:#f8fafc;display:flex;align-items:center;gap:12px;flex-wrap:wrap}.fileinput input{min-width:260px;padding:10px;background:white}.scan-actions{display:flex;gap:10px;flex-wrap:wrap}@media(max-width:900px){.redflag-columns{grid-template-columns:1fr}}.mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.mode-box{background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:14px}.mode-box h3{font-size:15px}.mode-box p{margin-top:4px}.compact-note{font-size:12px;color:#64748b;margin-top:8px}.button-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.button-row button{white-space:nowrap}.source-separator{display:flex;align-items:center;gap:10px;margin:12px 0;color:#64748b;font-size:12px}.source-separator:before,.source-separator:after{content:"";height:1px;background:#dbe3ef;flex:1}@media(max-width:900px){.mode-grid{grid-template-columns:1fr}}
-.report-page{background:#fff;color:#0f172a;width:210mm;min-height:297mm;margin:0 auto 18px;padding:14mm 15mm;border:1px solid #e2e8f0;box-shadow:0 14px 34px rgba(15,23,42,.08);position:relative;font-size:10.2pt;line-height:1.35}.report-head{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;border-bottom:3px solid #1e3a8a;padding-bottom:8px;margin-bottom:10px}.report-eyebrow{text-transform:uppercase;letter-spacing:.13em;font-size:8pt;font-weight:900;color:#0f766e}.report-title{font-size:20pt;font-weight:900;margin:2px 0 3px}.report-sub{color:#475569;font-size:9.5pt}.report-badge{border-radius:999px;padding:5px 9px;font-weight:800;font-size:8.5pt;background:#eef2ff;color:#3730a3;display:inline-block}.report-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}.report-kpi{border:1px solid #dbe3ef;border-radius:12px;padding:9px;background:#f8fafc}.report-kpi strong{display:block;font-size:20pt}.report-kpi span{font-size:8.5pt;color:#64748b}.report-section{margin:9px 0}.report-section h3{font-size:12pt;margin:0 0 5px;color:#172554}.report-box{border:1px solid #dbe3ef;border-radius:10px;padding:8px;background:#f8fafc}.report-table{width:100%;border-collapse:collapse;font-size:8.7pt}.report-table th{background:#e2e8f0;color:#0f172a;font-weight:800}.report-table th,.report-table td{border:1px solid #cbd5e1;padding:5px 6px;vertical-align:top}.report-two{display:grid;grid-template-columns:1fr 1fr;gap:9px}.report-list{margin:0;padding-left:16px}.report-list li{margin:3px 0}.report-footer{position:absolute;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #e2e8f0;padding-top:4px;font-size:7.8pt;color:#64748b;display:flex;justify-content:space-between;gap:12px}.report-risk{display:inline-block;border-radius:999px;padding:2px 7px;font-weight:800;font-size:8pt}.report-risk.Low{background:#dcfce7;color:#166534}.report-risk.Medium{background:#fef3c7;color:#92400e}.report-risk.High{background:#ffedd5;color:#9a3412}.report-risk.Veryhigh,.report-risk.VeryHigh{background:#fee2e2;color:#991b1b}.report-callout{border-left:4px solid #2563eb;background:#eff6ff;padding:8px 9px;border-radius:8px}.report-governance{display:grid;grid-template-columns:1fr 1fr;gap:8px}.report-status{display:inline-block;border-radius:999px;padding:2px 7px;font-size:8pt;font-weight:900;background:#e0f2fe;color:#075985}.report-small{font-size:8.5pt;color:#475569}.report-watermark{position:absolute;right:15mm;bottom:16mm;font-size:26pt;color:#f1f5f9;font-weight:900;z-index:0}.report-content{position:relative;z-index:1}
-@media(max-width:900px){.grid,.grid4,.top,.introgrid{grid-template-columns:1fr}.score{font-size:42px}.inputrow{display:block}input,button{width:100%;margin:6px 0}}@media print{@page{size:A4;margin:0}header,.noprint,#results{display:none!important}body{background:white}main{max-width:none;margin:0;padding:0}.card{box-shadow:none}#printableReport{display:block!important}.report-page{width:210mm;height:297mm;min-height:297mm;margin:0;padding:12mm 14mm;border:0;box-shadow:none;page-break-after:always;overflow:hidden}.report-page:last-child{page-break-after:auto}.report-kpi strong{font-size:18pt}.report-table{font-size:8.2pt}.report-section{margin:7px 0}.report-title{font-size:18pt}}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Green & Social Claims Risk Scan</title>
+  <style>
+    :root{
+      --bg:#f6f8fb; --card:#ffffff; --ink:#132033; --muted:#5e6b7d; --line:#dfe5ee;
+      --soft:#eef3f8; --accent:#265f5c; --accent2:#173f5f; --danger:#a43c3c; --warn:#9b6a17; --ok:#276749;
+      --shadow:0 8px 24px rgba(20,35,55,.08); --radius:14px;
+    }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45;font-size:15px}
+    .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{background:linear-gradient(135deg,#163d3b,#1d5b68);color:#fff;border-radius:20px;padding:28px 30px;box-shadow:var(--shadow)}
+    .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.12em;opacity:.9;font-weight:700}.hero h1{margin:8px 0 10px;font-size:34px;line-height:1.15}.hero p{max-width:900px;margin:0;color:#e7f0f3;font-size:16px}.version{margin-top:16px;font-size:12px;color:#d7e6eb}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+    h2{font-size:21px;margin:0 0 12px} h3{font-size:16px;margin:0 0 10px}.muted{color:var(--muted)} .small{font-size:12.5px;color:var(--muted)}
+    label{font-weight:700;display:block;margin-bottom:8px} input[type=url],input[type=file]{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;font:inherit}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px}.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}.btn:disabled{opacity:.55;cursor:not-allowed}.notice{margin-top:14px;padding:11px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}.warning{background:#fff8ea;border-color:#ead8aa;color:#68470f}.error{background:#fff0f0;border-color:#e2baba;color:#842424}.hidden{display:none!important}
+    .purpose{margin-top:20px}.purpose ol{margin:10px 0 0;padding-left:20px}.purpose li{margin:5px 0}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef3f8;border:1px solid var(--line);font-size:12px;margin:2px 4px 2px 0;color:#334}
+    .scores{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.score{border:1px solid var(--line);border-radius:14px;padding:16px;background:#fbfcfe}.score .num{font-size:34px;font-weight:800}.score .risk{font-weight:800;margin-top:4px}.risk.high,.risk.very-high{color:var(--danger)}.risk.medium{color:var(--warn)}.risk.low{color:var(--ok)}
+    table{width:100%;border-collapse:collapse;margin-top:8px} th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left} th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc} td{font-size:13.5px} .quote{color:#243449}.section{margin-top:20px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.list{margin:8px 0 0;padding-left:18px}.list li{margin:6px 0}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.reportbox{white-space:pre-wrap;background:#0f172a;color:#e5edf7;border-radius:12px;padding:16px;max-height:420px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px}.source a{color:#174e78}.footer{margin-top:26px;color:var(--muted);font-size:12.5px}.empty{color:var(--muted);font-style:italic}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid #c7d4df;border-top-color:var(--accent);animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}@keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:850px){.grid,.cols,.scores{grid-template-columns:1fr}.hero h1{font-size:28px}}
+    @media print{body{background:#fff}.wrap{max-width:none;padding:0}.hero,.card{box-shadow:none}.scan-area,.toolbar,.footer{display:none}.card{break-inside:avoid}.reportbox{max-height:none;color:#000;background:#fff;border:1px solid #ccc}}
+  </style>
 </head>
 <body>
-<header>
-  <div class="top">
-    <div>
-      <div class="eyebrow">Green & social claims scan</div>
-      <h1>Green & social claims scan</h1>
-      <p>This scan helps assess whether public green and social claims are specific, substantiated, audience-appropriate and consistent with relevant public information. It is designed to support claim governance, compliance review and better external communication.</p>
-    </div>
-  </div>
-</header>
-<main>
-<section class="card noprint scan-card">
-  <h2>Scan website or internal document</h2>
-  <p class="muted">Choose one source type. A website scan and an internal-document scan are separate assessments: results are not combined.</p>
-  <div class="mode-grid">
-    <div class="mode-box">
-      <h3>Website scan</h3>
-      <p class="muted small">Enter a company website, product page, brochure page or sustainability/social-responsibility page. The scan reviews the entered URL and, where possible, a small number of related company domains.</p>
-      <div class="button-row">
-        <input id="urlInput" placeholder="https://www.company.com" autocomplete="url" />
-        <button id="scanBtn" type="button">Run website scan</button>
-      </div>
-    </div>
-    <div class="mode-box">
-      <h3>Internal company document scan</h3>
-      <p class="muted small">Upload one non-public document for a separate document-only scan. The result will focus only on the uploaded file and will not use the website input.</p>
-      <div class="fileinput">
-        <input id="docFile" type="file" accept=".txt,.md,.html,.htm,.csv,.docx,.pdf" />
-        <button id="uploadBtn" type="button">Upload and scan document</button>
-      </div>
-      <div class="compact-note">Supported: TXT, HTML, MD, CSV, DOCX. PDF extraction is best-effort.</div>
-    </div>
-  </div>
-  <div id="statusBox" class="statusbox"><span id="statusIcon"></span><span id="status">Ready.</span><div id="statusHint" class="mini"></div></div>
-</section>
+<div class="wrap">
+  <section class="hero">
+    <div class="kicker">Durably pre-publication review</div>
+    <h1>Green & Social Claims Risk Scan</h1>
+    <p>Assess whether public green and social claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan supports claim governance, compliance review and better external communication.</p>
+    <div id="version" class="version">Checking backend version…</div>
+  </section>
 
-<section class="introgrid noprint">
-  <div class="card notice">
+  <section class="card purpose">
     <h2>Purpose of this scan</h2>
-    <p>This tool reviews company websites or uploaded internal documents for <strong>greenwashing and social-washing risk signals</strong>. It is not a broad ESG rating. It helps identify claims that may be too broad, insufficiently evidenced, unsuitable for the intended audience, or potentially contradicted by public-source context.</p>
-    <div class="checklist">
-      <div class="checkitem"><strong>1. Claim wording</strong><br>Are there broad, generic or absolute green/social claims?</div>
-      <div class="checkitem"><strong>2. Evidence gap</strong><br>Are scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, product traceability or forced-labour due-diligence evidence missing?</div>
-      <div class="checkitem"><strong>3. External context</strong><br>Are there relevant public signals that may contradict the claim?</div>
-      <div class="checkitem"><strong>4. Audience, sector & regulation</strong><br>Is the material consumer-facing, or mainly investor/internal reporting? Are product/supplier claims exposed to forced-labour regulation expectations?</div>
+    <p class="muted">This is a claims-risk scan, not a broad ESG rating. It identifies wording that may be too broad, insufficiently evidenced, consumer-facing under EmpCo, or potentially contradicted by relevant external context.</p>
+    <ol>
+      <li><strong>Claim wording:</strong> broad, generic, absolute, future-oriented, comparative or label/icon-based claims.</li>
+      <li><strong>Evidence gap:</strong> missing scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, traceability or due-diligence evidence.</li>
+      <li><strong>External context:</strong> relevant public signals that may contradict or qualify the claim.</li>
+      <li><strong>Regulatory lens:</strong> EmpCo / Directive (EU) 2024/825 for consumer-facing green claims and Regulation (EU) 2024/3015 for forced-labour product or supply-chain claims.</li>
+    </ol>
+  </section>
+
+  <section class="scan-area">
+    <div class="grid">
+      <div class="card">
+        <h2>Website scan</h2>
+        <p class="muted">Enter a company website, product page, campaign page, packaging/brochure page or sustainability page. The scan reviews the entered URL and, where possible, a small number of related company pages.</p>
+        <label for="url">Website URL</label>
+        <input id="url" type="url" placeholder="https://www.company.com/sustainability" />
+        <div class="toolbar"><button id="runUrl" class="btn">Run website scan</button></div>
+      </div>
+      <div class="card">
+        <h2>Internal company document scan</h2>
+        <p class="muted">Upload one non-public document for a separate document-only scan. Website and document results are not combined.</p>
+        <label for="file">Internal document</label>
+        <input id="file" type="file" accept=".txt,.html,.htm,.md,.csv,.docx,.pdf" />
+        <p class="small">Supported: TXT, HTML, MD, CSV, DOCX. PDF extraction is best-effort.</p>
+        <div class="toolbar"><button id="runDoc" class="btn">Upload and scan document</button></div>
+      </div>
     </div>
-  </div>
-  <div class="card warnbox">
-    <h2>How to interpret the result</h2>
-    <p>Direct risk signals under EmpCo / Directive (EU) 2024/825 and the EU Forced Labour Regulation / Regulation (EU) 2024/3015 carry more weight than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. A high score should normally reflect a sensitive claim, a substantiation gap and/or relevant external contradiction. Consumer-facing green claims receive stricter EmpCo relevance than investor or sustainability-report language used mainly as evidence.</p>
-    <p class="small muted">Some corporate websites block automated crawlers. If that happens, the scan will show an error message. Try the national website, the sustainability page, or a specific green, social, supplier, product, sustainability or human-rights page instead of the homepage.</p>
-  </div>
-</section>
+    <div id="status" class="notice">Ready.</div>
+  </section>
 
+  <section id="results" class="hidden">
+    <div class="card section">
+      <h2>Executive summary</h2>
+      <p id="summary" class="muted"></p>
+      <div id="scoreCards" class="scores"></div>
+      <div class="toolbar">
+        <button class="btn secondary" onclick="copyReport()">Copy text report</button>
+        <button class="btn secondary" onclick="downloadHtmlReport()">Download HTML report</button>
+        <button class="btn secondary" onclick="window.print()">Create PDF report</button>
+        <button class="btn secondary" onclick="downloadClaimCsv()">Download claim register CSV</button>
+      </div>
+    </div>
 
+    <div class="card section">
+      <h2>Claim governance conclusion</h2>
+      <p id="conclusion" class="muted"></p>
+    </div>
 
+    <div class="card section">
+      <h2>Score composition and risk drivers</h2>
+      <p class="muted">This section explains why the green and social scores are at their current level, based on detected claim wording, evidence gaps, retained external signals and sector exposure.</p>
+      <div id="drivers" class="cols"></div>
+    </div>
 
-<section id="results" class="hidden">
-<div class="card"><div class="eyebrow">Executive summary</div><h2 id="companyTitle"></h2><div class="grid4" id="threeScores"></div><p><strong id="conclusion"></strong></p><p id="summary"></p><div id="meta"></div></div>
-<div class="card"><h2>Claim governance conclusion</h2><div id="governanceBox" class="soft"></div></div>
-<div class="card"><h2>Score composition and risk drivers</h2><p class="small muted">This section explains why the green and social scores are at their current level, based on the detected claim wording, evidence gaps, retained external signals and sector exposure.</p><div id="scoreRiskCombined"></div></div>
-<div class="card"><h2>Key green and social claim signals</h2><p class="small muted">Green and social claims are shown separately because they are assessed through different regulatory and standards lenses.</p><div id="claimInventory"></div></div>
-<div class="card"><h2>External public-source signals</h2><p class="small muted">Only external sources are displayed here. Company-owned websites, reports, policies and supplier documents are not shown as external public-source signals.</p><div id="externalSources"></div></div>
-<div class="grid"><div class="card"><h2>Red Flags</h2><ul id="redFlags"></ul></div><div class="card"><h2>Recommended actions</h2><div id="actions"></div></div></div>
-<div class="card"><h2>Methodology and limitations</h2><p id="methodology"></p><p id="confidence"></p></div>
-<div class="card noprint"><h2>Text report</h2><button type="button" onclick="copyReport()">Copy report</button><button type="button" class="secondary" onclick="downloadHtml()">Download HTML report</button><button type="button" class="secondary" onclick="printReport()">Create 2-page PDF report</button><button type="button" class="secondary" onclick="downloadClaimRegisterCsv()">Download claim register CSV</button><textarea id="reportPreview" readonly></textarea></div>
-</section>
-<section id="printableReport" class="hidden"></section>
-<section class="card disclaimer-card noprint">
-  <h2>Disclaimer</h2>
-  <p>This scan is an indicative first-pass assessment. It is not legal advice, does not establish a violation of EmpCo, the EU Forced Labour Regulation or any other legal framework, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.</p>
-</section>
-</main>
+    <div class="card section">
+      <h2>Key green and social claim signals</h2>
+      <p class="muted">Green and social claims are shown separately because they are assessed through different regulatory and standards lenses.</p>
+      <div id="claimSignals"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Pre-publication review</h2>
+      <div id="prepub"></div>
+    </div>
+
+    <div class="card section">
+      <h2>External public-source signals</h2>
+      <p class="muted">Only external sources are displayed here. Company-owned websites, reports, policies and supplier documents are evidence sources, not external public-source signals.</p>
+      <div id="external"></div>
+    </div>
+
+    <div class="cols section">
+      <div class="card"><h2>Red flags</h2><ul id="redflags" class="list"></ul></div>
+      <div class="card"><h2>Recommended actions</h2><ul id="actions" class="list"></ul></div>
+    </div>
+
+    <div class="card section">
+      <h2>Methodology and limitations</h2>
+      <p id="methodology" class="muted"></p>
+      <p id="disclaimer" class="small"></p>
+    </div>
+
+    <div class="card section">
+      <h2>Text report</h2>
+      <div id="textReport" class="reportbox"></div>
+    </div>
+  </section>
+
+  <div class="footer">Durably Green & Social Claims Risk Scan — indicative first-pass assessment only. Results require legal, compliance and subject-matter review before external use.</div>
+</div>
 <script>
-let lastResult=null;
-const scanBtn=document.getElementById('scanBtn');
-const uploadBtn=document.getElementById('uploadBtn');
-const docFile=document.getElementById('docFile');
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function riskClass(x){return String(x||'Low').replace(/\s+/g,'')}
-function setStatus(t,type='info',hint=''){
-  const box=document.getElementById('statusBox'); const el=document.getElementById('status'); const icon=document.getElementById('statusIcon'); const h=document.getElementById('statusHint');
-  box.className='statusbox visible '+(type==='error'?'badbox':type==='ok'?'okbox':type==='warn'?'warnbox':'');
-  icon.innerHTML=type==='loading'?'<span class="spinner"></span>':'';
-  el.textContent=t; h.textContent=hint || '';
-}
-function setBusy(b,mode=''){scanBtn.disabled=b; uploadBtn.disabled=b; scanBtn.textContent=(b&&mode==='website')?'Scanning...':'Run website scan'; uploadBtn.textContent=(b&&mode==='document')?'Scanning...':'Upload and scan document'}
-async function checkBackend(){
-  setStatus('Checking backend...','loading');
-  try{const r=await fetch('/api/health',{cache:'no-store'});const d=await r.json();if(!r.ok)throw new Error(d.error||'Backend check failed');setStatus(`Backend OK. External search - Tavily: ${d.tavily_configured}. Google: ${d.google_search_configured}.`,'ok','If Tavily and Google are false, the scan still reviews the website but has no external public-source search layer.')}catch(e){setStatus('Backend not reachable: '+e.message,'error','Refresh the page or check whether the Render service is live.')}
-}
-async function scanUrl(){
-  const url=document.getElementById('urlInput').value.trim();
-  if(!url){setStatus('Enter a website URL first.','error');return}
-  setBusy(true,'website'); setStatus('Scanning website content and relevant public-source context...','loading','This is a website-only scan. Uploaded documents are not included. This can take 20-75 seconds on Render.');
-  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),90000);
-  try{
-    const r=await fetch('/api/scan/url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url}),signal:controller.signal});
-    clearTimeout(timer);
-    let d; try{d=await r.json()}catch(_){throw new Error('The backend returned a non-JSON response. Check the Render logs for a crash or timeout.')}
-    if(!r.ok||d.error)throw new Error(d.error||'Scan failed');
-    lastResult=d; render(d); setStatus('Scan completed.','ok','Scroll down to review the score, risk drivers, claims and recommended actions.');
-  }catch(e){
-    clearTimeout(timer);
-    const msg=e.name==='AbortError'?'The scan took too long and was stopped by the browser. Try a specific sustainability or supplier-responsibility page instead of the homepage.':e.message;
-    setStatus(msg,'error','Common causes: the company blocks crawlers, the page is not HTML, Render is still waking up, or external search credentials are timing out.');
-  }finally{setBusy(false)}
-}
-function render(d){
-  try{
-  document.getElementById('results').classList.remove('hidden');
-  document.getElementById('companyTitle').textContent=(d.company?.company||'Company')+' — Green & Social Claims Risk Assessment';
-  document.getElementById('threeScores').innerHTML=`
-    <div class="kpi"><strong>${esc(d.global_score??d.overall_score??0)}/100</strong><br><span class="small muted">Global green + social score</span></div>
-    <div class="kpi"><strong>${esc(d.green_score??0)}/100</strong><br><span class="small muted">Green risk score</span></div>
-    <div class="kpi"><strong>${esc(d.social_score??0)}/100</strong><br><span class="small muted">Social risk score</span></div>
-    <div class="kpi"><strong>${esc(d.document_audience?.audience||'Unknown')}</strong><br><span class="small muted">Assessment source</span></div>`;
-  document.getElementById('conclusion').textContent=d.screening_conclusion||d.overall_risk;
-  document.getElementById('summary').textContent=d.assessment_summary_specific||'';
-  document.getElementById('meta').innerHTML=[d.company?.sector,'Sector: '+(d.sector?.level||''),'Pages: '+(d.report?.pages_reviewed||[]).length,d.fallback_note,(d.related_source_notes||[]).join('; ')].filter(Boolean).map(x=>`<span class="pill">${esc(x)}</span>`).join('');
-  renderGovernance(d);
-  renderScoreRiskCombined(d);
-  renderClaims(d.merged_claims||d.claim_inventory||[]);
-  renderExternal(d.external_research||{});
-  renderRedFlags(d);
-  renderActions(d.company_action_plan||[]);
-  document.getElementById('methodology').innerHTML=`${esc(d.methodology||'Indicative first-pass assessment based on claim wording, substantiation gap, external public-source context and sector sensitivity. Green claims are assessed through an EmpCo lens; social claims include a Forced Labour Regulation lens where relevant.')}<br><br><a href="/methodology.pdf" target="_blank"><strong>Download the detailed methodology PDF</strong></a>`;
-  document.getElementById('confidence').textContent=`Confidence: ${d.confidence?.level||'Unknown'} — ${((d.confidence?.reasons||[]).join('; ')||'No detailed confidence notes returned.')}`;
-  document.getElementById('reportPreview').value=buildTextReport(d);
-  document.getElementById('printableReport').innerHTML=buildHtmlReport(d);
-  setTimeout(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}),100)
-  }catch(e){console.error(e); setStatus('The scan returned results, but the page could not render one section: '+e.message,'error','The result is still available in the text/PDF output when possible. This should be fixed in v32.')}
-}
-
-
-function safeHref(url){
-  url=String(url||'').trim();
-  if(!url) return '#';
-  if(url.startsWith('http://')||url.startsWith('https://')||url.startsWith('/')) return url.replace(/"/g,'%22');
-  return '#';
-}
-function linkHtml(url,label){
-  if(!url) return '<span class="muted">No link available</span>';
-  return `<a href="${safeHref(url)}" target="_blank" rel="noopener">${esc(label||url)}</a>`;
-}
-function renderDocumentsAudience(d){
-  const docs=d.documents_checked||((d.report?.pages_reviewed||[]).map(u=>({name:u,url:u,document_type:'Website page',audience_assessment:d.document_audience?.audience||'Unknown',audience_group:'mixed'})));
-  const aud=d.document_audience||{};
-  const ch=d.channel_analysis||{};
-  function docList(groupKey, fallback){
-    const fromChannel=(ch[groupKey]?.documents||[]).map(x=>({...x,audience_group:groupKey}));
-    const arr=fromChannel.length?fromChannel:docs.filter(x=>(x.audience_group||'mixed')===fallback);
-    return arr.slice(0,6).map(x=>`<li>${linkHtml(x.url,x.name||x.url)} <span class="small muted">${esc(x.type||x.document_type||'')}</span></li>`).join('')||'<li class="muted">No document in this channel detected.</li>';
-  }
-  const rows=docs.slice(0,12).map((r,i)=>`<tr><td>${i+1}</td><td>${linkHtml(r.url,r.name||r.url)}</td><td>${esc(r.document_type||'Website page')}</td><td><strong>${esc(r.audience_assessment||aud.audience||'Unknown')}</strong><br><span class="small muted">${esc(r.interpretation||'Client-facing pages are assessed as claim communication; investor/internal documents are used mainly as evidence, governance or consistency sources.')}</span></td></tr>`).join('');
-  const docTable=docs.length?`<table><thead><tr><th>#</th><th>Website / document checked</th><th>Type</th><th>How this source is treated</th></tr></thead><tbody>${rows}</tbody></table>`:'<p class="muted">No specific page list was returned by the crawler.</p>';
-  const boxes=`<div class="grid"><div class="soft okbox"><h3>Client-facing websites / commercial documents</h3><p class="small">These are pages or documents likely to be seen by customers or consumers, such as homepages, product pages, folders, brochures, campaign pages or marketing pages. Green claims in this channel receive the strongest EmpCo relevance.</p><ul>${docList('client_facing','client_facing')}</ul></div><div class="soft notice"><h3>Investor or internal documents</h3><p class="small">Annual reports, sustainability reports, ESG reports, policies and supplier codes are mainly used as substantiation, governance and consistency evidence. They can still create risk when claims are absolute, prominent or reused in consumer-facing communication.</p><ul>${docList('investor_stakeholder','investor')}${docList('policy_internal','internal')}</ul></div></div>`;
-  const notes=(d.related_source_notes||[]).length?`<p class="small muted"><strong>Related company domains also checked:</strong> ${esc((d.related_source_notes||[]).join('; '))}</p>`:'';
-  document.getElementById('audienceBox').innerHTML=`<p><strong>Overall source/channel lens:</strong> ${esc(aud.audience||'Unknown')} — EmpCo relevance: <strong>${esc(aud.empco_relevance||'Unknown')}</strong></p><p>${esc(aud.note||'')}</p>${notes}${boxes}${docTable}`;
-}
-
-function audienceBadge(c){
-  const lens=c.audience_lens||'Mixed or unclear';
-  const grp=(c.audience_group||'mixed').replace('_',' ');
-  return `<span class="pill">${esc(lens)}</span><span class="pill">${esc(grp)}</span>`;
-}
-function claimDecision(c){
-  const lvl=(c.risk_level||'').toLowerCase();
-  const txt=((c.analysis||'')+' '+((c.evidence_needed||[]).join(' '))+' '+(c.claim_text||'')).toLowerCase();
-  if(lvl==='high' && (txt.includes('forced labour')||txt.includes('forced labor')||txt.includes('absolute')||txt.includes('no evidence')||txt.includes('contradict'))) return 'Escalate legal review';
-  if(lvl==='high') return 'Reword';
-  if(lvl==='medium') return 'Needs substantiation';
-  return 'Acceptable';
-}
-function governanceMaturity(d){
-  const claims=d.merged_claims||d.claim_inventory||[];
-  const high=claims.filter(c=>(c.risk_level||'').toLowerCase()==='high').length;
-  const medium=claims.filter(c=>(c.risk_level||'').toLowerCase()==='medium').length;
-  const hasEvidence=claims.some(c=>(c.evidence_needed||[]).length>0);
-  if(high>=2 || (high>=1 && medium>=2)) return {level:'Basic',note:'Several claims need stronger governance before external reuse. Prioritise claim ownership, evidence files, approval flow and legal/compliance review for high-risk claims.'};
-  if(high>=1 || medium>=2 || hasEvidence) return {level:'Developing',note:'The claim set appears usable for assessment, but should be supported by a formal claim register, substantiation checks and periodic review.'};
-  return {level:'Advanced',note:'No major claim-governance weakness is visible from this first-pass scan. Maintain evidence links, review dates and approval records.'};
-}
-function clientReadyConclusion(d){
-  const g=scoreLabel(d.green_score||0), s=scoreLabel(d.social_score||0), glob=scoreLabel(d.global_score??d.overall_score??0);
-  const gov=governanceMaturity(d).level;
-  return `Overall, the reviewed material shows a ${glob.toLowerCase()} green & social claims risk profile, with ${g.toLowerCase()} green risk and ${s.toLowerCase()} social risk. Claim governance maturity is assessed as ${gov}. Priority should be given to separating client-facing claims from investor/internal reporting, narrowing broad wording, adding claim-specific substantiation and maintaining a claim register before external reuse.`;
-}
-function renderGovernance(d){
-  const box=document.getElementById('governanceBox'); if(!box) return;
-  const g=governanceMaturity(d);
-  const conclusion=clientReadyConclusion(d);
-  box.innerHTML=`<p class="small muted">This section translates the scan into a practical claim-governance view: how mature the current claim controls appear, and what conclusion could be used internally for legal, compliance or communications review.</p><div class="grid"><div class="soft okbox"><h3>Claim governance maturity: ${esc(g.level)}</h3><p>${esc(g.note)}</p></div><div class="soft notice"><h3>Practical conclusion for review</h3><p>${esc(conclusion)}</p></div></div>`;
-}
-function csvEscape(v){v=String(v??''); return '"'+v.replace(/"/g,'""')+'"'}
-function downloadClaimRegisterCsv(){
-  if(!lastResult){setStatus('Run a scan first.','error');return}
-  const rows=lastResult.merged_claims||lastResult.claim_inventory||[];
-  const header=['dimension','claim_type','claim_text','risk_level','decision','evidence_needed','suggested_rewrite'];
-  const lines=[header.join(',')];
-  rows.forEach(r=>lines.push([r.dimension||'',r.washing_type||r.claim_type||'',r.claim_text||'',r.risk_level||'',claimDecision(r),(r.evidence_needed||[]).join('; '),r.suggested_rewrite||''].map(csvEscape).join(',')));
-  const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='claim-register.csv';a.click();URL.revokeObjectURL(url);
-  setStatus('Claim register CSV downloaded.','ok')
-}
-
-function renderScoreRiskCombined(d){
-  const s=d.split_scores||{}; const w=d.why_score||{}; const green=s.green||{}; const social=s.social||{};
-  const sector=d.sector||{}; const details=d.score_driver_details||{};
-  const gd=details.green||{}, sd=details.social||{};
-  const greenDrivers=(gd.key_drivers||[]).map(x=>`<li>${esc(x)}</li>`).join('');
-  const socialDrivers=(sd.key_drivers||[]).map(x=>`<li>${esc(x)}</li>`).join('');
-  const rows=[
-    ['Claim wording','30%',green.claim_wording_risk,social.claim_wording_risk],
-    ['Substantiation gap','30%',green.substantiation_risk,social.substantiation_risk],
-    ['External contradiction','25%',green.external_context_risk,social.external_context_risk],
-    ['Sector exposure','15%',green.sector_baseline_risk,social.sector_baseline_risk]
-  ];
-  const table=`<table><thead><tr><th>Driver</th><th>Weight</th><th>Green driver score</th><th>Social driver score</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1])}</td><td><strong>${esc(r[2]??0)}/100</strong></td><td><strong>${esc(r[3]??0)}/100</strong></td></tr>`).join('')}</tbody></table>`;
-  const why=`<div class="grid"><div class="soft okbox"><h3>Why the green score is ${esc(d.green_score??0)}/100</h3><p>${esc(gd.summary||w.green||'No specific green-score explanation returned.')}</p><ul class="small">${greenDrivers}</ul></div><div class="soft notice"><h3>Why the social score is ${esc(d.social_score??0)}/100</h3><p>${esc(sd.summary||w.social||'No specific social-score explanation returned.')}</p><ul class="small">${socialDrivers}</ul></div></div>`;
-  const sectorBox=`<div class="soft warnbox"><h3>Sector risk / exposure</h3><p><strong>${esc(sector.level||'Medium')} exposure</strong>${d.company?.sector?' — '+esc(d.company.sector):''}</p><p>${esc(sector.risks||'Sector exposure is a baseline sensitivity factor. Some sectors are structurally more exposed because of consumer-facing claims, complex supply chains, high-impact products, emissions, labour conditions or vulnerable stakeholders.')}</p><p class="small muted">Basis: ${esc(sector.basis||'No detailed sector basis returned.')} Sector exposure cannot by itself create a High-risk finding.</p></div>`;
-  document.getElementById('scoreRiskCombined').innerHTML=`${table}${why}${sectorBox}`;
-}
-
-function renderClaims(rows){
-  const el=document.getElementById('claimInventory');
-  if(!rows.length){el.innerHTML='<p class="muted">No priority green or social claim signals were retained. This can happen when the scanned page is a generic homepage, when the company blocks crawler access, or when the page contains limited claim wording. Try a product, sustainability, supplier-responsibility or brochure page for a more meaningful result.</p>';return}
-  const green=rows.filter(r=>(r.dimension||'').toLowerCase()==='green').slice(0,5);
-  const social=rows.filter(r=>(r.dimension||'').toLowerCase()==='social').slice(0,5);
-  function cards(arr,empty){return arr.length?arr.map((r,i)=>`<div class="soft claim"><h3>${i+1}. ${esc(r.washing_type||r.claim_type||'Claim')} <span class="badge ${riskClass(r.risk_level)}">${esc(r.risk_level||'Low')}</span> <span class="badge">${esc(claimDecision(r))}</span></h3><p>${audienceBadge(r)}</p><p><strong>Company wording:</strong> “${esc(r.claim_text||'')}”</p><p><strong>Source:</strong> ${linkHtml(r.source_url||'',r.source_label||r.source_url||'Reviewed document')}</p><p><strong>Analysis:</strong> ${esc(r.analysis||r.risk_reason||'')}</p><p class="small"><strong>Evidence needed:</strong> ${(r.evidence_needed||[]).map(esc).join(', ')||'No additional evidence request generated.'}</p><p><strong>Safer wording:</strong> ${esc(r.suggested_rewrite||'')}</p></div>`).join(''):`<p class="muted">${esc(empty)}</p>`}
-  el.innerHTML=`<div class="grid"><div><h3>Green claim signals</h3><p class="small muted">Environmental claims assessed mainly through EmpCo for client-facing communication.</p>${cards(green,'No priority green-claim signal was retained.')}</div><div><h3>Social claim signals</h3><p class="small muted">Social, labour, human-rights, supplier and forced-labour related claims assessed through the social claims methodology.</p>${cards(social,'No priority social-claim signal was retained.')}</div></div>`;
-}
-function companyFilterTerms(d){
-  const raw=String(d?.company?.company||'').toLowerCase();
-  const bits=raw.split(/[\/|,\-\s&]+/).filter(x=>x.length>=3 && !['group','company','holding','holdings','corporate'].includes(x));
-  if(raw.length>=3) bits.push(raw.replace(/[^a-z0-9]+/g,''));
-  return [...new Set(bits)];
-}
-function rootDomain(url){try{let h=new URL(String(url||'')).hostname.toLowerCase().replace(/^www\./,'');let p=h.split('.');if(p.length>=3 && ['co','com','org','net','gov','ac'].includes(p[p.length-2]) && p[p.length-1].length===2){return p.slice(-3).join('.')}return p.length>=2?p.slice(-2).join('.'):h}catch(e){return ''}}
-function isCompanyOwnedUrl(url,d,title=''){
-  try{
-    const host=new URL(String(url||'')).hostname.toLowerCase().replace(/^www\./,'');
-    const hostCompact=host.replace(/[^a-z0-9]/g,'');
-    const root=rootDomain(url);
-    const ownRoots=new Set((d?.documents_checked||[]).map(x=>rootDomain(x.url)).filter(Boolean));
-    if(ownRoots.has(root)) return true;
-    const terms=companyFilterTerms(d);
-    const alias={delhaize:['aholddelhaize','ahold','delhaize'],lidl:['lidl','schwarz'],aldi:['aldi'],zara:['zara','inditex'],inditex:['inditex','zara'],kbc:['kbc'],proximus:['proximus'],fluxys:['fluxys']};
-    let aliases=[]; terms.forEach(t=>{aliases=aliases.concat(alias[t]||[])});
-    const parts=host.split('.');
-    if(terms.some(t=>parts.includes(t)||hostCompact.includes(t.replace(/[^a-z0-9]/g,'')))) return true;
-    if(aliases.some(a=>hostCompact.includes(a))) return true;
-    const blob=(String(title||'')+' '+String(url||'')).toLowerCase();
-    const ownDoc=/sustainability report|annual report|integrated report|esg report|human rights in the supply chain|human rights policy|supplier code|code of conduct|modern slavery statement|due diligence statement|policy|our responsibility|our sustainability|our human rights|supplier standards|corporate responsibility/i.test(blob);
-    if(ownDoc && [...terms,...aliases].some(t=>blob.includes(t))) return true;
-    return false;
-  }catch(e){return false}
-}
-function filterExternalRows(rows){
-  return (rows||[]).filter(r=>!isCompanyOwnedUrl(r.url,lastResult,r.title||''));
-}
-function renderExternal(ext){
-  function block(title, e){const rows=filterExternalRows(e?.targeted_negative_sources||e?.compact_sources||[]);const provider=(e?.providers_used||[]).join(', ');let html=`<div class="soft"><h3>${esc(title)}</h3><p class="small muted">${esc(e?.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${linkHtml(r.url,r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';return html+'</div>'}
-  if(ext.green||ext.social){document.getElementById('externalSources').innerHTML=block('Green external signals',ext.green)+block('Social external signals',ext.social);return}
-  const rows=filterExternalRows(ext.targeted_negative_sources||ext.compact_sources||[]);const provider=(ext.providers_used||[]).join(', ');let html=`<p class="small muted">${esc(ext.summary||'')} ${provider?'Provider(s): '+esc(provider):''}</p>`;html+=rows.length?rows.map(r=>`<div class="soft"><span class="pill">${esc(r.credibility||r.category||'Public source')}</span><span class="pill">${esc(r.provider||'Search')}</span><p><strong>${linkHtml(r.url,r.title||'Untitled')}</strong></p><p class="small muted">${esc(r.url||'')}</p></div>`).join(''):'<p class="muted">No targeted negative public-source signal was retained.</p>';document.getElementById('externalSources').innerHTML=html
-}
-function renderRedFlags(d){
-  const flags=d.stakeholder_red_flags||[];
-  const greenFlags=flags.filter(f=>String(f).toLowerCase().includes('empco')||String(f).toLowerCase().includes('green')||String(f).toLowerCase().includes('environment'));
-  const socialFlags=flags.filter(f=>String(f).toLowerCase().includes('forced')||String(f).toLowerCase().includes('social')||String(f).toLowerCase().includes('human')||String(f).toLowerCase().includes('supplier')||String(f).toLowerCase().includes('worker')||String(f).toLowerCase().includes('modern slavery'));
-  const otherFlags=flags.filter(f=>!greenFlags.includes(f)&&!socialFlags.includes(f));
-  function cards(arr,empty){return `<div class="redflag-grid">${arr.length?arr.map(f=>{const reg=String(f).toLowerCase().includes('empco')||String(f).toLowerCase().includes('forced labour')||String(f).toLowerCase().includes('regulation');return `<div class="redflag-card ${reg?'regulatory':''}"><span class="redflag-icon">!</span><p>${esc(f)}</p></div>`}).join(''):`<div class="soft"><p class="muted">${esc(empty)}</p></div>`}</div>`}
-  document.getElementById('redFlags').outerHTML=`<div id="redFlags"><div class="redflag-columns"><div><h3>Green claim red flags</h3>${cards(greenFlags.concat(otherFlags.filter((_,i)=>i<1)),'No specific green red flag retained.')}</div><div><h3>Social claim red flags</h3>${cards(socialFlags,'No specific social red flag retained.')}</div></div></div>`;
-}
-function renderActions(items){const el=document.getElementById('actions'); if(!el)return; const arr=items||[]; el.innerHTML=arr.length?arr.map(a=>`<div class="soft"><strong>${esc(a.priority||'')}: ${esc(a.title||'Action')}</strong><p>${esc(a.action||'')}</p></div>`).join(''):'<p class="muted">No specific action plan was generated. Treat this as a low-signal scan and request claim-level substantiation before external reuse.</p>'}
-function buildTextReport(d){const claims=d.merged_claims||d.claim_inventory||[];const gsrc=filterExternalRows(d.external_research?.green?.targeted_negative_sources||[]);const ssrc=filterExternalRows(d.external_research?.social?.targeted_negative_sources||[]);let lines=[`${d.company?.company||'Company'} — Green & Social Claims Risk Assessment`,`Global score: ${d.global_score??d.overall_score}/100`,`Green risk score: ${d.green_score}/100`,`Social risk score: ${d.social_score}/100`,`Assessment source: ${d.document_audience?.audience||'Unknown'} — EmpCo relevance: ${d.document_audience?.empco_relevance||'Unknown'}`,`Sector exposure: ${d.sector?.level||'Unknown'} — ${d.company?.sector||''}`,`Claim governance maturity: ${governanceMaturity(d).level}`,`Client-ready conclusion: ${clientReadyConclusion(d)}`,'',d.assessment_summary_specific||'','',`Methodology: ${d.methodology||''}`,'Forced Labour Regulation lens: social claims involving products, suppliers, imports/exports, traceability, modern slavery or forced-labour-free wording are assessed for evidence of risk assessment, traceability, remediation and response readiness under Regulation (EU) 2024/3015.','','Key green and social claim signals'];claims.slice(0,10).forEach((r,i)=>lines.push(`${i+1}. [${r.dimension||''}] ${r.washing_type||r.claim_type} (${r.risk_level}) — wording: “${r.claim_text||''}” — evidence needed: ${(r.evidence_needed||[]).join(', ')}`));lines.push('','Green external signals');if(!gsrc.length)lines.push('- No targeted negative green public-source signal retained.');gsrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Social external signals');if(!ssrc.length)lines.push('- No targeted negative social public-source signal retained.');ssrc.forEach(r=>lines.push(`- ${r.title||'Untitled'} | ${r.url||''}`));lines.push('','Recommended actions');(d.company_action_plan||[]).forEach(a=>lines.push(`- ${a.title}: ${a.action}`));lines.push('','Disclaimer',d.disclaimer||'');return lines.join('\n')}
-function shortText(s,n=260){s=String(s||'').replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
-function scoreLabel(score){score=Number(score||0); if(score>=75)return 'High'; if(score>=45)return 'Medium'; return 'Low'}
-function topClaims(d,n=4){let rows=d.merged_claims||d.claim_inventory||[];const rank={High:3,Medium:2,Low:1};return rows.slice().sort((a,b)=>(rank[b.risk_level]||0)-(rank[a.risk_level]||0)).slice(0,n)}
-function evidenceNeeds(claims){let set=[];claims.forEach(c=>(c.evidence_needed||[]).forEach(x=>{x=String(x||'').trim(); if(x&&!set.includes(x))set.push(x)}));return set.slice(0,8)}
-function sourceRows(d,n=4){const g=filterExternalRows((d.external_research?.green?.targeted_negative_sources||[])).map(x=>({...x,dim:'Green'}));const s=filterExternalRows((d.external_research?.social?.targeted_negative_sources||[])).map(x=>({...x,dim:'Social'}));return g.concat(s).slice(0,n)}
-function componentTable(d){const g=d.split_scores?.green||{};const s=d.split_scores?.social||{};const rows=[['Claim wording',g.claim_wording_risk,s.claim_wording_risk,'Broad, generic, absolute or sensitive wording.'],['Evidence gap',g.substantiation_risk,s.substantiation_risk,'Missing scope, methodology, KPI, verification, limits or remediation evidence.'],['External context',g.external_context_risk,s.external_context_risk,'Only external public sources are counted; company-owned documents are excluded.'],['Sector sensitivity',g.sector_baseline_risk,s.sector_baseline_risk,'Baseline sector exposure; not sufficient on its own for High risk.']];return `<table class="report-table"><thead><tr><th>Driver</th><th>Green</th><th>Social</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]??0)}/100</td><td>${esc(r[2]??0)}/100</td></tr>`).join('')}</tbody></table><div class="report-box report-small"><strong>Green score:</strong> ${esc(d.score_driver_details?.green?.summary||d.why_score?.green||'')}<br><strong>Social score:</strong> ${esc(d.score_driver_details?.social?.summary||d.why_score?.social||'')}</div>`}
-
-function reportClaimTables(claims){
-  const green=claims.filter(c=>(c.dimension||'').toLowerCase()==='green').slice(0,3);
-  const social=claims.filter(c=>(c.dimension||'').toLowerCase()==='social').slice(0,3);
-  function table(title,arr){return `<h4>${esc(title)}</h4>`+(arr.length?`<table class="report-table"><thead><tr><th>#</th><th>Channel</th><th>Claim type</th><th>Risk</th><th>Decision</th><th>Why it matters</th></tr></thead><tbody>${arr.map((c,i)=>`<tr><td>${i+1}</td><td>${esc(shortText(c.audience_lens||'Mixed',45))}</td><td>${esc(c.washing_type||c.claim_type||'Claim')}</td><td><span class="report-risk ${riskClass(c.risk_level)}">${esc(c.risk_level||'Low')}</span></td><td><span class="report-status">${esc(claimDecision(c))}</span></td><td>${esc(shortText(c.analysis||c.risk_reason||c.claim_text||'',110))}</td></tr>`).join('')}</tbody></table>`:'<div class="report-box">No material signal retained.</div>')}
-  return `<div class="report-two"><div>${table('Green claim signals',green)}</div><div>${table('Social claim signals',social)}</div></div>`;
-}
-function buildHtmlReport(d){
-  const claims=topClaims(d,4); const needs=evidenceNeeds(claims); const sources=sourceRows(d,4); const actions=(d.company_action_plan||[]).slice(0,5);
-  const today=(d.analysis_date||new Date().toISOString()).slice(0,10);
-  const company=esc(d.company?.company||'Company'); const url=esc(d.source_label||d.original_url||'');
-  const audience=esc(d.document_audience?.audience||'Unknown'); const empco=esc(d.document_audience?.empco_relevance||'Unknown');
-  const global=d.global_score??d.overall_score??0, green=d.green_score??0, social=d.social_score??0;
-  const gov=governanceMaturity(d); const clientConclusion=clientReadyConclusion(d);
-  const page1=`<section class="report-page"><div class="report-watermark">REVIEW</div><div class="report-content">
-    <div class="report-head"><div><div class="report-eyebrow">Green & social claims scan</div><div class="report-title">${company} - claims risk report</div><div class="report-sub">Two-page screening report | ${esc(today)} | ${url}</div></div></div>
-    <div class="report-kpis"><div class="report-kpi"><strong>${esc(global)}/100</strong><span>Global risk score</span><br><span class="report-risk ${riskClass(scoreLabel(global))}">${scoreLabel(global)}</span></div><div class="report-kpi"><strong>${esc(green)}/100</strong><span>Green risk score</span><br><span class="report-risk ${riskClass(scoreLabel(green))}">${scoreLabel(green)}</span></div><div class="report-kpi"><strong>${esc(social)}/100</strong><span>Social risk score</span><br><span class="report-risk ${riskClass(scoreLabel(social))}">${scoreLabel(social)}</span></div></div>
-    <div class="report-section"><h3>Executive summary</h3><div class="report-callout"><strong>${esc(d.screening_conclusion||'Screening conclusion')}</strong><br>${esc(shortText(d.assessment_summary_specific||d.report?.summary||'',420))}</div></div>
-    <div class="report-section"><h3>Claim governance maturity</h3><div class="report-governance"><div class="report-box"><strong>${esc(gov.level)}</strong><br><span class="report-small">${esc(shortText(gov.note,220))}</span></div><div class="report-box"><strong>Client-ready conclusion</strong><br><span class="report-small">${esc(shortText(clientConclusion,260))}</span></div></div></div>
-    <div class="report-two"><div class="report-section"><h3>Input and audience lens</h3><div class="report-box"><strong>${audience}</strong><br><span class="report-small">EmpCo relevance: ${empco}</span><br><span class="report-small">Website scans and internal-document scans are separate. Internal uploaded documents are assessed only on their own content.</span></div></div><div class="report-section"><h3>Regulatory lenses</h3><div class="report-box"><ul class="report-list"><li>Client-facing green claims: highest EmpCo relevance and stricter wording/substantiation controls.</li><li>Investor or internal documents: used mainly as substantiation, governance and consistency evidence.</li><li>Social claims: social-washing assessment plus forced-labour/product-market lens where relevant.</li></ul></div></div></div>
-    <div class="report-section"><h3>Score composition, risk drivers and sector exposure</h3>${componentTable(d)}<div class="report-box report-small"><strong>Sector exposure:</strong> ${esc(d.sector?.level||'Medium')} - ${esc(shortText(d.sector?.risks||'Sector exposure is a baseline sensitivity factor.',220))}</div></div>
-    <div class="report-section"><h3>Priority claim signals</h3>${claims.length?reportClaimTables(claims):'<div class="report-box">No material claim signal retained in this first-pass scan.</div>'}</div>
-    <div class="report-footer"><span>${company} - Green & Social Claims Risk Assessment</span><span>Page 1 of 2</span></div></div></section>`;
-  const page2=`<section class="report-page"><div class="report-content">
-    <div class="report-head"><div><div class="report-eyebrow">Action-oriented review</div><div class="report-title">Evidence, sources and next steps</div><div class="report-sub">${company} | concise professional report</div></div><div><span class="report-badge">2-page PDF</span></div></div>
-    <div class="report-section"><h3>Recommended actions</h3>${actions.length?`<table class="report-table"><thead><tr><th>Priority</th><th>Action</th><th>Expected output</th></tr></thead><tbody>${actions.map(a=>`<tr><td><strong>${esc(a.priority||'')}</strong></td><td>${esc(a.title||'Action')}</td><td>${esc(shortText(a.action||'',210))}</td></tr>`).join('')}</tbody></table>`:'<div class="report-box">No action plan generated.</div>'}</div>
-    <div class="report-two"><div class="report-section"><h3>Evidence to request</h3><div class="report-box"><ul class="report-list">${(needs.length?needs:['Scope and boundary of each claim','Methodology and substantiating data','Limitations, exclusions and verification basis','Claim owner and approval process']).map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div></div><div class="report-section"><h3>Style improvement</h3><div class="report-box"><ul class="report-list"><li>Replace broad reassurance language with claim-specific, scoped wording.</li><li>Separate consumer-facing claims from investor/internal reporting.</li><li>Keep a claim register linking each claim to evidence, owner and review date.</li><li>Use one consistent green and social claims taxonomy.</li></ul></div></div></div>
-    <div class="report-section"><h3>External public-source signals retained</h3>${sources.length?`<table class="report-table"><thead><tr><th>Area</th><th>Source title / URL</th><th>Relevance</th></tr></thead><tbody>${sources.map(r=>`<tr><td>${esc(r.dim)}</td><td>${esc(shortText(r.title||'Untitled',120))}<br><span class="report-small">${esc(shortText(r.url||'',120))}</span></td><td>${esc(shortText(r.relevance||r.category||r.credibility||'Public-source signal for manual verification.',120))}</td></tr>`).join('')}</tbody></table>`:'<div class="report-box">No targeted negative public-source signal was retained. Manual verification is still recommended for high-impact claims.</div>'}</div>
-    <div class="report-section"><h3>Methodology and limitations</h3><div class="report-box"><p>${esc(shortText(d.methodology||'',420))}</p><p class="report-small"><strong>Confidence:</strong> ${esc(d.confidence?.level||'Unknown')} - ${esc(shortText((d.confidence?.reasons||[]).join('; '),260))}</p><p class="report-small"><strong>Detailed methodology:</strong> <a href="/methodology.pdf" target="_blank">download methodology PDF</a></p><p class="report-small"><strong>Disclaimer:</strong> ${esc(shortText(d.disclaimer||'',360))}</p></div></div>
-    <div class="report-footer"><span>${company} - Indicative first-pass assessment, for verification and governance use</span><span>Page 2 of 2</span></div></div></section>`;
-  return page1+page2;
-}
-function printReport(){if(!lastResult){setStatus('Run a scan first.','error');return}document.getElementById('printableReport').innerHTML=buildHtmlReport(lastResult);setStatus('Opening print dialog. Choose “Save as PDF” to download the two-page report.','ok');setTimeout(()=>window.print(),150)}
-function copyReport(){navigator.clipboard.writeText(document.getElementById('reportPreview').value).then(()=>setStatus('Report copied.','ok')).catch(()=>setStatus('Could not copy automatically.','error'))}
-function downloadHtml(){if(!lastResult){setStatus('Run a scan first.','error');return}const blob=new Blob([`<!doctype html><html><head><meta charset="utf-8"><title>Green & Social Claims Risk Report</title><style>${document.querySelector('style').innerHTML}</style></head><body><main>${buildHtmlReport(lastResult)}</main></body></html>`],{type:'text/html'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='green-social-claims-risk-report.html';a.click();URL.revokeObjectURL(url)}
-function fileToBase64(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');reader.onerror=reject;reader.readAsDataURL(file);})}
-async function uploadDoc(){const f=docFile.files&&docFile.files[0];if(!f){setStatus('Select an internal company document first.','error');return}setBusy(true,'document');setStatus('Scanning the uploaded internal document only...','loading','This document-only scan does not use the website URL or external public-source search.');try{const b64=await fileToBase64(f);const r=await fetch('/api/scan/document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:f.name,mime_type:f.type,content_base64:b64})});let d;try{d=await r.json()}catch(_){throw new Error('The backend returned a non-JSON response. Check Render logs.')}if(!r.ok||d.error)throw new Error(d.error||'Document scan failed');lastResult=d;render(d);setStatus('Internal document scan completed.','ok','The results below are based only on the uploaded document.')}catch(e){setStatus(e.message,'error','For PDFs, try uploading a DOCX, HTML or TXT extract if text extraction fails.')}finally{setBusy(false)}}
-scanBtn.addEventListener('click',scanUrl); uploadBtn.addEventListener('click',uploadDoc); document.getElementById('urlInput').addEventListener('keydown',e=>{if(e.key==='Enter')scanUrl()});
+let lastData=null;
+const $=id=>document.getElementById(id);
+function riskClass(r){r=(r||'').toLowerCase().replace(/\s+/g,'-');return r||'low'}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function arr(x){return Array.isArray(x)?x:(x?[x]:[])}
+function setStatus(msg,type='notice'){const el=$('status');el.className=type;el.innerHTML=msg}
+async function health(){try{let r=await fetch('/api/health');let j=await r.json();$('version').textContent='Backend version: '+(j.version||'unknown')+' · External search: '+((j.tavily_configured||j.google_search_configured)?'configured':'not configured');}catch(e){$('version').textContent='Backend version unavailable';}}
+health();
+async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a website URL.','notice warning');return} await runScan('/api/scan/url',{url});}
+async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return} let b64=await fileToBase64(f); await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64});}
+async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment when external sources are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
+function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
+$('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
+function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderPrepub(d);renderExternal(d);renderList('redflags',d.stakeholder_red_flags);renderActions(d);$('textReport').textContent=buildTextReport(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
+function renderScores(d){let scores=[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk],['Green',d.green_score,d.green_risk],['Social',d.social_score,d.social_risk]].filter(x=>x[1]!=null);$('scoreCards').innerHTML=scores.map(s=>`<div class="score"><div class="small">${esc(s[0])} risk score</div><div class="num">${esc(s[1])}<span class="small">/100</span></div><div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div></div>`).join('');}
+function renderDrivers(d){let det=d.score_driver_details||{};let green=det.green||{};let social=det.social||{};let html=''; if(green.summary)html+=driverCard('Green score drivers',green); if(social.summary)html+=driverCard('Social score drivers',social); if(!html && d.why_score){html=Object.entries(d.why_score).map(([k,v])=>`<div><h3>${esc(k)}</h3><p class="muted">${esc(typeof v==='string'?v:JSON.stringify(v,null,2))}</p></div>`).join('')} $('drivers').innerHTML=html||'<p class="empty">No score-driver details available.</p>';}
+function driverCard(title,obj){let items=[];['summary','claim_wording','substantiation','external_context','sector_context','audience'].forEach(k=>{if(obj[k])items.push(`<li><strong>${esc(k.replace(/_/g,' '))}:</strong> ${esc(obj[k])}</li>`)});return `<div><h3>${esc(title)}</h3><ul class="list">${items.join('')}</ul></div>`}
+function renderClaims(d){let blocks=[]; if(arr(d.green_findings).length)blocks.push(`<h3>Green claims</h3>${claimTable(d.green_findings)}`); if(arr(d.social_findings).length)blocks.push(`<h3>Social claims</h3>${claimTable(d.social_findings)}`); if(!blocks.length && arr(d.findings).length)blocks.push(claimTable(d.findings));$('claimSignals').innerHTML=blocks.join('')||'<p class="empty">No claim signals available.</p>';}
+function claimTable(rows){return `<table><thead><tr><th>Risk</th><th>Claim type</th><th>Detected wording</th><th>Why it matters</th><th>Suggested improvement</th></tr></thead><tbody>${arr(rows).map(r=>`<tr><td><span class="risk ${riskClass(r.risk_level||r.risk)}">${esc(r.risk_level||r.risk||'')}</span></td><td>${esc(r.claim_type||r.type||'')}</td><td class="quote">${esc(r.claim_text||r.claim||'')}</td><td>${esc(r.risk_reason||r.issue||'')}</td><td>${esc(r.suggested_rewrite||r.rewrite||'')}</td></tr>`).join('')}</tbody></table>`}
+function renderPrepub(d){let rows=arr(d.pre_publication_review); if(!rows.length){$('prepub').innerHTML='<p class="empty">No pre-publication review items available.</p>';return} $('prepub').innerHTML=`<table><thead><tr><th>Claim</th><th>Risk</th><th>Pre-publication check</th><th>Action</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.claim_type||r.type||r.claim||'')}</td><td>${esc(r.risk_level||r.risk||'')}</td><td>${esc(r.pre_publication_check||r.check||r.issue||'')}</td><td>${esc(r.action||r.recommended_action||r.suggested_rewrite||'')}</td></tr>`).join('')}</tbody></table>`}
+function renderExternal(d){let html=''; let ext=d.external_research||{}; function srcList(title,items){items=arr(items); if(!items.length)return ''; return `<h3>${esc(title)}</h3>`+items.map(s=>`<div class="source"><strong>${esc(s.title||'Source')}</strong><br><a href="${esc(s.url||'#')}" target="_blank" rel="noopener">${esc(s.url||'')}</a><p class="small">${esc(s.category||'Public source')} · ${esc(s.credibility||'')}</p><p>${esc(s.content||'')}</p></div>`).join('')}
+html+=srcList('Green external signals',ext.green?.targeted_negative_sources||ext.green?.compact_sources); html+=srcList('Social external signals',ext.social?.targeted_negative_sources||ext.social?.compact_sources); html+=srcList('External signals',ext.targeted_negative_sources||ext.compact_sources); $('external').innerHTML=html||'<p class="empty">No targeted negative external public-source signal retained.</p>';}
+function renderList(id,items){$(''+id).innerHTML=arr(items).length?arr(items).map(x=>`<li>${esc(typeof x==='string'?x:JSON.stringify(x))}</li>`).join(''):'<li class="empty">No items available.</li>'}
+function renderActions(d){let actions=arr(d.company_action_plan);$('actions').innerHTML=actions.length?actions.map(a=>`<li><strong>${esc(a.priority||'')}</strong> ${esc(a.title||'')} — ${esc(a.action||'')}</li>`).join(''):'<li class="empty">No actions available.</li>'}
+function buildTextReport(d){let lines=[];lines.push('GREEN & SOCIAL CLAIMS RISK SCAN');lines.push('Source: '+(d.source_label||''));lines.push('Date: '+(d.analysis_date||''));lines.push('');lines.push('Executive summary');lines.push(d.assessment_summary_specific||d.report?.summary||'');lines.push('');lines.push('Scores');['global','green','social'].forEach(k=>{let s=d[k+'_score'];let r=d[k+'_risk'];if(s!=null)lines.push(`${k}: ${s}/100 (${r||''})`)});lines.push('');lines.push('Conclusion');lines.push(d.screening_conclusion||'');lines.push('');lines.push('Red flags');arr(d.stakeholder_red_flags).forEach(x=>lines.push('- '+(typeof x==='string'?x:JSON.stringify(x))));lines.push('');lines.push('Recommended actions');arr(d.company_action_plan).forEach(a=>lines.push(`- ${a.priority||''} ${a.title||''}: ${a.action||''}`));lines.push('');lines.push('Disclaimer');lines.push(d.disclaimer||'');return lines.join('\n')}
+function copyReport(){navigator.clipboard.writeText($('textReport').textContent||'')}
+function downloadHtmlReport(){let blob=new Blob([document.documentElement.outerHTML],{type:'text/html'});download(blob,'durably_claims_scan_report.html')}
+function downloadClaimCsv(){let rows=[...arr(lastData?.green_findings),...arr(lastData?.social_findings),...arr(lastData?.findings)];let head=['risk','claim_type','claim_text','issue','suggested_rewrite'];let csv=[head.join(',')].concat(rows.map(r=>head.map(k=>'"'+String(r[k]||r[k.replace('claim_','')]||'').replace(/"/g,'""')+'"').join(','))).join('\n');download(new Blob([csv],{type:'text/csv'}),'durably_claim_register.csv')}
+function download(blob,name){let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 </script>
 </body>
 </html>
