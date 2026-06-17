@@ -1,17 +1,27 @@
-Durably Green & Social Claims Risk Scan - v42 replacement package
+Durably Green & Social Claims Risk Scan - v43 replacement package
+
+Version:
+hostable_v43_restored_red_flags_report_downloads_methodology
 
 Files included:
-- agent.py: updated backend with APP_VERSION = hostable_v42_professional_ui_consistency_check
-- frontend.html: updated professional UI; hides empty result sections before a scan, improves wording, structure and report rendering
-- durably_green_social_claims_scan_v42.py: backup copy of the same backend
+- agent.py: new backend/application file. Replace your old agent.py with this file.
+- frontend.html: new professional UI. Replace your old frontend.html with this file.
+- methodology.pdf: detailed methodology document served at /methodology.pdf.
+- durably_green_social_claims_scan_v43.py: backup/reference copy of agent.py.
+- README_INSTALL.txt: this file.
 
 Installation:
-1. Make a backup of your current project folder.
+1. Make a backup of your current project folder or rename your current agent.py to agent_v42_backup.py.
 2. Unzip this package.
-3. Copy agent.py and frontend.html into your Render/GitHub project folder.
-4. Replace the existing files with the same names.
-5. Commit and push to GitHub if Render deploys from GitHub.
-6. Redeploy on Render.
-7. Open /api/health or check the page header. The backend should show v42.
+3. Copy agent.py, frontend.html and methodology.pdf into the project root, replacing the old files.
+4. Commit and push to GitHub if Render deploys from GitHub.
+5. Redeploy the Render service.
+6. Open the app and check /api/health. The version should be hostable_v43_restored_red_flags_report_downloads_methodology.
 
-Do not upload the zip file itself to Render as the running application. Unzip it first and replace the old files.
+Main v43 changes:
+- Restored a stronger and clearer Red flags section with grouped red-flag cards.
+- Improved Key green and social claim signals.
+- Problematic words in detected wording are highlighted in bold/yellow.
+- Added visible company report download panel.
+- Added direct methodology PDF download link in the introduction and methodology sections.
+- Kept the v41/v42 EmpCo and Forced Labour Regulation logic.

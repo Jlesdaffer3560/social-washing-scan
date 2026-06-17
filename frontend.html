@@ -7,20 +7,21 @@
   <style>
     :root{
       --bg:#f6f8fb; --card:#ffffff; --ink:#132033; --muted:#5e6b7d; --line:#dfe5ee;
-      --soft:#eef3f8; --accent:#265f5c; --accent2:#173f5f; --danger:#a43c3c; --warn:#9b6a17; --ok:#276749;
+      --soft:#eef3f8; --accent:#265f5c; --accent2:#173f5f; --danger:#a43c3c; --danger-soft:#fff1f1; --warn:#9b6a17; --warn-soft:#fff8ea; --ok:#276749; --ok-soft:#edf7f0;
       --shadow:0 8px 24px rgba(20,35,55,.08); --radius:14px;
     }
     *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45;font-size:15px}
     .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{background:linear-gradient(135deg,#163d3b,#1d5b68);color:#fff;border-radius:20px;padding:28px 30px;box-shadow:var(--shadow)}
-    .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.12em;opacity:.9;font-weight:700}.hero h1{margin:8px 0 10px;font-size:34px;line-height:1.15}.hero p{max-width:900px;margin:0;color:#e7f0f3;font-size:16px}.version{margin-top:16px;font-size:12px;color:#d7e6eb}
+    .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.12em;opacity:.9;font-weight:700}.hero h1{margin:8px 0 10px;font-size:34px;line-height:1.15}.hero p{max-width:940px;margin:0;color:#e7f0f3;font-size:16px}.version{margin-top:16px;font-size:12px;color:#d7e6eb}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
     h2{font-size:21px;margin:0 0 12px} h3{font-size:16px;margin:0 0 10px}.muted{color:var(--muted)} .small{font-size:12.5px;color:var(--muted)}
-    label{font-weight:700;display:block;margin-bottom:8px} input[type=url],input[type=file]{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;font:inherit}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px}.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}.btn:disabled{opacity:.55;cursor:not-allowed}.notice{margin-top:14px;padding:11px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}.warning{background:#fff8ea;border-color:#ead8aa;color:#68470f}.error{background:#fff0f0;border-color:#e2baba;color:#842424}.hidden{display:none!important}
-    .purpose{margin-top:20px}.purpose ol{margin:10px 0 0;padding-left:20px}.purpose li{margin:5px 0}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef3f8;border:1px solid var(--line);font-size:12px;margin:2px 4px 2px 0;color:#334}
+    label{font-weight:700;display:block;margin-bottom:8px} input[type=url],input[type=file]{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;font:inherit}.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}.btn.primary-outline{background:#fff;color:#173f5f;border:1px solid #9cb3c8}.btn:disabled{opacity:.55;cursor:not-allowed}.notice{margin-top:14px;padding:11px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}.warning{background:#fff8ea;border-color:#ead8aa;color:#68470f}.error{background:#fff0f0;border-color:#e2baba;color:#842424}.hidden{display:none!important}
+    .purpose{margin-top:20px}.purpose ol{margin:10px 0 0;padding-left:20px}.purpose li{margin:5px 0}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef3f8;border:1px solid var(--line);font-size:12px;margin:2px 4px 2px 0;color:#334}.pill.problem{background:#fff1f1;border-color:#efb8b8;color:#842424;font-weight:700}.pill.green{background:#edf7f0;border-color:#bfe2c8;color:#205b31}.pill.blue{background:#eef3f8;border-color:#ccd8e4;color:#173f5f}
     .scores{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.score{border:1px solid var(--line);border-radius:14px;padding:16px;background:#fbfcfe}.score .num{font-size:34px;font-weight:800}.score .risk{font-weight:800;margin-top:4px}.risk.high,.risk.very-high{color:var(--danger)}.risk.medium{color:var(--warn)}.risk.low{color:var(--ok)}
-    table{width:100%;border-collapse:collapse;margin-top:8px} th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left} th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc} td{font-size:13.5px} .quote{color:#243449}.section{margin-top:20px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.list{margin:8px 0 0;padding-left:18px}.list li{margin:6px 0}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.reportbox{white-space:pre-wrap;background:#0f172a;color:#e5edf7;border-radius:12px;padding:16px;max-height:420px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px}.source a{color:#174e78}.footer{margin-top:26px;color:var(--muted);font-size:12.5px}.empty{color:var(--muted);font-style:italic}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid #c7d4df;border-top-color:var(--accent);animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}@keyframes spin{to{transform:rotate(360deg)}}
-    @media(max-width:850px){.grid,.cols,.scores{grid-template-columns:1fr}.hero h1{font-size:28px}}
-    @media print{body{background:#fff}.wrap{max-width:none;padding:0}.hero,.card{box-shadow:none}.scan-area,.toolbar,.footer{display:none}.card{break-inside:avoid}.reportbox{max-height:none;color:#000;background:#fff;border:1px solid #ccc}}
+    table{width:100%;border-collapse:collapse;margin-top:8px} th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left} th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc} td{font-size:13.5px} .quote{color:#243449}.quote strong{background:#fff1a8;padding:1px 2px;border-radius:3px;color:#111827}.section{margin-top:20px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.list{margin:8px 0 0;padding-left:18px}.list li{margin:6px 0}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.download-panel{background:#f8fbff;border:1px solid #cbd9e8;border-radius:12px;padding:14px;margin-top:14px}.download-panel h3{margin-bottom:5px}.reportbox{white-space:pre-wrap;background:#0f172a;color:#e5edf7;border-radius:12px;padding:16px;max-height:420px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px}.source a{color:#174e78}.footer{margin-top:26px;color:var(--muted);font-size:12.5px}.empty{color:var(--muted);font-style:italic}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid #c7d4df;border-top-color:var(--accent);animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}@keyframes spin{to{transform:rotate(360deg)}}
+    .redflag-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.redflag{border:1px solid #e7c1c1;background:var(--danger-soft);border-radius:12px;padding:12px}.redflag h3{color:#842424;margin-bottom:6px}.redflag ul{margin:0;padding-left:18px}.redflag li{margin:5px 0}.action-card{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fbfcfe;margin:8px 0}.subtlebox{background:#fafbfd;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
+    @media(max-width:850px){.grid,.cols,.scores,.redflag-grid{grid-template-columns:1fr}.hero h1{font-size:28px}}
+    @media print{body{background:#fff}.wrap{max-width:none;padding:0}.hero,.card{box-shadow:none}.scan-area,.toolbar,.footer,.download-panel{display:none}.card{break-inside:avoid}.reportbox{max-height:none;color:#000;background:#fff;border:1px solid #ccc}.quote strong{background:#fff;border-bottom:2px solid #000}}
   </style>
 </head>
 <body>
@@ -29,7 +30,7 @@
     <div class="kicker">Durably pre-publication review</div>
     <h1>Green & Social Claims Risk Scan</h1>
     <p>Assess whether public green and social claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan supports claim governance, compliance review and better external communication.</p>
-    <div id="version" class="version">Checking backend version…</div>
+    <div id="version" class="version">Checking backend version...</div>
   </section>
 
   <section class="card purpose">
@@ -41,6 +42,7 @@
       <li><strong>External context:</strong> relevant public signals that may contradict or qualify the claim.</li>
       <li><strong>Regulatory lens:</strong> EmpCo / Directive (EU) 2024/825 for consumer-facing green claims and Regulation (EU) 2024/3015 for forced-labour product or supply-chain claims.</li>
     </ol>
+    <div class="toolbar"><a class="btn secondary" href="/methodology.pdf" target="_blank" rel="noopener">Download detailed methodology PDF</a></div>
   </section>
 
   <section class="scan-area">
@@ -69,11 +71,15 @@
       <h2>Executive summary</h2>
       <p id="summary" class="muted"></p>
       <div id="scoreCards" class="scores"></div>
-      <div class="toolbar">
-        <button class="btn secondary" onclick="copyReport()">Copy text report</button>
-        <button class="btn secondary" onclick="downloadHtmlReport()">Download HTML report</button>
-        <button class="btn secondary" onclick="window.print()">Create PDF report</button>
-        <button class="btn secondary" onclick="downloadClaimCsv()">Download claim register CSV</button>
+      <div class="download-panel">
+        <h3>Company report downloads</h3>
+        <p class="small">Use these buttons after reviewing the scan. For the PDF report, your browser will open the print dialog; choose <strong>Save as PDF</strong>.</p>
+        <div class="toolbar">
+          <button class="btn" onclick="window.print()">Download / save company report as PDF</button>
+          <button class="btn secondary" onclick="downloadHtmlReport()">Download HTML report</button>
+          <button class="btn secondary" onclick="downloadClaimCsv()">Download claim register CSV</button>
+          <button class="btn secondary" onclick="copyReport()">Copy text report</button>
+        </div>
       </div>
     </div>
 
@@ -90,8 +96,14 @@
 
     <div class="card section">
       <h2>Key green and social claim signals</h2>
-      <p class="muted">Green and social claims are shown separately because they are assessed through different regulatory and standards lenses.</p>
+      <p class="muted">The table shows the exact wording detected in the reviewed material. Potentially problematic words are highlighted in <strong>bold yellow</strong>, followed by a short list of the main trigger terms.</p>
       <div id="claimSignals"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Red flags</h2>
+      <p class="muted">Red flags are grouped by practical review lens. This section is intentionally prominent because it helps legal, compliance, marketing and sustainability teams decide what must be checked first.</p>
+      <div id="redflags"></div>
     </div>
 
     <div class="card section">
@@ -105,14 +117,15 @@
       <div id="external"></div>
     </div>
 
-    <div class="cols section">
-      <div class="card"><h2>Red flags</h2><ul id="redflags" class="list"></ul></div>
-      <div class="card"><h2>Recommended actions</h2><ul id="actions" class="list"></ul></div>
+    <div class="card section">
+      <h2>Recommended actions</h2>
+      <div id="actions"></div>
     </div>
 
     <div class="card section">
       <h2>Methodology and limitations</h2>
       <p id="methodology" class="muted"></p>
+      <div class="toolbar"><a class="btn secondary" href="/methodology.pdf" target="_blank" rel="noopener">Download detailed methodology PDF</a></div>
       <p id="disclaimer" class="small"></p>
     </div>
 
@@ -122,11 +135,12 @@
     </div>
   </section>
 
-  <div class="footer">Durably Green & Social Claims Risk Scan — indicative first-pass assessment only. Results require legal, compliance and subject-matter review before external use.</div>
+  <div class="footer">Durably Green & Social Claims Risk Scan - indicative first-pass assessment only. Results require legal, compliance and subject-matter review before external use.</div>
 </div>
 <script>
 let lastData=null;
 const $=id=>document.getElementById(id);
+const PROBLEM_TERMS=['green','eco','ecological','environmentally friendly','natural','sustainable','sustainability','climate neutral','carbon neutral','co2 neutral','co₂ neutral','net zero','carbon positive','carbon negative','climate positive','offset','offsetting','climate compensated','reduced climate impact','biodegradable','recyclable','recycled','circular','renewable','green energy','energy efficient','water efficient','better for the planet','greener than','more sustainable than','lower emissions','reduced emissions','lowest emissions','best environmental','ethical','fair','responsible','socially responsible','trusted','human rights','labour rights','labor rights','forced labour','forced labor','child labour','child labor','modern slavery','living wage','supply chain','supplier','responsible sourcing','ethical sourcing','traceable','certified','audited','diversity','inclusion','inclusive','safe workplace','well-being','accessibility','vulnerable customers','for all','all suppliers','all employees','100%','always','never','guarantee','fully','zero'];
 function riskClass(r){r=(r||'').toLowerCase().replace(/\s+/g,'-');return r||'low'}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function arr(x){return Array.isArray(x)?x:(x?[x]:[])}
@@ -135,24 +149,29 @@ async function health(){try{let r=await fetch('/api/health');let j=await r.json(
 health();
 async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a website URL.','notice warning');return} await runScan('/api/scan/url',{url});}
 async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return} let b64=await fileToBase64(f); await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64});}
-async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment when external sources are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
+async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment when external sources are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below and use the company report download buttons.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
 function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
 $('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
-function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderPrepub(d);renderExternal(d);renderList('redflags',d.stakeholder_red_flags);renderActions(d);$('textReport').textContent=buildTextReport(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
+function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderPrepub(d);renderExternal(d);renderActions(d);$('textReport').textContent=buildTextReport(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
 function renderScores(d){let scores=[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk],['Green',d.green_score,d.green_risk],['Social',d.social_score,d.social_risk]].filter(x=>x[1]!=null);$('scoreCards').innerHTML=scores.map(s=>`<div class="score"><div class="small">${esc(s[0])} risk score</div><div class="num">${esc(s[1])}<span class="small">/100</span></div><div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div></div>`).join('');}
 function renderDrivers(d){let det=d.score_driver_details||{};let green=det.green||{};let social=det.social||{};let html=''; if(green.summary)html+=driverCard('Green score drivers',green); if(social.summary)html+=driverCard('Social score drivers',social); if(!html && d.why_score){html=Object.entries(d.why_score).map(([k,v])=>`<div><h3>${esc(k)}</h3><p class="muted">${esc(typeof v==='string'?v:JSON.stringify(v,null,2))}</p></div>`).join('')} $('drivers').innerHTML=html||'<p class="empty">No score-driver details available.</p>';}
-function driverCard(title,obj){let items=[];['summary','claim_wording','substantiation','external_context','sector_context','audience'].forEach(k=>{if(obj[k])items.push(`<li><strong>${esc(k.replace(/_/g,' '))}:</strong> ${esc(obj[k])}</li>`)});return `<div><h3>${esc(title)}</h3><ul class="list">${items.join('')}</ul></div>`}
+function driverCard(title,obj){let items=[];['summary','claim_wording','substantiation','external_context','sector_context','audience'].forEach(k=>{if(obj[k])items.push(`<li><strong>${esc(k.replace(/_/g,' '))}:</strong> ${esc(obj[k])}</li>`)});return `<div class="subtlebox"><h3>${esc(title)}</h3><ul class="list">${items.join('')}</ul></div>`}
+function termsInText(text){let low=String(text||'').toLowerCase();return PROBLEM_TERMS.filter(t=>low.includes(t)).slice(0,10)}
+function highlightTerms(text, explicit){let html=esc(text||'');let terms=arr(explicit).concat(termsInText(text)).filter(Boolean);terms=[...new Set(terms.map(x=>String(x).trim()).filter(x=>x.length>1))].sort((a,b)=>b.length-a.length).slice(0,14);for(let term of terms){let safe=esc(term).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');try{html=html.replace(new RegExp('('+safe+')','ig'),'<strong>$1</strong>')}catch(e){}}
+return {html,terms};}
 function renderClaims(d){let blocks=[]; if(arr(d.green_findings).length)blocks.push(`<h3>Green claims</h3>${claimTable(d.green_findings)}`); if(arr(d.social_findings).length)blocks.push(`<h3>Social claims</h3>${claimTable(d.social_findings)}`); if(!blocks.length && arr(d.findings).length)blocks.push(claimTable(d.findings));$('claimSignals').innerHTML=blocks.join('')||'<p class="empty">No claim signals available.</p>';}
-function claimTable(rows){return `<table><thead><tr><th>Risk</th><th>Claim type</th><th>Detected wording</th><th>Why it matters</th><th>Suggested improvement</th></tr></thead><tbody>${arr(rows).map(r=>`<tr><td><span class="risk ${riskClass(r.risk_level||r.risk)}">${esc(r.risk_level||r.risk||'')}</span></td><td>${esc(r.claim_type||r.type||'')}</td><td class="quote">${esc(r.claim_text||r.claim||'')}</td><td>${esc(r.risk_reason||r.issue||'')}</td><td>${esc(r.suggested_rewrite||r.rewrite||'')}</td></tr>`).join('')}</tbody></table>`}
+function claimTable(rows){return `<table><thead><tr><th>Risk</th><th>Claim type</th><th>Detected wording</th><th>Why it matters</th><th>Suggested improvement</th></tr></thead><tbody>${arr(rows).map(r=>{let text=r.claim_text||r.claim||'';let h=highlightTerms(text,r.problematic_terms);let chips=h.terms.length?`<div class="small" style="margin-top:6px"><strong>Problematic trigger(s):</strong> ${h.terms.map(t=>`<span class="pill problem">${esc(t)}</span>`).join('')}</div>`:'<div class="small" style="margin-top:6px">No specific trigger term isolated; review the full sentence and context.</div>';return `<tr><td><span class="risk ${riskClass(r.risk_level||r.risk)}">${esc(r.risk_level||r.risk||'')}</span></td><td>${esc(r.claim_type||r.type||'')}</td><td class="quote">${h.html}${chips}</td><td>${esc(r.risk_reason||r.issue||'')}</td><td>${esc(r.suggested_rewrite||r.rewrite||'')}</td></tr>`}).join('')}</tbody></table>`}
+function renderRedFlags(d){let flags=arr(d.stakeholder_red_flags);let grouped={regulatory:[], evidence:[], external:[], sector:[]};for(let f of flags){let s=String(typeof f==='string'?f:JSON.stringify(f));let l=s.toLowerCase();if(l.includes('empco')||l.includes('forced labour')||l.includes('forced labor')||l.includes('regulation'))grouped.regulatory.push(s);else if(l.includes('evidence')||l.includes('substantiation')||l.includes('claim')||l.includes('wording')||l.includes('supply-chain')||l.includes('supplier'))grouped.evidence.push(s);else if(l.includes('external')||l.includes('public-source')||l.includes('contradict'))grouped.external.push(s);else grouped.sector.push(s)}
+let cards=[['Regulatory red flags',grouped.regulatory],['Claim wording & evidence gaps',grouped.evidence],['External public-source signals',grouped.external],['Sector / context sensitivity',grouped.sector]];
+$('redflags').innerHTML=`<div class="redflag-grid">${cards.map(([title,items])=>`<div class="redflag"><h3>${esc(title)}</h3>${items.length?'<ul>'+items.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'<p class="empty">No specific red flag in this category.</p>'}</div>`).join('')}</div>`;}
 function renderPrepub(d){let rows=arr(d.pre_publication_review); if(!rows.length){$('prepub').innerHTML='<p class="empty">No pre-publication review items available.</p>';return} $('prepub').innerHTML=`<table><thead><tr><th>Claim</th><th>Risk</th><th>Pre-publication check</th><th>Action</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.claim_type||r.type||r.claim||'')}</td><td>${esc(r.risk_level||r.risk||'')}</td><td>${esc(r.pre_publication_check||r.check||r.issue||'')}</td><td>${esc(r.action||r.recommended_action||r.suggested_rewrite||'')}</td></tr>`).join('')}</tbody></table>`}
 function renderExternal(d){let html=''; let ext=d.external_research||{}; function srcList(title,items){items=arr(items); if(!items.length)return ''; return `<h3>${esc(title)}</h3>`+items.map(s=>`<div class="source"><strong>${esc(s.title||'Source')}</strong><br><a href="${esc(s.url||'#')}" target="_blank" rel="noopener">${esc(s.url||'')}</a><p class="small">${esc(s.category||'Public source')} · ${esc(s.credibility||'')}</p><p>${esc(s.content||'')}</p></div>`).join('')}
 html+=srcList('Green external signals',ext.green?.targeted_negative_sources||ext.green?.compact_sources); html+=srcList('Social external signals',ext.social?.targeted_negative_sources||ext.social?.compact_sources); html+=srcList('External signals',ext.targeted_negative_sources||ext.compact_sources); $('external').innerHTML=html||'<p class="empty">No targeted negative external public-source signal retained.</p>';}
-function renderList(id,items){$(''+id).innerHTML=arr(items).length?arr(items).map(x=>`<li>${esc(typeof x==='string'?x:JSON.stringify(x))}</li>`).join(''):'<li class="empty">No items available.</li>'}
-function renderActions(d){let actions=arr(d.company_action_plan);$('actions').innerHTML=actions.length?actions.map(a=>`<li><strong>${esc(a.priority||'')}</strong> ${esc(a.title||'')} — ${esc(a.action||'')}</li>`).join(''):'<li class="empty">No actions available.</li>'}
-function buildTextReport(d){let lines=[];lines.push('GREEN & SOCIAL CLAIMS RISK SCAN');lines.push('Source: '+(d.source_label||''));lines.push('Date: '+(d.analysis_date||''));lines.push('');lines.push('Executive summary');lines.push(d.assessment_summary_specific||d.report?.summary||'');lines.push('');lines.push('Scores');['global','green','social'].forEach(k=>{let s=d[k+'_score'];let r=d[k+'_risk'];if(s!=null)lines.push(`${k}: ${s}/100 (${r||''})`)});lines.push('');lines.push('Conclusion');lines.push(d.screening_conclusion||'');lines.push('');lines.push('Red flags');arr(d.stakeholder_red_flags).forEach(x=>lines.push('- '+(typeof x==='string'?x:JSON.stringify(x))));lines.push('');lines.push('Recommended actions');arr(d.company_action_plan).forEach(a=>lines.push(`- ${a.priority||''} ${a.title||''}: ${a.action||''}`));lines.push('');lines.push('Disclaimer');lines.push(d.disclaimer||'');return lines.join('\n')}
+function renderActions(d){let actions=arr(d.company_action_plan);$('actions').innerHTML=actions.length?actions.map(a=>`<div class="action-card"><strong>${esc(a.priority||'')}</strong> ${esc(a.title||'')}<br><span class="muted">${esc(a.action||'')}</span></div>`).join(''):'<p class="empty">No actions available.</p>'}
+function buildTextReport(d){let lines=[];lines.push('GREEN & SOCIAL CLAIMS RISK SCAN');lines.push('Source: '+(d.source_label||''));lines.push('Date: '+(d.analysis_date||''));lines.push('');lines.push('Executive summary');lines.push(d.assessment_summary_specific||d.report?.summary||'');lines.push('');lines.push('Scores');[['global',d.global_score,d.global_risk],['green',d.green_score,d.green_risk],['social',d.social_score,d.social_risk]].forEach(([k,s,r])=>{if(s!=null)lines.push(`${k}: ${s}/100 (${r||''})`)});lines.push('');lines.push('Conclusion');lines.push(d.screening_conclusion||'');lines.push('');lines.push('Red flags');arr(d.stakeholder_red_flags).forEach(x=>lines.push('- '+(typeof x==='string'?x:JSON.stringify(x))));lines.push('');lines.push('Recommended actions');arr(d.company_action_plan).forEach(a=>lines.push(`- ${a.priority||''} ${a.title||''}: ${a.action||''}`));lines.push('');lines.push('Disclaimer');lines.push(d.disclaimer||'');return lines.join('\n')}
 function copyReport(){navigator.clipboard.writeText($('textReport').textContent||'')}
 function downloadHtmlReport(){let blob=new Blob([document.documentElement.outerHTML],{type:'text/html'});download(blob,'durably_claims_scan_report.html')}
-function downloadClaimCsv(){let rows=[...arr(lastData?.green_findings),...arr(lastData?.social_findings),...arr(lastData?.findings)];let head=['risk','claim_type','claim_text','issue','suggested_rewrite'];let csv=[head.join(',')].concat(rows.map(r=>head.map(k=>'"'+String(r[k]||r[k.replace('claim_','')]||'').replace(/"/g,'""')+'"').join(','))).join('\n');download(new Blob([csv],{type:'text/csv'}),'durably_claim_register.csv')}
+function downloadClaimCsv(){let rows=[...arr(lastData?.green_findings),...arr(lastData?.social_findings),...arr(lastData?.findings)];let head=['risk','claim_type','claim_text','issue','suggested_rewrite','problematic_terms'];let csv=[head.join(',')].concat(rows.map(r=>{let prob=(arr(r.problematic_terms).length?arr(r.problematic_terms):termsInText(r.claim_text||r.claim||'')).join('; ');let vals={risk:r.risk_level||r.risk||'',claim_type:r.claim_type||r.type||'',claim_text:r.claim_text||r.claim||'',issue:r.risk_reason||r.issue||'',suggested_rewrite:r.suggested_rewrite||r.rewrite||'',problematic_terms:prob};return head.map(k=>'"'+String(vals[k]||'').replace(/"/g,'""')+'"').join(',')})).join('\n');download(new Blob([csv],{type:'text/csv'}),'durably_claim_register.csv')}
 function download(blob,name){let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 </script>
 </body>
