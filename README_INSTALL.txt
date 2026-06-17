@@ -1,27 +1,31 @@
-Durably Green & Social Claims Risk Scan - v43 replacement package
+Durably Green & Social Claims Risk Scan - v44 replacement package
 
-Version:
-hostable_v43_restored_red_flags_report_downloads_methodology
+Version: hostable_v44_detailed_methodology_two_page_report_claim_sources
 
-Files included:
-- agent.py: new backend/application file. Replace your old agent.py with this file.
-- frontend.html: new professional UI. Replace your old frontend.html with this file.
-- methodology.pdf: detailed methodology document served at /methodology.pdf.
-- durably_green_social_claims_scan_v43.py: backup/reference copy of agent.py.
-- README_INSTALL.txt: this file.
+Replace these files in your GitHub/Render project:
+1. agent.py
+2. frontend.html
+3. methodology.pdf
 
-Installation:
-1. Make a backup of your current project folder or rename your current agent.py to agent_v42_backup.py.
+Recommended steps:
+1. Backup your current project folder or at least rename your old agent.py and frontend.html.
 2. Unzip this package.
 3. Copy agent.py, frontend.html and methodology.pdf into the project root, replacing the old files.
-4. Commit and push to GitHub if Render deploys from GitHub.
-5. Redeploy the Render service.
-6. Open the app and check /api/health. The version should be hostable_v43_restored_red_flags_report_downloads_methodology.
+4. Commit and push to GitHub.
+5. Re-deploy on Render.
+6. Open /api/health and verify that the version is:
+   hostable_v44_detailed_methodology_two_page_report_claim_sources
 
-Main v43 changes:
-- Restored a stronger and clearer Red flags section with grouped red-flag cards.
-- Improved Key green and social claim signals.
-- Problematic words in detected wording are highlighted in bold/yellow.
-- Added visible company report download panel.
-- Added direct methodology PDF download link in the introduction and methodology sections.
-- Kept the v41/v42 EmpCo and Forced Labour Regulation logic.
+Main v44 improvements:
+- detailed methodology PDF with EU regulatory references and score calculation method;
+- executive summary with clearer Global, Green and Social scores;
+- restored professional red-flag structure, now separated into green-claim and social-claim red flags;
+- claim-signal table now shows source page/document/link where the claim was found;
+- problematic trigger words are highlighted and shown separately;
+- visual/icon cue detection from available HTML attributes such as alt, title, class, id and src;
+- improved external public-source query recall and brand aliases, including Inditex/Zara;
+- clearer 2-page PDF company report generation via browser print / Save as PDF;
+- removed redundant Text Report section from the UI.
+
+Note:
+External public-source signals require Tavily or Google Custom Search credentials in Render environment variables.
