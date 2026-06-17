@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v44_detailed_methodology_two_page_report_claim_sources"
+APP_VERSION="hostable_v45_fix_green_fs_external_signals"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -1831,13 +1831,17 @@ def analyse_url_v27(raw):
         txt=(txt+'\n'+investor_internal_text)[:110000]
     page_segments=extract_page_segments(txt,pages)
     channel_analysis=build_channel_analysis(documents_checked)
-    green_fs=assign_sources_to_findings(green_fs,page_segments,documents_checked)
-    social_fs=assign_sources_to_findings(social_fs,page_segments,documents_checked)
+    # v45 fix: detect claim findings before assigning sources. In v44, source assignment
+    # was called before green_fs/social_fs existed, which caused the scan to fail for
+    # some websites with: cannot access local variable 'green_fs'.
     social_fs=detect_claims(txt)
     green_fs=detect_green_claims(txt)
-    # Separate internal-document scan: no website content and no external public-source search.
-    social_ext={'enabled':False,'results':[],'compact_sources':[],'targeted_negative_sources':[],'summary':'External public-source search is not performed for internal-document scans.'}
-    green_ext={'enabled':False,'results':[],'compact_sources':[],'targeted_negative_sources':[],'summary':'External public-source search is not performed for internal-document scans.'}
+    green_fs=assign_sources_to_findings(green_fs,page_segments,documents_checked)
+    social_fs=assign_sources_to_findings(social_fs,page_segments,documents_checked)
+    # Website scans should include external public-source signals. Uploaded internal
+    # documents remain separate and do not run external search in analyse_uploaded_document().
+    social_ext=external(comp['company'], social_fs)
+    green_ext=external_green(comp['company'], green_fs)
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
     sec=infer_sector(comp,txt+'\n'+exttext)
     ctx=infer_context(comp,txt,social_ext)

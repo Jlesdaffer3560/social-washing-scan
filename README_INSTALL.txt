@@ -1,31 +1,22 @@
-Durably Green & Social Claims Risk Scan - v44 replacement package
+Durably Green & Social Claims Scan - v45 replacement package
 
-Version: hostable_v44_detailed_methodology_two_page_report_claim_sources
+This version fixes the v44 scan failure:
+"cannot access local variable 'green_fs' where it is not associated with a value".
 
-Replace these files in your GitHub/Render project:
+What changed in v45:
+- Claim detection now runs before source assignment.
+- Website scans again run external public-source signal searches.
+- Both agent.py and app.py are included with the same v45 code, so Render will use the updated backend regardless of whether the start command is python agent.py or python app.py.
+
+Files to replace in your GitHub/Render project:
 1. agent.py
-2. frontend.html
-3. methodology.pdf
+2. app.py
+3. frontend.html
+4. methodology.pdf
 
-Recommended steps:
-1. Backup your current project folder or at least rename your old agent.py and frontend.html.
-2. Unzip this package.
-3. Copy agent.py, frontend.html and methodology.pdf into the project root, replacing the old files.
-4. Commit and push to GitHub.
-5. Re-deploy on Render.
-6. Open /api/health and verify that the version is:
-   hostable_v44_detailed_methodology_two_page_report_claim_sources
+After replacing, commit and push to GitHub, then wait for Render to redeploy.
+Check:
+https://social-washing-scan-python.onrender.com/api/health
 
-Main v44 improvements:
-- detailed methodology PDF with EU regulatory references and score calculation method;
-- executive summary with clearer Global, Green and Social scores;
-- restored professional red-flag structure, now separated into green-claim and social-claim red flags;
-- claim-signal table now shows source page/document/link where the claim was found;
-- problematic trigger words are highlighted and shown separately;
-- visual/icon cue detection from available HTML attributes such as alt, title, class, id and src;
-- improved external public-source query recall and brand aliases, including Inditex/Zara;
-- clearer 2-page PDF company report generation via browser print / Save as PDF;
-- removed redundant Text Report section from the UI.
-
-Note:
-External public-source signals require Tavily or Google Custom Search credentials in Render environment variables.
+Expected version:
+hostable_v45_fix_green_fs_external_signals
