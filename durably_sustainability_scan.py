@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v48_methodology_layout_external_filter_copyright"
+APP_VERSION="hostable_v49_clean_methodology_precise_claim_sources_external_stakeholders"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -709,14 +709,19 @@ NEGATIVE_SIGNAL_TERMS = [
     "accessibility","customer protection","workers","unsafe","audit failure"
 ]
 POSITIVE_NOISE_TERMS = [
-    "award","wins","recognised","recognized","partnership","sponsor","donation",
-    "new product","launches","growth","profit","revenue","appointment","campaign"
+    "award","awarded","wins","recognised","recognized","partnership","partnered","sponsor","donation",
+    "new product","launches","opens","expands","growth","profit","revenue","appointment","campaign",
+    "success story","best practice","ranking","ranked","certificate","certified","collaboration","initiative"
 ]
 def is_negative_external_source(result):
     text = (result.get("title","") + " " + result.get("content","") + " " + result.get("url","")).lower()
-    has_negative = any(t in text for t in NEGATIVE_SIGNAL_TERMS)
-    has_positive_noise = any(t in text for t in POSITIVE_NOISE_TERMS)
-    return has_negative and not (has_positive_noise and not has_negative)
+    # This section is limited to negative stakeholder perception: criticism, allegations,
+    # complaints, investigations, enforcement, litigation, union/NGO/regulator signals or media
+    # reporting about potential harm. Company documents, ordinary positive news and neutral
+    # sustainability announcements are not retained.
+    stakeholder_negative_terms = ["greenwashing","misleading","accused","accusation","allegation","criticised","criticized","criticism","complaint","lawsuit","court","investigation","fine","penalty","sanction","regulator","authority","watchdog","ngo","union","strike","protest","boycott","violation","breach","forced labour","forced labor","child labour","child labor","modern slavery","human rights abuse","labour rights","labor rights","unsafe","discrimination"]
+    positive_only = any(t in text for t in POSITIVE_NOISE_TERMS) and not any(t in text for t in ["greenwashing","misleading","complaint","lawsuit","investigation","fine","accused","criticised","criticized","forced labour","forced labor","human rights abuse"])
+    return any(t in text for t in stakeholder_negative_terms) and not positive_only
 def negative_compact_sources(results, limit=5):
     filtered = [r for r in results if is_negative_external_source(r)]
     if "compact_sources" in globals():
@@ -849,11 +854,11 @@ def is_company_owned_source(result, company_name, reviewed_pages=None):
         return True
     # Also exclude obvious company-hosted policy/report pages even where the host uses a country/corporate subdomain.
     text=(result.get('title','')+' '+result.get('content','')+' '+url).lower()
-    own_doc_terms=['sustainability report','sustainability statement','annual report','annualreview','integrated report','esg report','non-financial report','csrd','esrs','human rights in the supply chain','human rights policy','human-rights policy','human rights statement','supplier code','supplier policy','supplier standards','code of conduct','modern slavery statement','due diligence statement','policy','policies','our responsibility','our sustainability','our human rights','supplier responsibility','corporate responsibility report','responsibility report','impact report','rapport annuel','jaarverslag','duurzaamheidsverslag','rapport de durabilité']
+    own_doc_terms=['sustainability page','sustainability report','sustainability statement','annual report','annualreview','integrated report','esg report','non-financial report','csrd','esrs','human rights in the supply chain','human rights policy','human-rights policy','human rights statement','supplier code','supplier policy','supplier standards','code of conduct','modern slavery statement','due diligence statement','policy','policies','our responsibility','our sustainability','our human rights','supplier responsibility','corporate responsibility report','responsibility report','impact report','press release','news release','corporate news','annual results','quarterly results','rapport annuel','jaarverslag','duurzaamheidsverslag','rapport de durabilité']
     # External-stakeholder section must not include company-owned policies, reports,
     # own supplier codes, own sustainability pages or document repositories. These may
     # support evidence assessment elsewhere, but are not external public-source signals.
-    company_source_markers=['official site','company website','corporate website','annualreports','reports.','cdn','assets','static','download','media','investor','investors','sustainability','responsibility','about-us','about us']
+    company_source_markers=['official site','official website','corporate site','company website','corporate website','annualreports','reports.','cdn','assets','static','download','media','investor','investors','sustainability','responsibility','about-us','about us']
     if any(t in text for t in own_doc_terms) and (any(t in text for t in cleaned) or any(a in text for a in alias_terms)):
         return True
     if any(t in text for t in own_doc_terms) and any(m in host for m in company_source_markers):
@@ -869,11 +874,21 @@ def is_company_owned_source(result, company_name, reviewed_pages=None):
 def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=None, negative_fn=None):
     kept = []
     negative_fn = negative_fn or is_negative_external_source
+    positive_markers = POSITIVE_NOISE_TERMS + ['annual report','sustainability report','esg report','policy','supplier code','code of conduct','our sustainability','our responsibility','press release','corporate news']
+    hard_negative = ['greenwashing','misleading','complaint','lawsuit','court','investigation','fine','penalty','sanction','regulator','authority','watchdog','accused','allegation','criticised','criticized','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','strike','union','protest','boycott','violation']
     for r in results:
+        text=(r.get('title','')+' '+r.get('content','')+' '+r.get('url','')).lower()
         if is_company_owned_source(r, company_name, reviewed_pages):
             continue
-        if negative_fn(r) and source_mentions_company(r, company_name):
-            kept.append(r)
+        if not source_mentions_company(r, company_name):
+            continue
+        if not negative_fn(r):
+            continue
+        if any(p in text for p in positive_markers) and not any(n in text for n in hard_negative):
+            continue
+        if not any(n in text for n in hard_negative):
+            continue
+        kept.append(r)
     if "compact_sources" in globals():
         return compact_sources(kept, limit)
     return kept[:limit]
@@ -1338,7 +1353,7 @@ def summarise_green_ext(results):
     hits=[t for t in terms if t in combo]
     return ('External results contain potentially relevant green-claim signals, including: '+', '.join(hits[:8])+'. These require verification.') if hits else 'External results were found, but no strong green-claim risk signal was detected from snippets alone.'
 
-GREEN_NEGATIVE_SIGNAL_TERMS=['greenwashing','misleading','complaint','lawsuit','court','regulator','authority','advertising standards','ban','prohibited','investigation','fine','penalty','carbon neutral','offset','sustainable claim','environmental claim','climate claim','net zero','advertising complaint','consumer authority']
+GREEN_NEGATIVE_SIGNAL_TERMS=['greenwashing','misleading','complaint','lawsuit','court','regulator','authority','advertising standards','ban','prohibited','investigation','fine','penalty','sanction','watchdog','accused','allegation','criticised','criticized','consumer authority']
 def is_green_negative_source(result):
     text=(result.get('title','')+' '+result.get('content','')+' '+result.get('url','')).lower()
     return any(t in text for t in GREEN_NEGATIVE_SIGNAL_TERMS)
@@ -1495,7 +1510,7 @@ def recalibrate_dimension_score(raw_score, components, findings, targeted_source
         base=76
 
     base=max(0,min(100,int(round(base))))
-    comps['score_calculation_note']='Continuous scoring: 34% claim wording, 32% evidence gap, 22% retained external stakeholder context, 12% sector/channel sensitivity, with regulatory and claim-count modifiers. Fixed plateau caps are not used.'
+    comps['score_calculation_note']='Score calculation: 34% claim wording, 32% evidence gap, 22% retained external stakeholder context, 12% sector/channel sensitivity, with regulatory and claim-count modifiers.'
     return base, comps
 
 def combine_green_social(green_score, social_score, audience):
@@ -1624,7 +1639,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
         vals=[f.get('type','claim') for f in fs or [] if not f.get('type','').lower().startswith('no major')]
         return ', '.join(vals[:3]) if vals else 'no material claim type detected'
     def targeted_count(ext):
-        return len(ext.get('targeted_negative_sources') or ext.get('compact_sources') or []) if ext else 0
+        return len(ext.get('targeted_negative_sources') or []) if ext else 0
     gf=claim_names(green_fs); sf=claim_names(social_fs)
     ge='; '.join((green_components or {}).get('evidence_notes',[])[:1])
     se='; '.join((social_components or {}).get('evidence_notes',[])[:1])
@@ -1935,7 +1950,7 @@ def analyse_url_v27(raw):
         'why_score':{'global':f'Global score is {overall}/100. It is a weighted combination of the green score ({green_score}/100) and social score ({social_score}/100), capped so it cannot exceed the highest dimension score. Direct EmpCo or Forced Labour Regulation risk signals can raise the relevant dimension score, while broader OECD/UNGC/UNGP expectations are weighted less strongly.',
                      'green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],
                      'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],
-                     'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications. The score methodology avoids fixed score plateaus so results vary by claim type, evidence gap, channel, sector sensitivity and retained external stakeholder context.'},
+                     'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications. The score methodology uses continuous weighting so results vary by claim type, evidence gap, communication channel, sector sensitivity and retained external stakeholder context.'},
         'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience),
         'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),
         'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),
