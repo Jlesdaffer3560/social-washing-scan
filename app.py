@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v46_sustainability_scan_polished_report_methodology"
+APP_VERSION="hostable_v47_score_methodology_recalibrated_no_prepub"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -1425,49 +1425,84 @@ def has_forced_labour_regulatory_signal(findings):
     return False
 
 def recalibrate_dimension_score(raw_score, components, findings, targeted_sources, regulatory_signal=False, dimension='green'):
-    """Conservative dimension score used for v40.
-    A high score should require more than broad wording or sector exposure. It normally
-    requires sensitive wording, a material evidence gap and either a direct regulatory
-    signal or retained external contradiction.
+    """v47 recalibrated dimension score.
+
+    Previous versions used fixed caps such as 48/100 when there were no high-risk
+    claims or when evidence-gap risk was below a threshold. That could make unrelated
+    companies receive identical 48/100 scores across Global, Green and Social.
+
+    v47 keeps a conservative philosophy, but uses a continuous score instead of
+    fixed plateau values. The result varies with claim wording, evidence gap,
+    retained external signals, sector exposure, number of detected claim types and
+    direct EmpCo / Forced Labour Regulation indicators.
     """
-    comps=components or {}
+    comps=dict(components or {})
     evidence_gap=int(comps.get('substantiation_risk',0) or 0)
     claim_wording=int(comps.get('claim_wording_risk',0) or 0)
     sector_score=int(comps.get('sector_baseline_risk',0) or 0)
     ext_count=len(targeted_sources or [])
-    # Only retained, external stakeholder sources count for external-context scoring.
-    comps['external_context_risk']=min(100, 20 + 15*ext_count) if ext_count else 0
-    base=round(claim_wording*0.30 + evidence_gap*0.30 + comps['external_context_risk']*0.25 + sector_score*0.15)
-    no_major=findings and findings[0].get('type','').lower().startswith('no major')
-    high_claims=len([f for f in (findings or []) if f.get('risk')=='High'])
+    findings=list(findings or [])
+    no_major=bool(findings and findings[0].get('type','').lower().startswith('no major'))
+    material=[f for f in findings if not f.get('type','').lower().startswith('no major')]
+    high_claims=len([f for f in material if f.get('risk')=='High'])
+    medium_claims=len([f for f in material if f.get('risk')=='Medium'])
+
+    # Only retained, company-specific external stakeholder sources count here.
+    external_context=min(100, 16 + 14*ext_count) if ext_count else 0
+    comps['external_context_risk']=external_context
+
+    # Continuous weighted formula. Evidence and claim wording are the main drivers;
+    # sector and external context are modifiers.
+    base=round(claim_wording*0.34 + evidence_gap*0.32 + external_context*0.22 + sector_score*0.12)
+
+    # Small differentiating modifiers avoid artificial plateaus.
+    base += min(8, high_claims*4)
+    base += min(4, medium_claims*2)
+    if regulatory_signal:
+        base += 7 if dimension=='green' else 5
+    if ext_count>=2:
+        base += 3
     if no_major:
-        base=min(base,22 if not ext_count else 32)
-    if high_claims==0:
-        base=min(base,48)
-    if evidence_gap < 45:
-        base=min(base,48)
-    if ext_count==0 and not regulatory_signal:
-        base=min(base,52)
-    elif ext_count==0 and dimension!='green':
-        base=min(base,56)
-    # Direct EmpCo blacklisted-practice indicators can create a High green risk even without external contradiction,
-    # because the legal risk comes from the claim wording itself. External sources remain review signals, not a prerequisite.
-    if dimension=='green' and regulatory_signal and evidence_gap>=60 and claim_wording>=70:
-        base=max(base,65)
-    elif regulatory_signal and evidence_gap>=60 and claim_wording>=60:
-        base=max(base,52)
-    # High risk is reserved for strong, substantiation-heavy cases. For green claims, direct EmpCo signals can qualify.
-    if base>=70 and not ((dimension=='green' and regulatory_signal and evidence_gap>=70 and claim_wording>=70) or (regulatory_signal and evidence_gap>=70 and claim_wording>=70 and ext_count>=1)):
-        base=64
-    if base>=80 and not ((dimension=='green' and regulatory_signal and evidence_gap>=75 and claim_wording>=75 and ext_count>=1) or (regulatory_signal and evidence_gap>=75 and claim_wording>=75 and ext_count>=2)):
-        base=72
-    return max(0,min(100,base)), comps
+        base -= 10
+
+    # Conservative caps, but no longer one fixed 48/100 plateau.
+    if no_major:
+        cap=24 + min(8, ext_count*4) + (4 if sector_score>=55 else 0)
+        base=min(base, cap)
+    else:
+        if high_claims==0:
+            cap=42 + min(10, evidence_gap//8) + min(6, external_context//18) + (4 if regulatory_signal else 0)
+            base=min(base, cap)
+        if evidence_gap < 25:
+            base=min(base, 44 + min(6, claim_wording//20) + min(4, external_context//25))
+        elif evidence_gap < 45:
+            base=min(base, 56 + min(6, claim_wording//25) + min(5, external_context//20))
+        if ext_count==0 and not regulatory_signal:
+            base=min(base, 61 if high_claims else 55)
+
+    # High risk requires a meaningful combination of problematic wording and weak substantiation.
+    if base>=70 and not (evidence_gap>=58 and claim_wording>=62 and (regulatory_signal or ext_count>=1 or high_claims>=2)):
+        base=66
+    if base>=80 and not (evidence_gap>=72 and claim_wording>=75 and (ext_count>=1 or (dimension=='green' and regulatory_signal))):
+        base=76
+
+    base=max(0,min(100,int(round(base))))
+    comps['score_calculation_note']='v47 continuous scoring: 34% claim wording, 32% evidence gap, 22% retained external context, 12% sector/channel sensitivity, with regulatory and claim-count modifiers. Fixed 48/100 plateau caps were removed.'
+    return base, comps
 
 def combine_green_social(green_score, social_score, audience):
     # Conservative integrated score: weighted average of green and social risk. It must not exceed the highest
     # dimension score and no longer receives a generic consumer-facing uplift.
-    overall=round((int(green_score or 0)*0.50)+(int(social_score or 0)*0.50))
-    return max(0, min(max(int(green_score or 0), int(social_score or 0)), overall))
+    green=int(green_score or 0); social=int(social_score or 0)
+    # v47: keep the global score close to the strongest dimension, but avoid automatic equality.
+    if green==0 and social==0:
+        return 0
+    if green>=social:
+        overall=round(green*0.58 + social*0.42)
+    else:
+        overall=round(green*0.42 + social*0.58)
+    # If the dimensions are equal, keep equality; otherwise keep a distinct integrated score.
+    return max(0, min(max(green, social), overall))
 
 def green_washing_conclusion(score, findings, evidence_gap, external_score, audience):
     no_major=findings and findings[0].get('type','').lower().startswith('no major')
@@ -1756,7 +1791,7 @@ def build_claim_modules_summary(green_findings, social_findings):
 
 def federation_pilot_output(green_findings, social_findings, overall, green_score, social_score):
     return {
-        'member_scan_positioning':'Pre-publication Sustainability Scan',
+        'member_scan_positioning':'Sustainability Scan',
         'member_value':'Identifies risky, vague or insufficiently substantiated claims before they are used in websites, campaigns, packaging, brochures or sustainability communication.',
         'benchmark_fields':['overall_score','green_score','social_score','number_of_empco_indicators','number_of_forced_labour_or_social_indicators','top_claim_modules','priority_actions'],
         'aggregatable_for_federations':True,
@@ -1798,10 +1833,10 @@ def analyse_uploaded_document(filename, text):
         c.setdefault('source_url', source); c.setdefault('source_label', filename or 'Uploaded document'); c.setdefault('audience_lens', audience.get('audience','Internal document')); c.setdefault('audience_group', audience.get('group','internal'))
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
-    methodology='Sustainability Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Direct EmpCo and Forced Labour Regulation risk signals carry more weight than broader OECD, UNGC or UNGP expectations.'
+    methodology='Sustainability Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use the v47 continuous calculation method: claim wording, evidence gap, retained external context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
     summary=f"{comp['company']} receives a global sustainability scan score of {overall}/100 for the uploaded internal document. Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion})."
     return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'pre_publication_review':build_pre_publication_review(green_fs,social_fs,audience),'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a conservative average of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a pre-publication claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'pre_publication_review':[],'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def analyse_url_v27(raw):
     original_url=norm_url(raw); fallback_note=''; related_notes=[]
@@ -1881,20 +1916,20 @@ def analyse_url_v27(raw):
         'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
         'merged_claims':all_claims,'claim_inventory':all_claims,
-        'pre_publication_review':build_pre_publication_review(green_fs,social_fs,audience),'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),
+        'pre_publication_review':[],'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),
         'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Green and social external-source layers are reported separately.'},
         'green_external_context_assessment':green_external_context,'social_external_context_assessment':social_external_context,
         'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},
-        'why_score':{'global':f'Global score is {overall}/100. It is a conservative average of the green score ({green_score}/100) and social score ({social_score}/100), capped so it cannot exceed the highest dimension score. Direct EmpCo or Forced Labour Regulation risk signals can raise the relevant dimension score, while broader OECD/UNGC/UNGP expectations are weighted less strongly.',
+        'why_score':{'global':f'Global score is {overall}/100. It is a weighted combination of the green score ({green_score}/100) and social score ({social_score}/100), capped so it cannot exceed the highest dimension score. Direct EmpCo or Forced Labour Regulation risk signals can raise the relevant dimension score, while broader OECD/UNGC/UNGP expectations are weighted less strongly.',
                      'green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],
                      'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],
-                     'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications.'},
+                     'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications. v47 removed fixed score plateaus so scores should vary more clearly by claim type, evidence gap and external context.'},
         'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience),
         'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),
         'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),
         'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
         'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
-        'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a pre-publication claims register distinguishing green and social claims, claim owner, evidence file and review date.','Classify each claim by audience: consumer-facing marketing vs investor reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals and keep company-owned evidence separate from external stakeholder sources.'],
+        'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Classify each claim by audience: consumer-facing marketing vs investor reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals and keep company-owned evidence separate from external stakeholder sources.'],
         'ai_used':False,'ai_note':''}
 
 # Override v26 endpoint implementation with v27 implementation.

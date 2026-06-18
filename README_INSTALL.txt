@@ -1,21 +1,21 @@
-Durably Sustainability Scan - v46 replacement package
+Durably Sustainability Scan v47 replacement package
 
-Replace the old files in your GitHub/Render project with these files:
+Replace these files in your GitHub/Render project:
+- agent.py
+- app.py
+- frontend.html
+- methodology.pdf
 
-1. agent.py
-2. app.py
-3. frontend.html
-4. methodology.pdf
+Then commit/push to GitHub and redeploy on Render.
 
-Then commit and push the changes to GitHub and redeploy on Render.
-
-After deployment, open:
+After deployment, check:
 https://social-washing-scan-python.onrender.com/api/health
 
 Expected version:
-hostable_v46_sustainability_scan_polished_report_methodology
+hostable_v47_score_methodology_recalibrated_no_prepub
 
-Notes:
-- The public title is now "Sustainability Scan".
-- The methodology is based on EmpCo / Directive (EU) 2024/825 and the EU Forced Labour Regulation / Regulation (EU) 2024/3015.
-- The company report is intended as a compact two-page PDF via browser Print > Save as PDF.
+v47 changes:
+- Recalibrated the score methodology to remove the fixed 48/100 plateau.
+- Global, Green and Social scores now vary with claim wording, evidence gap, external context, sector/channel sensitivity and regulatory indicators.
+- Removed the Pre-publication review section from the UI.
+- Updated the methodology PDF with the v47 score calculation.

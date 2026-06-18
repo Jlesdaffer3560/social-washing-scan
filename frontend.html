@@ -28,7 +28,7 @@
 <body>
 <div class="wrap">
   <section class="hero">
-    <div class="kicker">Durably pre-publication review</div>
+    <div class="kicker">EmpCo and EU Forced Labour Regulation lens</div>
     <h1>Sustainability Scan</h1>
     <p>Assess whether public sustainability claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan is based on EmpCo / Directive (EU) 2024/825 and the EU Forced Labour Regulation / Regulation (EU) 2024/3015, with separate green-claim and social-claim risk lenses.</p>
     <div id="version" class="version">Checking backend version...</div>
@@ -91,7 +91,7 @@
 
     <div class="card section">
       <h2>Score composition and risk drivers</h2>
-      <p class="muted">This section explains why the green and social risk scores are at their current level, based on detected claim wording, evidence gaps, retained external signals and sector exposure.</p>
+      <p class="muted">This section explains why the green and social risk scores are at their current level. v47 uses a continuous calculation, so scores should no longer default to identical 48/100 plateau values unless the underlying green and social risk profile is genuinely identical.</p>
       <div id="drivers" class="cols"></div>
     </div>
 
@@ -107,10 +107,6 @@
       <div id="redflags"></div>
     </div>
 
-    <div class="card section">
-      <h2>Pre-publication review</h2>
-      <div id="prepub"></div>
-    </div>
 
     <div class="card section">
       <h2>External public-source signals</h2>
@@ -149,7 +145,7 @@ async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choo
 async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment when external sources are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below and use the company report download buttons.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
 function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
 $('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
-function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderPrepub(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
+function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
 function renderScores(d){let scores=[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk,'global'],['Green',d.green_score,d.green_risk,'green-score'],['Social',d.social_score,d.social_risk,'social-score']].filter(x=>x[1]!=null);$('scoreCards').innerHTML=scores.map(s=>`<div class="score ${esc(s[3])}"><div class="label">${esc(s[0])} risk score</div><div class="num">${esc(s[1])}<span class="small">/100</span></div><div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div><div class="small">${s[0]==='Global'?'Integrated risk view':s[0]==='Green'?'Environmental/EmpCo lens':'Social/forced-labour lens'}</div></div>`).join('');}
 function renderDrivers(d){let det=d.score_driver_details||{};let green=det.green||{};let social=det.social||{};let html=''; if(green.summary)html+=driverCard('Green score drivers',green); if(social.summary)html+=driverCard('Social score drivers',social); if(!html && d.why_score){html=Object.entries(d.why_score).map(([k,v])=>`<div><h3>${esc(k)}</h3><p class="muted">${esc(typeof v==='string'?v:JSON.stringify(v,null,2))}</p></div>`).join('')} $('drivers').innerHTML=html||'<p class="empty">No score-driver details available.</p>';}
 function driverCard(title,obj){let items=[];['summary','claim_wording','substantiation','external_context','sector_context','audience'].forEach(k=>{if(obj[k])items.push(`<li><strong>${esc(k.replace(/_/g,' '))}:</strong> ${esc(obj[k])}</li>`)});return `<div class="subtlebox"><h3>${esc(title)}</h3><ul class="list">${items.join('')}</ul></div>`}
@@ -162,7 +158,6 @@ function claimTable(rows){return `<table><thead><tr><th>Risk</th><th>Claim type<
 function renderRedFlags(d){let by=d.red_flags_by_dimension||{};let green=arr(by.green);let social=arr(by.social);let flags=arr(d.stakeholder_red_flags);let regulatory=[];let external=[];for(let f of flags){let s=String(typeof f==='string'?f:JSON.stringify(f));let l=s.toLowerCase();if(l.includes('empco')||l.includes('regulation')||l.includes('forced labour')||l.includes('forced labor'))regulatory.push(s);if(l.includes('external')||l.includes('public-source')||l.includes('contradict'))external.push(s)}
 let cards=[['Green-claim red flags',green,'green-flag'],['Social-claim red flags',social,'social-flag'],['Regulatory red flags',regulatory,'reg-flag'],['External public-source red flags',external,'reg-flag']];
 $('redflags').innerHTML=`<div class="redflag-grid">${cards.map(([title,items,cls])=>`<div class="redflag ${cls}"><h3>${esc(title)}</h3>${items.length?'<ul>'+items.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'<p class="empty">No specific red flag in this category.</p>'}</div>`).join('')}</div>`;}
-function renderPrepub(d){let rows=arr(d.pre_publication_review); if(!rows.length){$('prepub').innerHTML='<p class="empty">No pre-publication review items available.</p>';return} $('prepub').innerHTML=`<table><thead><tr><th>Claim</th><th>Risk</th><th>Pre-publication check</th><th>Action</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.claim_type||r.type||r.claim||'')}</td><td>${esc(r.risk_level||r.risk||'')}</td><td>${esc(r.pre_publication_check||r.check||r.issue||'')}</td><td>${esc(r.action||r.recommended_action||r.suggested_rewrite||'')}</td></tr>`).join('')}</tbody></table>`}
 function renderExternal(d){let html=''; let ext=d.external_research||{}; function srcList(title,items){items=arr(items); if(!items.length)return ''; return `<h3>${esc(title)}</h3>`+items.map(s=>`<div class="source"><strong>${esc(s.title||'Source')}</strong><br><a href="${esc(s.url||'#')}" target="_blank" rel="noopener">${esc(s.url||'')}</a><p class="small">${esc(s.category||'Public source')} · ${esc(s.credibility||'')}</p><p>${esc(s.content||'')}</p></div>`).join('')}
 html+=srcList('Green external signals',ext.green?.targeted_negative_sources||ext.green?.compact_sources); html+=srcList('Social external signals',ext.social?.targeted_negative_sources||ext.social?.compact_sources); html+=srcList('External signals',ext.targeted_negative_sources||ext.compact_sources); let configured=(ext.green?.enabled||ext.social?.enabled||ext.enabled);let msg=configured?'<p class="empty">No targeted negative external public-source signal retained. Review provider attempts if this seems unexpected.</p>':'<p class="empty">External public-source search is not configured or not performed for this scan. Configure Tavily or Google Custom Search credentials for live external signals.</p>';$('external').innerHTML=html||msg;}
 function renderActions(d){let actions=arr(d.company_action_plan);$('actions').innerHTML=actions.length?actions.map(a=>`<div class="action-card"><strong>${esc(a.priority||'')}</strong> ${esc(a.title||'')}<br><span class="muted">${esc(a.action||'')}</span></div>`).join(''):'<p class="empty">No actions available.</p>'}
