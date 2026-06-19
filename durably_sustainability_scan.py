@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v52_material_claims_recalibrated_scoring"
+APP_VERSION="hostable_v53_scan_timeout_resilience"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -138,7 +138,7 @@ def norm_url(u):
     if not u: raise ValueError("Please enter a company website URL.")
     return u if u.startswith(("http://","https://")) else "https://"+u
 
-def related_company_sites(url, max_sites=2):
+def related_company_sites(url, max_sites=1):
     """Return a small set of likely related corporate/national domains.
     Example: www.lidl.be -> www.lidl.com. This is a cautious heuristic: it does not
     crawl the open web, it only tests common corporate TLD variants for the same brand.
@@ -206,7 +206,7 @@ def fetch_html(url):
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
     req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0","Accept":"text/html,application/xhtml+xml"})
-    with urlopen(req,timeout=12,context=ssl.create_default_context()) as r:
+    with urlopen(req,timeout=7,context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
 def same_domain(u,base):
@@ -221,7 +221,7 @@ def crawl(url):
     for href in links:
         full=urljoin(url,href).split("#")[0]
         if same_domain(full,host) and relevant(full) and full not in cands and full!=url: cands.append(full)
-    for link in cands[:6]:
+    for link in cands[:3]:
         try:
             t,_=parse_html(fetch_html(link))
             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
@@ -247,7 +247,7 @@ def tavily_search(q,max_results=5):
     if not TAVILY_API_KEY: return []
     payload={"query":q,"search_depth":"basic","max_results":max_results,"include_answer":False,"include_raw_content":False,"topic":"general"}
     req=Request("https://api.tavily.com/search",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json","Authorization":"Bearer "+TAVILY_API_KEY},method="POST")
-    with urlopen(req,timeout=12) as r: data=json.loads(r.read().decode("utf-8",errors="ignore"))
+    with urlopen(req,timeout=7) as r: data=json.loads(r.read().decode("utf-8",errors="ignore"))
     return [{"title":i.get("title",""),"url":i.get("url",""),"content":i.get("content",""),"score":i.get("score",0)} for i in data.get("results",[])]
 
 def google_search(query, max_results=5):
@@ -257,7 +257,7 @@ def google_search(query, max_results=5):
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
     req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"},method="GET")
-    with urlopen(req,timeout=12) as r:
+    with urlopen(req,timeout=7) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
     for item in data.get("items",[]):
@@ -309,7 +309,7 @@ def external(company, findings=None):
     qs=[f'{company} {theme}' for theme in themes]
     qs.append(f'{company} social washing greenwashing misleading social claims')
     allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:7]:
+    for q in qs[:3]:
         res,attempts=search_public_sources(q,4)
         provider_attempts.extend([dict(a,query=q) for a in attempts])
         for r in res:
@@ -1398,7 +1398,7 @@ def external_green(company, findings=None):
     themes=green_query_themes(findings or [])
     qs=[f'{company} {theme}' for theme in themes]
     allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:7]:
+    for q in qs[:3]:
         res,attempts=search_public_sources(q,4)
         provider_attempts.extend([dict(a,query=q) for a in attempts])
         for r in res:
@@ -1951,11 +1951,11 @@ def analyse_url_v27(raw):
     documents_checked=build_documents_checked(pages,audience,txt)
     discovered_docs=[]
     try:
-        discovered_docs=discover_investor_internal_documents(comp, pages, limit=5)
+        discovered_docs=[]  # v53: skip secondary investor-document discovery during live website scans to avoid Render gateway timeouts
     except Exception:
         discovered_docs=[]
     documents_checked=merge_documents(documents_checked, discovered_docs)
-    investor_internal_text=collect_investor_internal_text(discovered_docs, limit=2)
+    investor_internal_text=""  # v53: keep website scan focused on crawled website pages
     if investor_internal_text:
         txt=(txt+'\n'+investor_internal_text)[:110000]
     page_segments=extract_page_segments(txt,pages)
