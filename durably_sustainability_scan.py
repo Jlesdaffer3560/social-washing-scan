@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v50_ui_fix_english_file_picker_external_stakeholder_filter"
+APP_VERSION="hostable_v51_contextual_claim_scoring"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -35,7 +35,7 @@ CLAIMS=[
  (["ethical","fair","responsible","trusted","socially responsible","caring","worker-friendly"],"Broad ethical or responsible-business claim","High","The wording reassures users about responsible conduct, but may not specify criteria, scope, exclusions, verification method or evidence.","Replace broad wording with evidence-based language, for example: 'We apply defined responsible-sourcing criteria to selected high-risk categories and disclose audit coverage and corrective-action progress.'"),
  (["human rights","labour rights","labor rights","decent work","forced labour","forced labor","child labour","child labor","living wage","modern slavery"],"Human-rights or labour-rights claim","High","The claim refers to sensitive rights topics but may not show due diligence, salient risks, grievance channels, tracking or remedy.","State the process and limits, for example: 'We assess selected human-rights risks in priority supply chains and report actions, grievance channels and remediation progress.'"),
  (["forced labour free","forced labor free","free from forced labour","free from forced labor","no forced labour","no forced labor","modern slavery free","forced labour due diligence","forced labor due diligence","product traceability","import controls","supplier traceability"],"Forced-labour product or supply-chain claim","High","EU Forced Labour Regulation risk: the wording may imply that products, imports, exports or supply chains are free from forced labour. Such claims require robust product/supplier traceability, forced-labour risk assessment, mitigation, remediation and response procedures.","Scope the wording, for example: 'We apply a risk-based forced-labour due-diligence process to selected higher-risk products and suppliers, with traceability, escalation and remediation steps disclosed.'"),
-  (["supply chain","value chain","all suppliers","supplier","responsible sourcing","ethical sourcing","audited","certified","traceable","supplier code"],"Supply-chain or supplier-responsibility claim","High","The claim may imply supplier control or responsible value-chain coverage without showing supplier tiers, audit quality, worker voice or remediation.","Scope the claim, for example: 'We assess higher-risk suppliers through a risk-based process and disclose supplier coverage, key findings and corrective-action closure rates.'"),
+  (["supply chain","value chain","all suppliers","responsible sourcing","ethical sourcing","supplier code","supplier standards","supplier due diligence","supplier audit","supplier audits","audited suppliers","certified suppliers","traceable suppliers","supplier traceability","human rights in the supply chain","supply-chain transparency"],"Supply-chain or supplier-responsibility claim","High","The wording may imply responsible value-chain control, supplier coverage, traceability, audit quality or remediation. A neutral reference to suppliers, such as supporting local suppliers, is not treated as a high-risk social claim unless it is linked to responsible-sourcing, traceability, human-rights, audit, certification or absolute coverage language.","Scope the claim, for example: 'We assess higher-risk suppliers through a risk-based process and disclose supplier coverage, key findings and corrective-action closure rates.'"),
  (["diversity","inclusion","inclusive","equality","equal opportunities","pay equity","gender equality","non-discrimination"],"Diversity, equality and inclusion claim","Medium","The claim refers to inclusion or equality but may not provide workforce data, baseline, targets, pay-equity information or progress evidence.","Add measurable evidence, for example: 'We monitor diversity and inclusion through workforce data, employee feedback and targeted action plans, with progress reported annually.'"),
  (["safe workplace","safe working","health and safety","well-being","wellbeing","worker welfare","quality of life","care for employees"],"Health, safety or worker-welfare claim","High","The claim suggests safe or positive working conditions but may not provide incident data, contractor coverage, workload evidence, worker feedback or remedy.","Link to controls and outcomes, for example: 'We monitor health and safety through incident reporting, training, contractor coverage and corrective actions.'"),
  (["accessibility","vulnerable customers","customer care","fair treatment","customer protection","affordable for all","financial inclusion","digital inclusion"],"Customer welfare or accessibility claim","Medium","The claim concerns customer welfare or inclusion but may not show measurable access, complaints, remedy or vulnerable-customer safeguards.","Add evidence, for example: 'We track accessibility and customer inclusion through service metrics, complaint handling and improvement actions for vulnerable groups.'"),
@@ -341,6 +341,56 @@ def infer_context(company,text,ext):
 def snip(text,trig):
     return clean_excerpt(text,trig)
 
+
+LOW_RISK_SUPPLIER_CONTEXTS = [
+    'backing british suppliers','supporting british suppliers','supporting local suppliers','support local suppliers',
+    'backing local suppliers','local suppliers','british suppliers','working with suppliers','our suppliers include'
+]
+SUPPLIER_RESPONSIBILITY_QUALIFIERS = [
+    'responsible','ethical','sustainable','sustainability','human rights','labour rights','labor rights','forced labour','forced labor',
+    'child labour','child labor','modern slavery','living wage','traceable','traceability','certified','audited','audit','due diligence',
+    'supplier code','code of conduct','compliant','compliance','remediation','grievance','fair','transparent','transparency',
+    'tier 1','tier 2','all suppliers','every supplier','supply chain','value chain','sourcing','procurement'
+]
+
+def _context_window(text, start, end, chars=120):
+    return (text[max(0,start-chars):min(len(text),end+chars)] or '')
+
+def _is_supplier_responsibility_context(text, trigger, pos):
+    """Avoid false positives where 'supplier(s)' is used neutrally.
+    A supplier reference is scored only when the surrounding wording implies responsibility, traceability,
+    certification, audit coverage, human-rights/labour controls, due diligence or absolute supplier coverage.
+    """
+    low=text.lower(); trig=trigger.lower(); end=pos+len(trig)
+    win=_context_window(low,pos,end,170)
+    # Explicit high-sensitivity phrases remain valid.
+    explicit=['supply chain','value chain','all suppliers','every supplier','responsible sourcing','ethical sourcing','supplier code','supplier standards','supplier due diligence','supplier traceability','human rights in the supply chain','supply-chain transparency','audited suppliers','certified suppliers','traceable suppliers']
+    if any(x in win for x in explicit):
+        return True
+    # Bare supplier(s) + neutral local-support wording is not a social-washing claim.
+    if trig in ['supplier','suppliers']:
+        if any(x in win for x in LOW_RISK_SUPPLIER_CONTEXTS) and not any(q in win for q in SUPPLIER_RESPONSIBILITY_QUALIFIERS if q not in ['sourcing','procurement']):
+            return False
+        return any(q in win for q in SUPPLIER_RESPONSIBILITY_QUALIFIERS)
+    # Other triggers need claim-like context, not isolated technical wording.
+    if trig in ['audited','certified','traceable']:
+        return any(x in win for x in ['supplier','suppliers','supply chain','product','products','source','sourcing','materials','cotton','factory','factories'])
+    return True
+
+def _find_valid_trigger(text, triggers, claim_type):
+    low=text.lower()
+    for trig in triggers:
+        start=0
+        while True:
+            i=low.find(trig.lower(), start)
+            if i < 0:
+                break
+            if claim_type == 'Supply-chain or supplier-responsibility claim' and not _is_supplier_responsibility_context(text, trig, i):
+                start=i+len(trig)
+                continue
+            return trig
+    return None
+
 def problematic_terms_for_finding(claim_text, claim_type=''):
     """Return short list of words/phrases that explain why a detected claim was flagged."""
     terms=[
@@ -355,12 +405,15 @@ def problematic_terms_for_finding(claim_text, claim_type=''):
     for marker in ['generic environmental claim','climate-neutrality or offsetting claim','sustainability label / certification claim','future environmental-performance claim','comparative environmental claim','forced-labour product or supply-chain claim','supply-chain or supplier-responsibility claim','broad ethical or responsible-business claim']:
         if marker.lower() in ct and marker not in out:
             out.append(marker)
+    # Avoid showing bare supplier/suppliers as a problematic term unless the claim type is genuinely about supplier responsibility or forced labour.
+    if 'supplier' not in (claim_type or '').lower() and 'forced' not in (claim_type or '').lower():
+        out=[x for x in out if x not in ['supplier','suppliers']]
     return out[:10]
 
 def detect_claims(text):
     low=text.lower(); fs=[]; seen=set()
     for triggers,typ,risk,issue,rewrite in CLAIMS:
-        trig=next((t for t in triggers if t in low),None)
+        trig=_find_valid_trigger(text,triggers,typ)
         if trig and typ not in seen:
             seen.add(typ); score=72 if typ=="Forced-labour product or supply-chain claim" else (56 if risk=="High" else 32)
             claim_excerpt=snip(text,trig)
@@ -888,21 +941,21 @@ def is_company_owned_source(result, company_name, reviewed_pages=None):
 def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=None, negative_fn=None):
     kept = []
     negative_fn = negative_fn or is_negative_external_source
-    positive_markers = POSITIVE_NOISE_TERMS + ['annual report','sustainability report','esg report','policy','supplier code','code of conduct','our sustainability','our responsibility','press release','corporate news']
-    hard_negative = ['greenwashing','misleading','complaint','lawsuit','court','investigation','fine','penalty','sanction','regulator','authority','watchdog','accused','allegation','criticised','criticized','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','strike','union','protest','boycott','violation']
+    positive_markers = POSITIVE_NOISE_TERMS + ['annual report','sustainability report','esg report','policy','supplier code','code of conduct','our sustainability','our responsibility','press release','corporate news','investor relations','annual results','quarterly results','case study','best practice','ranked','awarded']
+    hard_negative = ['greenwashing','misleading','complaint','lawsuit','court','investigation','probe','fine','penalty','sanction','regulator','authority','watchdog','accused','alleged','allegation','criticism','concern','concerns','criticised','criticized','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','strike','union','protest','boycott','violation','breach','controversy','backlash','scandal']
     for r in results:
         text=(r.get('title','')+' '+r.get('content','')+' '+r.get('url','')).lower()
         if is_company_owned_source(r, company_name, reviewed_pages):
             continue
         if not source_mentions_company(r, company_name):
             continue
-        if not negative_fn(r):
-            continue
-        if any(p in text for p in positive_markers) and not any(n in text for n in hard_negative):
-            continue
+        # Only keep negative stakeholder perceptions. Positive corporate news, company documents and neutral announcements are excluded.
         if not any(n in text for n in hard_negative):
             continue
-        kept.append(r)
+        if any(p in text for p in positive_markers) and not any(n in text for n in ['accused','alleged','allegation','criticism','criticised','criticized','complaint','lawsuit','court','regulator','fine','penalty','greenwashing','misleading','forced labour','forced labor','child labour','child labor','investigation','probe']):
+            continue
+        if negative_fn(r):
+            kept.append(r)
     if "compact_sources" in globals():
         return compact_sources(kept, limit)
     return kept[:limit]
@@ -1506,7 +1559,7 @@ def recalibrate_dimension_score(raw_score, components, findings, targeted_source
     if no_major:
         base -= 10
 
-    # Conservative caps, but no longer one fixed 48/100 plateau.
+    # Conservative interpretive caps avoid treating weak or generic signals as high risk.
     if no_major:
         cap=24 + min(8, ext_count*4) + (4 if sector_score>=55 else 0)
         base=min(base, cap)
