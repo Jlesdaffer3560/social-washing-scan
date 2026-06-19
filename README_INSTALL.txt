@@ -1,6 +1,6 @@
 Durably Sustainability Scan - replacement package
 
-Replace these files in the GitHub/Render project:
+Replace these files in your GitHub / Render project:
 - agent.py
 - app.py
 - frontend.html
@@ -8,10 +8,8 @@ Replace these files in the GitHub/Render project:
 
 Then commit, push and redeploy on Render.
 
-After deploy, check:
+After deployment, open:
 https://social-washing-scan-python.onrender.com/api/health
 
-Expected version:
-hostable_v53_scan_timeout_resilience
-
-This package reduces Render timeout risk during website scans by limiting secondary page discovery and external search calls while keeping negative external stakeholder signal screening active.
+The version should be:
+hostable_v54_material_problem_claim_engine_conservative_scoring
