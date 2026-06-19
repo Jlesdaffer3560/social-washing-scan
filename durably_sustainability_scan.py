@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v49_clean_methodology_precise_claim_sources_external_stakeholders"
+APP_VERSION="hostable_v50_ui_fix_english_file_picker_external_stakeholder_filter"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -701,27 +701,41 @@ def merge_claim_sections(findings, company=None, sector=None):
 
 
 NEGATIVE_SIGNAL_TERMS = [
-    "forced labour","forced labor","child labour","child labor","modern slavery",
-    "lawsuit","court","complaint","controversy","strike","union","regulator",
-    "regulatory","discrimination","human rights","labour rights","labor rights",
-    "supplier","supply chain","wage","grievance","allegation","criticism",
-    "investigation","fine","sanction","breach","violation","misconduct",
-    "accessibility","customer protection","workers","unsafe","audit failure"
+    "greenwashing","social washing","misleading","accused","accusation","allegation","criticised","criticized","criticism",
+    "complaint","lawsuit","court","investigation","fine","penalty","sanction","regulator","authority","watchdog",
+    "ngo","union","strike","protest","boycott","violation","breach","forced labour","forced labor","child labour",
+    "child labor","modern slavery","human rights abuse","labour rights","labor rights","unsafe","discrimination",
+    "worker rights","supply chain controversy","class action","settlement","ban","prohibited"
 ]
 POSITIVE_NOISE_TERMS = [
     "award","awarded","wins","recognised","recognized","partnership","partnered","sponsor","donation",
     "new product","launches","opens","expands","growth","profit","revenue","appointment","campaign",
-    "success story","best practice","ranking","ranked","certificate","certified","collaboration","initiative"
+    "success story","best practice","ranking","ranked","certificate","certified","collaboration","initiative",
+    "how to","guide","webinar","event","conference","training","job","vacancy"
 ]
+OWNED_OR_NEUTRAL_DOC_TERMS = [
+    "sustainability report","sustainability statement","annual report","integrated report","esg report","non-financial report",
+    "corporate responsibility report","impact report","human rights policy","human rights statement","supplier code",
+    "supplier policy","supplier standards","code of conduct","modern slavery statement","due diligence statement",
+    "policy","policies","our sustainability","our responsibility","our human rights","our suppliers",
+    "press release","newsroom","media release","corporate news","investor relations","results presentation",
+    "jaarverslag","duurzaamheidsverslag","rapport annuel","rapport de durabilité"
+]
+def _external_signal_text(result):
+    return (result.get("title","")+" "+result.get("content","")+" "+result.get("url","")).lower()
+
 def is_negative_external_source(result):
-    text = (result.get("title","") + " " + result.get("content","") + " " + result.get("url","")).lower()
-    # This section is limited to negative stakeholder perception: criticism, allegations,
-    # complaints, investigations, enforcement, litigation, union/NGO/regulator signals or media
-    # reporting about potential harm. Company documents, ordinary positive news and neutral
-    # sustainability announcements are not retained.
-    stakeholder_negative_terms = ["greenwashing","misleading","accused","accusation","allegation","criticised","criticized","criticism","complaint","lawsuit","court","investigation","fine","penalty","sanction","regulator","authority","watchdog","ngo","union","strike","protest","boycott","violation","breach","forced labour","forced labor","child labour","child labor","modern slavery","human rights abuse","labour rights","labor rights","unsafe","discrimination"]
-    positive_only = any(t in text for t in POSITIVE_NOISE_TERMS) and not any(t in text for t in ["greenwashing","misleading","complaint","lawsuit","investigation","fine","accused","criticised","criticized","forced labour","forced labor","human rights abuse"])
-    return any(t in text for t in stakeholder_negative_terms) and not positive_only
+    text = _external_signal_text(result)
+    hard_negative = any(t in text for t in [
+        "greenwashing","social washing","misleading","accused","accusation","allegation","criticised","criticized",
+        "complaint","lawsuit","court","investigation","fine","penalty","sanction","regulator","authority",
+        "watchdog","union","strike","protest","boycott","violation","breach","forced labour","forced labor",
+        "child labour","child labor","modern slavery","human rights abuse","unsafe","discrimination","settlement"
+    ])
+    stakeholder_context = any(t in text for t in ["ngo","union","court","regulator","authority","watchdog","media","press","reuters","guardian","bbc","ft.com","oecd","ncp","complaint","lawsuit","investigation"])
+    own_or_neutral = any(t in text for t in OWNED_OR_NEUTRAL_DOC_TERMS) and not hard_negative
+    positive_only = any(t in text for t in POSITIVE_NOISE_TERMS) and not hard_negative
+    return hard_negative and stakeholder_context and not own_or_neutral and not positive_only
 def negative_compact_sources(results, limit=5):
     filtered = [r for r in results if is_negative_external_source(r)]
     if "compact_sources" in globals():
@@ -1353,10 +1367,14 @@ def summarise_green_ext(results):
     hits=[t for t in terms if t in combo]
     return ('External results contain potentially relevant green-claim signals, including: '+', '.join(hits[:8])+'. These require verification.') if hits else 'External results were found, but no strong green-claim risk signal was detected from snippets alone.'
 
-GREEN_NEGATIVE_SIGNAL_TERMS=['greenwashing','misleading','complaint','lawsuit','court','regulator','authority','advertising standards','ban','prohibited','investigation','fine','penalty','sanction','watchdog','accused','allegation','criticised','criticized','consumer authority']
+GREEN_NEGATIVE_SIGNAL_TERMS=['greenwashing','misleading','complaint','lawsuit','court','regulator','authority','advertising standards','ban','prohibited','investigation','fine','penalty','sanction','watchdog','accused','allegation','criticised','criticized','consumer authority','settlement','asa','jep']
 def is_green_negative_source(result):
-    text=(result.get('title','')+' '+result.get('content','')+' '+result.get('url','')).lower()
-    return any(t in text for t in GREEN_NEGATIVE_SIGNAL_TERMS)
+    text=_external_signal_text(result)
+    hard=any(t in text for t in GREEN_NEGATIVE_SIGNAL_TERMS)
+    stakeholder=any(t in text for t in ['regulator','authority','watchdog','court','complaint','lawsuit','investigation','media','press','ngo','consumer authority','asa','jep','reuters','guardian','bbc','ft.com'])
+    own_or_neutral=any(t in text for t in OWNED_OR_NEUTRAL_DOC_TERMS) and not hard
+    positive_only=any(t in text for t in POSITIVE_NOISE_TERMS) and not hard
+    return hard and stakeholder and not own_or_neutral and not positive_only
 
 def green_negative_compact_sources(results, limit=5):
     return compact_sources([r for r in results if is_green_negative_source(r)], limit)

@@ -1,4 +1,4 @@
-Durably Sustainability Scan - replacement files
+Durably Sustainability Scan - replacement package
 
 Replace these files in your GitHub/Render project:
 
@@ -9,13 +9,16 @@ Replace these files in your GitHub/Render project:
 
 Then commit/push to GitHub and redeploy on Render.
 
-After deployment, open:
+After deployment, check:
 https://social-washing-scan-python.onrender.com/api/health
 
 Expected version:
-hostable_v49_clean_methodology_precise_claim_sources_external_stakeholders
+hostable_v50_ui_fix_english_file_picker_external_stakeholder_filter
 
-Notes:
-- The methodology PDF contains no internal version history.
-- The scan page includes clearer source references for detected wording.
-- External public-source signals are intended to show only negative stakeholder signals, excluding company-owned documents and positive/neutral news.
+Main fixes included:
+- Run website scan button JavaScript fixed.
+- Native Dutch file-upload wording removed; custom English file picker added.
+- UI wording standardised in English.
+- Copy text report / redundant text-report flow removed from visible UI.
+- External signals restricted to negative external stakeholder perceptions; company-owned documents and positive/neutral news are excluded.
+- Copyright footer added.
