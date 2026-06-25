@@ -44,3 +44,13 @@ Methodology PDF (fully rewritten):
 - Omnibus I thresholds for CSDDD and CSRD
 - Correct v55 scoring weights (42/24/22/12)
 - Score bands and interpretation
+
+TIMEOUT FIX (latest update)
+- fetch_html timeout: 7s -> 5s with helpful error message
+- Tavily and Google Search timeouts: 7s -> 5s
+- External search queries: 6 -> 4 per scan
+- Crawl: reduced from 3 to 2 additional pages per scan
+- Document fetch timeout: 10s -> 7s
+- Better error message when website times out:
+  "Website scan timed out. Try the sustainability page directly,
+   or paste text into a document and use the document scan."
