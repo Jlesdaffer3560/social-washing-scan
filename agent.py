@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
 
-APP_VERSION="hostable_v54_material_problem_claim_engine_conservative_scoring"
+APP_VERSION="hostable_v55_claim_detection_balanced_report_layout"
 PORT=int(os.environ.get("PORT","8000"))
 HOST="0.0.0.0"
 APP_DIR=Path(__file__).resolve().parent
@@ -57,9 +57,9 @@ SOCIAL_WASHING_TAXONOMY={
 }
 
 STANDARDS=[
- {"name":"CSRD / ESRS S1-S4","use":"Connect social claims to policies, actions, targets, metrics and affected stakeholder groups: own workforce, value-chain workers, affected communities, consumers and end-users."},
- {"name":"CSDDD","use":"Support human-rights and supply-chain claims with risk-based due diligence, prevention, mitigation, tracking and remediation."},
- {"name":"EU Forced Labour Regulation — Regulation (EU) 2024/3015","use":"Check product, supplier and import/export claims against the EU prohibition on placing, making available on the Union market, or exporting products made with forced labour. Evidence should cover forced-labour risk assessment, supplier/product traceability, preventive actions, remediation and withdrawal/response readiness."},
+ {"name":"CSRD / ESRS S1-S4 (post-Omnibus I: >1,000 employees AND >EUR450M net turnover; reporting from FY2027)","use":"Connect social claims to policies, actions, targets and metrics across own workforce (S1), value-chain workers (S2), affected communities (S3) and consumers (S4). Post-Omnibus I: first CSRD report due 2028 for in-scope companies. Belgian transposition via Wet van 6 februari 2025."},
+ {"name":"CSDDD (post-Omnibus I: scope limited to >5,000 employees AND >EUR1.5B net turnover; application from 26 July 2029)","use":"Support human-rights and supply-chain claims with risk-based due diligence, prevention, mitigation, tracking and remediation. Post-Omnibus I (Directive 2026/470, in force 18 March 2026): direct scope applies only to the largest companies. Indirect exposure through customer due diligence expectations is already commercially relevant."},
+ {"name":"EU Forced Labour Regulation  -  Regulation (EU) 2024/3015","use":"Check product, supplier and import/export claims against the EU prohibition on placing, making available on the Union market, or exporting products made with forced labour. Evidence should cover forced-labour risk assessment, supplier/product traceability, preventive actions, remediation and withdrawal/response readiness."},
  {"name":"OECD Guidelines","use":"Check whether responsible-business claims are backed by identification, prevention, mitigation and accounting for adverse impacts."},
  {"name":"UN Guiding Principles on Business and Human Rights","use":"Support human-rights claims with policy commitment, due diligence, grievance channels and remedy."},
  {"name":"UN Global Compact","use":"Check consistency with principles on human rights, labour, environment and anti-corruption when responsible-business conduct is invoked."},
@@ -309,7 +309,7 @@ def external(company, findings=None):
     qs=[f'{company} {theme}' for theme in themes]
     qs.append(f'{company} social washing greenwashing misleading social claims')
     allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:3]:
+    for q in qs[:6]:
         res,attempts=search_public_sources(q,4)
         provider_attempts.extend([dict(a,query=q) for a in attempts])
         for r in res:
@@ -529,12 +529,12 @@ def washing_conclusion(score, findings, evidence_gap, external_score):
     if score < 50:
         return "Potentially overbroad social claim"
     if score < 60:
-        return "Potential social-washing concern — evidence review needed"
+        return "Potential social-washing concern  -  evidence review needed"
     if external_score >= 40 and evidence_gap >= 55:
-        return "High social-washing risk signal — verify urgently"
-    return "Potential social-washing concern — not enough contradiction evidence for High"
+        return "High social-washing risk signal  -  verify urgently"
+    return "Potential social-washing concern  -  not enough contradiction evidence for High"
 
-def calc_score(findings,sector,context,external_research=None,page_text=""):
+def calc_score(findings,sector,context,external_research=None,page_text="",company_name=""):
     """
     V25 social-washing assessment scoring:
     - 30% claim wording risk
@@ -550,7 +550,7 @@ def calc_score(findings,sector,context,external_research=None,page_text=""):
     claim_wording=min(100,round(claim*1.25)) if not no_major else 15
     substantiation, evidence_notes=evidence_signal_score(page_text, findings)
     evidence_gap=25 if no_major else max(0,100-substantiation)
-    external_context=strict_external_context_risk(external_research or {}, "")
+    external_context=strict_external_context_risk(external_research or {}, company_name)
     external_score=external_context.get("score",0)
     sector_score={"Low":10,"Medium":35,"High":60}.get(sector.get("level","Medium"),35)
     raw=round(claim_wording*0.30 + evidence_gap*0.30 + external_score*0.25 + sector_score*0.15)
@@ -746,8 +746,8 @@ def merge_claim_sections(findings, company=None, sector=None):
             "risk_level": f.get("risk",""),
             "claim_score": f.get("claim_score",0),
             "standards": f.get("standards", []),
-            "analysis": specific_claim_analysis(f, company, sector) if "specific_claim_analysis" in globals() else (f.get("issue","") + " " + f.get("action","")).strip(),
-            "evidence_needed": evidence_checklist(f) if "evidence_checklist" in globals() else [],
+            "analysis": (f.get("issue","") + " " + f.get("action","")).strip(),
+            "evidence_needed": evidence_checklist(f),
             "suggested_rewrite": f.get("rewrite","")
         })
     return rows
@@ -1007,7 +1007,7 @@ def analyse_url(raw):
     exttext=" ".join(r.get("title","")+" "+r.get("content","") for r in ext.get("results",[]))
     sec=infer_sector(comp,txt+"\n"+exttext)
     ctx=infer_context(comp,txt,ext)
-    score, external_modifier, external_modifier_note, evidence_credit, score_components = calc_score(fs,sec,ctx,ext,txt)
+    score, external_modifier, external_modifier_note, evidence_credit, score_components = calc_score(fs,sec,ctx,ext,txt,comp.get("company",""))
     external_context_v17 = strict_external_context_risk(ext, comp.get("company",""))
     # Use the stricter company-aware external context in the components.
     score_components["external_context_risk"] = external_context_v17.get("score", score_components.get("external_context_risk",0))
@@ -1078,6 +1078,8 @@ GREEN_CLAIMS=[
 
 EMPCO_LENS=[
  {'name':'Directive (EU) 2024/825 / EmpCo','use':'Frames green-claim risk in B2C commercial communications by addressing misleading environmental claims, generic claims, labels, comparisons, durability/repairability and future environmental performance claims.'},
+ {'name':'EU Green Claims Directive (GCD, 2024 political agreement)','use':'Product-specific green claims made in B2C communications must be independently pre-verified before use. Applies to explicit comparative or absolute product-level environmental claims not covered by recognised EU ecolabel schemes. Stricter than EmpCo for verified product-level claims.'},
+ {'name':'EU Deforestation Regulation (EUDR, Regulation (EU) 2023/1115)','use':'Relevant for supply-chain and sourcing claims involving cocoa, coffee, palm oil, soy, wood, rubber or cattle products. Companies placing these commodities on the EU market must demonstrate deforestation-free status and traceability. Compliance deadline for large operators under phased review (originally Dec 2024).'},
  {'name':'UCPD environmental-claim definition','use':'Checks whether text, images, symbols, labels, brand names, trade names or presentation imply positive, zero, reduced, comparative or improved environmental impact of a product, brand or trader.'},
  {'name':'Blacklisted-practices lens','use':'Flags high-sensitivity indicators such as generic environmental claims without clear specification or recognised excellent performance, self-declared sustainability labels, offset-based product neutrality claims, global claims based on one feature, and legal requirements presented as distinctive benefits.'},
  {'name':'Same-medium specification check','use':'Checks whether broad wording is specified clearly and prominently on the same page, advertisement, packaging text or product interface.'},
@@ -1398,7 +1400,7 @@ def external_green(company, findings=None):
     themes=green_query_themes(findings or [])
     qs=[f'{company} {theme}' for theme in themes]
     allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:3]:
+    for q in qs[:6]:
         res,attempts=search_public_sources(q,4)
         provider_attempts.extend([dict(a,query=q) for a in attempts])
         for r in res:
@@ -1604,9 +1606,9 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
     if no_major: return prefix+'No clear greenwashing signal detected'
     if score<30: return prefix+'Low green-claim substantiation risk'
     if score<50: return prefix+'Potentially overbroad green claim'
-    if score<60: return prefix+'Potential greenwashing concern — evidence review needed'
-    if external_score>=40 and evidence_gap>=55: return prefix+'High greenwashing risk signal — verify urgently'
-    return prefix+'Potential greenwashing concern — not enough contradiction evidence for High'
+    if score<60: return prefix+'Potential greenwashing concern  -  evidence review needed'
+    if external_score>=40 and evidence_gap>=55: return prefix+'High greenwashing risk signal  -  verify urgently'
+    return prefix+'Potential greenwashing concern  -  not enough contradiction evidence for High'
 
 def build_green_claim_inventory(findings):
     out=[]
@@ -1913,7 +1915,7 @@ def analyse_uploaded_document(filename, text):
     exttext=''
     sec=infer_sector(comp,text)
     ctx=infer_context(comp,text,social_ext)
-    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text)
+    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""))
     social_reg=has_forced_labour_regulatory_signal(social_fs)
     social_score, social_components = recalibrate_dimension_score(social_score, social_components, social_fs, social_targeted, social_reg, 'social')
     green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext,text,audience)
@@ -1980,7 +1982,7 @@ def analyse_url_v27(raw):
     # reports and sustainability pages are deliberately excluded from this layer.
     social_ext_scoring=dict(social_ext, results=social_targeted, compact_sources=social_targeted, targeted_negative_sources=social_targeted)
     green_ext_scoring=dict(green_ext, results=green_targeted, compact_sources=green_targeted, targeted_negative_sources=green_targeted)
-    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext_scoring,txt)
+    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext_scoring,txt,comp.get("company",""))
     social_external_context = strict_external_context_risk({'results':social_targeted}, comp.get('company',''))
     social_reg=has_forced_labour_regulatory_signal(social_fs)
     social_score, social_components = recalibrate_dimension_score(social_score, social_components, social_fs, social_targeted, social_reg, 'social')
@@ -2002,7 +2004,7 @@ def analyse_url_v27(raw):
     methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims, with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims. Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     summary=(f"{comp['company']} receives a global sustainability scan score of {overall}/100. "
              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
-             f"Document/channel classification: {audience['audience']} — {audience['note']}" + (" "+"; ".join(related_notes) if related_notes else ""))
+             f"Document/channel classification: {audience['audience']}  -  {audience['note']}" + (" "+"; ".join(related_notes) if related_notes else ""))
     return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
@@ -2223,7 +2225,7 @@ def calc_green_score(findings, sector, ext, page_text, audience):
     comps={'claim_wording_risk':claim_wording,'substantiation_risk':evidence_gap,'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor}
     return max(0,min(100,raw)), comps, external_context
 
-def calc_score(findings,sector,context,external_research=None,page_text=""):
+def calc_score(findings,sector,context,external_research=None,page_text="",company_name=""):
     material=[f for f in findings or [] if not (f.get('type','').lower().startswith('no material') or f.get('type','').lower().startswith('no major'))]
     claim=max([f.get('claim_score',0) for f in material] or [8])
     high_claims=len([f for f in material if f.get('risk')=='High'])
@@ -2231,7 +2233,7 @@ def calc_score(findings,sector,context,external_research=None,page_text=""):
     claim_wording=min(100,round(claim*1.15)) if not no_material else 8
     substantiation, evidence_notes=evidence_signal_score(page_text, findings)
     evidence_gap=15 if no_material else max(0,100-substantiation)
-    external_context=strict_external_context_risk(external_research or {}, "")
+    external_context=strict_external_context_risk(external_research or {}, company_name)
     external_score=external_context.get('score',0)
     sector_score={"Low":10,"Medium":35,"High":60}.get(sector.get("level","Medium"),35)
     raw=round(claim_wording*0.30 + evidence_gap*0.30 + external_score*0.25 + sector_score*0.15)
@@ -2275,8 +2277,6 @@ def analyse_url(raw):
 # This override restores the scan's core objective: detect material problematic
 # sustainability claims, especially EmpCo-sensitive wording and forced-labour / supplier
 # assurance claims, without treating neutral references as risks.
-APP_VERSION="hostable_v54_material_problem_claim_engine_conservative_scoring"
-
 GENERIC_GREEN_TERMS = [
     'eco-friendly','environmentally friendly','environmentally responsible','planet friendly',
     'better for the planet','good for the planet','ecological','climate friendly','climate-friendly',
@@ -2443,10 +2443,10 @@ def calc_green_score(findings, sector, ext, page_text, audience):
     comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Scores are calibrated to reflect severity, evidence gaps and external context. One isolated claim signal is treated as a limited concern unless it is a direct blacklisted-practice indicator or is supported by negative external stakeholder signals.'}
     return score, comps, external_context
 
-def calc_score(findings,sector,context,external_research=None,page_text=""):
+def calc_score(findings,sector,context,external_research=None,page_text="",company_name=""):
     material=_material_findings(findings)
     substantiation, evidence_notes=evidence_signal_score(page_text, findings)
-    external_context=strict_external_context_risk(external_research or {}, "")
+    external_context=strict_external_context_risk(external_research or {}, company_name)
     external_score=external_context.get('score',0)
     sector_score={"Low":10,"Medium":35,"High":60}.get(sector.get("level","Medium"),35)
     regulatory=any(('forced-labour' in f.get('type','').lower() or 'forced labor' in f.get('type','').lower()) for f in material)
@@ -2517,10 +2517,7 @@ def main():
     print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("AI configured:",bool(OPENAI_API_KEY)); HTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
 
-# -----------------------------
 # V55 claim-signal sensitivity and report layout refinements
-# -----------------------------
-APP_VERSION="hostable_v55_claim_detection_balanced_report_layout"
 
 # The scan should retain enough claim signals to be useful, but only where wording is a real
 # sustainability claim signal (not a neutral reference such as 'backing British suppliers').
@@ -2549,6 +2546,9 @@ V55_SOCIAL_EXTRA_PATTERNS = [
     ('Broad social-impact claim', 'Medium', ['positive social impact','positive impact on communities','support communities','supporting communities','empowering communities','inclusive growth'],
      'Broad community or social-impact wording can overstate outcomes where stakeholders, geography, metrics and limitations are not defined.',
      'Specify stakeholder group, geography, objective, indicators, period, evidence and limitations.'),
+    ('EU Deforestation Regulation sourcing claim', 'High', ['deforestation-free','deforestation free','forest-positive','no deforestation','zero deforestation','deforestation-free supply chain','EUDR compliant','EUDR compliance','cocoa traceability','palm oil traceability','soy traceability'],
+     'EUDR risk: sourcing or deforestation-free claims for in-scope commodities (cocoa, coffee, palm oil, soy, wood, rubber, cattle) require verified geolocation data, traceability to plot level, due diligence statements and operator registration. Claims of compliance should reference the specific evidence standard, not just a policy commitment.',
+     'Specify the commodity, traceability standard, geolocation evidence basis, operator registration status and due-diligence statement reference.'),
 ]
 
 V55_NAV_CONTEXT_EXCLUSIONS = [
@@ -2556,20 +2556,6 @@ V55_NAV_CONTEXT_EXCLUSIONS = [
     'download report', 'annual report', 'sustainability report', 'press release archive'
 ]
 
-def _v55_sentence_list(text, trigger, window=850):
-    """Return one or two readable sentences around the trigger without mixing a whole page."""
-    raw=text or ''
-    low=raw.lower(); trig=(trigger or '').lower(); i=low.find(trig)
-    if i < 0:
-        return ''
-    start=max(raw.rfind('.',0,i), raw.rfind('\n',0,i), raw.rfind('!',0,i), raw.rfind('?',0,i))
-    start=0 if start < 0 else start+1
-    end_candidates=[p for p in [raw.find('.',i+len(trig)), raw.find('\n',i+len(trig)), raw.find('!',i+len(trig)), raw.find('?',i+len(trig))] if p!=-1]
-    end=(min(end_candidates)+1) if end_candidates else min(len(raw), i+window)
-    out=' '.join(raw[start:end].split())
-    if len(out) < 45:
-        out=' '.join(raw[max(0,i-160):min(len(raw),i+260)].split())
-    return out[:620]
 
 def _v55_claim_context_ok(excerpt, trigger, dimension):
     c=(excerpt or '').lower(); trig=(trigger or '').lower()
