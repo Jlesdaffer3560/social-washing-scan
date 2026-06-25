@@ -11,54 +11,96 @@
       --shadow:0 8px 24px rgba(20,35,55,.08); --radius:14px;
     }
     *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45;font-size:15px}
-    .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{background:linear-gradient(135deg,#163d3b,#1d5b68);color:#fff;border-radius:20px;padding:28px 30px;box-shadow:var(--shadow)}
+    .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 60px}.hero{background:linear-gradient(135deg,#0f2d3b,#173f5f 55%,#1a5860);color:#fff;border-radius:20px;padding:30px 34px;box-shadow:var(--shadow)}
     .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.12em;opacity:.9;font-weight:700}.hero h1{margin:8px 0 10px;font-size:34px;line-height:1.15}.hero p{max-width:940px;margin:0;color:#e7f0f3;font-size:16px}.version{margin-top:16px;font-size:12px;color:#d7e6eb}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
     h2{font-size:21px;margin:0 0 12px} h3{font-size:16px;margin:0 0 10px}.muted{color:var(--muted)} .small{font-size:12.5px;color:var(--muted)}
-    label{font-weight:700;display:block;margin-bottom:8px} input[type=url]{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;font:inherit}.file-native{display:none}.file-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.file-name{font-size:13px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:180px}.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}.btn.primary-outline{background:#fff;color:#173f5f;border:1px solid #9cb3c8}.btn:disabled{opacity:.55;cursor:not-allowed}.notice{margin-top:14px;padding:11px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}.warning{background:#fff8ea;border-color:#ead8aa;color:#68470f}.error{background:#fff0f0;border-color:#e2baba;color:#842424}.hidden{display:none!important}
+    label{font-weight:700;display:block;margin-bottom:8px} input[type=url]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:12px;background:#fff;font:inherit;transition:border-color .15s} input[type=url]:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px rgba(38,95,92,.1)}.file-native{display:none}.file-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.file-name{font-size:13px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:180px}.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}.btn.primary-outline{background:#fff;color:#173f5f;border:1px solid #9cb3c8}.btn:disabled{opacity:.55;cursor:not-allowed}.notice{margin-top:14px;padding:11px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}.warning{background:#fff8ea;border-color:#ead8aa;color:#68470f}.error{background:#fff0f0;border-color:#e2baba;color:#842424}.hidden{display:none!important}
     .purpose{margin-top:20px}.purpose ol{margin:10px 0 0;padding-left:20px}.purpose li{margin:5px 0}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef3f8;border:1px solid var(--line);font-size:12px;margin:2px 4px 2px 0;color:#334}.pill.problem{background:#fff1f1;border-color:#efb8b8;color:#842424;font-weight:700}.pill.green{background:#edf7f0;border-color:#bfe2c8;color:#205b31}.pill.blue{background:#eef3f8;border-color:#ccd8e4;color:#173f5f}
-    .scores{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.score{border:1px solid var(--line);border-radius:16px;padding:18px;background:#fbfcfe;position:relative;overflow:hidden}.score:before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:#9cb3c8}.score.global:before{background:#173f5f}.score.green-score:before{background:#276749}.score.social-score:before{background:#9b6a17}.score .num{font-size:38px;font-weight:850;letter-spacing:-.03em}.score .label{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#46576b}.score .risk{font-weight:850;margin-top:4px}.risk.high,.risk.very-high{color:var(--danger)}.risk.medium{color:var(--warn)}.risk.low{color:var(--ok)}
+    .scores{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.score{border:1px solid var(--line);border-radius:16px;padding:18px;background:#fbfcfe;position:relative;overflow:hidden}.score:before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:#9cb3c8}.score.global:before{background:#173f5f}.score.green-score:before{background:#276749}.score.social-score:before{background:#9b6a17}.score .num{font-size:38px;font-weight:850;letter-spacing:-.03em}.score .label{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#46576b}.score .risk{font-weight:850;margin-top:4px}.risk.high,.risk.very-high{color:var(--danger)}.risk.medium,.risk.elevated{color:var(--warn)}.risk.low{color:var(--ok)}.score-bar{height:5px;background:#e5eaf2;border-radius:3px;margin-top:10px;overflow:hidden}.score-bar-fill{height:5px;border-radius:3px;transition:width .4s ease}.global .score-bar-fill{background:#173f5f}.green-score .score-bar-fill{background:#276749}.social-score .score-bar-fill{background:#9b6a17}.score-interp{font-size:11.5px;color:var(--muted);margin-top:5px}
     table{width:100%;border-collapse:collapse;margin-top:8px} th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left} th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc} td{font-size:13.5px} .quote{color:#243449}.quote strong{background:#fff1a8;padding:1px 2px;border-radius:3px;color:#111827}.section{margin-top:20px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.list{margin:8px 0 0;padding-left:18px}.list li{margin:6px 0}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.download-panel{background:#f8fbff;border:1px solid #cbd9e8;border-radius:12px;padding:14px;margin-top:14px}.download-panel h3{margin-bottom:5px}.reportbox{white-space:pre-wrap;background:#0f172a;color:#e5edf7;border-radius:12px;padding:16px;max-height:420px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px}.source a{color:#174e78}.footer{margin-top:26px;color:var(--muted);font-size:12.5px}.empty{color:var(--muted);font-style:italic}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid #c7d4df;border-top-color:var(--accent);animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}@keyframes spin{to{transform:rotate(360deg)}}
     .redflag-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.redflag{border:1px solid #e7c1c1;background:var(--danger-soft);border-radius:12px;padding:12px}.redflag.green-flag{background:#f1fbf4;border-color:#bfe2c8}.redflag.social-flag{background:#fff8ea;border-color:#ead8aa}.redflag.reg-flag{background:#fff1f1;border-color:#e7c1c1}.redflag h3{color:#842424;margin-bottom:6px}.redflag ul{margin:0;padding-left:18px}.redflag li{margin:5px 0}.action-card{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fbfcfe;margin:8px 0}.subtlebox{background:#fafbfd;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
-    .claim-card{border:1px solid var(--line);border-left:5px solid #9cb3c8;border-radius:14px;background:#fff;margin:12px 0;padding:14px;box-shadow:0 4px 14px rgba(20,35,55,.05)}
-    .claim-card.green{border-left-color:#276749}.claim-card.social{border-left-color:#9b6a17}.claim-head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;margin-bottom:10px}.claim-title{font-weight:850;color:#173f5f}.source-ref{background:#f7f9fc;border:1px solid #dfe5ee;border-radius:10px;padding:9px;margin-bottom:9px}.claim-step{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#516073;font-weight:850;margin-bottom:4px}.detected-passage{background:#fffdf4;border:1px solid #ead8aa;border-radius:10px;padding:11px;color:#263445;margin-bottom:8px}.detected-passage .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#68470f;font-weight:800;margin-bottom:4px}.trigger-row{margin-top:8px;background:#fff7f7;border:1px solid #efcaca;border-radius:10px;padding:9px}.stakeholder-note{background:#fff8ea;border:1px solid #ead8aa;border-radius:10px;padding:9px;margin-bottom:10px;color:#68470f}
+    .claim-card{border:1px solid var(--line);border-left:5px solid #9cb3c8;border-radius:14px;background:#fff;margin:12px 0;padding:14px;box-shadow:0 4px 14px rgba(20,35,55,.05);transition:box-shadow .15s}
+    .claim-card:hover{box-shadow:0 8px 24px rgba(20,35,55,.10)}.claim-card.green{border-left-color:#276749}.claim-card.social{border-left-color:#9b6a17}.claim-head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;margin-bottom:10px}.claim-title{font-weight:850;color:#173f5f}.source-ref{background:#f7f9fc;border:1px solid #dfe5ee;border-radius:10px;padding:9px;margin-bottom:9px}.claim-step{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#516073;font-weight:850;margin-bottom:4px}.detected-passage{background:#fffdf4;border:1px solid #ead8aa;border-radius:10px;padding:11px;color:#263445;margin-bottom:8px}.detected-passage .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#68470f;font-weight:800;margin-bottom:4px}.trigger-row{margin-top:8px;background:#fff7f7;border:1px solid #efcaca;border-radius:10px;padding:9px}.stakeholder-note{background:#fff8ea;border:1px solid #ead8aa;border-radius:10px;padding:9px;margin-bottom:10px;color:#68470f}
+    .section h2{display:flex;align-items:center;gap:10px}
+    .section h2::before{content:'';display:inline-block;width:4px;height:20px;border-radius:2px;background:var(--accent2);vertical-align:middle}
+    .card.section{border-top:3px solid var(--accent2)}
     @media(max-width:850px){.grid,.cols,.scores,.redflag-grid{grid-template-columns:1fr}.hero h1{font-size:28px}}
-    #printReport{display:none}.print-page{font-family:Inter,Segoe UI,Arial,sans-serif;color:#132033;position:relative}.print-title{font-size:25px;font-weight:900;margin:0 0 5px;color:#173f5f}.print-subtitle{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:#265f5c;font-weight:800;margin-bottom:4px}.print-meta{font-size:10.5px;color:#5e6b7d;margin-bottom:9px;border-bottom:1px solid #dfe5ee;padding-bottom:6px}.print-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.print-score{border:1px solid #dfe5ee;border-radius:12px;padding:9px;background:#fbfcfe;border-left:5px solid #9cb3c8}.print-score.global{border-left-color:#173f5f}.print-score.green{border-left-color:#276749}.print-score.social{border-left-color:#9b6a17}.print-score strong{font-size:23px;letter-spacing:-.03em}.print-section{margin-top:9px;border:1px solid #e6ebf2;border-radius:10px;padding:8px;background:#fff}.print-section h3{font-size:12.5px;margin:0 0 4px;color:#173f5f;text-transform:uppercase;letter-spacing:.04em}.print-section p,.print-section li{font-size:10.2px;line-height:1.25}.print-section ul,.print-section ol{margin:3px 0 0 16px;padding:0}.print-table{width:100%;border-collapse:collapse}.print-table th,.print-table td{border-bottom:1px solid #e5e7eb;padding:4px;font-size:8.9px;vertical-align:top}.print-table th{background:#f3f6f9;text-transform:uppercase;font-size:7.9px;color:#516073}.page-break{break-before:page}
-    @media print{body{background:#fff}.wrap{display:none!important}#printReport{display:block!important;padding:12mm}.print-page{height:273mm;overflow:hidden}.page-break{break-before:page}.quote strong{background:#fff;border-bottom:2px solid #000}}
-  
-    /* V55 board-style 2-page report print refinements */
-    .print-header{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;border-bottom:2px solid #173f5f;padding-bottom:7px;margin-bottom:8px}
-    .print-brand{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#265f5c;font-weight:900}
-    .print-source{font-size:9.5px;color:#5e6b7d;text-align:right;max-width:45%}
-    .print-kicker{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#687789;font-weight:800}
-    .print-two-col{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .print-claim-card{border:1px solid #e5eaf0;border-radius:9px;padding:6px;margin:5px 0;background:#fff}
-    .print-claim-card .tag{display:inline-block;font-size:7.5px;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;padding:2px 6px;background:#eef5f2;color:#276749;font-weight:800;margin-bottom:3px}
-    .print-source-line{font-size:8.3px;color:#5e6b7d;margin:2px 0}
-    .print-quote{font-size:9.2px;line-height:1.22;color:#152238;background:#f8fafc;border-left:3px solid #9cb3c8;padding:4px 5px;border-radius:6px}
-    .print-triggers{font-size:8.2px;color:#6b4e00;margin-top:3px}
-    .print-triggers strong{background:#fff1a8;padding:1px 2px;border-radius:3px;color:#111827}
-    .print-footer{font-size:8.5px;color:#687789;border-top:1px solid #dfe5ee;margin-top:6px;padding-top:4px;display:flex;justify-content:space-between}
+    #printReport{display:none}
+    .pr-page{font-family:Inter,Segoe UI,Arial,sans-serif;color:#132033}
+    .pr-hdr{background:#173f5f;color:#fff;padding:9px 12px;display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px}
+    .pr-brand{font-size:8.5px;text-transform:uppercase;letter-spacing:.13em;color:#9fbdd4;font-weight:800}
+    .pr-title{font-size:17px;font-weight:900;color:#fff;margin:2px 0 1px;line-height:1.1}
+    .pr-sub{font-size:8px;color:#9fbdd4}
+    .pr-hdr-right{text-align:right;font-size:8px;color:#9fbdd4;max-width:45%}
+    .pr-hdr-right strong{color:#c8dce8;display:block;margin-bottom:2px}
+    .pr-scores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:7px}
+    .pr-sb{border:1px solid #dfe5ee;border-radius:9px;padding:9px 10px;background:#fbfcfe;border-left:5px solid #9cb3c8}
+    .pr-sb.gl{border-left-color:#173f5f}.pr-sb.gr{border-left-color:#276749}.pr-sb.so{border-left-color:#9b6a17}.pr-sb.rl{border-left-color:#a43c3c;background:#fff8f8}
+    .pr-sb .lbl{font-size:7.5px;text-transform:uppercase;letter-spacing:.08em;color:#516073;font-weight:800;margin-bottom:2px}
+    .pr-sb .num{font-size:26px;font-weight:900;letter-spacing:-.03em;line-height:1}
+    .pr-sb .rsk{font-size:10px;font-weight:800;margin-top:2px}
+    .rsk-high,.rsk-very-high{color:#a43c3c}.rsk-medium,.rsk-elevated{color:#9b6a17}.rsk-low{color:#276749}
+    .pr-bar{height:4px;border-radius:2px;background:#e5eaf2;margin-top:4px}
+    .pr-bar-fill{height:4px;border-radius:2px;background:#9cb3c8}
+    .pr-sb.gl .pr-bar-fill{background:#173f5f}.pr-sb.gr .pr-bar-fill{background:#276749}.pr-sb.so .pr-bar-fill{background:#9b6a17}
+    .pr-sec{border:1px solid #e6ebf2;border-radius:8px;padding:8px 10px;background:#fff;margin-bottom:6px}
+    .pr-sec h3{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:#173f5f;border-bottom:1px solid #edf1f6;padding-bottom:3px;margin:0 0 5px}
+    .pr-sec p,.pr-sec li{font-size:8.8px;line-height:1.35;color:#132033}
+    .pr-sec ul,.pr-sec ol{margin:3px 0 0 14px;padding:0}.pr-sec li{margin:3px 0}
+    .pr-2col{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px}
+    .pr-flag{background:#fff1f1;border:1px solid #e7c1c1;border-radius:7px;padding:7px 9px}
+    .pr-flag.gr{background:#f0fbf4;border-color:#bfe2c8}
+    .pr-flag h3{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.07em;margin:0 0 4px}
+    .pr-flag h3{color:#a43c3c}.pr-flag.gr h3{color:#276749}
+    .pr-flag ul{margin:0;padding-left:13px}.pr-flag li{font-size:8px;line-height:1.35;margin:3px 0;color:#263445}
+    .pr-claim{border:1px solid #e6ebf2;border-left:4px solid #9cb3c8;border-radius:7px;padding:7px 9px;margin:5px 0;background:#fafbfd}
+    .pr-claim.gr{border-left-color:#276749}.pr-claim.so{border-left-color:#9b6a17}
+    .pr-claim-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px}
+    .pr-claim-type{font-size:7.5px;font-weight:800;color:#516073;text-transform:uppercase;letter-spacing:.05em}
+    .pr-rpill{font-size:7px;font-weight:800;padding:1px 6px;border-radius:99px;text-transform:uppercase}
+    .pr-rpill.high{background:#fff1f1;color:#a43c3c}.pr-rpill.medium{background:#fff8ea;color:#9b6a17}.pr-rpill.low{background:#edf7f0;color:#276749}
+    .pr-src{font-size:7.5px;color:#8b9baa;margin-bottom:3px}
+    .pr-quote{background:#fffdf4;border-left:2px solid #ead8aa;padding:4px 6px;font-size:8.5px;line-height:1.3;color:#152637;margin-bottom:3px;border-radius:0 4px 4px 0}
+    .pr-quote strong{background:#fff1a8;padding:0 2px;border-radius:2px;color:#111}
+    .pr-trig{font-size:7.5px;color:#6b4e00}.pr-trig strong{background:#fff1a8;padding:0 2px;border-radius:2px}
+    .pr-dtbl{width:100%;border-collapse:collapse}
+    .pr-dtbl th,.pr-dtbl td{padding:4px 6px;border-bottom:1px solid #e6ebf2;font-size:8px;vertical-align:top}
+    .pr-dtbl th{background:#f3f6f9;font-weight:800;text-transform:uppercase;font-size:7.5px;color:#516073}
+    .pr-dtbl td:last-child{text-align:right;font-weight:700;color:#173f5f}
+    .pr-action{display:flex;gap:8px;padding:5px 0;border-bottom:1px solid #f0f2f5;font-size:8px}
+    .pr-action:last-child{border-bottom:none}
+    .pr-action-n{font-weight:900;color:#173f5f;min-width:16px;font-size:11px;padding-top:1px}
+    .pr-action-title{font-weight:700;color:#132033;margin-bottom:1px}
+    .pr-action-txt{color:#5e6b7d;font-size:7.8px}
+    .pr-bands{width:100%;border-collapse:collapse}
+    .pr-bands td{padding:3px 5px;font-size:7.5px;border-bottom:1px solid #f0f2f5}
+    .pr-bands .bn{font-weight:700}
+    .bn-low{color:#276749}.bn-mod{color:#5b8c6e}.bn-elev{color:#9b6a17}.bn-high{color:#a43c3c}.bn-vhigh{color:#7a1e1e}
+    .pr-ext{padding:5px 0;border-bottom:1px solid #f0f2f5;font-size:8px}
+    .pr-ext:last-child{border-bottom:none}
+    .pr-ext strong{color:#132033;font-size:8.5px}
+    .pr-ext a{color:#174e78;font-size:7.5px;word-break:break-all;display:block}
+    .pr-ext p{color:#5e6b7d;margin:1px 0 0;font-size:7.5px}
+    .pr-foot{font-size:7.5px;color:#8b9baa;border-top:1px solid #dfe5ee;margin-top:7px;padding-top:4px;display:flex;justify-content:space-between}
     @media print{
-      @page{size:A4;margin:9mm}
+      @page{size:A4;margin:8mm}
       body{background:#fff!important}
       .wrap{display:none!important}
       #printReport{display:block!important;padding:0!important}
-      .print-page{height:auto!important;min-height:0!important;overflow:visible!important;break-inside:avoid;page-break-inside:avoid}
-      .print-page + .print-page{break-before:page;page-break-before:always}
-      .page-break{break-before:page;page-break-before:always}
-      .print-section{break-inside:avoid;page-break-inside:avoid}
-      .print-table tr{break-inside:avoid;page-break-inside:avoid}
-      .quote strong,.print-quote strong{background:#fff1a8!important;border-bottom:1px solid #444}
+      .pr-page+.pr-page{page-break-before:always}
+      .pr-sec,.pr-claim,.pr-flag{break-inside:avoid}
+      .pr-quote strong{background:#fff1a8!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .pr-hdr,.pr-sb,.pr-flag{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     }
 </style>
 </head>
 <body>
 <div class="wrap">
   <section class="hero">
-    <div class="kicker">EmpCo · EU Green Claims Directive · EU Forced Labour Regulation · EUDR lenses</div>
+    <div class="kicker">EmpCo &middot; EU Green Claims Directive &middot; EU Forced Labour Regulation &middot; EUDR lenses</div>
     <h1>Sustainability Scan</h1>
-    <p>Assess whether public sustainability claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan applies four lenses: <strong>EmpCo</strong> (Directive (EU) 2024/825) for green and environmental claims, the <strong>EU Green Claims Directive</strong> (2024 political agreement) for verified product-level claims, the <strong>EU Forced Labour Regulation</strong> (Regulation (EU) 2024/3015) for supply-chain and product assurance claims, and the <strong>EU Deforestation Regulation</strong> (EUDR) for deforestation-sensitive commodity claims.</p>
+    <p>Assess whether public sustainability claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan applies four lenses: <strong>EmpCo</strong> (Directive (EU) 2024/825), the <strong>EU Green Claims Directive</strong> (2024), the <strong>EU Forced Labour Regulation</strong> (Regulation (EU) 2024/3015), and the <strong>EU Deforestation Regulation</strong> (EUDR) for deforestation-sensitive commodity claims.</p>
     <div id="version" class="version">Checking backend version...</div>
   </section>
 
@@ -69,7 +111,7 @@
       <li><strong>Claim wording:</strong> broad, generic, absolute, future-oriented, comparative or label/icon-based claims.</li>
       <li><strong>Evidence gap:</strong> missing scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, traceability or due-diligence evidence.</li>
       <li><strong>External context:</strong> relevant public signals that may contradict or qualify the claim.</li>
-      <li><strong>Regulatory lens:</strong> EmpCo (Directive (EU) 2024/825) and the EU Green Claims Directive for consumer-facing green claims; Regulation (EU) 2024/3015 for forced-labour product or supply-chain claims; EUDR (Regulation (EU) 2023/1115) for deforestation-sensitive commodity claims. CSDDD and CSRD thresholds updated for Omnibus I (Directive 2026/470, in force 18 March 2026).</li>
+      <li><strong>Regulatory lens:</strong> EmpCo and the EU Green Claims Directive for consumer-facing green claims; Regulation (EU) 2024/3015 for forced-labour claims; EUDR for deforestation-sensitive commodity claims. CSDDD and CSRD thresholds updated for Omnibus I (Directive 2026/470, in force 18 March 2026).</li>
     </ol>
     <div class="toolbar"><a class="btn secondary" href="/methodology.pdf" target="_blank" rel="noopener">Download detailed methodology PDF</a></div>
   </section>
@@ -82,6 +124,7 @@
         <label for="url">Website URL</label>
         <input id="url" type="url" placeholder="https://www.company.com/sustainability" />
         <div class="toolbar"><button id="runUrl" class="btn">Run website scan</button></div>
+        <p class="small" style="margin-top:8px;color:var(--muted)">Scans the entered page plus related sustainability pages. Website scans include external public-source search when configured.</p>
       </div>
       <div class="card">
         <h2>Internal company document scan</h2>
@@ -101,9 +144,9 @@
       <h2>Executive summary</h2>
       <p id="summary" class="muted"></p>
       <div id="scoreCards" class="scores"></div>
-      <div class="download-panel">
-        <h3>Company report downloads</h3>
-        <p class="small"><strong>PDF company report:</strong> use the first button to generate a compact two-page board-style report. Your browser will open the print dialog; choose <strong>Save as PDF</strong>.</p>
+      <div class="download-panel" style="background:#f0f9ff;border:1px solid #bfd7f0;border-radius:12px;padding:16px;margin-top:16px">
+        <h3 style="color:#173f5f;margin-bottom:6px">&#8595; Download company report</h3>
+        <p class="small"><strong>2-page PDF report:</strong> generates a board-ready claim-risk report with scores, red flags, claim signals, score drivers and action plan. Click the button &rarr; browser opens print dialog &rarr; choose <strong>Save as PDF</strong>.</p>
         <div class="toolbar">
           <button class="btn" onclick="printTwoPageReport()">Download / save 2-page company report as PDF</button>
           <button class="btn secondary" onclick="downloadHtmlReport()">Download HTML snapshot</button>
@@ -155,7 +198,7 @@
     </div>
   </section>
 
-  <div class="footer">© Durably. Proprietary Sustainability Scan methodology v55 · EmpCo · GCD · EU Forced Labour Regulation · EUDR lenses. Indicative first-pass assessment only; results require legal, compliance and subject-matter review before external use. Omnibus I (Directive 2026/470) thresholds applied for CSDDD and CSRD.</div>
+  <div class="footer">© Durably. Proprietary Sustainability Scan methodology. Indicative first-pass assessment only; results require legal, compliance and subject-matter review before external use.</div>
 </div>
 <div id="printReport"></div>
 <script>
@@ -176,7 +219,27 @@ async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').d
 function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
 $('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
 function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
-function renderScores(d){let scores=[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk,'global'],['Green',d.green_score,d.green_risk,'green-score'],['Social',d.social_score,d.social_risk,'social-score']].filter(x=>x[1]!=null);$('scoreCards').innerHTML=scores.map(s=>`<div class="score ${esc(s[3])}"><div class="label">${esc(s[0])} risk score</div><div class="num">${esc(s[1])}<span class="small">/100</span></div><div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div><div class="small">${s[0]==='Global'?'Integrated risk view':s[0]==='Green'?'Environmental / EmpCo lens':'Social / forced-labour lens'}</div></div>`).join('');}
+function scoreInterp(n){
+  if(n==null)return '';
+  if(n>=85)return 'Very high — multiple severe signals';
+  if(n>=70)return 'High — priority review needed';
+  if(n>=50)return 'Elevated — several claim signals';
+  if(n>=30)return 'Moderate — some wording needs review';
+  return 'Low — limited claim-risk signal';
+}
+function renderScores(d){
+  let scores=[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk,'global'],
+              ['Green',d.green_score,d.green_risk,'green-score'],
+              ['Social',d.social_score,d.social_risk,'social-score']].filter(x=>x[1]!=null);
+  $('scoreCards').innerHTML=scores.map(s=>`<div class="score ${esc(s[3])}">
+    <div class="label">${esc(s[0])} risk score</div>
+    <div class="num">${esc(s[1])}<span class="small">/100</span></div>
+    <div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div>
+    <div class="score-bar"><div class="score-bar-fill" style="width:${s[1]}%"></div></div>
+    <div class="score-interp">${scoreInterp(s[1])}</div>
+    <div class="small" style="margin-top:4px">${s[0]==='Global'?'Combined green + social':s[0]==='Green'?'Environmental / EmpCo / GCD lens':'Social / forced-labour / EUDR lens'}</div>
+  </div>`).join('');
+}
 function renderDrivers(d){let det=d.score_driver_details||{};let green=det.green||{};let social=det.social||{};let html=''; if(green.summary)html+=driverCard('Green score drivers',green); if(social.summary)html+=driverCard('Social score drivers',social); if(!html && d.why_score){html=Object.entries(d.why_score).map(([k,v])=>`<div><h3>${esc(k)}</h3><p class="muted">${esc(typeof v==='string'?v:JSON.stringify(v,null,2))}</p></div>`).join('')} $('drivers').innerHTML=html||'<p class="empty">No score-driver details available.</p>';}
 function driverCard(title,obj){let items=[];['summary','claim_wording','substantiation','external_context','sector_context','audience'].forEach(k=>{if(obj[k])items.push(`<li><strong>${esc(k.replace(/_/g,' '))}:</strong> ${esc(obj[k])}</li>`)});return `<div class="subtlebox"><h3>${esc(title)}</h3><ul class="list">${items.join('')}</ul></div>`}
 function termsInText(text){let low=String(text||'').toLowerCase();return PROBLEM_TERMS.filter(t=>low.includes(t)).slice(0,10)}
@@ -190,7 +253,212 @@ function renderExternal(d){let g=arr(d.external_research?.green?.targeted_negati
 function renderActions(d){let actions=arr(d.company_action_plan);$('actions').innerHTML=actions.length?actions.map(a=>`<div class="action-card"><strong>${esc(a.priority||'')}</strong> ${esc(a.title||'')}<br><span class="muted">${esc(a.action||'')}</span></div>`).join(''):'<p class="empty">No actions available.</p>'}
 function miniSource(r){return (r.source_label||r.source_url||'Reviewed material').replace(/\s+/g,' ').slice(0,90)}
 function topClaims(d, dim, n){let rows=arr(d.claim_inventory).filter(x=>(x.dimension||'').toLowerCase()===dim.toLowerCase()); if(!rows.length) rows=arr(dim==='Green'?d.green_findings:d.social_findings); return rows.filter(x=>!(x.claim_type||x.type||'').toLowerCase().startsWith('no major')).slice(0,n)}
-function printTwoPageReport(){let d=lastData||{};let g=topClaims(d,'Green',5), s=topClaims(d,'Social',5);let src=d.source_label||d.original_url||'';let date=(d.analysis_date||'').slice(0,10);let flags=d.red_flags_by_dimension||{};let actions=arr(d.company_action_plan).slice(0,5);let external=[...arr(d.external_research?.green?.targeted_negative_sources),...arr(d.external_research?.social?.targeted_negative_sources),...arr(d.external_research?.targeted_negative_sources)].slice(0,4);let scoreBlock=`<div class="print-grid">${[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk],['Green',d.green_score,d.green_risk],['Social',d.social_score,d.social_risk]].filter(x=>x[1]!=null).map(x=>`<div class="print-score ${String(x[0]).toLowerCase()}"><div class="print-kicker">${esc(x[0])} score</div><strong>${esc(x[1])}/100</strong><br><span>${esc(x[2]||'')}</span></div>`).join('')}</div>`;function pClaimCards(title,rows,dim){rows=arr(rows).filter(isMaterialClaim).slice(0,5);if(!rows.length)return `<div class="print-section"><h3>${esc(title)}</h3><p>No material problematic ${esc(dim)} claim signal retained in this category.</p></div>`;return `<div class="print-section"><h3>${esc(title)}</h3>${rows.map(r=>{let h=highlightTerms(r.claim_text||r.claim||'',r.problematic_terms);let triggers=h.terms.length?h.terms.map(x=>`<strong>${esc(x)}</strong>`).join(' · '):'Pattern-based claim signal';return `<div class="print-claim-card"><span class="tag">${esc(r.risk_level||r.risk||'Review')} · ${esc(r.claim_type||r.type||'Claim signal')}</span><div class="print-source-line"><strong>Source:</strong> ${esc(miniSource(r))}</div><div class="print-quote">${h.html||'No exact passage available.'}</div><div class="print-triggers"><strong>Trigger phrase(s):</strong> ${triggers}</div></div>`}).join('')}</div>`}let greenFlags=arr(flags.green).slice(0,4), socialFlags=arr(flags.social).slice(0,4);let html=`<div class="print-page"><div class="print-header"><div><div class="print-brand">Durably Sustainability Scan</div><div class="print-title">Company claim-risk report</div><div class="print-subtitle">EmpCo · EU Green Claims Directive · EU Forced Labour Regulation · EUDR lenses</div></div><div class="print-source"><strong>Reviewed source</strong><br>${esc(src)}<br>${esc(date)}</div></div>${scoreBlock}<div class="print-section"><h3>Executive summary</h3><p>${esc(d.assessment_summary_specific||d.report?.summary||'')}</p></div><div class="print-two-col"><div class="print-section"><h3>Green claim red flags</h3><ul>${greenFlags.map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No specific green red flag retained.</li>'}</ul></div><div class="print-section"><h3>Social claim red flags</h3><ul>${socialFlags.map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No specific social red flag retained.</li>'}</ul></div></div>${pClaimCards('Key green claim signals',g,'green')}${pClaimCards('Key social claim signals',s,'social')}<div class="print-footer"><span>Indicative screening only - not legal advice.</span><span>© Durably</span></div></div><div class="print-page"><div class="print-header"><div><div class="print-brand">Durably Sustainability Scan</div><div class="print-title">Evidence, external signals and action plan</div></div><div class="print-source">2-page company report</div></div><div class="print-section"><h3>Score drivers</h3><p>${esc(d.why_score?.global||d.screening_conclusion||'Scores combine claim wording, substantiation gaps, external stakeholder signals and sector/channel sensitivity.')}</p></div><div class="print-section"><h3>Negative external stakeholder signals retained</h3><ul>${external.map(x=>`<li><strong>${esc(x.title||'Source')}</strong> - ${esc(x.content||'').slice(0,220)}</li>`).join('')||'<li>No negative external stakeholder signal retained, or external search not configured.</li>'}</ul></div><div class="print-section"><h3>Recommended actions</h3><ol>${actions.map(a=>`<li><strong>${esc(a.title||'')}</strong> - ${esc(a.action||'')}</li>`).join('')||'<li>Review retained claim signals manually and attach evidence before reuse.</li>'}</ol></div><div class="print-section"><h3>Methodology note</h3><p>The scan retains material sustainability claim signals, with priority for EmpCo blacklisted-practice indicators, EU Green Claims Directive verification requirements, climate/offsetting claims, labels, absolute wording, supplier assurance, traceability, EUDR commodity claims and forced-labour statements. CSDDD and CSRD scope updated for Omnibus I (Directive 2026/470, in force 18 March 2026). Scores require stronger claim severity, evidence gaps, regulatory relevance and/or negative external stakeholder signals for High or Very high ratings.</p><p style="font-size:8.5px;margin-top:5px"><strong>Score bands:</strong> 0-29 Low · 30-49 Moderate · 50-69 Elevated · 70-84 High · 85-100 Very high. Scores are risk signals, not performance ratings. Higher = stronger need for legal, communication or evidence review.</p></div><div class="print-footer"><span>Proprietary Durably methodology.</span><span>© Durably</span></div></div>`;$('printReport').innerHTML=html;window.print();}
+function printTwoPageReport(){
+  let d=lastData||{};
+  let g=topClaims(d,'Green',4), s=topClaims(d,'Social',4);
+  let src=d.source_label||d.original_url||'';
+  let date=(d.analysis_date||'').slice(0,10);
+  let flags=d.red_flags_by_dimension||{};
+  let actions=arr(d.company_action_plan).slice(0,5);
+  let ext=[...arr(d.external_research?.green?.targeted_negative_sources),
+           ...arr(d.external_research?.social?.targeted_negative_sources),
+           ...arr(d.external_research?.targeted_negative_sources)].slice(0,5);
+  let gs=d.global_score??d.overall_score, grs=d.global_risk??d.overall_risk;
+  let gns=d.green_score, gnrs=d.green_risk;
+  let ss=d.social_score, srs=d.social_risk;
+
+  function rskClass(r){
+    let l=(r||'').toLowerCase().replace(/\s+/g,'-');
+    return l.includes('very')?'rsk-very-high':l.includes('high')?'rsk-high':l.includes('elev')||l.includes('medium')?'rsk-medium':'rsk-low';
+  }
+  function bar(n){return `<div class="pr-bar"><div class="pr-bar-fill" style="width:${Math.min(100,n||0)}%"></div></div>`;}
+  function rpill(r){let l=(r||'').toLowerCase();let c=l.includes('high')?'high':l.includes('elev')||l.includes('med')?'medium':'low';return `<span class="pr-rpill ${c}">${esc(r||'')}</span>`;}
+
+  function scoreBox(cls,label,num,risk){
+    return `<div class="pr-sb ${cls}">
+      <div class="lbl">${esc(label)}</div>
+      <div class="num">${num!=null?esc(num):'—'}<span style="font-size:11px;font-weight:500;color:#8b9baa">/100</span></div>
+      <div class="rsk ${rskClass(risk)}">${esc(risk||'')}</div>
+      ${num!=null?bar(num):''}
+    </div>`;
+  }
+
+  // Overall risk level box
+  let overallRisk=grs||'—';
+  let riskColor=overallRisk.toLowerCase().includes('very')?'#7a1e1e':overallRisk.toLowerCase().includes('high')?'#a43c3c':overallRisk.toLowerCase().includes('elev')||overallRisk.toLowerCase().includes('med')?'#9b6a17':'#276749';
+  let riskBox=`<div class="pr-sb rl" style="border-left-color:${riskColor}">
+    <div class="lbl">Overall risk level</div>
+    <div class="num" style="font-size:18px;line-height:1.2;color:${riskColor}">${esc(overallRisk)}</div>
+    <div style="font-size:7.5px;color:#8b9baa;margin-top:4px">Combined green + social</div>
+  </div>`;
+
+  function claimCard(r,dim){
+    let text=String(r.claim_text||r.claim||'').replace(/\s+/g,' ').trim();
+    let h=highlightTerms(text,r.problematic_terms);
+    let typ=r.claim_type||r.type||'Claim signal';
+    let risk=r.risk_level||r.risk||'';
+    let srcLabel=(r.source_label||r.source_url||'Reviewed material').slice(0,80);
+    let triggers=h.terms.length?h.terms.map(x=>`<strong>${esc(x)}</strong>`).join(' &middot; '):'Pattern-based signal';
+    return `<div class="pr-claim ${dim}">
+      <div class="pr-claim-head">
+        <span class="pr-claim-type">${esc(typ)}</span>
+        ${rpill(risk)}
+      </div>
+      <div class="pr-src">Source: ${esc(srcLabel)}</div>
+      <div class="pr-quote">${h.html||'No exact passage available.'}</div>
+      <div class="pr-trig"><strong>Trigger:</strong> ${triggers}</div>
+    </div>`;
+  }
+
+  function claimSection(title,rows,dim){
+    rows=arr(rows).filter(isMaterialClaim);
+    if(!rows.length) return `<div class="pr-sec"><h3>${esc(title)}</h3><p style="color:#8b9baa;font-style:italic">No material problematic ${dim} claim signal retained.</p></div>`;
+    return `<div class="pr-sec"><h3>${esc(title)}</h3>${rows.map(r=>claimCard(r,dim)).join('')}</div>`;
+  }
+
+  // Score drivers from components
+  let sc=d.score_components||{};let gc=sc.green||{};let soc_c=sc.social||{};
+  function driverTable(comp){
+    let rows=[
+      ['Claim wording severity',comp.claim_wording_risk],
+      ['Evidence / substantiation gap',comp.substantiation_risk],
+      ['External stakeholder context',comp.external_context_risk],
+      ['Sector & channel sensitivity',comp.sector_baseline_risk]
+    ].filter(r=>r[1]!=null);
+    if(!rows.length)return '<p style="font-size:8px;color:#8b9baa">No component breakdown available.</p>';
+    return `<table class="pr-dtbl"><thead><tr><th>Score component</th><th>Weight</th><th>Value/100</th></tr></thead><tbody>
+      <tr><td>Claim wording severity</td><td>42%</td><td>${comp.claim_wording_risk??'—'}</td></tr>
+      <tr><td>Evidence / substantiation gap</td><td>24%</td><td>${comp.substantiation_risk??'—'}</td></tr>
+      <tr><td>External stakeholder context</td><td>22%</td><td>${comp.external_context_risk??'—'}</td></tr>
+      <tr><td>Sector &amp; channel sensitivity</td><td>12%</td><td>${comp.sector_baseline_risk??'—'}</td></tr>
+    </tbody></table>`;
+  }
+
+  let greenFlags=arr(flags.green).slice(0,5);
+  let socialFlags=arr(flags.social).slice(0,5);
+
+  // ── PAGE 1 ─────────────────────────────────────────────────────────────────
+  let p1=`<div class="pr-page">
+    <div class="pr-hdr">
+      <div>
+        <div class="pr-brand">Durably Sustainability Scan</div>
+        <div class="pr-title">Company claim-risk report</div>
+        <div class="pr-sub">EmpCo &middot; EU Green Claims Directive &middot; EU Forced Labour Regulation &middot; EUDR</div>
+      </div>
+      <div class="pr-hdr-right">
+        <strong>Reviewed source</strong>
+        ${esc(src.slice(0,70)+(src.length>70?'…':''))}<br>
+        ${esc(date)}
+      </div>
+    </div>
+
+    <div class="pr-scores">
+      ${scoreBox('gl','Global risk score',gs,grs)}
+      ${scoreBox('gr','Green risk score',gns,gnrs)}
+      ${scoreBox('so','Social risk score',ss,srs)}
+      ${riskBox}
+    </div>
+
+    <div class="pr-sec">
+      <h3>Executive summary</h3>
+      <p>${esc(d.assessment_summary_specific||d.report?.summary||'No summary available.')}</p>
+    </div>
+
+    <div class="pr-2col">
+      <div class="pr-flag gr">
+        <h3>Green claim red flags</h3>
+        <ul>${greenFlags.map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No specific green red flag retained.</li>'}</ul>
+      </div>
+      <div class="pr-flag">
+        <h3>Social claim red flags</h3>
+        <ul>${socialFlags.map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No specific social red flag retained.</li>'}</ul>
+      </div>
+    </div>
+
+    ${claimSection('Key green claim signals retained',g,'gr')}
+    ${claimSection('Key social claim signals retained',s,'so')}
+
+    <div class="pr-foot">
+      <span>Indicative screening only &mdash; not legal advice. Results require legal, compliance and subject-matter review before external use.</span>
+      <span>&copy; Durably &middot; Page 1 of 2</span>
+    </div>
+  </div>`;
+
+  // ── PAGE 2 ─────────────────────────────────────────────────────────────────
+  let p2=`<div class="pr-page">
+    <div class="pr-hdr">
+      <div>
+        <div class="pr-brand">Durably Sustainability Scan</div>
+        <div class="pr-title">Evidence, external signals &amp; action plan</div>
+        <div class="pr-sub">Claim-risk score drivers and recommended next steps</div>
+      </div>
+      <div class="pr-hdr-right">
+        <strong>2-page company report</strong>
+        ${esc(src.slice(0,60)+(src.length>60?'…':''))}<br>
+        ${esc(date)}
+      </div>
+    </div>
+
+    <div class="pr-2col">
+      <div class="pr-sec">
+        <h3>Green score drivers</h3>
+        ${driverTable(gc)}
+      </div>
+      <div class="pr-sec">
+        <h3>Social score drivers</h3>
+        ${driverTable(soc_c)}
+      </div>
+    </div>
+
+    <div class="pr-sec">
+      <h3>Negative external stakeholder signals retained</h3>
+      ${ext.length
+        ? ext.map(x=>`<div class="pr-ext">
+            <strong>${esc(x.title||'External signal')}</strong>
+            <a href="${esc(x.url||'#')}" target="_blank">${esc((x.url||'').slice(0,100))}</a>
+            <p>${esc((x.content||'').slice(0,200))}</p>
+          </div>`).join('')
+        : '<p style="color:#8b9baa;font-style:italic;font-size:8px">No negative external stakeholder signal retained, or external search not configured.</p>'
+      }
+    </div>
+
+    <div class="pr-sec">
+      <h3>Recommended actions</h3>
+      ${actions.length
+        ? actions.map(a=>`<div class="pr-action">
+            <div class="pr-action-n">${esc(a.priority?.replace('Priority ','')+'.')}</div>
+            <div><div class="pr-action-title">${esc(a.title||'')}</div><div class="pr-action-txt">${esc(a.action||'')}</div></div>
+          </div>`).join('')
+        : '<div class="pr-action"><div class="pr-action-n">1.</div><div><div class="pr-action-title">Review retained claim signals</div><div class="pr-action-txt">Attach evidence, scope and approval records to each claim before reuse.</div></div></div>'
+      }
+    </div>
+
+    <div class="pr-2col">
+      <div class="pr-sec">
+        <h3>Score interpretation</h3>
+        <table class="pr-bands">
+          <tr><td class="bn bn-low">0&ndash;29 Low</td><td>No material problematic claim or limited wording risk.</td></tr>
+          <tr><td class="bn bn-mod">30&ndash;49 Moderate</td><td>Some wording may need specification or clearer limits.</td></tr>
+          <tr><td class="bn bn-elev">50&ndash;69 Elevated</td><td>Several claim signals or weak substantiation for review.</td></tr>
+          <tr><td class="bn bn-high">70&ndash;84 High</td><td>Strong wording risk, evidence gaps or negative external signals.</td></tr>
+          <tr><td class="bn bn-vhigh">85&ndash;100 Very high</td><td>Multiple severe signals with regulatory or external context.</td></tr>
+        </table>
+      </div>
+      <div class="pr-sec">
+        <h3>Methodology note</h3>
+        <p>Claim wording (42%) + Evidence gap (24%) + External context (22%) + Sector/channel sensitivity (12%). Lenses: EmpCo &bull; EU Green Claims Directive &bull; EU Forced Labour Regulation (EU) 2024/3015 &bull; EUDR. CSDDD and CSRD thresholds updated for Omnibus I (Directive 2026/470, in force 18 March 2026). High or Very high scores require strong claim severity, evidence gaps, regulatory relevance and/or retained negative external stakeholder signals.</p>
+      </div>
+    </div>
+
+    <div class="pr-foot">
+      <span>Proprietary Durably methodology v55 &mdash; indicative screening only. Not legal advice.</span>
+      <span>&copy; Durably &middot; Page 2 of 2</span>
+    </div>
+  </div>`;
+
+  $('printReport').innerHTML=p1+p2;
+  window.print();
+}
 function downloadHtmlReport(){let blob=new Blob([document.documentElement.outerHTML],{type:'text/html'});download(blob,'durably_sustainability_scan_report.html')}
 function downloadClaimCsv(){let rows=[...arr(lastData?.green_findings),...arr(lastData?.social_findings),...arr(lastData?.findings)];let head=['risk','claim_type','claim_text','source','issue','suggested_rewrite','problematic_terms'];let csv=[head.join(',')].concat(rows.map(r=>{let prob=(arr(r.problematic_terms).length?arr(r.problematic_terms):termsInText(r.claim_text||r.claim||'')).join('; ');let vals={risk:r.risk_level||r.risk||'',claim_type:r.claim_type||r.type||'',claim_text:r.claim_text||r.claim||'',source:r.source_label||r.source_url||'',issue:r.risk_reason||r.issue||'',suggested_rewrite:r.suggested_rewrite||r.rewrite||'',problematic_terms:prob};return head.map(k=>'"'+String(vals[k]||'').replace(/"/g,'""')+'"').join(',')})).join('\n');download(new Blob([csv],{type:'text/csv'}),'durably_claim_register.csv')}
 function download(blob,name){let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
