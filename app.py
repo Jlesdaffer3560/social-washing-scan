@@ -5,6 +5,12 @@ from urllib.request import Request, urlopen
 from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
+try:
+    from report_pdf import build_company_report_pdf
+    REPORT_PDF_AVAILABLE = True
+except Exception as _report_pdf_err:
+    REPORT_PDF_AVAILABLE = False
+    _REPORT_PDF_IMPORT_ERROR = str(_report_pdf_err)
 
 APP_VERSION="hostable_v55_claim_detection_balanced_report_layout"
 PORT=int(os.environ.get("PORT","8000"))
@@ -2483,9 +2489,11 @@ def _near_sentence(text, trigger, max_len=620):
     return out[:max_len]+('...' if len(out)>max_len else '')
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self,body,ctype="text/html; charset=utf-8",status=200):
+    def _send(self,body,ctype="text/html; charset=utf-8",status=200,extra_headers=None):
         if isinstance(body,str): body=body.encode()
-        self.send_response(status); self.send_header("Content-Type",ctype); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS"); self.send_header("Access-Control-Allow-Headers","Content-Type"); self.end_headers(); self.wfile.write(body)
+        self.send_response(status); self.send_header("Content-Type",ctype); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS"); self.send_header("Access-Control-Allow-Headers","Content-Type")
+        for k,v in (extra_headers or {}).items(): self.send_header(k,v)
+        self.end_headers(); self.wfile.write(body)
     def _json(self,d,status=200): self._send(json.dumps(d,ensure_ascii=False,indent=2),"application/json; charset=utf-8",status)
     def do_HEAD(self): self.send_response(200); self.end_headers()
     def do_OPTIONS(self): self._json({"ok":True})
@@ -2495,7 +2503,7 @@ class Handler(BaseHTTPRequestHandler):
             pdf=APP_DIR/"methodology.pdf"
             if pdf.exists(): self._send(pdf.read_bytes(),"application/pdf")
             else: self._json({"error":"Methodology PDF not found"},404)
-        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX)})
+        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX),"report_pdf_available":REPORT_PDF_AVAILABLE})
         else: self._json({"error":"Not found"},404)
     def do_POST(self):
         try:
@@ -2510,6 +2518,18 @@ class Handler(BaseHTTPRequestHandler):
                 if not content: return self._json({"error":"No document content provided"},400)
                 txt=decode_uploaded_document(filename, content, data.get("mime_type",""))
                 return self._json(analyse_uploaded_document(filename, txt))
+            if self.path=="/api/report/pdf":
+                if not REPORT_PDF_AVAILABLE:
+                    return self._json({"error":"PDF report generation is unavailable: "+_REPORT_PDF_IMPORT_ERROR},500)
+                if not data:
+                    return self._json({"error":"No scan result provided"},400)
+                try:
+                    pdf_bytes=build_company_report_pdf(data)
+                except Exception as e:
+                    return self._json({"error":"Could not generate PDF report: "+str(e)},500)
+                stamp=re.sub(r"[^0-9-]","",(data.get("analysis_date") or datetime.date.today().isoformat())[:10])
+                fname=f"durably_company_report_{stamp or datetime.date.today().isoformat()}.pdf"
+                return self._send(pdf_bytes,"application/pdf",200,{"Content-Disposition":f'attachment; filename="{fname}"'})
             self._json({"error":"Unknown endpoint"},404)
         except Exception as e: self._json({"error":str(e)},500)
 
