@@ -4,7 +4,7 @@ from urllib.parse import urlparse, urljoin
 from urllib.request import Request, urlopen
 from html.parser import HTMLParser
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time
 try:
     from report_pdf import build_company_report_pdf
     REPORT_PDF_AVAILABLE = True
@@ -144,6 +144,58 @@ def norm_url(u):
     if not u: raise ValueError("Please enter a company website URL.")
     return u if u.startswith(("http://","https://")) else "https://"+u
 
+def looks_like_domain_or_url(raw):
+    """True when the input already looks like a usable domain or URL
+    (has a scheme, or a dot-separated host such as inditex.com / www.inditex.be)."""
+    raw=(raw or '').strip()
+    if not raw: return False
+    if raw.startswith(("http://","https://")): return True
+    if " " in raw: return False
+    return bool(re.match(r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9-]{1,63})+(?:/.*)?$', raw))
+
+NON_OFFICIAL_SITE_DOMAINS = {
+    'wikipedia.org','wikidata.org','linkedin.com','facebook.com','twitter.com','x.com','instagram.com',
+    'youtube.com','tiktok.com','bloomberg.com','crunchbase.com','glassdoor.com','indeed.com','reuters.com',
+    'forbes.com','wsj.com','ft.com','nytimes.com','yahoo.com','google.com','duckduckgo.com','bing.com',
+    'trustpilot.com','pitchbook.com','owler.com','zoominfo.com','apple.com','play.google.com','amazon.com',
+    'ecosia.org','yelp.com','github.com','medium.com','pinterest.com'
+}
+
+def slugify_company_name(name):
+    s=re.sub(r'[^a-z0-9]+','',(name or '').lower())
+    return s or 'company'
+
+def resolve_company_website(name):
+    """Best-effort resolution of a bare company name (e.g. 'Inditex') to an official
+    website URL. Tries web search first (Tavily, then Google CSE, when configured) and
+    filters out social/news/directory domains; falls back to a best-guess domain when
+    no search is configured or nothing usable was found."""
+    query=f'{name} official website'
+    results=[]
+    try: results=tavily_search(query,max_results=5) or []
+    except Exception: results=[]
+    if not results:
+        try: results=google_search(query,max_results=5) or []
+        except Exception: results=[]
+    for r in results:
+        host=(urlparse(r.get('url','')).hostname or '').lower()
+        bare=host[4:] if host.startswith('www.') else host
+        if not bare: continue
+        if any(bare==d or bare.endswith('.'+d) for d in NON_OFFICIAL_SITE_DOMAINS): continue
+        return f'https://{host}', f'Company name "{name}" was resolved to {host} via web search. Verify this is the correct entity before relying on the result.'
+    guess=f'https://www.{slugify_company_name(name)}.com'
+    return guess, f'Company name "{name}" could not be verified via web search (no search provider configured or no confident match); the scan used a best-guess domain ({guess}). Please verify this is the correct company website and re-run with the exact URL if not.'
+
+def resolve_scan_input(raw):
+    """Accepts a bare company name, a bare domain, or a full URL/page and returns
+    (url, resolution_note). resolution_note is None when the input was already a
+    usable domain or URL and needed no resolution."""
+    raw=(raw or '').strip()
+    if not raw: raise ValueError("Please enter a company name or website.")
+    if looks_like_domain_or_url(raw):
+        return norm_url(raw), None
+    return resolve_company_website(raw)
+
 def related_company_sites(url, max_sites=1):
     """Return a small set of likely related corporate/national domains.
     Example: www.lidl.be -> www.lidl.com. This is a cautious heuristic: it does not
@@ -186,7 +238,7 @@ def crawl_with_related_sites(original_url):
                 source_notes.append(f"Related company site also checked: {candidate}")
         except Exception:
             pass
-    return '\n\n'.join(all_text)[:140000], all_pages[:12], source_notes
+    return '\n\n'.join(all_text)[:150000], all_pages[:16], source_notes
 
 def replace_tld_with_be(url):
     """If a .com domain cannot be reached, try the same host with .be."""
@@ -221,13 +273,61 @@ def same_domain(u,base):
 def relevant(h):
     h=h.lower()
     return any(k in h for k in ["sustain","responsib","people","human","rights","divers","inclusion","supplier","ethic","impact","community","accessibility","safety","annual","report","esg","environment","climate","circular","green","sourcing","governance","modern-slavery","modern_slavery","non-financial","investor"])
-def crawl(url):
+COMMON_PUBLIC_PATHS=['/sustainability','/sustainability-report','/csr','/esg','/responsibility',
+    '/corporate-responsibility','/human-rights','/supply-chain','/policies','/investors',
+    '/investor-relations','/about/sustainability','/about-us/sustainability','/en/sustainability',
+    '/news','/press','/newsroom']
+
+def discover_sitemap_urls(base_url, limit=40):
+    """Best-effort sitemap discovery so the scan can reach pages that are not linked
+    from the homepage. Silently returns [] on any failure (missing/blocked sitemap)."""
+    host=urlparse(base_url).hostname or ''
+    if not host: return []
+    scheme=urlparse(base_url).scheme or 'https'
+    found=[]
+    for path in ('/sitemap.xml','/sitemap_index.xml'):
+        try:
+            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
+            with urlopen(req,timeout=6,context=ssl.create_default_context()) as r:
+                body=r.read(1500000).decode("utf-8",errors="ignore")
+            locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.IGNORECASE)
+            if '<sitemapindex' in body.lower() and locs:
+                for child in locs[:2]:
+                    try:
+                        req2=Request(child,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
+                        with urlopen(req2,timeout=6,context=ssl.create_default_context()) as r2:
+                            body2=r2.read(1500000).decode("utf-8",errors="ignore")
+                        locs.extend(re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE))
+                    except Exception: pass
+            if locs: found=locs; break
+        except Exception: continue
+    out=[]; seen=set()
+    for u in found:
+        u=u.strip()
+        if same_domain(u,host) and u not in seen:
+            seen.add(u); out.append(u)
+    return out[:limit]
+
+def crawl(url,max_extra_pages=6,time_budget=16):
+    t0=time.time()
     html=fetch_html(url); text,links=parse_html(html); host=urlparse(url).hostname or ""
     pages=[url]; chunks=[text]; cands=[]
     for href in links:
         full=urljoin(url,href).split("#")[0]
         if same_domain(full,host) and relevant(full) and full not in cands and full!=url: cands.append(full)
-    for link in cands[:3]:
+    if len(cands)<max_extra_pages:
+        try:
+            for u in discover_sitemap_urls(url):
+                if relevant(u) and u not in cands and u!=url: cands.append(u)
+                if len(cands)>=max_extra_pages*2: break
+        except Exception: pass
+    if len(cands)<3:
+        scheme=urlparse(url).scheme or 'https'
+        for path in COMMON_PUBLIC_PATHS:
+            guess=f'{scheme}://{host}{path}'
+            if guess not in cands and guess!=url: cands.append(guess)
+    for link in cands[:max_extra_pages]:
+        if time.time()-t0>time_budget: break
         try:
             t,_=parse_html(fetch_html(link))
             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
@@ -1941,14 +2041,14 @@ def analyse_uploaded_document(filename, text):
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def analyse_url_v27(raw):
-    original_url=norm_url(raw); fallback_note=''; related_notes=[]
+    original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
     try:
         txt,pages,related_notes=crawl_with_related_sites(original_url); url=original_url
     except Exception as first_error:
         fallback_url=replace_tld_with_be(original_url)
         if fallback_url:
             try:
-                txt,pages,related_notes=crawl_with_related_sites(fallback_url); url=fallback_url; fallback_note=f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
+                txt,pages,related_notes=crawl_with_related_sites(fallback_url); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
             except Exception as second_error:
                 raise ValueError(f'The .com website could not be accessed and the .be fallback also failed. Original error: {first_error}. Fallback error: {second_error}.')
         else:

@@ -52,16 +52,16 @@
   <section class="scan-area">
     <div class="grid">
       <div class="card">
-        <h2>Website scan</h2>
-        <p class="muted">Enter a company website, product page, campaign page, packaging/brochure page or sustainability page. The scan reviews the entered URL and, where possible, a small number of related company pages.</p>
-        <label for="url">Website URL</label>
-        <input id="url" type="url" placeholder="https://www.company.com/sustainability" />
+        <h2>Website scan &mdash; public sources</h2>
+        <p class="muted">Enter a company name or website (for example <strong>Inditex</strong>, <strong>inditex.com</strong>, <strong>www.inditex.com</strong> or <strong>inditex.be</strong>). The scan resolves this to the company's official website, then discovers and reviews a range of public pages on that site &mdash; homepage, sustainability/ESG pages, policies, product and campaign pages, packaging/brochure pages, press and investor pages &mdash; plus public external stakeholder sources (media, NGO, regulator and union signals) when search is configured. Only publicly available material is checked; nothing private or internal is accessed.</p>
+        <label for="url">Company name or website</label>
+        <input id="url" type="text" placeholder="e.g. Inditex, inditex.com or www.inditex.com" />
         <div class="toolbar"><button id="runUrl" class="btn">Run website scan</button></div>
-        <p class="small" style="margin-top:8px;color:var(--muted)">Scans the entered page plus related sustainability pages. Website scans include external public-source search when configured.</p>
+        <p class="small" style="margin-top:8px;color:var(--muted)">Public sources only. If a bare company name cannot be confidently matched to an official domain, the scan reports how it resolved the name so you can verify it.</p>
       </div>
       <div class="card">
-        <h2>Internal company document scan</h2>
-        <p class="muted">Upload one non-public document for a separate document-only scan. Website and document results are not combined.</p>
+        <h2>Internal document scan &mdash; non-public upload</h2>
+        <p class="muted">Upload one document that is <strong>not publicly available</strong> &mdash; for example an internal policy draft, an unpublished sustainability report, a supplier contract or an internal memo. This scan reviews only the uploaded file itself: no website is crawled and no external stakeholder search is run. Website and document results are kept separate and are not combined.</p>
         <label for="file">Internal document</label>
         <input id="file" class="file-native" type="file" accept=".txt,.html,.htm,.md,.csv,.docx,.pdf" />
         <div class="file-row"><button id="chooseFile" type="button" class="btn secondary">Choose file</button><span id="fileName" class="file-name">No file selected</span></div>
@@ -75,6 +75,7 @@
   <section id="results" class="hidden">
     <div class="card section">
       <h2>Executive summary</h2>
+      <p id="resolutionNote" class="notice warning hidden" style="margin-bottom:12px"></p>
       <p id="summary" class="muted"></p>
       <div id="scoreCards" class="scores"></div>
       <div class="download-panel" style="background:#f0f9ff;border:1px solid #bfd7f0;border-radius:12px;padding:16px;margin-top:16px">
@@ -145,12 +146,12 @@ async function health(){try{let r=await fetch('/api/health',{cache:'no-store'});
 health();
 $('chooseFile')?.addEventListener('click',()=>$('file').click());
 $('file')?.addEventListener('change',()=>{$('fileName').textContent=$('file').files[0]?.name||'No file selected'});
-async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a website URL.','notice warning');return} await runScan('/api/scan/url',{url});}
+async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a company name or website.','notice warning');return} await runScan('/api/scan/url',{url});}
 async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return} let b64=await fileToBase64(f); await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64});}
 async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment while the website and external stakeholder signals are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let text=await r.text();let j;try{j=JSON.parse(text)}catch(_){throw new Error((text.trim().startsWith('<!DOCTYPE')||text.trim().startsWith('<html'))?'The backend returned a Render gateway error. Please redeploy the latest package and try again. If this persists, the website scan timed out while fetching pages or external stakeholder signals.':(text.slice(0,250)||'The server returned an unreadable response.'))}if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below and use the company report download buttons.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
 function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
 $('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
-function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
+function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('conclusion').textContent=d.screening_conclusion||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';let rn=$('resolutionNote');if(d.fallback_note){rn.textContent=d.fallback_note;rn.classList.remove('hidden')}else{rn.classList.add('hidden')}renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
 function scoreInterp(n){
   if(n==null)return '';
   if(n>=85)return 'Very high — multiple severe signals';
