@@ -1183,9 +1183,8 @@ GREEN_CLAIMS=[
 
 
 EMPCO_LENS=[
- {'name':'Directive (EU) 2024/825 / EmpCo','use':'Frames green-claim risk in B2C commercial communications by addressing misleading environmental claims, generic claims, labels, comparisons, durability/repairability and future environmental performance claims.'},
- {'name':'EU Green Claims Directive (GCD, 2024 political agreement)','use':'Product-specific green claims made in B2C communications must be independently pre-verified before use. Applies to explicit comparative or absolute product-level environmental claims not covered by recognised EU ecolabel schemes. Stricter than EmpCo for verified product-level claims.'},
- {'name':'EU Deforestation Regulation (EUDR, Regulation (EU) 2023/1115)','use':'Relevant for supply-chain and sourcing claims involving cocoa, coffee, palm oil, soy, wood, rubber or cattle products. Companies placing these commodities on the EU market must demonstrate deforestation-free status and traceability. Compliance deadline for large operators under phased review (originally Dec 2024).'},
+ {'name':'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive)','use':'Main green-claims lens. Frames green-claim risk in B2C commercial communications by addressing misleading environmental claims, generic claims, labels, comparisons, durability/repairability and future environmental performance claims.'},
+ {'name':'EU Forced Labour Regulation / Regulation (EU) 2024/3015','use':'Main social-claim lens. Flags wording that may imply products, suppliers or value chains are free from forced labour, or that traceability, due diligence or import/export controls provide assurance beyond what is evidenced.'},
  {'name':'UCPD environmental-claim definition','use':'Checks whether text, images, symbols, labels, brand names, trade names or presentation imply positive, zero, reduced, comparative or improved environmental impact of a product, brand or trader.'},
  {'name':'Blacklisted-practices lens','use':'Flags high-sensitivity indicators such as generic environmental claims without clear specification or recognised excellent performance, self-declared sustainability labels, offset-based product neutrality claims, global claims based on one feature, and legal requirements presented as distinctive benefits.'},
  {'name':'Same-medium specification check','use':'Checks whether broad wording is specified clearly and prominently on the same page, advertisement, packaging text or product interface.'},
@@ -2666,9 +2665,6 @@ V55_SOCIAL_EXTRA_PATTERNS = [
     ('Broad social-impact claim', 'Medium', ['positive social impact','positive impact on communities','support communities','supporting communities','empowering communities','inclusive growth'],
      'Broad community or social-impact wording can overstate outcomes where stakeholders, geography, metrics and limitations are not defined.',
      'Specify stakeholder group, geography, objective, indicators, period, evidence and limitations.'),
-    ('EU Deforestation Regulation sourcing claim', 'High', ['deforestation-free','deforestation free','forest-positive','no deforestation','zero deforestation','deforestation-free supply chain','EUDR compliant','EUDR compliance','cocoa traceability','palm oil traceability','soy traceability'],
-     'EUDR risk: sourcing or deforestation-free claims for in-scope commodities (cocoa, coffee, palm oil, soy, wood, rubber, cattle) require verified geolocation data, traceability to plot level, due diligence statements and operator registration. Claims of compliance should reference the specific evidence standard, not just a policy commitment.',
-     'Specify the commodity, traceability standard, geolocation evidence basis, operator registration status and due-diligence statement reference.'),
 ]
 
 V55_NAV_CONTEXT_EXCLUSIONS = [

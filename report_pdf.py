@@ -314,12 +314,17 @@ def build_company_report_pdf(data):
     # ---------- PAGE 1 ----------
     page1 = []
     page1 += header_block(data, 'Company claim-risk report',
-                           'EmpCo · EU Green Claims Directive · EU Forced Labour Regulation · EUDR')
+                           'EmpCo (Directive (EU) 2024/825) · EU Forced Labour Regulation (EU) 2024/3015')
     page1.append(scores_row(data))
     page1.append(Spacer(1, 7))
-    page1.append(section_card('Executive summary', Paragraph(
+    summary_flow = [Paragraph(
         esc(data.get('assessment_summary_specific') or (data.get('report') or {}).get('summary') or 'No summary available.'),
-        STY['body'])))
+        STY['body'])]
+    if data.get('fallback_note'):
+        summary_flow.append(Spacer(1, 4))
+        summary_flow.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',
+                                       ParagraphStyle('rn', parent=STY['small'], textColor=AMBER)))
+    page1.append(section_card('Executive summary', summary_flow))
     page1.append(Spacer(1, 5))
     flagrow = Table([[bullet_box('Green claim red flags', flags.get('green'), GREEN),
                        bullet_box('Social claim red flags', flags.get('social'), AMBER)]],
@@ -390,8 +395,8 @@ def build_company_report_pdf(data):
                                ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
     method_note = Paragraph(
         'Claim wording (42%) + Evidence gap (24%) + External context (22%) + Sector/channel sensitivity (12%). '
-        'Lenses: EmpCo &bull; EU Green Claims Directive &bull; EU Forced Labour Regulation (EU) 2024/3015 &bull; EUDR. '
-        'CSDDD and CSRD thresholds reflect the post-Omnibus I scope (Directive 2026/470, in force 18 March 2026).', STY['small'])
+        'Lenses: EmpCo &mdash; Directive (EU) 2024/825, "Empowering Consumers for the Green Transition" &mdash; for green claims, '
+        'and the EU Forced Labour Regulation (EU) 2024/3015 for forced-labour and supply-chain claims.', STY['small'])
     lastrow = Table([[section_card('Score interpretation', btbl), section_card('Methodology note', method_note)]],
                      colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
     lastrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),

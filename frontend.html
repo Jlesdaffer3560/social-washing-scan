@@ -31,9 +31,9 @@
 <body>
 <div class="wrap">
   <section class="hero">
-    <div class="kicker">EmpCo &middot; EU Green Claims Directive &middot; EU Forced Labour Regulation &middot; EUDR lenses</div>
+    <div class="kicker">EmpCo &middot; EU Forced Labour Regulation lenses</div>
     <h1>Sustainability Scan</h1>
-    <p>Assess whether public sustainability claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan applies four lenses: <strong>EmpCo</strong> (Directive (EU) 2024/825), the <strong>EU Green Claims Directive</strong> (2024), the <strong>EU Forced Labour Regulation</strong> (Regulation (EU) 2024/3015), and the <strong>EU Deforestation Regulation</strong> (EUDR) for deforestation-sensitive commodity claims.</p>
+    <p>Assess whether public sustainability claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan applies two regulatory lenses: <strong>EmpCo</strong> &mdash; Directive (EU) 2024/825, officially the "Empowering Consumers for the Green Transition" Directive &mdash; for consumer-facing environmental (green) claims, and the <strong>EU Forced Labour Regulation</strong> (Regulation (EU) 2024/3015) for product, supplier and supply-chain claims related to forced labour.</p>
     <div id="version" class="version">Checking backend version...</div>
   </section>
 
@@ -44,7 +44,7 @@
       <li><strong>Claim wording:</strong> broad, generic, absolute, future-oriented, comparative or label/icon-based claims.</li>
       <li><strong>Evidence gap:</strong> missing scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, traceability or due-diligence evidence.</li>
       <li><strong>External context:</strong> relevant public signals that may contradict or qualify the claim.</li>
-      <li><strong>Regulatory lens:</strong> EmpCo and the EU Green Claims Directive for consumer-facing green claims; Regulation (EU) 2024/3015 for forced-labour claims; EUDR for deforestation-sensitive commodity claims. CSDDD and CSRD thresholds updated for Omnibus I (Directive 2026/470, in force 18 March 2026).</li>
+      <li><strong>Regulatory lens:</strong> EmpCo (Directive (EU) 2024/825, "Empowering Consumers for the Green Transition") for consumer-facing green claims; the EU Forced Labour Regulation (Regulation (EU) 2024/3015) for forced-labour and supply-chain claims.</li>
     </ol>
     <div class="toolbar"><a class="btn secondary" href="/methodology.pdf" target="_blank" rel="noopener">Download detailed methodology PDF</a></div>
   </section>
@@ -170,7 +170,7 @@ function renderScores(d){
     <div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div>
     <div class="score-bar"><div class="score-bar-fill" style="width:${s[1]}%"></div></div>
     <div class="score-interp">${scoreInterp(s[1])}</div>
-    <div class="small" style="margin-top:4px">${s[0]==='Global'?'Combined green + social':s[0]==='Green'?'Environmental / EmpCo / GCD lens':'Social / forced-labour / EUDR lens'}</div>
+    <div class="small" style="margin-top:4px">${s[0]==='Global'?'Combined green + social':s[0]==='Green'?'Environmental / EmpCo lens':'Social / forced-labour lens'}</div>
   </div>`).join('');
 }
 function renderDrivers(d){let det=d.score_driver_details||{};let green=det.green||{};let social=det.social||{};let html=''; if(green.summary)html+=driverCard('Green score drivers',green); if(social.summary)html+=driverCard('Social score drivers',social); if(!html && d.why_score){html=Object.entries(d.why_score).map(([k,v])=>`<div><h3>${esc(k)}</h3><p class="muted">${esc(typeof v==='string'?v:JSON.stringify(v,null,2))}</p></div>`).join('')} $('drivers').innerHTML=html||'<p class="empty">No score-driver details available.</p>';}
