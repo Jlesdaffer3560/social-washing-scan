@@ -5,12 +5,26 @@ from urllib.request import Request, urlopen
 from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time
-try:
-    from report_pdf import build_company_report_pdf
-    REPORT_PDF_AVAILABLE = True
-except Exception as _report_pdf_err:
-    REPORT_PDF_AVAILABLE = False
-    _REPORT_PDF_IMPORT_ERROR = str(_report_pdf_err)
+
+def _get_build_company_report_pdf():
+    """Lazily import the ReportLab-based PDF generator on first use, instead of at
+    module load time. This guarantees the HTTP server can bind its port and start
+    immediately even if the reportlab import is slow, memory-heavy or fails on a
+    given host -- only the PDF-download endpoint is affected, not server startup."""
+    global _report_pdf_fn, _report_pdf_import_error
+    if _report_pdf_fn is not None:
+        return _report_pdf_fn
+    if _report_pdf_import_error is not None:
+        return None
+    try:
+        from report_pdf import build_company_report_pdf as _fn
+        _report_pdf_fn = _fn
+        return _fn
+    except Exception as e:
+        _report_pdf_import_error = str(e)
+        return None
+_report_pdf_fn = None
+_report_pdf_import_error = None
 
 APP_VERSION="hostable_v55_claim_detection_balanced_report_layout"
 PORT=int(os.environ.get("PORT","8000"))
@@ -2602,7 +2616,7 @@ class Handler(BaseHTTPRequestHandler):
             pdf=APP_DIR/"methodology.pdf"
             if pdf.exists(): self._send(pdf.read_bytes(),"application/pdf")
             else: self._json({"error":"Methodology PDF not found"},404)
-        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX),"report_pdf_available":REPORT_PDF_AVAILABLE})
+        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX),"report_pdf_available":(_report_pdf_fn is not None or _report_pdf_import_error is None)})
         else: self._json({"error":"Not found"},404)
     def do_POST(self):
         try:
@@ -2618,12 +2632,13 @@ class Handler(BaseHTTPRequestHandler):
                 txt=decode_uploaded_document(filename, content, data.get("mime_type",""))
                 return self._json(analyse_uploaded_document(filename, txt))
             if self.path=="/api/report/pdf":
-                if not REPORT_PDF_AVAILABLE:
-                    return self._json({"error":"PDF report generation is unavailable: "+_REPORT_PDF_IMPORT_ERROR},500)
+                build_fn=_get_build_company_report_pdf()
+                if build_fn is None:
+                    return self._json({"error":"PDF report generation is unavailable: "+(_report_pdf_import_error or "unknown import error")},500)
                 if not data:
                     return self._json({"error":"No scan result provided"},400)
                 try:
-                    pdf_bytes=build_company_report_pdf(data)
+                    pdf_bytes=build_fn(data)
                 except Exception as e:
                     return self._json({"error":"Could not generate PDF report: "+str(e)},500)
                 stamp=re.sub(r"[^0-9-]","",(data.get("analysis_date") or datetime.date.today().isoformat())[:10])
