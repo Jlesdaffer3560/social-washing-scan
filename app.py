@@ -2684,8 +2684,20 @@ V55_SOCIAL_EXTRA_PATTERNS = [
 
 V55_NAV_CONTEXT_EXCLUSIONS = [
     'cookie', 'privacy', 'terms', 'login', 'sign in', 'menu', 'navigation', 'subscribe', 'newsletter',
-    'download report', 'annual report', 'sustainability report', 'press release archive'
+    'download report', 'annual report', 'sustainability report', 'press release archive',
+    'read more about', 'learn more about', 'find out more about', 'more about our'
 ]
+
+_TRIGGER_RE_CACHE = {}
+def _trigger_present(trigger, low_text):
+    """Whole-word/phrase match instead of naive substring containment. Prevents
+    short triggers from matching inside unrelated words, e.g. 'eco' inside
+    'economic'/'ecosystem', or 'green' inside 'greenhouse gas emissions'."""
+    rx = _TRIGGER_RE_CACHE.get(trigger)
+    if rx is None:
+        rx = re.compile(r'(?<![a-z0-9])' + re.escape(trigger) + r'(?![a-z0-9])')
+        _TRIGGER_RE_CACHE[trigger] = rx
+    return rx.search(low_text) is not None
 
 
 def _v55_claim_context_ok(excerpt, trigger, dimension):
@@ -2697,8 +2709,10 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # Exclude headings that have no claim object.
     if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
         return False
+    if any(x in c for x in ['challenges and opportunities','opportunities and challenges']):
+        return False
     if dimension == 'green':
-        if trig in ['green','eco','sustainable','natural'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
+        if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
             return False
     if dimension == 'social':
         neutral=['backing british suppliers','supporting local suppliers','working with suppliers','become a supplier','supplier portal','list of suppliers']
@@ -2732,7 +2746,7 @@ def detect_green_claims(text):
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
         hits=0
         for trig in triggers:
-            if trig in low:
+            if _trigger_present(trig, low):
                 excerpt=_v55_sentence_list(text,trig)
                 if typ=='Future environmental-performance claim' and not _looks_like_future_environmental_claim(excerpt):
                     continue
@@ -2744,7 +2758,7 @@ def detect_green_claims(text):
     for typ,risk,triggers,issue,rewrite in V55_GREEN_EXTRA_PATTERNS:
         hits=0
         for trig in triggers:
-            if trig in low:
+            if _trigger_present(trig, low):
                 score=62 if risk=='Medium' else 68
                 _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', score)
                 hits += 1
@@ -2759,7 +2773,7 @@ def detect_claims(text):
     for triggers,typ,risk,issue,rewrite in CLAIMS:
         hits=0
         for trig in triggers:
-            if trig in low:
+            if _trigger_present(trig, low):
                 excerpt=_v55_sentence_list(text,trig)
                 if not _social_claim_context(excerpt, typ, trig):
                     continue
@@ -2770,7 +2784,7 @@ def detect_claims(text):
     for typ,risk,triggers,issue,rewrite in V55_SOCIAL_EXTRA_PATTERNS:
         hits=0
         for trig in triggers:
-            if trig in low:
+            if _trigger_present(trig, low):
                 score=74 if 'Forced-labour' in typ else (62 if risk=='High' else 38)
                 _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score)
                 hits += 1
