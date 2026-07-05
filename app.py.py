@@ -235,23 +235,29 @@ def related_company_sites(url, max_sites=1):
         if c not in seen: seen.append(c)
     return seen[:max_sites]
 
-def crawl_with_related_sites(original_url):
+def crawl_with_related_sites(original_url,overall_deadline=None):
     """Crawl the requested URL plus a small number of likely related company sites.
     The requested URL remains the primary source. Related domains are added only when reachable.
+    A single shared wall-clock deadline caps the ENTIRE operation (not per sub-step) so the
+    request reliably returns well within Render's gateway timeout.
     """
-    txt,pages=crawl(original_url)
+    if overall_deadline is None:
+        overall_deadline=time.time()+22
+    txt,pages=crawl(original_url,deadline=overall_deadline)
     source_notes=[]
     all_text=[txt]
     all_pages=list(pages)
-    for candidate in related_company_sites(original_url):
-        try:
-            rt,rpages=crawl(candidate)
-            if len(rt)>500:
-                all_text.append('\n\nRELATED COMPANY SITE: '+candidate+'\n'+rt)
-                all_pages.extend([p for p in rpages if p not in all_pages])
-                source_notes.append(f"Related company site also checked: {candidate}")
-        except Exception:
-            pass
+    if time.time() < overall_deadline-3:
+        for candidate in related_company_sites(original_url):
+            if time.time()>=overall_deadline-2: break
+            try:
+                rt,rpages=crawl(candidate,deadline=overall_deadline)
+                if len(rt)>500:
+                    all_text.append('\n\nRELATED COMPANY SITE: '+candidate+'\n'+rt)
+                    all_pages.extend([p for p in rpages if p not in all_pages])
+                    source_notes.append(f"Related company site also checked: {candidate}")
+            except Exception:
+                pass
     return '\n\n'.join(all_text)[:150000], all_pages[:16], source_notes
 
 def replace_tld_with_be(url):
@@ -273,12 +279,12 @@ def is_private(host):
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved: return True
     except Exception: return False
     return False
-def fetch_html(url):
+def fetch_html(url,timeout=7):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
     req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0","Accept":"text/html,application/xhtml+xml"})
-    with urlopen(req,timeout=7,context=ssl.create_default_context()) as r:
+    with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
 def same_domain(u,base):
@@ -292,27 +298,31 @@ COMMON_PUBLIC_PATHS=['/sustainability','/sustainability-report','/csr','/esg','/
     '/investor-relations','/about/sustainability','/about-us/sustainability','/en/sustainability',
     '/news','/press','/newsroom']
 
-def discover_sitemap_urls(base_url, limit=40):
+def discover_sitemap_urls(base_url, limit=40, deadline=None):
     """Best-effort sitemap discovery so the scan can reach pages that are not linked
-    from the homepage. Silently returns [] on any failure (missing/blocked sitemap)."""
+    from the homepage. Silently returns [] on any failure (missing/blocked sitemap) or
+    once the shared crawl deadline is reached."""
     host=urlparse(base_url).hostname or ''
     if not host: return []
+    if deadline and time.time()>=deadline: return []
     scheme=urlparse(base_url).scheme or 'https'
     found=[]
-    for path in ('/sitemap.xml','/sitemap_index.xml'):
+    for path in ('/sitemap.xml',):
+        if deadline and time.time()>=deadline: break
         try:
+            t=min(5, max(2, deadline-time.time())) if deadline else 5
             req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
-            with urlopen(req,timeout=6,context=ssl.create_default_context()) as r:
-                body=r.read(1500000).decode("utf-8",errors="ignore")
+            with urlopen(req,timeout=t,context=ssl.create_default_context()) as r:
+                body=r.read(1000000).decode("utf-8",errors="ignore")
             locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.IGNORECASE)
-            if '<sitemapindex' in body.lower() and locs:
-                for child in locs[:2]:
-                    try:
-                        req2=Request(child,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
-                        with urlopen(req2,timeout=6,context=ssl.create_default_context()) as r2:
-                            body2=r2.read(1500000).decode("utf-8",errors="ignore")
-                        locs.extend(re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE))
-                    except Exception: pass
+            if '<sitemapindex' in body.lower() and locs and (not deadline or time.time()<deadline):
+                try:
+                    t2=min(4, max(2, deadline-time.time())) if deadline else 4
+                    req2=Request(locs[0],headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
+                    with urlopen(req2,timeout=t2,context=ssl.create_default_context()) as r2:
+                        body2=r2.read(1000000).decode("utf-8",errors="ignore")
+                    locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE)
+                except Exception: pass
             if locs: found=locs; break
         except Exception: continue
     out=[]; seen=set()
@@ -322,16 +332,18 @@ def discover_sitemap_urls(base_url, limit=40):
             seen.add(u); out.append(u)
     return out[:limit]
 
-def crawl(url,max_extra_pages=6,time_budget=16):
-    t0=time.time()
-    html=fetch_html(url); text,links=parse_html(html); host=urlparse(url).hostname or ""
+def crawl(url,max_extra_pages=5,deadline=None):
+    if deadline is None:
+        deadline=time.time()+18
+    def remaining(): return max(1,deadline-time.time())
+    html=fetch_html(url,timeout=min(7,remaining())); text,links=parse_html(html); host=urlparse(url).hostname or ""
     pages=[url]; chunks=[text]; cands=[]
     for href in links:
         full=urljoin(url,href).split("#")[0]
         if same_domain(full,host) and relevant(full) and full not in cands and full!=url: cands.append(full)
-    if len(cands)<max_extra_pages:
+    if len(cands)<max_extra_pages and time.time()<deadline:
         try:
-            for u in discover_sitemap_urls(url):
+            for u in discover_sitemap_urls(url,deadline=deadline):
                 if relevant(u) and u not in cands and u!=url: cands.append(u)
                 if len(cands)>=max_extra_pages*2: break
         except Exception: pass
@@ -341,9 +353,9 @@ def crawl(url,max_extra_pages=6,time_budget=16):
             guess=f'{scheme}://{host}{path}'
             if guess not in cands and guess!=url: cands.append(guess)
     for link in cands[:max_extra_pages]:
-        if time.time()-t0>time_budget: break
+        if time.time()>=deadline: break
         try:
-            t,_=parse_html(fetch_html(link))
+            t,_=parse_html(fetch_html(link,timeout=min(6,remaining())))
             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
         except Exception: pass
     return "\n\n".join(chunks)[:90000], pages
@@ -2055,13 +2067,14 @@ def analyse_uploaded_document(filename, text):
 
 def analyse_url_v27(raw):
     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
+    scan_deadline=time.time()+25
     try:
-        txt,pages,related_notes=crawl_with_related_sites(original_url); url=original_url
+        txt,pages,related_notes=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
     except Exception as first_error:
         fallback_url=replace_tld_with_be(original_url)
         if fallback_url:
             try:
-                txt,pages,related_notes=crawl_with_related_sites(fallback_url); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
+                txt,pages,related_notes=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
             except Exception as second_error:
                 raise ValueError(f'The .com website could not be accessed and the .be fallback also failed. Original error: {first_error}. Fallback error: {second_error}.')
         else:
@@ -2647,10 +2660,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error":"Unknown endpoint"},404)
         except Exception as e: self._json({"error":str(e)},500)
 
-def main():
-    print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()
-if __name__=="__main__": main()
-
 # V55 claim-signal sensitivity and report layout refinements
 
 # The scan should retain enough claim signals to be useful, but only where wording is a real
@@ -2685,7 +2694,8 @@ V55_SOCIAL_EXTRA_PATTERNS = [
 V55_NAV_CONTEXT_EXCLUSIONS = [
     'cookie', 'privacy', 'terms', 'login', 'sign in', 'menu', 'navigation', 'subscribe', 'newsletter',
     'download report', 'annual report', 'sustainability report', 'press release archive',
-    'read more about', 'learn more about', 'find out more about', 'more about our'
+    'read more about', 'learn more about', 'find out more about', 'more about our',
+    'explore our', 'discover our', 'read on to', 'click here', 'see more'
 ]
 
 _TRIGGER_RE_CACHE = {}
@@ -2709,7 +2719,7 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # Exclude headings that have no claim object.
     if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
         return False
-    if any(x in c for x in ['challenges and opportunities','opportunities and challenges']):
+    if 'challenges' in c and 'opportunities' in c:
         return False
     if dimension == 'green':
         if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
@@ -2858,3 +2868,7 @@ def _v55_sentence_list(text, trigger, window=850):
     if i < 0:
         return raw[:620]
     return raw[max(0,i-180):min(len(raw),i+300)][:620]
+
+def main():
+    print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()
+if __name__=="__main__": main()
