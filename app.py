@@ -2147,25 +2147,17 @@ def _describe_fetch_error(err):
     return str(err)
 
 
-def _is_access_denied(err):
-    return isinstance(err, HTTPError) and err.code in (401, 403, 429)
-
-
 def analyse_url_v27(raw):
     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
     scan_deadline=time.time()+18
     try:
         txt,pages,related_notes=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
     except Exception as first_error:
-        if _is_access_denied(first_error):
-            raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)}')
         fallback_url=replace_tld_with_be(original_url)
         if fallback_url:
             try:
                 txt,pages,related_notes=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original website was not accessible. The scan was automatically performed on {fallback_url}.'
             except Exception as second_error:
-                if _is_access_denied(second_error):
-                    raise ValueError(f'Could not scan {original_url} or the {fallback_url} fallback: {_describe_fetch_error(second_error)}')
                 raise ValueError(f'Could not access {original_url} ({_describe_fetch_error(first_error)}) and the {fallback_url} fallback also failed ({_describe_fetch_error(second_error)}).')
         else:
             raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)}')
