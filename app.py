@@ -242,7 +242,7 @@ def crawl_with_related_sites(original_url,overall_deadline=None):
     request reliably returns well within Render's gateway timeout.
     """
     if overall_deadline is None:
-        overall_deadline=time.time()+22
+        overall_deadline=time.time()+18
     txt,pages=crawl(original_url,deadline=overall_deadline)
     source_notes=[]
     all_text=[txt]
@@ -2101,7 +2101,7 @@ def analyse_uploaded_document(filename, text):
 
 def analyse_url_v27(raw):
     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
-    scan_deadline=time.time()+25
+    scan_deadline=time.time()+18
     try:
         txt,pages,related_notes=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
     except Exception as first_error:
