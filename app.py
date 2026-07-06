@@ -741,7 +741,7 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[])} for f in findings]
+    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[])} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -1768,31 +1768,37 @@ def social_claim_inventory_with_dimension(findings):
         r['dimension']='Social'; r['washing_type']=SOCIAL_WASHING_TAXONOMY.get(r.get('claim_type',''),r.get('claim_type',''))
     return rows
 
-def build_green_social_actions(green_findings, social_findings, audience):
+def build_green_social_actions(green_findings, social_findings, audience, company_name=''):
     actions=[]
+    cn=(company_name or '').strip()
+    who=cn if cn and cn.lower() not in ('company reviewed','') else 'the company'
     client_facing=('Client-facing' in audience.get('audience','') or 'Consumer-facing' in audience.get('audience','') or 'commercial' in audience.get('audience','').lower())
     all_findings=(green_findings or [])+(social_findings or [])
     high_green=[f for f in (green_findings or []) if f.get('risk')=='High']
     high_social=[f for f in (social_findings or []) if f.get('risk')=='High']
-    claim_types='; '.join(dict.fromkeys([f.get('type','claim') for f in all_findings if f.get('type')]))[:220]
+    claim_types='; '.join(dict.fromkeys([f.get('type','claim') for f in all_findings if f.get('type') and not f.get('type','').lower().startswith('no ')]))[:220]
+    green_terms=list(dict.fromkeys([t for f in high_green for t in (f.get('problematic_terms') or [])]))[:5]
+    social_terms=list(dict.fromkeys([t for f in high_social for t in (f.get('problematic_terms') or [])]))[:5]
     if client_facing or high_green:
-        actions.append({'priority':'Priority 1','title':'Review client-facing green claims under EmpCo','action':f"Check the exact wording of the detected green claim areas ({claim_types or 'environmental claims'}) on websites/product pages/folders. For each claim, document scope, product coverage, methodology, evidence source, verification basis and limitations before reuse."})
+        wording=f' Specific wording to check: {", ".join(green_terms)}.' if green_terms else ''
+        actions.append({'priority':'Priority 1','title':'Review client-facing green claims under EmpCo','action':f"Check the exact wording {who} uses for the detected green claim areas ({claim_types or 'environmental claims'}) on websites/product pages/folders.{wording} For each claim, document scope, product coverage, methodology, evidence source, verification basis and limitations before reuse."})
     else:
-        actions.append({'priority':'Priority 1','title':'Confirm which scanned claims are client-facing','action':'Separate website/product/folder wording from annual or sustainability report language. Treat client-facing claims as higher priority for EmpCo-style substantiation and approval controls.'})
+        actions.append({'priority':'Priority 1','title':'Confirm which scanned claims are client-facing','action':f'Separate {who}\'s website/product/folder wording from annual or sustainability report language. Treat client-facing claims as higher priority for EmpCo-style substantiation and approval controls.'})
     if high_social:
         forced=any(('forced' in f.get('type','').lower() or 'modern slavery' in f.get('type','').lower() or 'supply' in f.get('type','').lower()) for f in high_social)
+        wording=f' Specific wording to check: {", ".join(social_terms)}.' if social_terms else ''
         if forced:
-            actions.append({'priority':'Priority 2','title':'Validate forced-labour and supplier claims','action':'For supplier, responsible-sourcing, modern-slavery or forced-labour wording, prepare evidence on product/supplier traceability, risk assessment by geography/product, mitigation, grievance/remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.'})
+            actions.append({'priority':'Priority 2','title':'Validate forced-labour and supplier claims','action':f"For {who}'s supplier, responsible-sourcing, modern-slavery or forced-labour wording, prepare evidence on product/supplier traceability, risk assessment by geography/product, mitigation, grievance/remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.{wording}"})
         else:
-            actions.append({'priority':'Priority 2','title':'Substantiate high-priority social claims','action':'For the detected social claim areas, collect stakeholder scope, KPIs, grievance/remedy evidence, audit or workforce data and clear limits to avoid overstatement.'})
-    actions.append({'priority':'Priority 3','title':'Build a claim evidence file','action':'Create one evidence file per priority claim with the approved wording, source URL/document, owner, evidence link, date, legal/compliance review status and review deadline.'})
+            actions.append({'priority':'Priority 2','title':'Substantiate high-priority social claims','action':f"For {who}'s detected social claim areas ({claim_types or 'social claims'}), collect stakeholder scope, KPIs, grievance/remedy evidence, audit or workforce data and clear limits to avoid overstatement.{wording}"})
+    actions.append({'priority':'Priority 3','title':'Build a claim evidence file','action':'Create one evidence file per priority claim retained in this scan, with the approved wording, source URL/document, owner, evidence link, date, legal/compliance review status and review deadline.'})
     if any('comparative' in f.get('type','').lower() for f in green_findings or []):
-        actions.append({'priority':'Priority 4','title':'Check comparative green claims','action':'For reduced impact, lower emissions or better product wording, identify the comparator, baseline year, methodology, equivalent product basis and data date.'})
+        actions.append({'priority':'Priority 4','title':'Check comparative green claims','action':f"For {who}'s reduced impact, lower emissions or better product wording, identify the comparator, baseline year, methodology, equivalent product basis and data date."})
     if any(('climate' in f.get('type','').lower() or 'offset' in f.get('type','').lower() or 'net zero' in f.get('claim','').lower()) for f in green_findings or []):
-        actions.append({'priority':'Priority 4','title':'Clarify climate and offset claims','action':'Separate actual emission reductions from offsetting/compensation, and disclose scopes, baseline, residual emissions, implementation plan and progress indicators.'})
+        actions.append({'priority':'Priority 4','title':'Clarify climate and offset claims','action':f"Separate {who}'s actual emission reductions from offsetting/compensation, and disclose scopes, baseline, residual emissions, implementation plan and progress indicators."})
     if any(('label' in f.get('type','').lower() or 'certification' in f.get('type','').lower()) for f in green_findings or []):
-        actions.append({'priority':'Priority 4','title':'Verify labels and certifications','action':'Name the scheme owner, criteria, certification scope, verification body and validity period for any green/social label or certification reference.'})
-    actions.append({'priority':'Priority 5','title':'Align reporting and marketing language','action':'Use sustainability and annual reports as supporting evidence, but avoid copying broad report language into consumer-facing pages unless the claim is specific, current, substantiated and audience-appropriate.'})
+        actions.append({'priority':'Priority 4','title':'Verify labels and certifications','action':f"Name the scheme owner, criteria, certification scope, verification body and validity period for any green/social label or certification {who} references."})
+    actions.append({'priority':'Priority 5','title':'Align reporting and marketing language','action':f"Use {who}'s sustainability and annual reports as supporting evidence, but avoid copying broad report language into consumer-facing pages unless the claim is specific, current, substantiated and audience-appropriate."})
     return actions[:6]
 
 
@@ -1846,32 +1852,52 @@ def merge_documents(primary, discovered):
 
 def score_driver_details(green_score, social_score, green_fs, social_fs, green_splits, social_splits, green_components, social_components, green_ext, social_ext, sector, audience):
     def claim_names(fs):
-        vals=[f.get('type','claim') for f in fs or [] if not f.get('type','').lower().startswith('no major')]
-        return ', '.join(vals[:3]) if vals else 'no material claim type detected'
+        vals=[f.get('type','claim') for f in fs or [] if not f.get('type','').lower().startswith('no major') and not f.get('type','').lower().startswith('no material')]
+        return vals
     def targeted_count(ext):
         return len(ext.get('targeted_negative_sources') or []) if ext else 0
-    gf=claim_names(green_fs); sf=claim_names(social_fs)
-    ge='; '.join((green_components or {}).get('evidence_notes',[])[:1])
-    se='; '.join((social_components or {}).get('evidence_notes',[])[:1])
-    audience_note='Client-facing sources increase EmpCo relevance.' if 'Client-facing' in audience.get('audience','') else 'Investor/internal sources are mainly treated as evidence and consistency context.'
+    def band(n):
+        n=n or 0
+        return 'low' if n<45 else 'medium' if n<75 else 'high' if n<90 else 'very high'
+    def dominant_driver(splits):
+        labels={'claim_wording_risk':'the wording of the claims themselves','substantiation_risk':'a lack of visible evidence/substantiation','external_context_risk':'negative external signals','sector_baseline_risk':'sector-level exposure'}
+        best=max(labels, key=lambda k: (splits or {}).get(k,0))
+        return labels[best], (splits or {}).get(best,0)
+    gnames=claim_names(green_fs); snames=claim_names(social_fs)
+    g_top, g_top_val = dominant_driver(green_splits)
+    s_top, s_top_val = dominant_driver(social_splits)
+    audience_note='This is client/consumer-facing material, which increases EmpCo relevance.' if 'Client-facing' in audience.get('audience','') else 'This is investor/internal material, treated mainly as evidence and consistency context rather than a direct consumer claim.'
+    g_ext_n=targeted_count(green_ext); s_ext_n=targeted_count(social_ext)
+    if gnames:
+        g_summary=f'Green score is {green_score}/100 ({band(green_score)} risk), mainly because of {g_top} ({g_top_val}/100). Claim types retained: {", ".join(gnames[:3])}.'
+        if g_ext_n: g_summary+=f' {g_ext_n} external green signal(s) were also factored in.'
+    else:
+        g_summary=f'Green score is {green_score}/100 ({band(green_score)} risk). No material green claim was retained, so the score reflects only baseline sector exposure and any external context.'
+    if snames:
+        s_summary=f'Social score is {social_score}/100 ({band(social_score)} risk), mainly because of {s_top} ({s_top_val}/100). Claim types retained: {", ".join(snames[:3])}.'
+        if s_ext_n: s_summary+=f' {s_ext_n} external social signal(s) were also factored in.'
+    else:
+        s_summary=f'Social score is {social_score}/100 ({band(social_score)} risk). No material social claim was retained, so the score reflects only baseline sector exposure and any external context.'
     return {
         'green': {
             'score': green_score,
-            'summary': f'Green score {green_score}/100: driven by {gf}. Claim wording {green_splits.get("claim_wording_risk",0)}/100, evidence gap {green_splits.get("substantiation_risk",0)}/100, external context {green_splits.get("external_context_risk",0)}/100, sector exposure {green_splits.get("sector_baseline_risk",0)}/100. {ge} {audience_note}',
+            'summary': f'{g_summary} {audience_note}',
             'key_drivers': [
-                f'Detected green claim areas: {gf}.',
-                f'Evidence-gap driver: {green_splits.get("substantiation_risk",0)}/100.',
-                f'External green signals retained after company-owned-source filtering: {targeted_count(green_ext)}.',
+                f'Claim types detected: {", ".join(gnames) if gnames else "none material"}.',
+                f'Strongest driver: {g_top} ({g_top_val}/100).',
+                f'Evidence-gap level: {green_splits.get("substantiation_risk",0)}/100.',
+                f'External green signals retained after company-owned-source filtering: {g_ext_n}.',
                 f'Sector exposure for environmental claims: {sector.get("level","Medium")}.'
             ]
         },
         'social': {
             'score': social_score,
-            'summary': f'Social score {social_score}/100: driven by {sf}. Claim wording {social_splits.get("claim_wording_risk",0)}/100, evidence gap {social_splits.get("substantiation_risk",0)}/100, external context {social_splits.get("external_context_risk",0)}/100, sector exposure {social_splits.get("sector_baseline_risk",0)}/100. {se} Forced-labour/product-supply-chain wording receives higher regulatory weight where relevant.',
+            'summary': f'{s_summary} Forced-labour or product/supply-chain wording receives higher regulatory weight where relevant.',
             'key_drivers': [
-                f'Detected social claim areas: {sf}.',
-                f'Evidence-gap driver: {social_splits.get("substantiation_risk",0)}/100.',
-                f'External social signals retained after company-owned-source filtering: {targeted_count(social_ext)}.',
+                f'Claim types detected: {", ".join(snames) if snames else "none material"}.',
+                f'Strongest driver: {s_top} ({s_top_val}/100).',
+                f'Evidence-gap level: {social_splits.get("substantiation_risk",0)}/100.',
+                f'External social signals retained after company-owned-source filtering: {s_ext_n}.',
                 f'Sector exposure for social claims: {sector.get("level","Medium")}.'
             ]
         }
@@ -2071,7 +2097,7 @@ def analyse_uploaded_document(filename, text):
     methodology='Sustainability Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
     summary=f"{comp['company']} receives a global sustainability scan score of {overall}/100 for the uploaded internal document. Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion})."
     return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def analyse_url_v27(raw):
     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
@@ -2167,7 +2193,7 @@ def analyse_url_v27(raw):
         'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience),
         'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),
         'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),
-        'company_action_plan':build_green_social_actions(green_fs,social_fs,audience),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
+        'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
         'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
         'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Classify each claim by audience: consumer-facing marketing vs investor reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals and keep company-owned evidence separate from external stakeholder sources.'],
         'ai_used':False,'ai_note':''}
@@ -2782,6 +2808,36 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
             return False
     return True
 
+def social_specification_check(claim_type, claim_text):
+    c=(claim_text or '').lower(); t=(claim_type or '').lower()
+    specificity_terms=['%','audit','audited','certified','certification','scope','tier 1','tier 2','due diligence',
+                        'grievance','remediation','remediated','traceab','methodology','assessment','assessed',
+                        'according to','standard','iso','sa8000','third-party','independent','kpi','baseline','policy']
+    has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%\b', c))
+    if t.startswith('no ') or t.startswith('no material'):
+        return {'status':'Not applicable','comment':'No material social claim was detected.'}
+    if has_specific:
+        return {'status':'Partly specified','comment':'Some substantiation indicators (e.g. audit, certification, scope, %) were found, but coverage, methodology and remediation should still be verified.'}
+    if any(x in t for x in ['forced','modern slavery','supply','supplier','human rights','labour','labor']):
+        return {'status':'Likely insufficient','comment':'The detected wording implies assurance or coverage but the retained passage shows no visible scope, audit basis, methodology or remediation evidence.'}
+    return {'status':'Needs review','comment':'The claim should be checked for precise scope, evidence and remediation basis.'}
+
+def social_blacklisted_indicator(claim_type, trigger, claim_text):
+    t=(claim_type or '').lower(); trig=(trigger or '').lower()
+    if 'forced' in t or 'modern slavery' in t:
+        return 'EU Forced Labour Regulation red flag: wording implying products, suppliers or the supply chain are free from forced labour requires traceability, risk assessment, mitigation and remediation evidence; it cannot rest on a policy statement alone.'
+    if 'supply' in t or 'supplier' in t:
+        return 'Potential red flag if supplier-coverage or audit wording (e.g. "all suppliers", "audited", "certified") is not backed by disclosed tier coverage, audit methodology and corrective-action closure rates.'
+    if 'human rights' in t or 'labour' in t or 'labor' in t:
+        return 'Potential red flag if human-rights/labour wording is not backed by a disclosed due-diligence process, grievance mechanism and remedy evidence.'
+    return 'No direct regulatory-blacklist indicator identified, but claim-specific substantiation is still required.'
+
+def enrich_social_finding(f, trigger=''):
+    f['regulatory_signal']=social_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
+    f['specification_check']=social_specification_check(f.get('type',''), f.get('claim',''))
+    f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no ') else 'Can normally proceed only after standard evidence and wording review.'
+    return f
+
 def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score):
     excerpt=_v55_sentence_list(text, trig)
     if not _v55_claim_context_ok(excerpt, trig, dimension):
@@ -2800,7 +2856,7 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         f={'dimension':'social','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
            'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
            'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
-        fs.append(f)
+        fs.append(enrich_social_finding(f,trig))
 
 def detect_green_claims(text):
     low=(text or '').lower(); fs=[]; seen=set()

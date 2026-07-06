@@ -212,6 +212,7 @@ def claim_card(c):
     if len(text) > 125:
         text = text[:122].rsplit(' ', 1)[0] + '…'
     terms = c.get('problematic_terms') or []
+    spec_status = (c.get('specification_check') or {}).get('status')
     head = Table([[Paragraph(esc(typ), STY['small_b']),
                    Paragraph(esc(risk), ParagraphStyle('rp', parent=STY['small_b'], textColor=risk_color(risk), alignment=TA_RIGHT))]],
                  colWidths=[(PAGE_W - 2 * MARGIN - 40) * 0.7, (PAGE_W - 2 * MARGIN - 40) * 0.3])
@@ -220,7 +221,10 @@ def claim_card(c):
     src_p = Paragraph(f'<font color="#8b9baa">Source:</font> {esc(src)}', STY['small'])
     quote_p = Paragraph(highlight(text, terms), STY['quote'])
     trig = ' &middot; '.join(f'<b backColor="#fff1a8">{esc(t)}</b>' for t in terms[:5]) or 'Pattern-based signal'
-    trig_p = Paragraph(f'<font color="#6b4e00"><b>Trigger:</b></font> {trig}', STY['small'])
+    trig_line = f'<font color="#6b4e00"><b>Trigger:</b></font> {trig}'
+    if spec_status:
+        trig_line += f'  <font color="#8b9baa">&middot; Substantiation in passage: <b>{esc(spec_status)}</b></font>'
+    trig_p = Paragraph(trig_line, STY['small'])
     accent = GREEN if str(c.get('dimension', '')).lower() == 'green' else AMBER
     inner = Table([[head], [src_p], [quote_p], [trig_p]], colWidths=[PAGE_W - 2 * MARGIN - 20])
     inner.setStyle(TableStyle([
