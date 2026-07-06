@@ -2710,11 +2710,35 @@ def _trigger_present(trigger, low_text):
     return rx.search(low_text) is not None
 
 
+DOC_TITLE_ENDINGS = ['code of conduct','code of ethics','policy','statement','charter',
+                     'standards','standard','guidelines','framework','handbook']
+ASSERTION_SIGNALS = ['compl','ensure','guarantee','audit','requir','monitor','verify','enforce',
+                     'implement','adopt','commit','all suppliers','our suppliers are','we ensure',
+                     'is designed to','are required','must ','has been','have been','in place to',
+                     'demonstrat','proves','proven']
+
+def _looks_like_bare_document_title(c):
+    """True when an excerpt is just the NAME of a policy/programme document (e.g.
+    'Supplier Code of Conduct.', 'Human Rights Policy', 'Modern Slavery Statement') with
+    no surrounding assertion. Naming a document a company has is not itself a claim --
+    only asserting compliance, outcomes or specifics against it is. Deliberately generic
+    (covers any '<Something> Code of Conduct/Policy/Statement/...' title), not specific to
+    one phrase, since this pattern recurs across many companies' sites."""
+    stripped=c.strip().rstrip('.').strip()
+    words=stripped.split()
+    if len(words) > 8:
+        return False
+    if not any(stripped.endswith(end) for end in DOC_TITLE_ENDINGS):
+        return False
+    return not any(sig in c for sig in ASSERTION_SIGNALS)
+
 def _v55_claim_context_ok(excerpt, trigger, dimension):
     c=(excerpt or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 25:
         return False
     if any(x in c for x in V55_NAV_CONTEXT_EXCLUSIONS):
+        return False
+    if _looks_like_bare_document_title(c):
         return False
     # Exclude headings that have no claim object.
     if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
