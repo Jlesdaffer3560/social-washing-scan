@@ -332,9 +332,11 @@ def driver_narrative(driver_data, fallback_comp=None):
     return flow
 
 
-def section_card(title, content):
+def section_card(title, content, width=None):
+    if width is None:
+        width = PAGE_W - 2 * MARGIN
     body = [Paragraph(esc(title), STY['h3']), Spacer(1, 3)] + (content if isinstance(content, list) else [content])
-    tbl = Table([[body]], colWidths=[PAGE_W - 2 * MARGIN])
+    tbl = Table([[body]], colWidths=[width])
     tbl.setStyle(TableStyle([
         ('LEFTPADDING', (0, 0), (-1, -1), 9), ('RIGHTPADDING', (0, 0), (-1, -1), 9),
         ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
@@ -422,8 +424,9 @@ def build_company_report_pdf(data):
     page2 = []
     page2 += header_block(data, 'Evidence, external signals & action plan',
                            'Score drivers and recommended next steps', company_name)
-    driverrow = Table([[section_card('Why the green score is what it is', driver_narrative(driver_details.get('green'), gc)),
-                         section_card('Why the social score is what it is', driver_narrative(driver_details.get('social'), sc))]],
+    HALF_W = (PAGE_W - 2 * MARGIN - 8) / 2
+    driverrow = Table([[section_card('Why the green score is what it is', driver_narrative(driver_details.get('green'), gc), HALF_W),
+                         section_card('Why the social score is what it is', driver_narrative(driver_details.get('social'), sc), HALF_W)]],
                        colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
     driverrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
                                     ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
@@ -468,7 +471,7 @@ def build_company_report_pdf(data):
     for i, r in enumerate(bands[1:], 1):
         bdata.append([Paragraph(esc(r[0]), ParagraphStyle(f'b{i}', parent=STY['small_b'], textColor=band_colors[i])),
                        Paragraph(esc(r[1]), STY['small'])])
-    band_w = (PAGE_W - 2 * MARGIN - 10) / 2
+    band_w = HALF_W - 20
     btbl = Table(bdata, colWidths=[band_w * 0.4, band_w * 0.6])
     btbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), SOFT), ('LINEBELOW', (0, 0), (-1, 0), 0.6, LINE),
                                ('LINEBELOW', (0, 1), (-1, -2), 0.4, LINE),
@@ -478,7 +481,7 @@ def build_company_report_pdf(data):
         'Claim wording (42%) + Evidence gap (24%) + External context (22%) + Sector/channel sensitivity (12%). '
         'Lenses: EmpCo &mdash; Directive (EU) 2024/825, "Empowering Consumers for the Green Transition" &mdash; for green claims, '
         'and the EU Forced Labour Regulation (EU) 2024/3015 for forced-labour and supply-chain claims.', STY['small'])
-    lastrow = Table([[section_card('Score interpretation', btbl), section_card('Methodology note', method_note)]],
+    lastrow = Table([[section_card('Score interpretation', btbl, HALF_W), section_card('Methodology note', method_note, HALF_W)]],
                      colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
     lastrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
                                   ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
