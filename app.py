@@ -2,6 +2,7 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, urljoin
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time
@@ -283,7 +284,7 @@ def fetch_html(url,timeout=7):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0","Accept":"text/html,application/xhtml+xml"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9"})
     with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -311,14 +312,14 @@ def discover_sitemap_urls(base_url, limit=40, deadline=None):
         if deadline and time.time()>=deadline: break
         try:
             t=min(5, max(2, deadline-time.time())) if deadline else 5
-            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
+            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"})
             with urlopen(req,timeout=t,context=ssl.create_default_context()) as r:
                 body=r.read(1000000).decode("utf-8",errors="ignore")
             locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.IGNORECASE)
             if '<sitemapindex' in body.lower() and locs and (not deadline or time.time()<deadline):
                 try:
                     t2=min(4, max(2, deadline-time.time())) if deadline else 4
-                    req2=Request(locs[0],headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
+                    req2=Request(locs[0],headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"})
                     with urlopen(req2,timeout=t2,context=ssl.create_default_context()) as r2:
                         body2=r2.read(1000000).decode("utf-8",errors="ignore")
                     locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE)
@@ -412,7 +413,7 @@ def google_search(query, max_results=5):
         return []
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"},method="GET")
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"},method="GET")
     with urlopen(req,timeout=7) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
@@ -1980,7 +1981,7 @@ def fetch_document_text(url):
     p=urlparse(url)
     if p.scheme not in ('http','https') or not p.hostname or is_private(p.hostname):
         return ''
-    req=Request(url,headers={'User-Agent':'Mozilla/5.0 GreenSocialClaimsAssessment/40.0','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
+    req=Request(url,headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
     with urlopen(req,timeout=10,context=ssl.create_default_context()) as r:
         ctype=(r.headers.get('content-type','') or '').lower()
         data=r.read(2500000)
@@ -2123,20 +2124,51 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
+def _describe_fetch_error(err):
+    """Turns a raw fetch exception into a clear, non-technical explanation."""
+    if isinstance(err, HTTPError):
+        if err.code in (401, 403):
+            return (f'the website returned HTTP {err.code} ({("Unauthorized" if err.code==401 else "Forbidden")}). '
+                    'This usually means the site has bot-detection or firewall protection that blocks automated '
+                    'requests, not that the scan is broken. Try scanning a specific sub-page instead of the homepage, '
+                    'or check the site manually.')
+        if err.code == 429:
+            return 'the website returned HTTP 429 (Too Many Requests). The site is rate-limiting automated requests; try again later.'
+        if err.code >= 500:
+            return f'the website returned HTTP {err.code}, a server-side error on the site itself.'
+        return f'the website returned HTTP {err.code}.'
+    if isinstance(err, URLError):
+        reason = str(getattr(err, 'reason', err))
+        if 'not known' in reason.lower() or 'nodename' in reason.lower():
+            return 'the domain name could not be resolved (it may not exist, or may be misspelled).'
+        if 'timed out' in reason.lower():
+            return 'the connection timed out before the site responded.'
+        return f'a connection error occurred ({reason}).'
+    return str(err)
+
+
+def _is_access_denied(err):
+    return isinstance(err, HTTPError) and err.code in (401, 403, 429)
+
+
 def analyse_url_v27(raw):
     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
     scan_deadline=time.time()+18
     try:
         txt,pages,related_notes=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
     except Exception as first_error:
+        if _is_access_denied(first_error):
+            raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)}')
         fallback_url=replace_tld_with_be(original_url)
         if fallback_url:
             try:
-                txt,pages,related_notes=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original .com website was not accessible. The scan was automatically performed on {fallback_url}.'
+                txt,pages,related_notes=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original website was not accessible. The scan was automatically performed on {fallback_url}.'
             except Exception as second_error:
-                raise ValueError(f'The .com website could not be accessed and the .be fallback also failed. Original error: {first_error}. Fallback error: {second_error}.')
+                if _is_access_denied(second_error):
+                    raise ValueError(f'Could not scan {original_url} or the {fallback_url} fallback: {_describe_fetch_error(second_error)}')
+                raise ValueError(f'Could not access {original_url} ({_describe_fetch_error(first_error)}) and the {fallback_url} fallback also failed ({_describe_fetch_error(second_error)}).')
         else:
-            raise first_error
+            raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)}')
     comp=infer_company(url,txt)
     page_segments=extract_page_segments(txt,pages)
     audience=classify_document_audience(url,txt,pages)
