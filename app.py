@@ -333,7 +333,7 @@ def discover_sitemap_urls(base_url, limit=40, deadline=None):
             seen.add(u); out.append(u)
     return out[:limit]
 
-def crawl(url,max_extra_pages=5,deadline=None):
+def crawl(url,max_extra_pages=3,deadline=None):
     if deadline is None:
         deadline=time.time()+18
     def remaining(): return max(1,deadline-time.time())
@@ -353,8 +353,9 @@ def crawl(url,max_extra_pages=5,deadline=None):
         for path in COMMON_PUBLIC_PATHS:
             guess=f'{scheme}://{host}{path}'
             if guess not in cands and guess!=url: cands.append(guess)
-    for link in cands[:max_extra_pages]:
+    for i,link in enumerate(cands[:max_extra_pages]):
         if time.time()>=deadline: break
+        if i>0 and remaining()>2: time.sleep(0.5)
         try:
             t,_=parse_html(fetch_html(link,timeout=min(6,remaining())))
             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
