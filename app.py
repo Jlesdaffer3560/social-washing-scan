@@ -284,7 +284,7 @@ def fetch_html(url,timeout=7):
     p=urlparse(url)
     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9"})
+    req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0","Accept":"text/html,application/xhtml+xml"})
     with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
@@ -312,14 +312,14 @@ def discover_sitemap_urls(base_url, limit=40, deadline=None):
         if deadline and time.time()>=deadline: break
         try:
             t=min(5, max(2, deadline-time.time())) if deadline else 5
-            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"})
+            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
             with urlopen(req,timeout=t,context=ssl.create_default_context()) as r:
                 body=r.read(1000000).decode("utf-8",errors="ignore")
             locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.IGNORECASE)
             if '<sitemapindex' in body.lower() and locs and (not deadline or time.time()<deadline):
                 try:
                     t2=min(4, max(2, deadline-time.time())) if deadline else 4
-                    req2=Request(locs[0],headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"})
+                    req2=Request(locs[0],headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
                     with urlopen(req2,timeout=t2,context=ssl.create_default_context()) as r2:
                         body2=r2.read(1000000).decode("utf-8",errors="ignore")
                     locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE)
@@ -413,7 +413,7 @@ def google_search(query, max_results=5):
         return []
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"},method="GET")
+    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"},method="GET")
     with urlopen(req,timeout=7) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
@@ -1981,7 +1981,7 @@ def fetch_document_text(url):
     p=urlparse(url)
     if p.scheme not in ('http','https') or not p.hostname or is_private(p.hostname):
         return ''
-    req=Request(url,headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
+    req=Request(url,headers={'User-Agent':'Mozilla/5.0 GreenSocialClaimsAssessment/40.0','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
     with urlopen(req,timeout=10,context=ssl.create_default_context()) as r:
         ctype=(r.headers.get('content-type','') or '').lower()
         data=r.read(2500000)
