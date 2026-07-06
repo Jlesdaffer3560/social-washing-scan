@@ -65,6 +65,8 @@
         <label for="file">Internal document</label>
         <input id="file" class="file-native" type="file" accept=".txt,.html,.htm,.md,.csv,.docx,.pdf" />
         <div class="file-row"><button id="chooseFile" type="button" class="btn secondary">Choose file</button><span id="fileName" class="file-name">No file selected</span></div>
+        <label for="docCompanyName" style="margin-top:8px">Company name (optional, recommended)</label>
+        <input id="docCompanyName" type="text" placeholder="e.g. Acme Corp" />
         <p class="small">Supported: TXT, HTML, MD, CSV, DOCX. PDF extraction is best-effort.</p>
         <div class="toolbar"><button id="runDoc" class="btn">Upload and scan document</button></div>
       </div>
@@ -140,7 +142,7 @@ health();
 $('chooseFile')?.addEventListener('click',()=>$('file').click());
 $('file')?.addEventListener('change',()=>{$('fileName').textContent=$('file').files[0]?.name||'No file selected'});
 async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a company name or website.','notice warning');return} await runScan('/api/scan/url',{url});}
-async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return} let b64=await fileToBase64(f); await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64});}
+async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return} let b64=await fileToBase64(f); await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64,company_name:$('docCompanyName').value.trim()});}
 async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment while the website and external stakeholder signals are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let text=await r.text();let j;try{j=JSON.parse(text)}catch(_){throw new Error((text.trim().startsWith('<!DOCTYPE')||text.trim().startsWith('<html'))?'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up (this can take up to a minute) on top of the scan itself. Please try the same scan again \u2014 it should complete normally now that the server is awake.':(text.slice(0,250)||'The server returned an unreadable response.'))}if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below and use the company report download buttons.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
 function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
 $('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);

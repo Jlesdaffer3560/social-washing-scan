@@ -359,11 +359,35 @@ def crawl(url,max_extra_pages=5,deadline=None):
             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
         except Exception: pass
     return "\n\n".join(chunks)[:90000], pages
-def infer_company(url,text):
+COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
+_COMPANY_NAME_RE=re.compile(r'\b([A-Z][A-Za-z0-9&\'\.\-]*(?:\s+[A-Z][A-Za-z0-9&\'\.\-]*){0,3}\s+'+COMPANY_SUFFIXES+r')\b')
+
+def _guess_company_from_text(text):
+    """Best-effort text-mining fallback for document uploads with no domain to infer from:
+    looks for a capitalized name immediately followed by a common corporate suffix
+    (e.g. 'Acme Corp', 'Acme Group N.V.') within the first part of the document."""
+    m=_COMPANY_NAME_RE.search((text or '')[:3000])
+    if m:
+        name=re.sub(r'\s+',' ',m.group(1)).strip()
+        if 2 <= len(name) <= 60:
+            return name
+    return ''
+
+def infer_company(url,text,company_name_hint=''):
+    if company_name_hint and company_name_hint.strip():
+        hint=company_name_hint.strip()
+        combo=hint.lower()
+        for k,p in PROFILES.items():
+            if k in combo: return {"company":p[0],"sector":p[1],"sector_risk":p[2],"context":p[3]}
+        return {"company":hint,"sector":"Sector not explicitly identified","sector_risk":"","context":"Company name provided by the user; context is based on document/website and external search signals."}
     combo=(url+" "+text[:5000]).lower()
     for k,p in PROFILES.items():
         if k in combo: return {"company":p[0],"sector":p[1],"sector_risk":p[2],"context":p[3]}
     host=urlparse(url).hostname or ""; name=host.replace("www.","").split(".")[0].title()
+    if not name or not host:
+        guessed=_guess_company_from_text(text)
+        if guessed:
+            return {"company":guessed,"sector":"Sector not explicitly identified","sector_risk":"","context":"Company name inferred from the uploaded document text; context is based on document content."}
     return {"company":name or "Company reviewed","sector":"Sector not explicitly identified","sector_risk":"","context":"No recognised company profile matched; context is based on website and external search signals."}
 def infer_sector(company,text):
     if company.get("sector_risk"):
@@ -741,7 +765,7 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[])} for f in findings]
+    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[])} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -1750,7 +1774,7 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -2059,9 +2083,9 @@ def federation_pilot_output(green_findings, social_findings, overall, green_scor
         'example_sector_output':'A federation can run the same scan across a small sample of member websites and receive an anonymised benchmark of most common claim risks.'
     }
 
-def analyse_uploaded_document(filename, text):
+def analyse_uploaded_document(filename, text, company_name_hint=''):
     source='Uploaded internal document: '+(filename or 'document')
-    comp=infer_company(filename or source, text)
+    comp=infer_company(filename or source, text, company_name_hint)
     audience=classify_document_audience(filename or source, text, [source])
     # Uploaded internal documents should not be treated as consumer-facing unless wording clearly says marketing/product/brochure.
     if audience.get('group')=='mixed':
@@ -2655,6 +2679,17 @@ class Handler(BaseHTTPRequestHandler):
         for k,v in (extra_headers or {}).items(): self.send_header(k,v)
         self.end_headers(); self.wfile.write(body)
     def _json(self,d,status=200): self._send(json.dumps(d,ensure_ascii=False,indent=2),"application/json; charset=utf-8",status)
+    def _respond_pdf(self,scan_result):
+        build_fn=_get_build_company_report_pdf()
+        if build_fn is None:
+            return self._json({"error":"PDF report generation is unavailable: "+(_report_pdf_import_error or "unknown import error")},500)
+        try:
+            pdf_bytes=build_fn(scan_result)
+        except Exception as e:
+            return self._json({"error":"Could not generate PDF report: "+str(e)},500)
+        stamp=re.sub(r"[^0-9-]","",(scan_result.get("analysis_date") or datetime.date.today().isoformat())[:10])
+        fname=f"durably_company_report_{stamp or datetime.date.today().isoformat()}.pdf"
+        return self._send(pdf_bytes,"application/pdf",200,{"Content-Disposition":f'attachment; filename="{fname}"'})
     def do_HEAD(self): self.send_response(200); self.end_headers()
     def do_OPTIONS(self): self._json({"ok":True})
     def do_GET(self):
@@ -2671,26 +2706,21 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=="/api/scan/url":
                 u=data.get("url","")
                 if not u: return self._json({"error":"No URL provided"},400)
-                return self._json(analyse_url(u))
+                result=analyse_url(u)
+                if data.get("format")=="pdf": return self._respond_pdf(result)
+                return self._json(result)
             if self.path=="/api/scan/document":
                 filename=data.get("filename","uploaded_document")
                 content=data.get("content_base64","")
                 if not content: return self._json({"error":"No document content provided"},400)
                 txt=decode_uploaded_document(filename, content, data.get("mime_type",""))
-                return self._json(analyse_uploaded_document(filename, txt))
+                result=analyse_uploaded_document(filename, txt, data.get("company_name",""))
+                if data.get("format")=="pdf": return self._respond_pdf(result)
+                return self._json(result)
             if self.path=="/api/report/pdf":
-                build_fn=_get_build_company_report_pdf()
-                if build_fn is None:
-                    return self._json({"error":"PDF report generation is unavailable: "+(_report_pdf_import_error or "unknown import error")},500)
                 if not data:
                     return self._json({"error":"No scan result provided"},400)
-                try:
-                    pdf_bytes=build_fn(data)
-                except Exception as e:
-                    return self._json({"error":"Could not generate PDF report: "+str(e)},500)
-                stamp=re.sub(r"[^0-9-]","",(data.get("analysis_date") or datetime.date.today().isoformat())[:10])
-                fname=f"durably_company_report_{stamp or datetime.date.today().isoformat()}.pdf"
-                return self._send(pdf_bytes,"application/pdf",200,{"Content-Disposition":f'attachment; filename="{fname}"'})
+                return self._respond_pdf(data)
             self._json({"error":"Unknown endpoint"},404)
         except Exception as e: self._json({"error":str(e)},500)
 

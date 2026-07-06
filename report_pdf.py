@@ -115,13 +115,41 @@ def top_claims(data, dim, n=3):
     rows = [c for c in (data.get('claim_inventory') or []) if str(c.get('dimension', '')).lower() == dim.lower()]
     if not rows:
         rows = data.get('green_findings' if dim.lower() == 'green' else 'social_findings') or []
-    return [c for c in rows if is_material(c)][:n]
+    rows = [c for c in rows if is_material(c)]
+    return _merge_duplicate_claims(rows)[:n]
 
 
-def header_block(data, page_title, page_sub):
-    kicker = Paragraph('DURABLY SUSTAINABILITY SCAN', STY['kicker'])
-    title = Paragraph(esc(page_title), STY['title'])
-    sub = Paragraph(esc(page_sub), STY['sub'])
+def _merge_duplicate_claims(rows):
+    """When several claim-type patterns match the exact same retained sentence, merge them into
+    one card with a combined type label instead of showing the identical quote multiple times."""
+    merged = []
+    seen_text = {}
+    for c in rows:
+        key = re.sub(r'\s+', ' ', str(c.get('claim_text') or c.get('claim') or '')).strip().lower()[:200]
+        if key and key in seen_text:
+            existing = seen_text[key]
+            t = c.get('claim_type') or c.get('type') or ''
+            if t and t not in existing['claim_type']:
+                existing['claim_type'] = existing['claim_type'] + ' + ' + t
+            for term in (c.get('problematic_terms') or []):
+                if term not in existing.setdefault('problematic_terms', []):
+                    existing['problematic_terms'].append(term)
+            continue
+        c = dict(c)
+        seen_text[key] = c
+        merged.append(c)
+    return merged
+
+
+def header_block(data, page_title, page_sub, company_name=''):
+    kicker = Paragraph('DURABLY SUSTAINABILITY SCAN &mdash; COMPANY CLAIM-RISK REPORT', STY['kicker'])
+    cn = (company_name or '').strip()
+    if cn and cn.lower() not in ('company reviewed', ''):
+        title = Paragraph(esc(cn), STY['title'])
+        sub = Paragraph(esc(page_title) + (' &mdash; ' + esc(page_sub) if page_sub else ''), STY['sub'])
+    else:
+        title = Paragraph(esc(page_title), STY['title'])
+        sub = Paragraph(esc(page_sub), STY['sub'])
     left = [kicker, title, sub]
 
     src = (data.get('source_label') or data.get('original_url') or '')[:70]
@@ -187,9 +215,34 @@ def scores_row(data):
     return row
 
 
-def bullet_box(title, items, accent):
-    items = [i for i in (items or []) if i][:4]
-    body = '<br/>'.join('&bull;&nbsp; ' + esc(i) for i in items) if items else '<i>No specific red flag retained.</i>'
+def _clean_flag_label(flag):
+    """Reduce a verbose backend red-flag sentence to a short, plain-language label for the
+    'at a glance' list, stripping the trailing regulatory-explanation clause and jargon so it
+    reads as a quick concern tag rather than a repeat of the detailed claim card below."""
+    f = re.sub(r'\s+', ' ', str(flag or '')).strip()
+    f = re.sub(r'^(Potential |High-priority )?EmpCo blacklisted-practice indicator (where|if)\s*', '', f, flags=re.IGNORECASE)
+    if f and f[0].islower():
+        f = f[0].upper() + f[1:]
+    f = f.split(' detected.')[0].split(' detected,')[0]
+    f = re.sub(r'\s*Problematic trigger\(s\).*$', '', f, flags=re.IGNORECASE)
+    f = re.sub(r'\s*Source:.*$', '', f, flags=re.IGNORECASE)
+    f = f.rstrip('. ').strip()
+    if len(f) > 92:
+        f = f[:89].rsplit(' ', 1)[0] + '…'
+    return f
+
+
+def concerns_list(title, items, accent):
+    labels = []
+    for i in items or []:
+        raw = str(i or '')
+        if ' detected' not in raw:
+            continue
+        lbl = _clean_flag_label(raw)
+        if lbl and lbl not in labels:
+            labels.append(lbl)
+    labels = labels[:5]
+    body = '<br/>'.join('&bull;&nbsp; ' + esc(l) for l in labels) if labels else '<i>No specific concern retained in this category.</i>'
     body_style = ParagraphStyle('bb', parent=STY['small'], spaceAfter=0, leading=10.8)
     cell = Table([[Paragraph(esc(title), ParagraphStyle('t', parent=STY['h3'], textColor=accent))],
                   [Paragraph(body, body_style)]],
@@ -203,7 +256,7 @@ def bullet_box(title, items, accent):
     return cell
 
 
-def claim_card(c):
+def claim_card(c, show_source=True):
     typ = c.get('claim_type') or c.get('type') or 'Claim signal'
     risk = c.get('risk_level') or c.get('risk') or ''
     src = (c.get('source_label') or c.get('source_url') or 'Reviewed material')[:80]
@@ -218,15 +271,18 @@ def claim_card(c):
                  colWidths=[(PAGE_W - 2 * MARGIN - 40) * 0.7, (PAGE_W - 2 * MARGIN - 40) * 0.3])
     head.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
                                ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
-    src_p = Paragraph(f'<font color="#8b9baa">Source:</font> {esc(src)}', STY['small'])
+    rows = [head]
+    if show_source:
+        rows.append(Paragraph(f'<font color="#8b9baa">Source:</font> {esc(src)}', STY['small']))
     quote_p = Paragraph(highlight(text, terms), STY['quote'])
+    rows.append(quote_p)
     trig = ' &middot; '.join(f'<b backColor="#fff1a8">{esc(t)}</b>' for t in terms[:5]) or 'Pattern-based signal'
     trig_line = f'<font color="#6b4e00"><b>Trigger:</b></font> {trig}'
     if spec_status:
         trig_line += f'  <font color="#8b9baa">&middot; Substantiation in passage: <b>{esc(spec_status)}</b></font>'
-    trig_p = Paragraph(trig_line, STY['small'])
+    rows.append(Paragraph(trig_line, STY['small']))
     accent = GREEN if str(c.get('dimension', '')).lower() == 'green' else AMBER
-    inner = Table([[head], [src_p], [quote_p], [trig_p]], colWidths=[PAGE_W - 2 * MARGIN - 20])
+    inner = Table([[r] for r in rows], colWidths=[PAGE_W - 2 * MARGIN - 20])
     inner.setStyle(TableStyle([
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
         ('TOPPADDING', (0, 0), (-1, -1), 1), ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
@@ -241,38 +297,39 @@ def claim_card(c):
     return KeepTogether(wrap)
 
 
-def claim_section(title, rows):
+def claim_section(title, rows, show_source=True):
     flow = [Paragraph(esc(title), STY['h3']), Spacer(1, 3)]
     if not rows:
         flow.append(Paragraph('<i>No material problematic claim signal retained.</i>', STY['small']))
         return flow
     for r in rows:
-        flow.append(claim_card(r))
+        flow.append(claim_card(r, show_source=show_source))
         flow.append(Spacer(1, 1.5))
     return flow
 
 
-def driver_table(comp):
-    comp = comp or {}
-    rows = [['Score component', 'Weight', 'Value/100'],
-            ['Claim wording severity', '42%', str(comp.get('claim_wording_risk', '—'))],
-            ['Evidence / substantiation gap', '24%', str(comp.get('substantiation_risk', '—'))],
-            ['External stakeholder context', '22%', str(comp.get('external_context_risk', '—'))],
-            ['Sector & channel sensitivity', '12%', str(comp.get('sector_baseline_risk', '—'))]]
-    data = [[Paragraph(esc(rows[0][0]), STY['small_b']), Paragraph(esc(rows[0][1]), STY['small_b']), Paragraph(esc(rows[0][2]), STY['small_b'])]]
-    for r in rows[1:]:
-        data.append([Paragraph(esc(r[0]), STY['small']), Paragraph(esc(r[1]), STY['small']),
-                     Paragraph(esc(r[2]), ParagraphStyle('v', parent=STY['small_b'], textColor=NAVY, alignment=TA_RIGHT))])
-    w = (PAGE_W - 2 * MARGIN - 10) / 2
-    t = Table(data, colWidths=[w * 0.56, w * 0.2, w * 0.24])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), SOFT),
-        ('LINEBELOW', (0, 0), (-1, 0), 0.6, LINE),
-        ('LINEBELOW', (0, 1), (-1, -2), 0.4, LINE),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('TOPPADDING', (0, 0), (-1, -1), 3.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
-    ]))
-    return t
+def driver_narrative(driver_data, fallback_comp=None):
+    """Builds a readable 'why this score' block from score_driver_details (summary + key_drivers
+    with real detected claim types) instead of a bare table of four unexplained numbers."""
+    driver_data = driver_data or {}
+    flow = []
+    summary = driver_data.get('summary')
+    if summary:
+        flow.append(Paragraph(esc(summary), STY['small']))
+        flow.append(Spacer(1, 3))
+    key_drivers = driver_data.get('key_drivers') or []
+    if key_drivers:
+        items = '<br/>'.join('&bull;&nbsp; ' + esc(k) for k in key_drivers[:5])
+        flow.append(Paragraph(items, ParagraphStyle('kd', parent=STY['small'], leading=10.8)))
+    elif fallback_comp:
+        comp = fallback_comp
+        rows = [('Claim wording severity', '42%', comp.get('claim_wording_risk', '—')),
+                ('Evidence / substantiation gap', '24%', comp.get('substantiation_risk', '—')),
+                ('External stakeholder context', '22%', comp.get('external_context_risk', '—')),
+                ('Sector & channel sensitivity', '12%', comp.get('sector_baseline_risk', '—'))]
+        items = '<br/>'.join(f'&bull;&nbsp; {esc(r[0])} ({r[1]}): <b>{esc(r[2])}</b>/100' for r in rows)
+        flow.append(Paragraph(items, ParagraphStyle('kd2', parent=STY['small'], leading=10.8)))
+    return flow
 
 
 def section_card(title, content):
@@ -305,48 +362,68 @@ def build_company_report_pdf(data):
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
                              topMargin=MARGIN, bottomMargin=MARGIN + 6)
 
+    company_name = ((data.get('company') or {}).get('company') or '').strip()
     flags = data.get('red_flags_by_dimension') or {}
     green_claims = top_claims(data, 'Green', 3)
     social_claims = top_claims(data, 'Social', 3)
+    all_claims = green_claims + social_claims
+    sources = {(c.get('source_label') or c.get('source_url') or '') for c in all_claims}
+    shared_source = len(sources) == 1 and all_claims
     actions = (data.get('company_action_plan') or [])[:4]
     ext = ((data.get('external_research', {}).get('green', {}).get('targeted_negative_sources') or []) +
            (data.get('external_research', {}).get('social', {}).get('targeted_negative_sources') or []) +
            (data.get('external_research', {}).get('targeted_negative_sources') or []))[:3]
     gc = (data.get('score_components') or {}).get('green') or {}
     sc = (data.get('score_components') or {}).get('social') or {}
+    driver_details = data.get('score_driver_details') or {}
+    who = company_name if company_name and company_name.lower() != 'company reviewed' else 'This company'
 
     # ---------- PAGE 1 ----------
     page1 = []
     page1 += header_block(data, 'Company claim-risk report',
-                           'EmpCo (Directive (EU) 2024/825) · EU Forced Labour Regulation (EU) 2024/3015')
+                           'EmpCo (Directive (EU) 2024/825) · EU Forced Labour Regulation (EU) 2024/3015',
+                           company_name)
     page1.append(scores_row(data))
     page1.append(Spacer(1, 7))
-    summary_flow = [Paragraph(
-        esc(data.get('assessment_summary_specific') or (data.get('report') or {}).get('summary') or 'No summary available.'),
-        STY['body'])]
+
+    overall_risk = data.get('global_risk', data.get('overall_risk', ''))
+    g_summary = (driver_details.get('green') or {}).get('summary', '')
+    s_summary = (driver_details.get('social') or {}).get('summary', '')
+    narrative = f'<b>{esc(who)}</b> scores <b>{esc(str(data.get("global_score", data.get("overall_score", "—"))))}/100</b> overall (<b>{esc(overall_risk)}</b> claim-risk) on this scan. '
+    if g_summary:
+        narrative += esc(g_summary) + ' '
+    if s_summary:
+        narrative += esc(s_summary)
+    if not (g_summary or s_summary):
+        narrative += esc(data.get('assessment_summary_specific') or 'No further summary available.')
+    summary_flow = [Paragraph(narrative, STY['body'])]
+    if shared_source:
+        src_label = (all_claims[0].get('source_label') or all_claims[0].get('source_url') or '')[:90]
+        summary_flow.append(Spacer(1, 3))
+        summary_flow.append(Paragraph(f'<font color="#8b9baa">All claim signals below are from:</font> {esc(src_label)}', STY['small']))
     if data.get('fallback_note'):
         summary_flow.append(Spacer(1, 4))
         summary_flow.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',
                                        ParagraphStyle('rn', parent=STY['small'], textColor=AMBER)))
     page1.append(section_card('Executive summary', summary_flow))
     page1.append(Spacer(1, 5))
-    flagrow = Table([[bullet_box('Green claim red flags', flags.get('green'), GREEN),
-                       bullet_box('Social claim red flags', flags.get('social'), AMBER)]],
+    flagrow = Table([[concerns_list('Green claims — at a glance', flags.get('green'), GREEN),
+                       concerns_list('Social claims — at a glance', flags.get('social'), AMBER)]],
                      colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
     flagrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
                                   ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
     page1.append(flagrow)
     page1.append(Spacer(1, 5))
-    page1 += claim_section('Key green claim signals retained', green_claims)
+    page1 += claim_section('Key green claim signals retained', green_claims, show_source=not shared_source)
     page1.append(Spacer(1, 3))
-    page1 += claim_section('Key social claim signals retained', social_claims)
+    page1 += claim_section('Key social claim signals retained', social_claims, show_source=not shared_source)
 
     # ---------- PAGE 2 ----------
     page2 = []
     page2 += header_block(data, 'Evidence, external signals & action plan',
-                           'Claim-risk score drivers and recommended next steps')
-    driverrow = Table([[section_card('Green score drivers', driver_table(gc)),
-                         section_card('Social score drivers', driver_table(sc))]],
+                           'Score drivers and recommended next steps', company_name)
+    driverrow = Table([[section_card('Why the green score is what it is', driver_narrative(driver_details.get('green'), gc)),
+                         section_card('Why the social score is what it is', driver_narrative(driver_details.get('social'), sc))]],
                        colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
     driverrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
                                     ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
@@ -362,7 +439,7 @@ def build_company_report_pdf(data):
             ext_flow.append(Paragraph(esc((x.get('content') or '')[:200]), STY['small']))
             ext_flow.append(Spacer(1, 4))
     else:
-        ext_flow = [Paragraph('<i>No negative external stakeholder signal retained, or external search not configured.</i>', STY['small'])]
+        ext_flow = [Paragraph(f'<i>No negative external stakeholder signal retained for {esc(who)}, or external search not configured.</i>', STY['small'])]
     page2.append(section_card('Negative external stakeholder signals retained', ext_flow))
     page2.append(Spacer(1, 4))
 
@@ -371,14 +448,14 @@ def build_company_report_pdf(data):
         for i, a in enumerate(actions, 1):
             act_flow.append(Paragraph(f'<b>{i}. {esc(a.get("title") or "")}</b>', STY['small_b']))
             txt = re.sub(r'\s+', ' ', str(a.get('action') or '')).strip()
-            if len(txt) > 175:
-                txt = txt[:172].rsplit(' ', 1)[0] + '…'
+            if len(txt) > 185:
+                txt = txt[:182].rsplit(' ', 1)[0] + '…'
             act_flow.append(Paragraph(esc(txt), STY['small']))
             act_flow.append(Spacer(1, 2))
     else:
         act_flow = [Paragraph('<b>1. Review retained claim signals</b>', STY['small_b']),
                     Paragraph('Attach evidence, scope and approval records to each claim before reuse.', STY['small'])]
-    page2.append(section_card('Recommended actions', act_flow))
+    page2.append(section_card(f'Recommended actions for {who}' if who != 'This company' else 'Recommended actions', act_flow))
     page2.append(Spacer(1, 4))
 
     bands = [['Score range', 'Meaning'],
@@ -410,10 +487,10 @@ def build_company_report_pdf(data):
     flowables = page1 + [PageBreak()] + page2
 
     def on_page1(c, d):
-        footer(c, d, '© Durably · Page 1 of 2')
+        footer(c, d, f'© Durably · {who if who != "This company" else "Company"} · Page 1 of 2')
 
     def on_page2(c, d):
-        footer(c, d, '© Durably · Page 2 of 2')
+        footer(c, d, f'© Durably · {who if who != "This company" else "Company"} · Page 2 of 2')
 
     doc.build(flowables, onFirstPage=on_page1, onLaterPages=on_page2)
     return buf.getvalue()
