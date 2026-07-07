@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57_pdf_reporting_and_aspirational_claims"
+APP_VERSION="hostable_v57b_group_domain_fallback_fix"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -301,10 +301,19 @@ def crawl_with_related_sites(original_url,overall_deadline=None):
     if overall_deadline is None:
         overall_deadline=time.time()+18
     crawl_log=[]
-    txt,pages=crawl(original_url,deadline=overall_deadline,log=crawl_log)
     source_notes=[]
-    all_text=[txt]
-    all_pages=list(pages)
+    all_text=[]; all_pages=[]
+    primary_error=None
+    try:
+        txt,pages=crawl(original_url,deadline=overall_deadline,log=crawl_log)
+        all_text.append(txt); all_pages.extend(pages)
+    except Exception as e:
+        # v57 fix: previously an outright failure here (e.g. a 403 on the primary domain)
+        # propagated immediately and skipped related_group_sites() below entirely -- so the
+        # Zara -> Inditex style fallback never actually ran in the exact case it exists for
+        # (the primary brand domain being fully blocked). Now we still try known related/group
+        # domains before giving up.
+        primary_error=e
     if time.time() < overall_deadline-3:
         for candidate in related_group_sites(original_url):
             if time.time()>=overall_deadline-2: break
@@ -316,6 +325,8 @@ def crawl_with_related_sites(original_url,overall_deadline=None):
                     source_notes.append(f"Related company site also checked: {candidate}")
             except Exception:
                 pass
+    if not all_text:
+        raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
     return '\n\n'.join(all_text)[:150000], all_pages[:16], source_notes, crawl_log
 
 def replace_tld_with_be(url):
