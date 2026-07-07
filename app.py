@@ -27,7 +27,26 @@ def _get_build_company_report_pdf():
 _report_pdf_fn = None
 _report_pdf_import_error = None
 
-APP_VERSION="hostable_v56_crawl_reliability_and_confidence"
+def _get_pypdf():
+    """Lazily import pypdf on first use, same pattern as the ReportLab lazy import above:
+    server startup must never be blocked or crashed by a PDF library import issue -- only
+    PDF *reading* is affected if the import fails, not the rest of the app."""
+    global _pypdf_module, _pypdf_import_error
+    if _pypdf_module is not None:
+        return _pypdf_module
+    if _pypdf_import_error is not None:
+        return None
+    try:
+        import pypdf as _p
+        _pypdf_module = _p
+        return _p
+    except Exception as e:
+        _pypdf_import_error = str(e)
+        return None
+_pypdf_module = None
+_pypdf_import_error = None
+
+APP_VERSION="hostable_v57_pdf_reporting_and_aspirational_claims"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -326,6 +345,26 @@ def fetch_html(url,timeout=7):
     with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
         return r.read(2000000).decode("utf-8",errors="ignore")
+
+def fetch_page_content(url,timeout=7):
+    """Like fetch_html, but also accepts PDFs (the format company annual/CSR/ESG/sustainability
+    reports are almost always published in) and returns extracted plain text either way.
+    v56: this is what lets the crawler pick up "the company's own reporting" -- e.g. a
+    'Download our Sustainability Report' PDF link discovered on the company's own site --
+    without depending on any external search API. Returns (text, content_kind)."""
+    p=urlparse(url)
+    if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
+    if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
+    req=Request(url,headers={"User-Agent":CRAWLER_USER_AGENT,"Accept":"text/html,application/xhtml+xml,application/pdf"})
+    with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
+        ctype=r.headers.get("content-type","").lower()
+        if "pdf" in ctype or url.lower().split("?")[0].endswith(".pdf"):
+            data=r.read(4000000)
+            return extract_pdf_text_best_effort(data), "pdf"
+        if "html" not in ctype: raise ValueError("URL does not return an HTML or PDF document.")
+        raw=r.read(2000000).decode("utf-8",errors="ignore")
+        text,_=parse_html(raw)
+        return text, "html"
 def same_domain(u,base):
     h=urlparse(u).hostname or ""
     return h==base or h.endswith("."+base)
@@ -410,14 +449,20 @@ def crawl(url,max_extra_pages=3,deadline=None,log=None):
         for path in COMMON_PUBLIC_PATHS:
             guess=f'{scheme}://{host}{path}'
             if guess not in cands and guess!=url: cands.append(guess)
+    # v56: prioritise .pdf candidates (annual/CSR/ESG/sustainability reports) within the
+    # existing relevance-filtered candidate list -- these are the company's own formal
+    # reporting and are more likely to contain the kind of specific, substantiation-heavy
+    # (or conspicuously unsubstantiated) claims that plain marketing pages do not.
+    cands.sort(key=lambda u: 0 if u.lower().split('?')[0].endswith('.pdf') else 1)
     for i,link in enumerate(cands[:max_extra_pages]):
         if time.time()>=deadline: break
         if i>0 and remaining()>2: time.sleep(0.5)
         try:
-            raw=fetch_html(link,timeout=min(6,remaining()))
-            t,_=parse_html(raw)
+            t,kind=fetch_page_content(link,timeout=min(8,remaining()))
             _log_fetch_success(log,link,len(t))
-            if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
+            if len(t)>200:
+                label="REPORT (PDF): " if kind=="pdf" else "PAGE: "
+                chunks.append("\n\n"+label+link+"\n"+t); pages.append(link)
         except Exception as e:
             _log_fetch_failure(log,link,e)
     return "\n\n".join(chunks)[:90000], pages
@@ -2032,19 +2077,72 @@ def extract_docx_text(data):
                 pass
         return '\n'.join(parts).strip()
 
-def extract_pdf_text_best_effort(data):
-    # Lightweight best-effort extraction without external dependencies. Text-based PDFs may yield usable strings;
-    # scanned/image PDFs will not. For reliable scans, upload a text extract or DOCX.
+def extract_pdf_text_best_effort(data, max_pages=60):
+    """PDF text extraction. Tries pypdf first, which correctly handles FlateDecode
+    (the near-universal PDF compression method) and font encoding/ToUnicode maps -- the
+    dominant case for professionally produced corporate PDFs (annual/CSR/ESG reports).
+    Falls back to a lightweight regex-only scan (no dependency) if pypdf is unavailable or
+    fails to parse the file, so a single malformed PDF cannot break the scan.
+    max_pages bounds worst case processing time for very large reports on a hosted,
+    time-limited deployment.
+    """
+    pypdf=_get_pypdf()
+    if pypdf is not None:
+        try:
+            reader=pypdf.PdfReader(io.BytesIO(data))
+            parts=[]
+            n=min(len(reader.pages), max_pages)
+            for i in range(n):
+                try:
+                    t=reader.pages[i].extract_text() or ''
+                except Exception:
+                    t=''
+                if t: parts.append(t)
+                if sum(len(p) for p in parts) > 200000:
+                    break
+            txt=' '.join(parts)
+            txt=re.sub(r'\s+', ' ', txt).strip()
+            if len(txt) >= 80:
+                return txt[:90000]
+            # pypdf ran but yielded almost nothing usable (e.g. scanned/image-only PDF) --
+            # fall through to the regex fallback in case it can pull out something extra.
+        except Exception:
+            pass
+    return _extract_pdf_text_regex_fallback(data)
+
+def _extract_pdf_text_regex_fallback(data):
+    """Best-effort extraction without any dependency. Decompresses FlateDecode content
+    streams via the standard-library zlib module and pulls text-showing operator strings
+    (Tj/TJ) from them; falls back further to any parenthesised literal string for very old
+    or non-standard PDFs. Used only when pypdf is unavailable or fails."""
+    import zlib
+    text_parts=[]
+    def text_operators(raw_bytes):
+        try:
+            raw=raw_bytes.decode('latin-1',errors='ignore')
+        except Exception:
+            return ''
+        cands=re.findall(r'\(((?:[^()\\]|\\.)*)\)\s*T[jJ]', raw)
+        if not cands:
+            cands=re.findall(r'\(((?:[^()\\]|\\.)*)\)', raw)
+        t=' '.join(cands)
+        t=t.replace('\\n',' ').replace('\\r',' ').replace('\\t',' ')
+        return re.sub(r'\\([()\\])', r'\1', t)
     try:
-        raw=data.decode('latin-1',errors='ignore')
-        candidates=re.findall(r'\(([^()]{3,250})\)', raw)
-        txt=' '.join(candidates)
-        txt=txt.replace('\\n',' ').replace('\\r',' ').replace('\\t',' ')
-        txt=re.sub(r'\\[()\\]', '', txt)
-        txt=re.sub(r'\s+', ' ', txt).strip()
-        return txt[:90000]
+        for m in re.finditer(rb'stream\r?\n(.*?)endstream', data, re.DOTALL):
+            try:
+                decompressed=zlib.decompress(m.group(1))
+            except Exception:
+                continue
+            text_parts.append(text_operators(decompressed))
+            if sum(len(t) for t in text_parts) > 200000:
+                break
+        if not text_parts:
+            text_parts.append(text_operators(data))
     except Exception:
-        return ''
+        pass
+    txt=re.sub(r'\s+', ' ', ' '.join(t for t in text_parts if t)).strip()
+    return txt[:90000]
 
 def decode_uploaded_document(filename, content_base64, mime_type=''):
     data=base64.b64decode(content_base64 or '')
@@ -2635,6 +2733,34 @@ def _looks_like_future_environmental_claim(excerpt):
     # Avoid generic sustainability ambition unless it is actually climate/environmental and time-bound.
     return bool(re.search(r'\b(20[3-5]0)\b', c) and any(x in c for x in ['net zero','carbon neutral','climate neutral','emissions','decarbon']))
 
+# v56: social-claim analogue of _looks_like_future_environmental_claim / 'Future
+# environmental-performance claim'. Prompted by KU Leuven/HIVA research (2026, fashion
+# sector) finding that vague, forward-looking wording on wages, human rights and working
+# conditions -- "working towards a foundation for living wages", "wish to build a world
+# where human rights are respected" -- was the single largest driver of social-washing risk
+# (found in the majority of high-risk social claims), distinct from and not covered by the
+# existing absolute/assurance-style triggers in CLAIMS (e.g. "100% of suppliers", "zero
+# accidents"). Ambition-only wording with no achieved-outcome, baseline or timeline is the
+# pattern to catch here -- companies are not penalised for stating a goal, but for stating it
+# in a way that reads as reassurance without being falsifiable or evidenced.
+_ASPIRATIONAL_SOCIAL_VERBS=['working towards','working to build','work towards','wish to build','wishes to build',
+    'want to build','aim to build','aims to build','aim to create','aims to create','strive to build',
+    'strives to build','strive to create','strives to create','ambition to build','our ambition is',
+    'committed to building','committed to build','building a foundation','building a basis',
+    'envision a world','envisage a world','vision of a world','working towards a world','working towards a future',
+    'we believe in a world where','we dream of a world where','on a journey towards','on our journey towards']
+_SOCIAL_ASPIRATION_TOPICS=['living wage','living wages','human rights','fair wage','fair wages','decent work',
+    'decent working conditions','good working conditions','safe working conditions','workers rights',"workers' rights",
+    'worker rights','labour rights','labor rights','gender equality','equal opportunities','dignity',
+    'respected','well-being of workers','wellbeing of workers','fair treatment','social justice','worker welfare',
+    'workers welfare']
+
+def _looks_like_aspirational_social_claim(excerpt):
+    c=(excerpt or '').lower()
+    if not any(v in c for v in _ASPIRATIONAL_SOCIAL_VERBS):
+        return False
+    return any(t in c for t in _SOCIAL_ASPIRATION_TOPICS)
+
 def _social_claim_context(excerpt, typ, trigger):
     c=(excerpt or '').lower(); t=(typ or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 35:
@@ -2676,6 +2802,7 @@ CLAIMS=[
  (['human rights compliant','respect human rights across our value chain','protect human rights across our value chain','respect human rights in our supply chain','living wage across our supply chain','decent work guaranteed','guaranteed labour rights','guaranteed labor rights','fair wages across our supply chain','no discrimination','zero discrimination','equal pay guaranteed'],'Human-rights or labour-rights claim','High','The claim refers to sensitive rights topics and may overstate outcomes or control without due diligence, grievance channels, tracking and remedy.','State the due-diligence process, salient risks, coverage, grievance channels, tracking, limits and remediation process.'),
  (['safe workplace guaranteed','zero accidents','zero harm','injury free','guaranteed safe workplace','no workplace injuries'],'Health, safety or worker-welfare claim','High','Absolute safety or welfare wording creates a high evidence burden and can overstate outcomes, particularly where contractors or suppliers are involved.','Use scoped wording linked to incident data, controls, coverage, training and corrective actions.'),
  (['all employees included','fully inclusive workplace','100% inclusive','guaranteed equal opportunities','no pay gap','zero pay gap'],'Diversity, equality and inclusion claim','Medium','Absolute inclusion, equality or pay-gap wording may overstate outcomes unless backed by data, scope, baseline and progress evidence.','Add workforce data, baseline, scope, limitations, methodology and progress indicators.'),
+ (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Research on fashion-sector sustainability communication (KU Leuven/HIVA, 2026) found this pattern -- vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result -- to be the dominant driver of social-washing risk, distinct from absolute assurance wording.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
 ]
 
 def detect_green_claims(text):
@@ -2707,6 +2834,8 @@ def detect_claims(text):
             if trig not in low:
                 continue
             claim_excerpt=_near_sentence(text,trig)
+            if typ=='Aspirational or future social-performance claim' and not _looks_like_aspirational_social_claim(claim_excerpt):
+                continue
             if not _social_claim_context(claim_excerpt, typ, trig):
                 continue
             if typ in seen:
