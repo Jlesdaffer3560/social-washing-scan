@@ -1,0 +1,314 @@
+diff --git a/app.py b/app.py
+index d244a30..99ea663 100644
+--- a/app.py
++++ b/app.py
+@@ -27,7 +27,21 @@ def _get_build_company_report_pdf():
+ _report_pdf_fn = None
+ _report_pdf_import_error = None
+ 
+-APP_VERSION="hostable_v55_claim_detection_balanced_report_layout"
++APP_VERSION="hostable_v56_crawl_reliability_and_confidence"
++# v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
++# that announces itself as an assessment/scanner tool is the easiest possible fingerprint
++# for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
++# independent of any other fingerprinting. This does not defeat sophisticated bot
++# detection, but removes the most trivial and unnecessary self-inflicted cause of it.
++CRAWLER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
++# v56: known corporate-group domains that are not simple TLD variants of the scanned
++# brand's own hostname (e.g. zara.com's real sustainability/CSR reporting lives mainly
++# under the parent group's own domain, not under zara.<tld>). Extend this map as more
++# gaps are found; it is deliberately conservative (kept in sync with PROFILES aliases).
++KNOWN_GROUP_DOMAINS={
++    "zara":["https://www.inditex.com"],
++    "inditex":["https://www.zara.com"],
++}
+ PORT=int(os.environ.get("PORT","8000"))
+ HOST="0.0.0.0"
+ APP_DIR=Path(__file__).resolve().parent
+@@ -236,30 +250,54 @@ def related_company_sites(url, max_sites=1):
+         if c not in seen: seen.append(c)
+     return seen[:max_sites]
+ 
++def related_group_sites(url, max_sites=2):
++    """v56: extends related_company_sites (same-brand TLD variants, e.g. lidl.be -> lidl.com)
++    with KNOWN_GROUP_DOMAINS -- cases where the scanned brand's real sustainability/CSR
++    reporting lives mainly on a *different* parent-group domain (e.g. zara.com's group-level
++    reporting sits under inditex.com, not under a zara.<tld> variant). Known-group matches are
++    checked first since they are the more likely place to find substantive claims."""
++    host=(urlparse(url).hostname or '').lower()
++    out=[]
++    for brand,domains in KNOWN_GROUP_DOMAINS.items():
++        if brand in host:
++            for d in domains:
++                if (urlparse(d).hostname or '') != host and d not in out:
++                    out.append(d)
++    for c in related_company_sites(url, max_sites=max_sites):
++        if c not in out:
++            out.append(c)
++    return out[:max_sites]
++
+ def crawl_with_related_sites(original_url,overall_deadline=None):
+     """Crawl the requested URL plus a small number of likely related company sites.
+     The requested URL remains the primary source. Related domains are added only when reachable.
+     A single shared wall-clock deadline caps the ENTIRE operation (not per sub-step) so the
+     request reliably returns well within Render's gateway timeout.
++
++    v56: also returns a per-page crawl_log (list of dicts: url, ok, chars, thin, error) so the
++    caller can tell "no risky claims found because none exist" apart from "no risky claims
++    found because the crawl barely reached any real content" -- these are not the same thing
++    and were previously indistinguishable in the output.
+     """
+     if overall_deadline is None:
+         overall_deadline=time.time()+18
+-    txt,pages=crawl(original_url,deadline=overall_deadline)
++    crawl_log=[]
++    txt,pages=crawl(original_url,deadline=overall_deadline,log=crawl_log)
+     source_notes=[]
+     all_text=[txt]
+     all_pages=list(pages)
+     if time.time() < overall_deadline-3:
+-        for candidate in related_company_sites(original_url):
++        for candidate in related_group_sites(original_url):
+             if time.time()>=overall_deadline-2: break
+             try:
+-                rt,rpages=crawl(candidate,deadline=overall_deadline)
++                rt,rpages=crawl(candidate,deadline=overall_deadline,log=crawl_log)
+                 if len(rt)>500:
+                     all_text.append('\n\nRELATED COMPANY SITE: '+candidate+'\n'+rt)
+                     all_pages.extend([p for p in rpages if p not in all_pages])
+                     source_notes.append(f"Related company site also checked: {candidate}")
+             except Exception:
+                 pass
+-    return '\n\n'.join(all_text)[:150000], all_pages[:16], source_notes
++    return '\n\n'.join(all_text)[:150000], all_pages[:16], source_notes, crawl_log
+ 
+ def replace_tld_with_be(url):
+     """If a .com domain cannot be reached, try the same host with .be."""
+@@ -284,7 +322,7 @@ def fetch_html(url,timeout=7):
+     p=urlparse(url)
+     if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
+     if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
+-    req=Request(url,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0","Accept":"text/html,application/xhtml+xml"})
++    req=Request(url,headers={"User-Agent":CRAWLER_USER_AGENT,"Accept":"text/html,application/xhtml+xml"})
+     with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
+         if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
+         return r.read(2000000).decode("utf-8",errors="ignore")
+@@ -312,14 +350,14 @@ def discover_sitemap_urls(base_url, limit=40, deadline=None):
+         if deadline and time.time()>=deadline: break
+         try:
+             t=min(5, max(2, deadline-time.time())) if deadline else 5
+-            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
++            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":CRAWLER_USER_AGENT})
+             with urlopen(req,timeout=t,context=ssl.create_default_context()) as r:
+                 body=r.read(1000000).decode("utf-8",errors="ignore")
+             locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.IGNORECASE)
+             if '<sitemapindex' in body.lower() and locs and (not deadline or time.time()<deadline):
+                 try:
+                     t2=min(4, max(2, deadline-time.time())) if deadline else 4
+-                    req2=Request(locs[0],headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"})
++                    req2=Request(locs[0],headers={"User-Agent":CRAWLER_USER_AGENT})
+                     with urlopen(req2,timeout=t2,context=ssl.create_default_context()) as r2:
+                         body2=r2.read(1000000).decode("utf-8",errors="ignore")
+                     locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE)
+@@ -333,11 +371,30 @@ def discover_sitemap_urls(base_url, limit=40, deadline=None):
+             seen.add(u); out.append(u)
+     return out[:limit]
+ 
+-def crawl(url,max_extra_pages=3,deadline=None):
++THIN_CONTENT_CHARS=400  # v56: a 200-OK page with less extracted text than this is flagged
++                         # "thin" -- most likely a JS-rendered shell or a soft-block/interstitial,
++                         # not a genuinely near-empty page. Used for confidence, not scoring.
++
++def _log_fetch_success(log,url,chars):
++    if log is not None:
++        log.append({"url":url,"ok":True,"http_status":200,"chars":chars,"thin":chars<THIN_CONTENT_CHARS,"error":None})
++
++def _log_fetch_failure(log,url,err):
++    if log is not None:
++        code=err.code if isinstance(err,HTTPError) else None
++        log.append({"url":url,"ok":False,"http_status":code,"chars":0,"thin":False,"error":_describe_fetch_error(err)})
++
++def crawl(url,max_extra_pages=3,deadline=None,log=None):
+     if deadline is None:
+         deadline=time.time()+18
+     def remaining(): return max(1,deadline-time.time())
+-    html=fetch_html(url,timeout=min(7,remaining())); text,links=parse_html(html); host=urlparse(url).hostname or ""
++    try:
++        html=fetch_html(url,timeout=min(7,remaining()))
++    except Exception as e:
++        _log_fetch_failure(log,url,e)
++        raise
++    text,links=parse_html(html); host=urlparse(url).hostname or ""
++    _log_fetch_success(log,url,len(text))
+     pages=[url]; chunks=[text]; cands=[]
+     for href in links:
+         full=urljoin(url,href).split("#")[0]
+@@ -357,9 +414,12 @@ def crawl(url,max_extra_pages=3,deadline=None):
+         if time.time()>=deadline: break
+         if i>0 and remaining()>2: time.sleep(0.5)
+         try:
+-            t,_=parse_html(fetch_html(link,timeout=min(6,remaining())))
++            raw=fetch_html(link,timeout=min(6,remaining()))
++            t,_=parse_html(raw)
++            _log_fetch_success(log,link,len(t))
+             if len(t)>200: chunks.append("\n\nPAGE: "+link+"\n"+t); pages.append(link)
+-        except Exception: pass
++        except Exception as e:
++            _log_fetch_failure(log,link,e)
+     return "\n\n".join(chunks)[:90000], pages
+ COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
+ _COMPANY_NAME_RE=re.compile(r'\b([A-Z][A-Za-z0-9&\'\.\-]*(?:\s+[A-Z][A-Za-z0-9&\'\.\-]*){0,3}\s+'+COMPANY_SUFFIXES+r')\b')
+@@ -414,7 +474,7 @@ def google_search(query, max_results=5):
+         return []
+     from urllib.parse import urlencode
+     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
+-    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":"Mozilla/5.0 GreenSocialClaimsAssessment/40.0"},method="GET")
++    req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":CRAWLER_USER_AGENT},method="GET")
+     with urlopen(req,timeout=7) as r:
+         data=json.loads(r.read().decode("utf-8",errors="ignore"))
+     out=[]
+@@ -821,15 +881,43 @@ def build_engagement_questions(findings,ext):
+         if q not in out: out.append(q)
+     return out[:6]
+ 
+-def build_confidence(pages,ext,findings):
++def build_confidence(pages,ext,findings,crawl_log=None):
+     pts=0; reasons=[]
+     if len(pages)>=3: pts+=2; reasons.append("several company pages were reviewed")
+     elif len(pages)>=1: pts+=1; reasons.append("at least the main company page was reviewed")
+     if ext.get("enabled") and len(ext.get("results",[]))>=5: pts+=2; reasons.append("external public-source search returned several results")
+     elif ext.get("enabled"): pts+=1; reasons.append("external public-source search was active")
+     else: reasons.append("external public-source search was not active")
+-    if findings and not findings[0].get("type","").lower().startswith("no major"): pts+=1; reasons.append("claim-level signals were detected")
+-    return {"level":"High" if pts>=5 else "Medium" if pts>=3 else "Low","reasons":reasons}
++    no_findings=not findings or findings[0].get("type","").lower().startswith("no major")
++    if not no_findings: pts+=1; reasons.append("claim-level signals were detected")
++
++    # v56: fold crawl reliability into confidence instead of leaving it as a silent side-channel.
++    # A scan that mostly failed or returned thin/blocked pages should not read the same as a
++    # scan that genuinely reached the site and found little to flag.
++    blocked=[e for e in (crawl_log or []) if not e.get("ok")]
++    thin=[e for e in (crawl_log or []) if e.get("ok") and e.get("thin")]
++    attempted=len(crawl_log or [])
++    reliability_warning=None
++    if attempted:
++        failure_ratio=len(blocked)/attempted
++        if failure_ratio>=0.5 or (len(pages)<=1 and blocked):
++            pts=max(0,pts-2)
++            reliability_warning=(f"{len(blocked)} of {attempted} page fetches failed (e.g. HTTP 403/blocked or unreachable). "
++                                  "A low risk score from this scan may reflect limited access to the site's content, "
++                                  "not necessarily a genuine absence of risky claims.")
++        elif thin:
++            pts=max(0,pts-1)
++            reliability_warning=(f"{len(thin)} of {attempted} fetched page(s) returned unusually little text, which can happen "
++                                  "with JavaScript-rendered pages or soft bot-blocks. Treat a low score with some caution and "
++                                  "consider checking the site's sustainability/CSR pages manually.")
++    if no_findings and (blocked or thin):
++        reliability_warning=reliability_warning or ("No claims were detected, and part of the crawl did not return usable content. "
++                                                      "This scan result should be treated as inconclusive rather than 'low risk'.")
++    level_str="High" if pts>=5 else "Medium" if pts>=3 else "Low"
++    result={"level":level_str,"reasons":reasons}
++    if reliability_warning:
++        result["reliability_warning"]=reliability_warning
++    return result
+ 
+ def split_scores(findings,sector,context,external_modifier,score_components=None):
+     if score_components:
+@@ -1982,7 +2070,7 @@ def fetch_document_text(url):
+     p=urlparse(url)
+     if p.scheme not in ('http','https') or not p.hostname or is_private(p.hostname):
+         return ''
+-    req=Request(url,headers={'User-Agent':'Mozilla/5.0 GreenSocialClaimsAssessment/40.0','Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
++    req=Request(url,headers={'User-Agent':CRAWLER_USER_AGENT,'Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
+     with urlopen(req,timeout=10,context=ssl.create_default_context()) as r:
+         ctype=(r.headers.get('content-type','') or '').lower()
+         data=r.read(2500000)
+@@ -2152,12 +2240,12 @@ def analyse_url_v27(raw):
+     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
+     scan_deadline=time.time()+18
+     try:
+-        txt,pages,related_notes=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
++        txt,pages,related_notes,crawl_log=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
+     except Exception as first_error:
+         fallback_url=replace_tld_with_be(original_url)
+         if fallback_url:
+             try:
+-                txt,pages,related_notes=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original website was not accessible. The scan was automatically performed on {fallback_url}.'
++                txt,pages,related_notes,crawl_log=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline); url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original website was not accessible. The scan was automatically performed on {fallback_url}.'
+             except Exception as second_error:
+                 raise ValueError(f'Could not access {original_url} ({_describe_fetch_error(first_error)}) and the {fallback_url} fallback also failed ({_describe_fetch_error(second_error)}).')
+         else:
+@@ -2217,14 +2305,25 @@ def analyse_url_v27(raw):
+         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
+         c.setdefault('audience_group', 'mixed')
+     methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims, with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims. Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
++    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log)
++    reliability_warning=confidence_result.get('reliability_warning')
++    crawl_pages_attempted=len(crawl_log); crawl_pages_failed=len([e for e in crawl_log if not e.get('ok')])
++    crawl_pages_thin=len([e for e in crawl_log if e.get('ok') and e.get('thin')])
+     summary=(f"{comp['company']} receives a global sustainability scan score of {overall}/100. "
+              f"Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion}). "
+              f"Document/channel classification: {audience['audience']}  -  {audience['note']}" + (" "+"; ".join(related_notes) if related_notes else ""))
++    if reliability_warning:
++        summary=f"⚠ DATA RELIABILITY: {reliability_warning} " + summary
++    screening_conclusion=f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}'
++    if reliability_warning:
++        screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
+     return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
+         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
+         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
+         'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,
+-        'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}',
++        'screening_conclusion':screening_conclusion,
++        'data_reliability_warning':reliability_warning,
++        'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'detail':crawl_log},
+         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
+         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
+         'documents_checked':documents_checked,'channel_analysis':channel_analysis,'related_source_notes':related_notes,
+@@ -2243,7 +2342,7 @@ def analyse_url_v27(raw):
+         'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['High-sensitivity green claims require EmpCo-style substantiation and consumer-facing wording controls.' ] if any(f.get('risk')=='High' for f in green_fs) else []),
+         'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),
+         'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
+-        'confidence':build_confidence(pages,social_ext,social_fs),'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
++        'confidence':confidence_result,'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
+         'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Classify each claim by audience: consumer-facing marketing vs investor reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals and keep company-owned evidence separate from external stakeholder sources.'],
+         'ai_used':False,'ai_note':''}
+ 
+diff --git a/frontend.html b/frontend.html
+index 1c03d38..f58e213 100644
+--- a/frontend.html
++++ b/frontend.html
+@@ -78,6 +78,7 @@
+     <div class="card section">
+       <h2>Executive summary</h2>
+       <p id="resolutionNote" class="notice warning hidden" style="margin-bottom:12px"></p>
++      <p id="reliabilityWarning" class="notice warning hidden" style="margin-bottom:12px;background:#fff4e5;border:1px solid #e0a020;color:#7a4a00;padding:10px 14px;border-radius:8px;font-weight:600"></p>
+       <p id="summary" class="muted"></p>
+       <div id="scoreCards" class="scores"></div>
+       <div class="download-panel" style="background:#f0f9ff;border:1px solid #bfd7f0;border-radius:12px;padding:16px;margin-top:16px">
+@@ -146,7 +147,7 @@ async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choo
+ async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment while the website and external stakeholder signals are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let text=await r.text();let j;try{j=JSON.parse(text)}catch(_){throw new Error((text.trim().startsWith('<!DOCTYPE')||text.trim().startsWith('<html'))?'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up (this can take up to a minute) on top of the scan itself. Please try the same scan again \u2014 it should complete normally now that the server is awake.':(text.slice(0,250)||'The server returned an unreadable response.'))}if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below and use the company report download buttons.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
+ function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
+ $('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
+-function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';let rn=$('resolutionNote');if(d.fallback_note){rn.textContent=d.fallback_note;rn.classList.remove('hidden')}else{rn.classList.add('hidden')}renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
++function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';let rn=$('resolutionNote');if(d.fallback_note){rn.textContent=d.fallback_note;rn.classList.remove('hidden')}else{rn.classList.add('hidden')}let rw=$('reliabilityWarning');if(d.data_reliability_warning){let cd=d.crawl_diagnostics||{};rw.textContent='⚠ Data reliability: '+d.data_reliability_warning+(cd.pages_attempted?` (${cd.pages_failed||0}/${cd.pages_attempted} page fetches failed.)`:'');rw.classList.remove('hidden')}else{rw.classList.add('hidden')}renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
+ function scoreInterp(n){
+   if(n==null)return '';
+   if(n>=85)return 'Very high — multiple severe signals';
+diff --git a/report_pdf.py b/report_pdf.py
+index 1c28587..a7a0a1d 100644
+--- a/report_pdf.py
++++ b/report_pdf.py
+@@ -403,6 +403,12 @@ def build_company_report_pdf(data):
+         src_label = (all_claims[0].get('source_label') or all_claims[0].get('source_url') or '')[:90]
+         summary_flow.append(Spacer(1, 3))
+         summary_flow.append(Paragraph(f'<font color="#8b9baa">All claim signals below are from:</font> {esc(src_label)}', STY['small']))
++    if data.get('data_reliability_warning'):
++        cd = data.get('crawl_diagnostics') or {}
++        detail = f' ({cd.get("pages_failed", 0)}/{cd.get("pages_attempted", 0)} page fetches failed.)' if cd.get('pages_attempted') else ''
++        summary_flow.append(Spacer(1, 4))
++        summary_flow.append(Paragraph(f'<b>&#9888; Data reliability warning:</b> {esc(data.get("data_reliability_warning"))}{esc(detail)}',
++                                       ParagraphStyle('rw', parent=STY['small'], textColor=AMBER)))
+     if data.get('fallback_note'):
+         summary_flow.append(Spacer(1, 4))
+         summary_flow.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',

@@ -403,6 +403,12 @@ def build_company_report_pdf(data):
         src_label = (all_claims[0].get('source_label') or all_claims[0].get('source_url') or '')[:90]
         summary_flow.append(Spacer(1, 3))
         summary_flow.append(Paragraph(f'<font color="#8b9baa">All claim signals below are from:</font> {esc(src_label)}', STY['small']))
+    if data.get('data_reliability_warning'):
+        cd = data.get('crawl_diagnostics') or {}
+        detail = f' ({cd.get("pages_failed", 0)}/{cd.get("pages_attempted", 0)} page fetches failed.)' if cd.get('pages_attempted') else ''
+        summary_flow.append(Spacer(1, 4))
+        summary_flow.append(Paragraph(f'<b>&#9888; Data reliability warning:</b> {esc(data.get("data_reliability_warning"))}{esc(detail)}',
+                                       ParagraphStyle('rw', parent=STY['small'], textColor=AMBER)))
     if data.get('fallback_note'):
         summary_flow.append(Spacer(1, 4))
         summary_flow.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',
