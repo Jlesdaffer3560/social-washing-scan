@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57b_group_domain_fallback_fix"
+APP_VERSION="hostable_v57e_single_stage_scoring_and_nav_filter_fix"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -113,7 +113,7 @@ SOCIAL_WASHING_TAXONOMY={
 STANDARDS=[
  {"name":"CSRD / ESRS S1-S4 (post-Omnibus I: >1,000 employees AND >EUR450M net turnover; reporting from FY2027)","use":"Connect social claims to policies, actions, targets and metrics across own workforce (S1), value-chain workers (S2), affected communities (S3) and consumers (S4). Post-Omnibus I: first CSRD report due 2028 for in-scope companies. Belgian transposition via Wet van 6 februari 2025."},
  {"name":"CSDDD (post-Omnibus I: scope limited to >5,000 employees AND >EUR1.5B net turnover; application from 26 July 2029)","use":"Support human-rights and supply-chain claims with risk-based due diligence, prevention, mitigation, tracking and remediation. Post-Omnibus I (Directive 2026/470, in force 18 March 2026): direct scope applies only to the largest companies. Indirect exposure through customer due diligence expectations is already commercially relevant."},
- {"name":"EU Forced Labour Regulation  -  Regulation (EU) 2024/3015","use":"Check product, supplier and import/export claims against the EU prohibition on placing, making available on the Union market, or exporting products made with forced labour. Evidence should cover forced-labour risk assessment, supplier/product traceability, preventive actions, remediation and withdrawal/response readiness."},
+ {"name":"EU Forced Labour Regulation - Regulation (EU) 2024/3015 (core prohibition, investigation and customs-enforcement provisions apply from 14 December 2027; a small set of governance/preparatory articles -- Art. 5(3), 7, 8, 9(2), 11, 33, 35 and 37(3) -- already apply from 13 December 2024)","use":"A product-market-access and customs-enforcement regime, not a claims/advertising law like EmpCo: it prohibits placing, making available on the Union market, or exporting products made in whole or in part with forced labour (Art. 3), enforced via investigation, withdrawal, disposal and customs suspension (Art. 17-30) rather than by policing marketing text. Article 1(3) explicitly states it does not itself create new due-diligence obligations -- due diligence already required under other Union/national law, or carried out per OECD/ILO guidance, is what investigators rely on as evidence. For this scan's purposes: treat 'forced-labour free', traceability or import/export assurance wording as a claim that should be backed by risk-based due diligence, product/supplier traceability, remediation and withdrawal/customs response readiness now, ahead of the 2027 application date -- not as proof the Regulation's own market-prohibition duties are already enforceable today."},
  {"name":"OECD Guidelines","use":"Check whether responsible-business claims are backed by identification, prevention, mitigation and accounting for adverse impacts."},
  {"name":"UN Guiding Principles on Business and Human Rights","use":"Support human-rights claims with policy commitment, due diligence, grievance channels and remedy."},
  {"name":"UN Global Compact","use":"Check consistency with principles on human rights, labour, environment and anti-corruption when responsible-business conduct is invoked."},
@@ -122,12 +122,19 @@ STANDARDS=[
 ]
 def standards_for_claim(t):
     x=(t or "").lower()
+    # v57c: Directive (EU) 2024/825 ("EmpCo") Article 6(1)(b), as amended, explicitly brings
+    # "social characteristics" of a product/trader within the misleading-claims test alongside
+    # environmental ones -- Recital 3 names wages, social protection, safety of the work
+    # environment, social dialogue, human rights, equal treatment, gender equality, inclusion,
+    # diversity and ethical commitments as examples. EmpCo is therefore also directly relevant
+    # to these social-claim categories, not only to green claims as previously cited here.
     if "forced" in x or "modern slavery" in x: return ["EU Forced Labour Regulation 2024/3015","CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO","UNGC"]
-    if "human" in x or "labour" in x or "labor" in x: return ["CSRD/ESRS S1-S2","CSDDD","EU Forced Labour Regulation 2024/3015","OECD Guidelines","UNGPs","ILO","UNGC"]
+    if "aspirational" in x or "future social" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) & 6(2)(d) (by analogy: future-performance claims require a verifiable, time-bound implementation plan)","CSRD/ESRS S1-S2","OECD Guidelines","UNGPs","ILO","UNGC"]
+    if "human" in x or "labour" in x or "labor" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics: human/labour rights)","CSRD/ESRS S1-S2","CSDDD","EU Forced Labour Regulation 2024/3015","OECD Guidelines","UNGPs","ILO","UNGC"]
     if "supply" in x or "supplier" in x: return ["CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO"]
-    if "diversity" in x or "inclusion" in x: return ["CSRD/ESRS S1","ILO","GRI","UNGC"]
+    if "diversity" in x or "inclusion" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics: equal treatment, gender equality, inclusion, diversity)","CSRD/ESRS S1","ILO","GRI","UNGC"]
     if "customer" in x or "accessibility" in x: return ["CSRD/ESRS S4","OECD Guidelines","GRI"]
-    if "worker" in x or "safety" in x: return ["CSRD/ESRS S1","ILO","GRI"]
+    if "worker" in x or "safety" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics: safety of the work environment)","CSRD/ESRS S1","ILO","GRI"]
     if "impact" in x or "community" in x: return ["CSRD/ESRS S3","UNGPs","OECD Guidelines","GRI"]
     return ["CSRD/ESRS S1-S4","OECD Guidelines","UNGC","GRI"]
 def clean_excerpt(text,trig):
@@ -471,7 +478,14 @@ def crawl(url,max_extra_pages=3,deadline=None,log=None):
         try:
             t,kind=fetch_page_content(link,timeout=min(8,remaining()))
             _log_fetch_success(log,link,len(t))
-            if len(t)>200:
+            # v57e: a PDF that yields *any* readable extracted text is already a much stronger
+            # substance signal than an HTML page of the same length (successful text extraction
+            # from a PDF rarely happens by accident). Applying the same 200-char bar as HTML pages
+            # silently dropped short-but-real reports (e.g. a concise supplier code or one-page
+            # sustainability statement). Align with the 80-char minimum used elsewhere in this file
+            # for "enough text to be usable" (see decode_uploaded_document).
+            min_chars=80 if kind=="pdf" else 200
+            if len(t)>min_chars:
                 label="REPORT (PDF): " if kind=="pdf" else "PAGE: "
                 chunks.append("\n\n"+label+link+"\n"+t); pages.append(link)
         except Exception as e:
@@ -1385,16 +1399,17 @@ GREEN_CLAIMS=[
 
 
 EMPCO_LENS=[
- {'name':'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive)','use':'Main green-claims lens. Frames green-claim risk in B2C commercial communications by addressing misleading environmental claims, generic claims, labels, comparisons, durability/repairability and future environmental performance claims.'},
- {'name':'EU Forced Labour Regulation / Regulation (EU) 2024/3015','use':'Main social-claim lens. Flags wording that may imply products, suppliers or value chains are free from forced labour, or that traceability, due diligence or import/export controls provide assurance beyond what is evidenced.'},
+ {'name':'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive)','use':'Amends the Unfair Commercial Practices Directive (2005/29/EC) and the Consumer Rights Directive (2011/83/EU). Member States must transpose by 27 March 2026; the rules apply from 27 September 2026. Covers both green AND social claims: Article 6(1)(b), as amended, brings "environmental or social characteristics" of a product or trader within the general misleading-claims test (Recital 3 names wages, safety, human rights, equal treatment, gender equality, inclusion and diversity as social characteristics in scope) -- this lens is therefore not limited to green claims.'},
+ {'name':'EU Forced Labour Regulation / Regulation (EU) 2024/3015 (core provisions apply from 14 December 2027)','use':'Main social-claim lens for forced-labour/traceability wording. Flags wording that may imply products, suppliers or value chains are free from forced labour, or that traceability, due diligence or import/export controls provide assurance beyond what is evidenced. It is a market-prohibition and customs-enforcement regime, not a claims law, and Art. 1(3) confirms it creates no new due-diligence obligation of its own -- readiness matters ahead of 2027, not an existing statutory breach today.'},
  {'name':'UCPD environmental-claim definition','use':'Checks whether text, images, symbols, labels, brand names, trade names or presentation imply positive, zero, reduced, comparative or improved environmental impact of a product, brand or trader.'},
- {'name':'Blacklisted-practices lens','use':'Flags high-sensitivity indicators such as generic environmental claims without clear specification or recognised excellent performance, self-declared sustainability labels, offset-based product neutrality claims, global claims based on one feature, and legal requirements presented as distinctive benefits.'},
+ {'name':'Blacklisted-practices lens (Annex I)','use':'Flags high-sensitivity indicators that Annex I treats as unfair in all circumstances: generic environmental claims without recognised excellent environmental performance (4a), claiming an entire product/business benefit when only one aspect or activity is meant (4b), product-level claims of neutral/reduced/positive climate impact based on offsetting (4c), self-declared sustainability labels not based on a certification scheme or public authority (2a), and presenting a legal requirement as a distinctive feature (10a).'},
  {'name':'Same-medium specification check','use':'Checks whether broad wording is specified clearly and prominently on the same page, advertisement, packaging text or product interface.'},
- {'name':'Climate / offsetting claims','use':'Separates actual emission reductions from offsetting or compensation and treats product-level neutrality wording based on offsets as a high-priority risk area.'},
- {'name':'Sustainability labels and visual claims','use':'Checks icons, badges, symbols and labels against independent certification, public-authority schemes, transparent criteria and validity.'},
- {'name':'Future environmental performance','use':'Future claims should be supported by clear, objective, publicly verifiable commitments, implementation plans, milestones, resources, governance and independent review.'},
- {'name':'Comparative environmental claims','use':'Checks whether comparisons disclose the comparison method, products/suppliers compared, data date, scope and update mechanism.'},
- {'name':'Consumer-facing communications','use':'EmpCo has strongest relevance for B2C/commercial communications; investor and internal documents remain relevant as evidence or consistency sources but are not treated the same as consumer marketing material.'}
+ {'name':'Climate / offsetting claims','use':'Separates actual emission reductions from offsetting or compensation and treats product-level neutrality wording based on offsets as a high-priority risk area (Annex I, point 4c).'},
+ {'name':'Sustainability labels and visual claims','use':'Checks icons, badges, symbols and labels against independent certification, public-authority schemes, transparent criteria and validity (Annex I, point 2a).'},
+ {'name':'Future environmental performance','use':'Article 6(2)(d), assessed case-by-case (not an automatic Annex I ban): future claims should be supported by clear, objective, publicly verifiable commitments, implementation plans, milestones, resources, governance and independent third-party review.'},
+ {'name':'Comparative environmental or social claims','use':'Recital 6 / Article 7(7): comparisons should disclose the comparison method, products/suppliers compared, data date, scope and update mechanism; comparison services have an explicit information duty under the new Article 7(7).'},
+ {'name':'Consumer-facing communications','use':'EmpCo has strongest relevance for B2C/commercial communications; investor and internal documents remain relevant as evidence or consistency sources but are not treated the same as consumer marketing material.'},
+ {'name':'Known scope gap in this scan','use':'Article 6(2)(e) also prohibits advertising a consumer benefit that is irrelevant and unrelated to any actual feature of the product or business (Recital 5 examples: a bottled water advertised as gluten-free, paper sheets advertised as not containing plastic). This requires judging relevance to the specific product, which this automated scan does not attempt -- irrelevant-benefit claims are not flagged and should be checked manually.'}
 ]
 
 
@@ -1958,7 +1973,7 @@ def build_green_social_actions(green_findings, social_findings, audience, compan
         forced=any(('forced' in f.get('type','').lower() or 'modern slavery' in f.get('type','').lower() or 'supply' in f.get('type','').lower()) for f in high_social)
         wording=f' Specific wording to check: {", ".join(social_terms)}.' if social_terms else ''
         if forced:
-            actions.append({'priority':'Priority 2','title':'Validate forced-labour and supplier claims','action':f"For {who}'s supplier, responsible-sourcing, modern-slavery or forced-labour wording, prepare evidence on product/supplier traceability, risk assessment by geography/product, mitigation, grievance/remediation and withdrawal/customs response readiness under Regulation (EU) 2024/3015.{wording}"})
+            actions.append({'priority':'Priority 2','title':'Validate forced-labour and supplier claims','action':f"For {who}'s supplier, responsible-sourcing, modern-slavery or forced-labour wording, prepare evidence on product/supplier traceability, risk assessment by geography/product, mitigation, grievance/remediation and withdrawal/customs response readiness ahead of Regulation (EU) 2024/3015's core provisions applying from 14 December 2027.{wording}"})
         else:
             actions.append({'priority':'Priority 2','title':'Substantiate high-priority social claims','action':f"For {who}'s detected social claim areas ({claim_types or 'social claims'}), collect stakeholder scope, KPIs, grievance/remedy evidence, audit or workforce data and clear limits to avoid overstatement.{wording}"})
     actions.append({'priority':'Priority 3','title':'Build a claim evidence file','action':'Create one evidence file per priority claim retained in this scan, with the approved wording, source URL/document, owner, evidence link, date, legal/compliance review status and review deadline.'})
@@ -2304,11 +2319,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     sec=infer_sector(comp,text)
     ctx=infer_context(comp,text,social_ext)
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""))
-    social_reg=has_forced_labour_regulatory_signal(social_fs)
-    social_score, social_components = recalibrate_dimension_score(social_score, social_components, social_fs, social_targeted, social_reg, 'social')
     green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext,text,audience)
-    green_reg=has_regulatory_green_signal(green_fs,audience)
-    green_score, green_components = recalibrate_dimension_score(green_score, green_components, green_fs, green_targeted, green_reg, 'green')
     social_splits=split_scores(social_fs,sec,ctx,social_mod,social_components)
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
     overall=combine_green_social(green_score,social_score,audience)
@@ -2396,11 +2407,7 @@ def analyse_url_v27(raw):
     green_ext_scoring=dict(green_ext, results=green_targeted, compact_sources=green_targeted, targeted_negative_sources=green_targeted)
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext_scoring,txt,comp.get("company",""))
     social_external_context = strict_external_context_risk({'results':social_targeted}, comp.get('company',''))
-    social_reg=has_forced_labour_regulatory_signal(social_fs)
-    social_score, social_components = recalibrate_dimension_score(social_score, social_components, social_fs, social_targeted, social_reg, 'social')
     green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext_scoring,txt,audience)
-    green_reg=has_regulatory_green_signal(green_fs,audience)
-    green_score, green_components = recalibrate_dimension_score(green_score, green_components, green_fs, green_targeted, green_reg, 'green')
     overall=combine_green_social(green_score,social_score,audience)
     social_splits=split_scores(social_fs,sec,ctx,social_mod,social_components)
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
@@ -2413,7 +2420,7 @@ def analyse_url_v27(raw):
         c.setdefault('source_label', 'Reviewed website / document')
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
-    methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims, with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims. Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
+    methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log)
     reliability_warning=confidence_result.get('reliability_warning')
     crawl_pages_attempted=len(crawl_log); crawl_pages_failed=len([e for e in crawl_log if not e.get('ok')])
@@ -2894,7 +2901,7 @@ def calc_green_score(findings, sector, ext, page_text, audience):
     regulatory=any(f.get('blacklisted_practice_indicator') for f in material)
     score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Scores are calibrated to reflect severity, evidence gaps and external context. One isolated claim signal is treated as a limited concern unless it is a direct blacklisted-practice indicator or is supported by negative external stakeholder signals.'}
+    comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.'}
     return score, comps, external_context
 
 def calc_score(findings,sector,context,external_research=None,page_text="",company_name=""):
@@ -2907,7 +2914,7 @@ def calc_score(findings,sector,context,external_research=None,page_text="",compa
     score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, 1.0)
     external_mod, external_note=external_relevance_score(findings, external_research or {})
     top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"score_calculation_note":"Scores are calibrated to avoid overstating isolated wording signals. High results require a stronger combination of material claim wording, weak substantiation, regulatory relevance and/or retained negative external stakeholder signals."}
+    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"score_calculation_note":"Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals."}
     return score, external_mod, external_note, evidence_quality_credit(page_text, findings), comps
 
 def recalc_global_score(green_score, social_score, green_findings=None, social_findings=None):
@@ -3084,7 +3091,13 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     c=(excerpt or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 25:
         return False
-    if any(x in c for x in V55_NAV_CONTEXT_EXCLUSIONS):
+    # v57e: previously this rejected ANY excerpt merely containing one of these phrases
+    # anywhere, with no length check -- so a genuine claim sentence immediately following a
+    # document heading in the same "sentence" (very common in PDF-extracted text, which often
+    # loses the line break between a heading like "Sustainability Report 2025" and the body
+    # text that follows it) was silently discarded along with real nav/title boilerplate.
+    # Nav links and bare titles are short; a full claim sentence is not, so gate on length.
+    if any(x in c for x in V55_NAV_CONTEXT_EXCLUSIONS) and len(c.split()) <= 10:
         return False
     if _looks_like_bare_document_title(c):
         return False

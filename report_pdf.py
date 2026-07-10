@@ -485,8 +485,9 @@ def build_company_report_pdf(data):
                                ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
     method_note = Paragraph(
         'Claim wording (42%) + Evidence gap (24%) + External context (22%) + Sector/channel sensitivity (12%). '
-        'Lenses: EmpCo &mdash; Directive (EU) 2024/825, "Empowering Consumers for the Green Transition" &mdash; for green claims, '
-        'and the EU Forced Labour Regulation (EU) 2024/3015 for forced-labour and supply-chain claims.', STY['small'])
+        'Lenses: EmpCo &mdash; Directive (EU) 2024/825, "Empowering Consumers for the Green Transition" &mdash; covers both green AND '
+        'social characteristics (Art. 6(1)(b)); applies from 27 September 2026. EU Forced Labour Regulation (EU) 2024/3015 covers '
+        'forced-labour and supply-chain claims; core provisions apply from 14 December 2027.', STY['small'])
     lastrow = Table([[section_card('Score interpretation', btbl, HALF_W), section_card('Methodology note', method_note, HALF_W)]],
                      colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
     lastrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),

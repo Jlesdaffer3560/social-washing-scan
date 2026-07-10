@@ -94,15 +94,21 @@ def build_methodology_pdf():
     lens_rows = [
         ('Lens', 'How it is used in the scan'),
         (Paragraph('<b>EmpCo</b> / Directive (EU) 2024/825', STY['td_b']),
-         Paragraph('Main green-claims lens. "EmpCo" stands for the Directive as regards <b>Emp</b>owering '
-                   '<b>Co</b>nsumers for the green transition (Directive (EU) 2024/825). Prioritises generic '
-                   'environmental claims, climate-neutrality/offsetting claims, self-declared sustainability labels, '
-                   'broad absolute wording, future environmental-performance claims, comparative environmental claims, '
-                   'and legal compliance presented as a sustainability benefit.', STY['td'])),
+         Paragraph('Main green-claims lens, and also covers social characteristics: Art. 6(1)(b), as amended, brings '
+                   '"environmental or social characteristics" (wages, safety, human rights, equal treatment, gender '
+                   'equality, inclusion, diversity) within the same misleading-claims test. "EmpCo" stands for the '
+                   'Directive as regards <b>Emp</b>owering <b>Co</b>nsumers for the green transition (Directive (EU) '
+                   '2024/825). Member States transpose by 27 March 2026; rules apply from 27 September 2026. '
+                   'Prioritises generic environmental claims, climate-neutrality/offsetting claims, self-declared '
+                   'sustainability labels, broad absolute wording, future environmental-performance claims, comparative '
+                   'claims, and legal compliance presented as a sustainability benefit.', STY['td'])),
         (Paragraph('<b>EU Forced Labour Regulation</b> / Regulation (EU) 2024/3015', STY['td_b']),
-         Paragraph('Main social-claim lens. Flags wording that may imply products, suppliers or value chains are '
-                   'free from forced labour, or that traceability, due diligence or import/export controls provide '
-                   'assurance beyond what is evidenced. Applies from 14 December 2027.', STY['td'])),
+         Paragraph('Main social-claim lens. A product-market-access and customs-enforcement regime, not a claims law: '
+                   'Art. 1(3) confirms it creates no new due-diligence obligation of its own. Flags wording that may '
+                   'imply products, suppliers or value chains are free from forced labour, or that traceability, due '
+                   'diligence or import/export controls provide assurance beyond what is evidenced. Core prohibition '
+                   'and enforcement provisions apply from 14 December 2027 (a few governance articles already apply '
+                   'from 13 December 2024).', STY['td'])),
         (Paragraph('UCPD environmental-claim definition', STY['td_b']),
          Paragraph('Supports the EmpCo lens: checks whether text, images, symbols, labels, brand names or presentation '
                    'imply positive, zero, reduced, comparative or improved environmental impact.', STY['td'])),
@@ -117,7 +123,9 @@ def build_methodology_pdf():
         'The scan does not operate as a simple keyword search. A word is retained only when the surrounding wording '
         'appears to make, imply or visually suggest an environmental or social performance claim. Neutral references '
         'such as <i>working with suppliers</i> or <i>backing local suppliers</i> are not retained unless they also imply '
-        'assurance, compliance, certification, traceability, audits, due diligence or full supply-chain coverage.',
+        'assurance, compliance, certification, traceability, audits, due diligence or full supply-chain coverage. '
+        'The website check follows relevant on-site links and, where linked directly from the company\'s own site, '
+        'reads the text of PDF reports (e.g. an annual, CSR, ESG or sustainability report) in addition to web pages.',
         STY['body']))
     flow.append(Spacer(1, 5))
     signal_rows = [
@@ -137,6 +145,9 @@ def build_methodology_pdf():
         (Paragraph('Forced-labour assurance', STY['td_b']),
          Paragraph('forced-labour free, modern-slavery free, no forced labour, product traceability', STY['td']),
          Paragraph('Require robust traceability, risk assessment, mitigation, remediation and response procedures under Regulation (EU) 2024/3015.', STY['td'])),
+        (Paragraph('Aspirational / future social-performance wording', STY['td_b']),
+         Paragraph('working towards a foundation for living wages, wish to build a world where human rights are respected, our ambition is...', STY['td']),
+         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Research (KU Leuven/HIVA, 2026) found this the dominant driver of social-washing risk in fashion-sector communication.', STY['td'])),
     ]
     flow.append(section_table(signal_rows, [W * 0.24, W * 0.36, W * 0.40]))
 
@@ -208,6 +219,12 @@ def build_methodology_pdf():
         'social washing legally occurred. Final assessment requires human review of the complete communication, '
         'applicable law, product context, evidence files, claim approval process, language versions and '
         'jurisdiction-specific enforcement practice.', STY['body']))
+    flow.append(Spacer(1, 5))
+    flow.append(Paragraph(
+        'If a site blocks automated access or returns unusually little text on most pages checked, the report carries '
+        'an explicit data-reliability warning. A low score under those conditions may reflect limited access to the '
+        'site\'s content rather than a genuine absence of risky claims, and should be treated with caution.',
+        STY['body']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'The tool is most useful before publication, campaign launch, website update, packaging change, sustainability '
