@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57e_single_stage_scoring_and_nav_filter_fix"
+APP_VERSION="hostable_v57f_false_positive_and_excerpt_clarity_fixes"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -3106,12 +3106,38 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         return False
     if 'challenges' in c and 'opportunities' in c:
         return False
+    # v57f: describing that staff/teams are trained or educated ON a topic is a capacity-building
+    # statement, not a claim that the company's products or operations already achieve the
+    # performance being trained on (e.g. "we train our teams on sustainability matters... thanks
+    # to the Sustainable Fashion School initiative" is not itself an environmental performance
+    # claim). Applies to both dimensions since the same pattern occurs for social topics too
+    # (e.g. "staff receive human rights training"). Exclude unless paired with an actual
+    # product/outcome assertion, not just the training-topic name.
+    training_context=['train our team','train our teams','train our staff','train our employees',
+        'trains our team','trains our teams','trains our staff','trains our employees',
+        'staff training','employee training','team training','training programme','training program',
+        'we train','trains employees','trains staff','training on ','training in ','educate our team',
+        'educate our staff','educate our employees']
+    if any(n in c for n in training_context) and not any(x in c for x in ['our product','our products','have achieved','has achieved','results in','has resulted','resulted in','reduced by','increase of','decrease of','certified','certification','100%','all of our','all our']):
+        return False
     if dimension == 'green':
         if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
             return False
     if dimension == 'social':
         neutral=['backing british suppliers','supporting local suppliers','working with suppliers','become a supplier','supplier portal','list of suppliers']
         if any(n in c for n in neutral) and not any(x in c for x in ['responsible','ethical','audited','certified','traceable','due diligence','human rights','forced labour','forced labor','modern slavery','comply','compliance','standard','code']):
+            return False
+        # v57f: sentences that describe what a charter, code of conduct or set of principles
+        # SAYS or is "underpinned by" are meta-descriptions of a governance document's content,
+        # not first-person operational assurance that the company actually delivers on it (e.g.
+        # "They define the principles... and are underpinned by respect for human and labour
+        # rights" describes what a values document contains, not an audited outcome). Exclude
+        # unless paired with a genuine operational assertion signal.
+        principles_meta=['define the principle','define our principle','defines the principle','defines our principle',
+            'set out the principle','set out our principle','sets out the principle','sets out our principle',
+            'govern our relation','governs our relation','govern the relation','governs the relation',
+            'are underpinned by','is underpinned by','these principles','our values include']
+        if any(n in c for n in principles_meta) and not any(sig in c for sig in ASSERTION_SIGNALS):
             return False
     return True
 
@@ -3276,6 +3302,15 @@ def _v55_sentence_list(text, trigger, window=850):
     for idx,p in enumerate(parts):
         if trig in p.lower():
             out=p
+            # v57f: a sentence that is grammatically "complete" by punctuation alone can still
+            # read as an unclear fragment if it opens mid-thought -- e.g. "(BAT) Guide, which
+            # contains detailed information..." gives no indication of what BAT stands for or
+            # what is actually being claimed. Detect common fragment-start patterns (lowercase
+            # opening, a leading parenthesis, or a dangling relative clause / conjunction with no
+            # subject) and pull in the previous sentence so the reviewer can see the actual claim.
+            starts_like_fragment=bool(re.match(r'^[a-z(]', out)) or bool(re.match(r'^(which|that|who|whom|and|but|or)\b', out, re.IGNORECASE))
+            if starts_like_fragment and idx>0:
+                out=parts[idx-1]+' '+out
             if len(out) < 25 and idx+1 < len(parts):
                 out=out+' '+parts[idx+1]
             return out[:620]
