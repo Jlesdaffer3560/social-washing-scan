@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57i_dedup_claim_type_summary"
+APP_VERSION="hostable_v57j_additional_false_positive_fixes"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -3115,6 +3115,52 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
         return False
     if 'challenges' in c and 'opportunities' in c:
+        return False
+    # v57j: bare legal-requirement triggers ("required by law", "legal requirement", "meets
+    # legal requirements") fire on ANY mention of a legal obligation, not just one presented as
+    # an environmental benefit -- e.g. "As required by law, our annual report is published every
+    # March" has nothing to do with the environment. EmpCo Annex I point 10a specifically targets
+    # presenting a legal requirement as a distinctive *environmental/sustainability* feature, so
+    # require an environmental-topic word nearby for the generic (non-environment-qualified)
+    # triggers. Triggers that already bake in "environmental"/"eu"/"regulation" (e.g. "compliant
+    # with environmental law", "eu compliant") are left as-is since they are inherently on-topic.
+    bare_legal_triggers=['meets legal requirements','according to legal standards','required by law','legal requirement']
+    if trig in bare_legal_triggers and not any(x in c for x in ['environment','emission','chemical','substance','packaging','plastic','waste','energy','ecodesign','reach ','recycl','sustainab','carbon','climate']):
+        return False
+    # v57j: absolute safety wording ("zero accidents", "zero harm") combined with clear
+    # forward-looking goal/target language is a stated ambition, not a claim that the outcome has
+    # already been achieved (e.g. "Our safety goal for 2027 is zero accidents across all our
+    # distribution centres"). Exclude unless paired with achieved-outcome language.
+    safety_absolute=['zero accidents','zero harm','injury free','no workplace injuries']
+    goal_language=['goal for','goal is','target for','target is','aim to','aims to','aspire','objective is','by 20','ambition']
+    achieved_language=['achieved','have had','has had','recorded','maintained','delivered','since 20','to date','this year we']
+    if any(n in c for n in safety_absolute) and any(g in c for g in goal_language) and not any(a in c for a in achieved_language):
+        return False
+    # v57j: describing that a policy/code document "covers" certain topics or "is available for
+    # download/on request" is a meta-reference to a document's existence and scope, not an
+    # operational assurance claim about the topics themselves (e.g. "Our Supplier Code of Conduct
+    # is available for download and covers labour rights, health and safety").
+    document_meta=['is available for download','available for download','is available on request',
+        'available on request','can be downloaded','available to download','download our']
+    if any(n in c for n in document_meta) and not any(sig in c for sig in ASSERTION_SIGNALS):
+        return False
+    # v57j: naming a specific, recognised third-party or public-authority certification scheme is
+    # the opposite of the "self-declared sustainability label" risk EmpCo targets (Annex I point
+    # 2a; Recital 7 explicitly lists the EU Ecolabel and EMAS as legitimate, publicly-established
+    # schemes). Do not flag a label reference when a recognised scheme is explicitly named.
+    recognised_schemes=['eu ecolabel','ecolabel logo','emas','regulation (ec) no 66/2010','regulation (ec) no 1221/2009',
+        'nordic swan','blue angel','fairtrade certified','fair trade certified','gots certified','oeko-tex',
+        'cradle to cradle','forest stewardship council','fsc certified','iso 14024','certified b corporation',
+        'b corp certified','rainforest alliance certified']
+    if dimension == 'green' and any(s in c for s in recognised_schemes):
+        return False
+    # v57j: a claim-trigger phrase inside a job posting/hiring context describes a role title or
+    # responsibility, not a performance claim about the company's own products or operations
+    # (e.g. "We are hiring a Climate Neutral Program Manager to lead our decarbonisation
+    # roadmap" is a vacancy, not a claim that the company is climate neutral).
+    hiring_context=['we are hiring','we\'re hiring','now hiring','job vacancy','join our team as',
+        'apply for the role','open position','open positions','we are looking for a','we are recruiting']
+    if any(n in c for n in hiring_context):
         return False
     # v57g: excerpts that discuss or report on a topic in general/industry terms -- rather than
     # making a first-person statement about the scanned company's own products or operations --
