@@ -262,9 +262,25 @@ def claim_card(c, show_source=True):
     src = (c.get('source_label') or c.get('source_url') or 'Reviewed material')[:80]
     text = c.get('claim_text') or c.get('claim') or ''
     text = re.sub(r'\s+', ' ', str(text)).strip()
+    matched_phrase = str(c.get('matched_phrase') or '').strip()
     if len(text) > 125:
-        text = text[:122].rsplit(' ', 1)[0] + '…'
+        # v57g: truncating from the start always lost the actual trigger wording whenever it sat
+        # past character ~122 of a longer sentence -- the reader would see text that never shows
+        # why the passage was flagged at all. Centre the shown window on the matched phrase
+        # instead, so the trigger is always visible (and gets highlighted below).
+        idx = text.lower().find(matched_phrase.lower()) if matched_phrase else -1
+        if idx >= 0:
+            start = max(0, idx - 45)
+            end = min(len(text), idx + len(matched_phrase) + 55)
+            snippet = text[start:end]
+            if start > 0: snippet = '…' + snippet.lstrip()
+            if end < len(text): snippet = snippet.rstrip() + '…'
+            text = snippet
+        else:
+            text = text[:122].rsplit(' ', 1)[0] + '…'
     terms = c.get('problematic_terms') or []
+    if matched_phrase and matched_phrase not in terms:
+        terms = [matched_phrase] + list(terms)
     spec_status = (c.get('specification_check') or {}).get('status')
     head = Table([[Paragraph(esc(typ), STY['small_b']),
                    Paragraph(esc(risk), ParagraphStyle('rp', parent=STY['small_b'], textColor=risk_color(risk), alignment=TA_RIGHT))]],

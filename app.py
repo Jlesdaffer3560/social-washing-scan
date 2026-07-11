@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57f_false_positive_and_excerpt_clarity_fixes"
+APP_VERSION="hostable_v57g_broader_false_positive_fixes_and_source_traceability"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -478,13 +478,14 @@ def crawl(url,max_extra_pages=3,deadline=None,log=None):
         try:
             t,kind=fetch_page_content(link,timeout=min(8,remaining()))
             _log_fetch_success(log,link,len(t))
-            # v57e: a PDF that yields *any* readable extracted text is already a much stronger
-            # substance signal than an HTML page of the same length (successful text extraction
-            # from a PDF rarely happens by accident). Applying the same 200-char bar as HTML pages
-            # silently dropped short-but-real reports (e.g. a concise supplier code or one-page
-            # sustainability statement). Align with the 80-char minimum used elsewhere in this file
-            # for "enough text to be usable" (see decode_uploaded_document).
-            min_chars=80 if kind=="pdf" else 200
+            # v57e/v57g: a PDF that yields *any* readable extracted text is already a much
+            # stronger substance signal than an HTML page of the same length (successful text
+            # extraction from a PDF rarely happens by accident) -- kept at 80 chars. The original
+            # 200-char bar for HTML sub-pages had the same false-negative problem: a company's
+            # actual sustainability/CSR sub-page is often short (one or two paragraphs) and was
+            # being silently dropped exactly where the crawler most needs to reach it. Lowered to
+            # 120, still enough to filter genuinely near-empty shell/loading pages.
+            min_chars=80 if kind=="pdf" else 120
             if len(t)>min_chars:
                 label="REPORT (PDF): " if kind=="pdf" else "PAGE: "
                 chunks.append("\n\n"+label+link+"\n"+t); pages.append(link)
@@ -3106,6 +3107,21 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         return False
     if 'challenges' in c and 'opportunities' in c:
         return False
+    # v57g: excerpts that discuss or report on a topic in general/industry terms -- rather than
+    # making a first-person statement about the scanned company's own products or operations --
+    # are not claims about this company (e.g. "The panel discussed what carbon neutral
+    # certification schemes require for retailers" or "Read about zero waste initiatives
+    # happening across the industry"). Generic and applies to both dimensions. Only excludes when
+    # there is no first-person-plural anchor ("we"/"our"/"us"), so a genuine first-person claim
+    # framed alongside industry context is still retained.
+    third_party_context=['the panel discussed','panel discussion','according to experts','industry reports show',
+        'industry report found','the debate about','debate over','conference discussed','article explains',
+        'experts say','analysts say','critics argue','research suggests','study found','survey found',
+        'across the industry','industry-wide','other brands','other companies','competitors',
+        'happening across','trend in the industry']
+    has_first_person=bool(re.search(r'\b(we|our|us)\b', c))
+    if any(x in c for x in third_party_context) and not has_first_person:
+        return False
     # v57f: describing that staff/teams are trained or educated ON a topic is a capacity-building
     # statement, not a claim that the company's products or operations already achieve the
     # performance being trained on (e.g. "we train our teams on sustainability matters... thanks
@@ -3123,20 +3139,30 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if dimension == 'green':
         if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
             return False
+        # v57g: same principles/policy meta-description pattern as social claims below, applied
+        # to green wording (e.g. "sets out our approach to climate action" describes a document,
+        # it does not assert an achieved environmental outcome).
+        green_meta=['sets out our approach','set out our approach','sets out the approach','outlines our approach',
+            'describes our approach','explains our approach','covers our approach']
+        if any(n in c for n in green_meta) and not any(sig in c for sig in ASSERTION_SIGNALS):
+            return False
     if dimension == 'social':
         neutral=['backing british suppliers','supporting local suppliers','working with suppliers','become a supplier','supplier portal','list of suppliers']
         if any(n in c for n in neutral) and not any(x in c for x in ['responsible','ethical','audited','certified','traceable','due diligence','human rights','forced labour','forced labor','modern slavery','comply','compliance','standard','code']):
             return False
-        # v57f: sentences that describe what a charter, code of conduct or set of principles
-        # SAYS or is "underpinned by" are meta-descriptions of a governance document's content,
-        # not first-person operational assurance that the company actually delivers on it (e.g.
-        # "They define the principles... and are underpinned by respect for human and labour
-        # rights" describes what a values document contains, not an audited outcome). Exclude
-        # unless paired with a genuine operational assertion signal.
+        # v57f/v57g: sentences that describe what a charter, code of conduct or set of principles
+        # SAYS, "sets out" or is "underpinned by" are meta-descriptions of a governance document's
+        # content, not first-person operational assurance that the company actually delivers on
+        # it (e.g. "They define the principles... and are underpinned by respect for human and
+        # labour rights" or "The policy sets out our approach to human rights due diligence"
+        # describe what a document contains, not an audited outcome). Exclude unless paired with
+        # a genuine operational assertion signal.
         principles_meta=['define the principle','define our principle','defines the principle','defines our principle',
             'set out the principle','set out our principle','sets out the principle','sets out our principle',
             'govern our relation','governs our relation','govern the relation','governs the relation',
-            'are underpinned by','is underpinned by','these principles','our values include']
+            'are underpinned by','is underpinned by','these principles','our values include',
+            'sets out our approach','set out our approach','sets out the approach','outlines our approach',
+            'describes our approach','explains our approach','covers our approach']
         if any(n in c for n in principles_meta) and not any(sig in c for sig in ASSERTION_SIGNALS):
             return False
     return True
@@ -3179,14 +3205,20 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
     if sig in seen:
         return
     seen.add(sig)
+    # v57g: name the exact phrase that triggered detection explicitly, separate from the
+    # generic category description in `issue`. Reviewers should never have to guess which
+    # words in a longer excerpt caused the flag.
+    why_flagged=f'This passage was flagged because it contains the wording "{trig}", matching the "{typ}" pattern.'
     if dimension == 'green':
         f={'dimension':'green','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+           'matched_phrase':trig,'why_flagged':why_flagged,
            'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
            'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
            'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
         fs.append(enrich_green_finding(f,trig))
     else:
         f={'dimension':'social','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+           'matched_phrase':trig,'why_flagged':why_flagged,
            'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
            'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
         fs.append(enrich_social_finding(f,trig))
