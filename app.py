@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57g_broader_false_positive_fixes_and_source_traceability"
+APP_VERSION="hostable_v57h_claim_inventory_field_passthrough_fix"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -898,7 +898,7 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[])} for f in findings]
+    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[])} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -1936,7 +1936,7 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -3307,7 +3307,7 @@ def _recalibrated_score(material, substantiation, evidence_notes, external_score
 
 # Override excerpt extraction with a sentence-segmentation approach to avoid mixing several claims.
 def _v55_sentence_list(text, trigger, window=850):
-    raw=' '.join((text or '').replace('\r',' ').replace('\n',' . ').split())
+    raw=' '.join((text or '').replace('\r',' ').replace('\n','. ').split())
     trig=(trigger or '').lower()
     if not raw or not trig:
         return raw[:620]
@@ -3326,7 +3326,7 @@ def _v55_sentence_list(text, trigger, window=850):
 
 # Final excerpt refinement: keep only the claim sentence when it is readable.
 def _v55_sentence_list(text, trigger, window=850):
-    raw=' '.join((text or '').replace('\r',' ').replace('\n',' . ').split())
+    raw=' '.join((text or '').replace('\r',' ').replace('\n','. ').split())
     trig=(trigger or '').lower()
     if not raw or not trig:
         return raw[:620]
