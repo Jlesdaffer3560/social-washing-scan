@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57h_claim_inventory_field_passthrough_fix"
+APP_VERSION="hostable_v57i_dedup_claim_type_summary"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -2039,7 +2039,16 @@ def merge_documents(primary, discovered):
 def score_driver_details(green_score, social_score, green_fs, social_fs, green_splits, social_splits, green_components, social_components, green_ext, social_ext, sector, audience):
     def claim_names(fs):
         vals=[f.get('type','claim') for f in fs or [] if not f.get('type','').lower().startswith('no major') and not f.get('type','').lower().startswith('no material')]
-        return vals
+        # v57i: previously each retained claim *instance* was listed by type name with no
+        # de-duplication, so e.g. three separate "Aspirational or future social-performance
+        # claim" excerpts showed up as that same phrase repeated three times in a row -- noisy
+        # and harder to scan. Show each distinct claim type once, order-preserved, with a
+        # (xN) count when it occurred more than once.
+        counts={}; order=[]
+        for v in vals:
+            if v not in counts: order.append(v)
+            counts[v]=counts.get(v,0)+1
+        return [f'{v} (\u00d7{counts[v]})' if counts[v]>1 else v for v in order]
     def targeted_count(ext):
         return len(ext.get('targeted_negative_sources') or []) if ext else 0
     def band(n):
