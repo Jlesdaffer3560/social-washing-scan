@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57j_additional_false_positive_fixes"
+APP_VERSION="hostable_v57m_empco_social_scope_and_more_false_positive_fixes"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -3115,6 +3115,18 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
         return False
     if 'challenges' in c and 'opportunities' in c:
+        return False
+    # v57m: statements that describe what a law/regulation/SDG requires, or what "living wage",
+    # "fair wages" or "decent work" mean in general (citations, statistics, definitions,
+    # references to an SDG or ILO convention) are not first-person company claims, even when
+    # they happen to contain "we"/"our" only in an industry-wide or advocacy sense.
+    definitional_citation=['according to the','research shows','research suggests','studies show','study shows',
+        'data shows','is estimated at','is defined as','refers to','supports un sustainable development goal',
+        'sustainable development goal','sdg 8','ilo convention','csddd requires','csrd requires','the law requires',
+        'regulation requires','directive requires','is a fundamental part of']
+    if any(n in c for n in definitional_citation) and not any(x in c for x in ['we ensure','we guarantee','we comply','we are compliant','our compliance','we achieve','we have achieved']):
+        return False
+    if 'our industry' in c and not any(x in c for x in ['we ensure','we guarantee','we comply','our operations','our supply chain','our products','our business']):
         return False
     # v57j: bare legal-requirement triggers ("required by law", "legal requirement", "meets
     # legal requirements") fire on ANY mention of a legal obligation, not just one presented as
