@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57m_empco_social_scope_and_more_false_positive_fixes"
+APP_VERSION="hostable_v57n_source_attribution_and_toc_garbage_fixes"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -1572,14 +1572,44 @@ def assign_claim_sources(claims, page_segments, documents):
     for c in claims:
         txt=(c.get('claim_text') or '').strip().lower()
         best=None
-        if txt:
-            probe=' '.join(txt.split()[:10])
-            for seg in page_segments or []:
-                hay=(seg.get('text') or '').lower()
-                if probe and probe in hay:
-                    best=seg.get('url'); break
-        if not best and page_segments:
-            best=page_segments[0].get('url')
+        if txt and page_segments:
+            words=txt.split()
+            # v57n: the stored excerpt may have been lightly reformatted since it was extracted
+            # (context sentence prepended when it looked like a fragment, internal processing
+            # labels stripped, whitespace/newline-to-period normalisation) -- so it often no
+            # longer appears as one exact long substring of the raw crawled page text. Try
+            # several candidate windows (different lengths, and a mid-excerpt window in case a
+            # prefix was added) before giving up on an exact match.
+            candidates=[]
+            for n in (10,7,5):
+                if len(words)>=n:
+                    candidates.append(' '.join(words[:n]))
+            if len(words)>=14:
+                mid=len(words)//3
+                candidates.append(' '.join(words[mid:mid+8]))
+            for probe in candidates:
+                for seg in page_segments:
+                    hay=(seg.get('text') or '').lower()
+                    if probe and probe in hay:
+                        best=seg.get('url'); break
+                if best: break
+            if not best:
+                # No exact-substring match anywhere. Previously this silently defaulted to
+                # page_segments[0] -- i.e. whichever page happened to be fetched/listed first --
+                # which is worse than admitting the source page could not be confidently
+                # identified: it actively mis-attributes claims to an unrelated page. Fall back
+                # to scoring pages by how many distinctive words from the claim they contain, and
+                # only trust that guess if the overlap is meaningful.
+                sig_words=[w for w in words if len(w)>4][:25]
+                if sig_words:
+                    best_score=0; best_guess=None
+                    for seg in page_segments:
+                        hay=(seg.get('text') or '').lower()
+                        score=sum(1 for w in sig_words if w in hay)
+                        if score>best_score:
+                            best_score=score; best_guess=seg.get('url')
+                    if best_guess and best_score >= max(3, len(sig_words)//4):
+                        best=best_guess
         if best:
             c['source_url']=best
             c['source_label']=page_name_from_url(best)
@@ -1587,6 +1617,11 @@ def assign_claim_sources(claims, page_segments, documents):
             c['audience_group']=d.get('audience_group','mixed')
             c['audience_lens']=d.get('audience_assessment','Mixed or unclear')
             c['source_interpretation']=d.get('interpretation','')
+        else:
+            # v57n: be explicit rather than guessing wrong -- an unclear source is more honest
+            # and more useful to a reviewer than a confidently wrong one.
+            c['source_url']=''
+            c['source_label']='Reviewed material (exact source page could not be confidently matched)'
     return claims
 
 
@@ -3097,9 +3132,50 @@ def _looks_like_bare_document_title(c):
         return True
     return False
 
+def _looks_like_toc_or_index(excerpt):
+    """v57n: detect table-of-contents / section-index style text -- short heading fragments
+    strung together (e.g. "MILIEU 1 Klimaatverandering * Klimaatadaptatie ... 2 Waterbeheer *
+    Waterverbruik ... 3 Verantwoorde inkoop ...") rather than real prose. This is common in
+    PDF-extracted report front-matter/navigation and, once digits or newlines get converted to
+    periods during text normalisation, reads enough like a sentence to slip past the other
+    checks -- even though no actual claim is being made, only chapter/section titles are being
+    listed. Words like "verantwoorde inkoop" or "ethisch" appearing as a section heading in an
+    index is not the same as the company asserting them as a claim."""
+    c=(excerpt or '').strip()
+    if not c:
+        return False
+    # Bullet-separated fragments (any bullet-like character used as a list separator).
+    if sum(c.count(b) for b in ('\u2022','*','·')) >= 2:
+        return True
+    # A run of short fragments separated by isolated one/two-digit numbers immediately before a
+    # capitalised word ("... 1 Klimaatverandering ... 2 Waterbeheer ...") is characteristic of a
+    # numbered chapter/section list, not a sentence using numbers as data.
+    digit_markers=len(re.findall(r'(?:^|\s)\d{1,2}(?=\s[A-Z])', c))
+    if digit_markers >= 3:
+        return True
+    # High density of capitalised word-starts with no first/third-person sentence verbs at all is
+    # typical of a list of headings ("Better planet Better life Better health...") rather than a
+    # written claim.
+    words=c.split()
+    if len(words) >= 8:
+        cap_starts=sum(1 for w in words if w[:1].isupper())
+        if cap_starts/len(words) > 0.5 and not re.search(r'\b(we|our|is|are|has|have|will|to)\b', c.lower()):
+            return True
+    # v57n: very short excerpts made up of two or more bare, verb-less fragments (e.g.
+    # "Responsible sourcing . Environment.") are typically adjacent section headings glued
+    # together by newline-to-period normalisation, not a sentence -- catch this even below the
+    # 8-word threshold above, which needs more words to safely judge capitalisation density.
+    if len(c) < 70:
+        frags=[f.strip() for f in re.split(r'[.!?]', c) if f.strip()]
+        if len(frags) >= 2 and all(len(f.split()) <= 4 for f in frags):
+            return True
+    return False
+
 def _v55_claim_context_ok(excerpt, trigger, dimension):
     c=(excerpt or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 25:
+        return False
+    if _looks_like_toc_or_index(excerpt):
         return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
@@ -3266,6 +3342,14 @@ def enrich_social_finding(f, trigger=''):
 
 def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score):
     excerpt=_v55_sentence_list(text, trig)
+    # v57n: "VISUAL CLAIM CUE: " is an internal marker prepended during HTML parsing to feed
+    # image alt-text / aria-label / CSS-class values (e.g. a leaf icon's alt text) into claim
+    # detection. It is a useful detection signal but was leaking verbatim into the "exact claim
+    # passage" shown to reviewers, reading like a raw debug artifact rather than quoted page
+    # content. Strip it from the displayed excerpt; the underlying detected wording is unaffected.
+    if 'VISUAL CLAIM CUE: ' in excerpt:
+        excerpt=re.sub(r'\s*VISUAL CLAIM CUE:\s*', ' ', excerpt).strip()
+        excerpt=re.sub(r'\s+', ' ', excerpt)
     if not _v55_claim_context_ok(excerpt, trig, dimension):
         return
     sig=(typ, excerpt[:160].lower())
@@ -3408,10 +3492,18 @@ def _v55_sentence_list(text, trigger, window=850):
             # opening, a leading parenthesis, or a dangling relative clause / conjunction with no
             # subject) and pull in the previous sentence so the reviewer can see the actual claim.
             starts_like_fragment=bool(re.match(r'^[a-z(]', out)) or bool(re.match(r'^(which|that|who|whom|and|but|or)\b', out, re.IGNORECASE))
-            if starts_like_fragment and idx>0:
+            # v57n: only pull in the previous "sentence" if it actually looks like prose context
+            # (e.g. "our Best Available Techniques") -- not if it is itself PDF title/index
+            # clutter such as "33Puratos 2025 Sustainability Report GRI Introduction Appendix"
+            # glued together by page-number and heading concatenation. Prepending that kind of
+            # text made the excerpt harder to read, not clearer.
+            if starts_like_fragment and idx>0 and not _looks_like_toc_or_index(parts[idx-1]):
                 out=parts[idx-1]+' '+out
             if len(out) < 25 and idx+1 < len(parts):
                 out=out+' '+parts[idx+1]
+            # v57n: joining sentence fragments can leave a doubled sentence-ending punctuation
+            # mark (e.g. "...conventional practices.." or "...forward..") -- collapse to one.
+            out=re.sub(r'([.!?])\1+', r'\1', out)
             return out[:620]
     i=raw.lower().find(trig)
     if i < 0:
