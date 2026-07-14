@@ -46,7 +46,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v57q_external_source_status_severity_dedup"
+APP_VERSION="hostable_v57w_recursive_related_domain_source_attribution_fix"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -1395,20 +1395,50 @@ def classify_page_audience(url, text=''):
     }
 
 def extract_page_segments(full_text, pages):
-    """Return approximate text segment per crawled page so audience and claim-source links can be more precise."""
+    """Return approximate text segment per crawled page so audience and claim-source links can be
+    more precise.
+    v57v: the crawler can emit three different markers when assembling the combined text --
+    "PAGE: url" for a regular sub-page, "REPORT (PDF): url" for a PDF report, and
+    "RELATED COMPANY SITE: domain" for a related/group domain's own crawl (itself containing
+    further nested "PAGE: url" markers, since crawl_with_related_sites() appends that whole
+    domain's own crawl() output, unmodified, after this label).
+    v57w: the v57v version recognised the RELATED COMPANY SITE marker but did not re-split its
+    body for the nested PAGE:/REPORT (PDF): markers inside it -- so an entire related domain's
+    worth of distinct pages (e.g. every sustainability sub-page of a group's main corporate
+    site) collapsed into one segment tagged with just the bare related-domain label. Claims
+    actually found on one of those inner pages then failed exact-text source-matching (their
+    text lived deep inside one merged blob, not at a page-level segment) and fell through to the
+    token-overlap fallback, which could land on an unrelated primary-domain page purely by
+    incidental word overlap -- exactly the "every claim attributed to the same wrong article"
+    pattern this was meant to fix. Recurse into the RELATED COMPANY SITE body so its own pages
+    become first-class segments too."""
     pages=pages or []
     if not pages:
         return []
     text=full_text or ''
-    segments=[]
-    # First page is text before first PAGE marker.
-    first=text.split('\n\nPAGE: ',1)[0]
-    segments.append({'url':pages[0], 'text':first})
-    for part in text.split('\n\nPAGE: ')[1:]:
-        line, _, rest=part.partition('\n')
-        url=line.strip()
-        if url:
-            segments.append({'url':url, 'text':rest})
+    parts=re.split(r'\n\n(PAGE|REPORT \(PDF\)|RELATED COMPANY SITE): ', text)
+    segments=[{'url':pages[0] if pages else '', 'text':parts[0]}]
+    i=1
+    while i < len(parts)-1:
+        marker_type=parts[i]
+        rest=parts[i+1]
+        line, _, body = rest.partition('\n')
+        label=line.strip()
+        if marker_type == 'RELATED COMPANY SITE':
+            nested=re.split(r'\n\n(PAGE|REPORT \(PDF\)): ', body)
+            if label:
+                segments.append({'url':label, 'text':nested[0]})
+            j=1
+            while j < len(nested)-1:
+                nrest=nested[j+1]
+                nline, _, nbody = nrest.partition('\n')
+                nurl=nline.strip()
+                if nurl:
+                    segments.append({'url':nurl, 'text':nbody})
+                j+=2
+        elif label:
+            segments.append({'url':label, 'text':body})
+        i+=2
     # Ensure every page has a segment, even when parsing failed.
     known={x['url'] for x in segments}
     for p in pages:
@@ -2287,8 +2317,14 @@ def analyse_url_v27(raw):
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
-        c.setdefault('source_url', url)
-        c.setdefault('source_label', 'Reviewed website / document')
+        # v57v: .setdefault() only fills in a key that is entirely absent -- it does not replace
+        # an existing falsy value. assign_claim_sources() can legitimately set source_url to ''
+        # when no page matched confidently, so that empty string was silently surviving instead
+        # of falling back to the scanned URL as intended. Explicitly check for falsy values too.
+        if not c.get('source_url'):
+            c['source_url']=url
+        if not c.get('source_label'):
+            c['source_label']=page_name_from_url(url) if url else 'Reviewed website / document'
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
     methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
