@@ -58,6 +58,17 @@ def esc(s):
     return _esc(str(s if s is not None else ''), quote=False)
 
 
+def smart_truncate(text, max_len):
+    """v57u: naive character-slicing (text[:150]) cuts mid-word with no indication that anything
+    was cut -- a real report showed 'migrant or seasonal l' where 'labour' was chopped in half.
+    Trim at the last full word before the limit and add an ellipsis so truncation is visible."""
+    text = str(text or '')
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len].rsplit(' ', 1)[0]
+    return (cut or text[:max_len]).rstrip('.,;: ') + '…'
+
+
 def risk_color(risk):
     r = (risk or '').lower()
     if 'very' in r or 'high' in r:
@@ -152,14 +163,21 @@ def header_block(data, page_title, page_sub, company_name=''):
         sub = Paragraph(esc(page_sub), STY['sub'])
     left = [kicker, title, sub]
 
-    src = (data.get('source_label') or data.get('original_url') or '')[:70]
+    src = (data.get('source_label') or data.get('original_url') or '')[:60]
     date = (data.get('analysis_date') or '')[:10]
+    assessment_type = 'Internal document scan' if data.get('document_type') or 'document' in str(data.get('assessment_type', '')).lower() else 'Website scan'
+    pages = data.get('report', {}).get('pages_reviewed') or []
+    domains = {re.sub(r'^https?://(www\.)?', '', p).split('/')[0] for p in pages if p}
+    coverage_line = f'{len(pages)} page(s) across {len(domains)} domain(s)' if pages else 'Coverage not available'
+    confidence_level = (data.get('confidence') or {}).get('level', '—')
     right = [Paragraph('Reviewed source', STY['meta_b']),
-             Paragraph(esc(src) + ('…' if len(data.get('source_label') or '') > 70 else ''), STY['meta']),
-             Paragraph(esc(date), STY['meta'])]
+             Paragraph(esc(src) + ('…' if len(data.get('source_label') or '') > 60 else ''), STY['meta']),
+             Paragraph(esc(date) + '  \u00b7  ' + esc(assessment_type), STY['meta']),
+             Paragraph(esc(coverage_line), STY['meta']),
+             Paragraph('Confidence: ' + esc(confidence_level), ParagraphStyle('cf_h', parent=STY['meta_b'], textColor=NAVY))]
 
     left_flow = left
-    tbl = Table([[left_flow, right]], colWidths=[(PAGE_W - 2 * MARGIN) * 0.66, (PAGE_W - 2 * MARGIN) * 0.34])
+    tbl = Table([[left_flow, right]], colWidths=[(PAGE_W - 2 * MARGIN) * 0.62, (PAGE_W - 2 * MARGIN) * 0.38])
     tbl.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
@@ -187,6 +205,43 @@ def score_box(label, num, risk, width=None):
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fbfcfe')),
     ]))
     return inner
+
+
+def executive_conclusion_block(data, who):
+    """v57t: given the top billing this text receives in the reviewer's own template ('Executive
+    conclusion' is the first thing on the page, ahead of the score grid), it should read like a
+    headline -- larger type, a colour accent tied to the overall risk level, generous whitespace
+    -- rather than another small-print box that looks identical to every other card on the page."""
+    overall_risk = data.get('global_risk', data.get('overall_risk', ''))
+    overall_score = data.get('global_score', data.get('overall_score', '\u2014'))
+    color = risk_color(overall_risk)
+    r = (overall_risk or '').lower()
+    color_hex = '#a43c3c' if ('very' in r or 'high' in r) else ('#9b6a17' if ('elev' in r or 'medium' in r or 'mod' in r) else '#276749')
+    narrative = (f'{esc(who)} scores <b>{esc(str(overall_score))}/100</b> overall '
+                 f'(<font color="{color_hex}"><b>{esc(overall_risk)}</b></font> claim-risk) on this scan, '
+                 f'covering EmpCo green/social claim wording and EU Forced Labour Regulation supply-chain wording. '
+                 f'See the risk drivers below and the entity-context note in the score summary for what mainly drove this result.')
+    body = [Paragraph(narrative, ParagraphStyle('exec', parent=STY['body'], fontSize=9.4, leading=13, textColor=INK))]
+    if data.get('data_reliability_warning'):
+        cd = data.get('crawl_diagnostics') or {}
+        detail = f' ({cd.get("pages_failed", 0)}/{cd.get("pages_attempted", 0)} page fetches failed.)' if cd.get('pages_attempted') else ''
+        body.append(Spacer(1, 5))
+        body.append(Paragraph(f'<b>&#9888; Data reliability:</b> {esc(data.get("data_reliability_warning"))}{esc(detail)}',
+                               ParagraphStyle('rw2', parent=STY['small'], textColor=AMBER, fontSize=8.2)))
+    if data.get('fallback_note'):
+        body.append(Spacer(1, 3))
+        body.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',
+                               ParagraphStyle('rn2', parent=STY['small'], textColor=AMBER, fontSize=8.2)))
+    inner = Table([[body]], colWidths=[PAGE_W - 2 * MARGIN - 16])
+    inner.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                                ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    wrap = Table([[inner]], colWidths=[PAGE_W - 2 * MARGIN])
+    wrap.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 12), ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LINEBEFORE', (0, 0), (0, 0), 3.5, color), ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fbfcfe')),
+    ]))
+    return wrap
 
 
 def scores_row(data):
@@ -374,15 +429,19 @@ def entity_context_and_confidence_row(data):
     conf_level = conf.get('level', '—')
     eci_color = {'Low': GREEN, 'Elevated': AMBER, 'High': DANGER, 'Very high': colors.HexColor('#7a1e1e')}.get(eci_level, MUTED)
     conf_color = {'High': GREEN, 'Medium': AMBER, 'Low': DANGER, 'Insufficient coverage': colors.HexColor('#7a1e1e')}.get(conf_level, MUTED)
+    eci_note = smart_truncate(eci.get('note') or 'Not assessed.', 210)
+    conf_reasons = conf.get('reasons') or []
+    conf_text = conf.get('reliability_warning') or (', '.join(conf_reasons) + '.' if conf_reasons else 'Standard scan coverage.')
+    conf_note = smart_truncate(conf_text, 210)
     eci_box = Table([
         [Paragraph('ENTITY CONTEXT', STY['score_lbl'])],
         [Paragraph(esc(eci_level), ParagraphStyle('ec', parent=STY['score_num'], fontSize=15, textColor=eci_color))],
-        [Paragraph(esc((eci.get('note') or 'Not assessed.')[:150]), STY['small'])],
+        [Paragraph(esc(eci_note), ParagraphStyle('ecn', parent=STY['small'], leading=9.6))],
     ], colWidths=[(PAGE_W - 2 * MARGIN - 8) / 2])
     conf_box = Table([
         [Paragraph('CONFIDENCE', STY['score_lbl'])],
         [Paragraph(esc(conf_level), ParagraphStyle('cf', parent=STY['score_num'], fontSize=15, textColor=conf_color))],
-        [Paragraph(esc((conf.get('reliability_warning') or '; '.join(conf.get('reasons') or []) or 'Standard scan coverage.')[:150]), STY['small'])],
+        [Paragraph(esc(conf_note), ParagraphStyle('cfn', parent=STY['small'], leading=9.6))],
     ], colWidths=[(PAGE_W - 2 * MARGIN - 8) / 2])
     for box, c in ((eci_box, eci_color), (conf_box, conf_color)):
         box.setStyle(TableStyle([
@@ -399,28 +458,45 @@ def entity_context_and_confidence_row(data):
 
 
 def combined_top_claims(data, n=3):
-    """v57r: rank ALL retained claims (green + social together) by claim_score and return the
-    top n -- the two-pager should surface the company's single most material issues, not a fixed
-    3-green-plus-3-social split regardless of relative severity."""
+    """v57r/v57u: rank ALL retained claims (green + social together) by claim_score and return
+    the top n -- the two-pager should surface the company's most material *distinct* issues, not
+    a fixed 3-green-plus-3-social split, and not multiple instances of the same claim type (a
+    real report showed "Climate-neutrality or offsetting claim" twice in the top-3, which reads
+    as repetitive rather than showing the breadth of concerns). Keep only the highest-scoring
+    instance per claim type before ranking."""
     rows = [c for c in (data.get('claim_inventory') or []) if is_material(c)]
     rows = _merge_duplicate_claims(rows)
     rows.sort(key=lambda c: c.get('claim_score', 0), reverse=True)
-    return rows[:n]
+    seen_types = set()
+    distinct = []
+    for c in rows:
+        t = c.get('claim_type') or c.get('type') or ''
+        if t in seen_types:
+            continue
+        seen_types.add(t)
+        distinct.append(c)
+    return distinct[:n]
 
 
 def top_risk_drivers_flow(data, n=3):
-    """v57r: a short, scannable 'top N risk drivers' list for the assessment-overview page,
-    distinct from (and above) the detailed priority-claim cards on page 2."""
+    """v57r/v57t: a short, scannable 'top N risk drivers' list for the assessment-overview page,
+    distinct from (and above) the detailed priority-claim cards on page 2. Numbered and sized to
+    read as a genuine headline list, matching the reviewer's own example ('1. Generic
+    environmental wording / 2. Evidence available only in a separate report / ...')."""
     claims = combined_top_claims(data, n)
     if not claims:
         return [Paragraph('<i>No material risk driver was identified in this scan.</i>', STY['small'])]
     items = []
-    for c in claims:
+    for i, c in enumerate(claims, 1):
         typ = esc(c.get('claim_type') or c.get('type') or 'Claim signal')
         risk = c.get('risk_level') or c.get('risk') or ''
-        src = esc((c.get('source_label') or c.get('source_url') or 'reviewed material')[:60])
-        items.append(f'&bull;&nbsp; <b>{typ}</b> <font color="#8b9baa">({esc(risk)} &middot; {src})</font>')
-    return [Paragraph('<br/>'.join(items), ParagraphStyle('trd', parent=STY['small'], leading=12))]
+        src = esc((c.get('source_label') or c.get('source_url') or 'reviewed material')[:55])
+        rl = risk.lower()
+        num_color = '#a43c3c' if ('very' in rl or 'high' in rl) else ('#9b6a17' if ('elev' in rl or 'medium' in rl or 'mod' in rl) else '#276749')
+        items.append(f'<font color="{num_color}"><b>{i}.</b></font>&nbsp; <b>{typ}</b> '
+                      f'<font size=7.4 color="#8b9baa">({esc(risk)} &middot; {src})</font>')
+    joined = '<br/>'.join(items)
+    return [Paragraph(joined, ParagraphStyle('trd', parent=STY['body'], fontSize=8.6, leading=13.5))]
 
 
 def priority_claim_card(c):
@@ -433,16 +509,26 @@ def priority_claim_card(c):
     text = c.get('claim_text') or c.get('claim') or ''
     text = re.sub(r'\s+', ' ', str(text)).strip()
     matched_phrase = str(c.get('matched_phrase') or '').strip()
-    if len(text) > 160:
+    if len(text) > 260:
         idx = text.lower().find(matched_phrase.lower()) if matched_phrase else -1
         if idx >= 0:
-            start = max(0, idx - 55); end = min(len(text), idx + len(matched_phrase) + 70)
+            start = max(0, idx - 90); end = min(len(text), idx + len(matched_phrase) + 110)
+            # v57u: snap the start to the nearest sentence/clause boundary within the window
+            # instead of a hard character cut -- avoids re-fragmenting an excerpt that the
+            # backend already assembled as a clean, complete sentence (e.g. cutting mid-way
+            # through "...in our value chain, particularly through Cacao-Trace..." because the
+            # matched phrase happened to sit further into a longer, already-clean sentence).
+            if start > 0:
+                window = text[start:idx]
+                boundary = max(window.rfind('. '), window.rfind('; '))
+                if boundary >= 0:
+                    start = start + boundary + 2
             snippet = text[start:end]
             if start > 0: snippet = '…' + snippet.lstrip()
             if end < len(text): snippet = snippet.rstrip() + '…'
             text = snippet
         else:
-            text = text[:157].rsplit(' ', 1)[0] + '…'
+            text = smart_truncate(text, 257)
     terms = c.get('problematic_terms') or []
     if matched_phrase and matched_phrase not in terms:
         terms = [matched_phrase] + list(terms)
@@ -464,18 +550,33 @@ def priority_claim_card(c):
     rewrite = re.sub(r'\s+', ' ', rewrite)
     if len(rewrite) > 190: rewrite = rewrite[:187].rsplit(' ', 1)[0] + '…'
 
-    head = Table([[Paragraph(esc(typ), STY['small_b']),
-                   Paragraph(esc(risk), ParagraphStyle('rp2', parent=STY['small_b'], textColor=risk_color(risk), alignment=TA_RIGHT))]],
+    head = Table([[Paragraph(esc(typ), ParagraphStyle('pct', parent=STY['small_b'], fontSize=9.6, textColor=NAVY)),
+                   Paragraph(esc(risk), ParagraphStyle('rp2', parent=STY['small_b'], fontSize=9.6, textColor=risk_color(risk), alignment=TA_RIGHT))]],
                  colWidths=[(PAGE_W - 2 * MARGIN - 40) * 0.7, (PAGE_W - 2 * MARGIN - 40) * 0.3])
     head.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-                               ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+                               ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 2)]))
     rows = [head, Paragraph(f'<font color="#8b9baa">Source:</font> {esc(src)}', STY['small'])]
+    rows.append(Spacer(1, 2))
     rows.append(Paragraph(highlight(text, terms), STY['quote']))
-    if why:
-        rows.append(Paragraph(f'<font color="#174e78"><b>Why it matters:</b></font> {esc(why)}', STY['small']))
-    rows.append(Paragraph(f'<font color="#6b4e00"><b>Evidence gap:</b></font> {esc(gap)}', STY['small']))
+    rows.append(Spacer(1, 3))
+
+    # v57t: "Why it matters" and "Evidence gap" side by side instead of stacked -- two shorter
+    # facts read faster as a pair than as three consecutive full-width paragraphs, and it keeps
+    # the card noticeably shorter.
+    why_p = Paragraph(f'<font color="#174e78"><b>WHY IT MATTERS</b></font><br/>{esc(why)}', ParagraphStyle('why', parent=STY['small'], leading=10.5)) if why else Paragraph('', STY['small'])
+    gap_p = Paragraph(f'<font color="#6b4e00"><b>EVIDENCE GAP</b></font><br/>{esc(gap)}', ParagraphStyle('gap', parent=STY['small'], leading=10.5))
+    half_w = (PAGE_W - 2 * MARGIN - 20 - 10) / 2
+    wg = Table([[why_p, gap_p]], colWidths=[half_w, half_w])
+    wg.setStyle(TableStyle([('LEFTPADDING', (0, 0), (0, -1), 0), ('RIGHTPADDING', (0, 0), (0, -1), 10),
+                             ('LEFTPADDING', (1, 0), (1, -1), 10), ('RIGHTPADDING', (1, 0), (1, -1), 0),
+                             ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                             ('LINEBEFORE', (1, 0), (1, -1), 0.5, LINE), ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+    rows.append(wg)
+
     if rewrite:
-        rows.append(Paragraph(f'<font color="#276749"><b>Recommended wording:</b></font> {esc(rewrite)}', STY['small']))
+        rows.append(Spacer(1, 2))
+        rows.append(Paragraph(f'<font color="#276749"><b>RECOMMENDED WORDING</b></font> {esc(rewrite)}',
+                               ParagraphStyle('rw3', parent=STY['small'], leading=10, textColor=INK)))
     accent = GREEN if str(c.get('dimension', '')).lower() == 'green' else AMBER
     inner = Table([[r] for r in rows], colWidths=[PAGE_W - 2 * MARGIN - 20])
     inner.setStyle(TableStyle([
@@ -512,29 +613,19 @@ def build_company_report_pdf(data):
     page1 += header_block(data, 'Assessment overview',
                            'EmpCo (Directive (EU) 2024/825) · EU Forced Labour Regulation (EU) 2024/3015',
                            company_name)
+
+    # v57t: Executive conclusion leads the page (matches the reviewer's template order: header ->
+    # conclusion -> score block -> top risk drivers), styled as a headline rather than another
+    # small boxed card, so a reader gets the "so what" before the supporting numbers.
+    page1.append(executive_conclusion_block(data, who))
+    page1.append(Spacer(1, 5))
+
+    page1.append(Paragraph('SCORE SUMMARY', ParagraphStyle('ss_lbl', parent=STY['score_lbl'], fontSize=8.5, textColor=NAVY, spaceAfter=4)))
     page1.append(scores_row(data))
     page1.append(Spacer(1, 4))
     page1.append(entity_context_and_confidence_row(data))
-    page1.append(Spacer(1, 7))
-
-    overall_risk = data.get('global_risk', data.get('overall_risk', ''))
-    narrative = (f'<b>{esc(who)}</b> scores <b>{esc(str(data.get("global_score", data.get("overall_score", "—"))))}/100</b> '
-                 f'overall (<b>{esc(overall_risk)}</b> claim-risk) on this scan, covering EmpCo green/social claim wording '
-                 f'and EU Forced Labour Regulation supply-chain wording. See the risk drivers and entity-context note below '
-                 f'for what mainly drove this result.')
-    summary_flow = [Paragraph(narrative, STY['body'])]
-    if data.get('data_reliability_warning'):
-        cd = data.get('crawl_diagnostics') or {}
-        detail = f' ({cd.get("pages_failed", 0)}/{cd.get("pages_attempted", 0)} page fetches failed.)' if cd.get('pages_attempted') else ''
-        summary_flow.append(Spacer(1, 4))
-        summary_flow.append(Paragraph(f'<b>&#9888; Data reliability warning:</b> {esc(data.get("data_reliability_warning"))}{esc(detail)}',
-                                       ParagraphStyle('rw', parent=STY['small'], textColor=AMBER)))
-    if data.get('fallback_note'):
-        summary_flow.append(Spacer(1, 4))
-        summary_flow.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',
-                                       ParagraphStyle('rn', parent=STY['small'], textColor=AMBER)))
-    page1.append(section_card('Executive conclusion', summary_flow))
     page1.append(Spacer(1, 5))
+
     page1.append(section_card('Top risk drivers', top_risk_drivers_flow(data, 3)))
 
     # ---------- PAGE 2: Findings and actions ----------
@@ -556,36 +647,42 @@ def build_company_report_pdf(data):
         page2.append(Paragraph('<i>No material problematic claim signal was retained in this scan.</i>', STY['small']))
     page2.append(Spacer(1, 4))
 
+    HALF_W2 = (PAGE_W - 2 * MARGIN - 8) / 2
     if ext:
         ext_flow = []
         for x in ext:
             title_line = f'<b>{esc(x.get("title") or "External signal")}</b>'
-            if x.get('status'): title_line += f'  <font color="#8b9baa">&middot; {esc(x.get("status"))}</font>'
+            if x.get('status'): title_line += f'  <font color="#8b9baa" size=7.2>&middot; {esc(x.get("status"))}</font>'
             ext_flow.append(Paragraph(title_line, STY['small_b']))
             if x.get('url'):
-                ext_flow.append(Paragraph(f'<font color="#174e78">{esc(x.get("url", "")[:100])}</font>', STY['small']))
-            ext_flow.append(Paragraph(esc((x.get('content') or '')[:180]), STY['small']))
+                ext_flow.append(Paragraph(f'<font color="#174e78" size=7.2>{esc(x.get("url", "")[:70])}</font>', STY['small']))
+            ext_flow.append(Paragraph(esc((x.get('content') or '')[:130]), STY['small']))
             if x.get('related_articles_count', 1) > 1:
-                ext_flow.append(Paragraph(f'<font color="#8b9baa">+{x.get("related_articles_count")-1} related article(s) on the same topic.</font>', STY['small']))
-            ext_flow.append(Spacer(1, 4))
+                ext_flow.append(Paragraph(f'<font color="#8b9baa" size=7.2>+{x.get("related_articles_count")-1} related article(s).</font>', STY['small']))
+            ext_flow.append(Spacer(1, 3))
     else:
-        ext_flow = [Paragraph(f'<i>No external public-source signal retained for {esc(who)}, or external search not configured for this scan (see Confidence, page 1).</i>', STY['small'])]
-    page2.append(section_card('External signals (verified, max 2 shown)', ext_flow))
-    page2.append(Spacer(1, 4))
+        ext_flow = [Paragraph(f'<i>No external public-source signal retained for {esc(who)}, or external search not configured (see Confidence, page 1).</i>', STY['small'])]
 
     if actions:
         act_flow = []
         for i, a in enumerate(actions, 1):
             act_flow.append(Paragraph(f'<b>{i}. {esc(a.get("title") or "")}</b>', STY['small_b']))
             txt = re.sub(r'\s+', ' ', str(a.get('action') or '')).strip()
-            if len(txt) > 175:
-                txt = txt[:172].rsplit(' ', 1)[0] + '…'
+            if len(txt) > 130:
+                txt = txt[:127].rsplit(' ', 1)[0] + '…'
             act_flow.append(Paragraph(esc(txt), STY['small']))
-            act_flow.append(Spacer(1, 2))
+            act_flow.append(Spacer(1, 3))
     else:
         act_flow = [Paragraph('<b>1. Review retained claim signals</b>', STY['small_b']),
                     Paragraph('Attach evidence, scope and approval records to each claim before reuse.', STY['small'])]
-    page2.append(section_card(f'Priority actions for {who}' if who != 'This company' else 'Priority actions', act_flow))
+
+    bottom_row = Table([[section_card('External signals (max 2)', ext_flow, HALF_W2),
+                          section_card(f'Priority actions for {who}' if who != 'This company' else 'Priority actions', act_flow, HALF_W2)]],
+                        colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
+    bottom_row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                                     ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                                     ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+    page2.append(bottom_row)
     page2.append(Spacer(1, 4))
 
     # v57r: reviewer feedback -- the two-pager is a management decision document, not the
