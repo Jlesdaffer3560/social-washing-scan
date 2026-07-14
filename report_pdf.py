@@ -499,6 +499,41 @@ def top_risk_drivers_flow(data, n=3):
     return [Paragraph(joined, ParagraphStyle('trd', parent=STY['body'], fontSize=8.6, leading=13.5))]
 
 
+def select_display_excerpt(text, matched_phrase, max_len=320):
+    """v57x: replace character-window math entirely with sentence-based selection. Every
+    previous version of this logic (a 160-char window, then a 90-char lookback, then a 260-char
+    lookback) was still fundamentally "find a boundary within N characters of the match" -- which
+    keeps failing for some real sentence, just a longer one each time, because the underlying
+    approach is inherently fragile. Instead: split into sentences first (a guaranteed clean unit,
+    already used by the backend's own excerpt logic), find the sentence containing the matched
+    phrase, and show that complete sentence (plus the previous one for context if it is short).
+    Character-window math is only used as a last resort *inside* one already-clean sentence, for
+    the rare case where a single sentence alone exceeds max_len -- never spanning a sentence
+    boundary, so a mid-sentence cut can no longer happen at the top-level selection."""
+    text = (text or '').strip()
+    if len(text) <= max_len:
+        return text
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    mp = (matched_phrase or '').lower()
+    if mp:
+        for i, s in enumerate(sentences):
+            if mp in s.lower():
+                out = s
+                if len(out) < 90 and i > 0:
+                    out = sentences[i - 1] + ' ' + out
+                if len(out) <= max_len:
+                    return out
+                # A single sentence longer than max_len: window strictly within this one
+                # sentence, so the result still starts and ends inside a clean sentence unit.
+                idx = out.lower().find(mp)
+                start = max(0, idx - 90); end = min(len(out), idx + len(mp) + 110)
+                snippet = out[start:end]
+                if start > 0: snippet = '…' + snippet.lstrip()
+                if end < len(out): snippet = snippet.rstrip() + '…'
+                return snippet
+    return smart_truncate(text, max_len)
+
+
 def priority_claim_card(c):
     """v57r: the five-field structure recommended for the two-pager's priority claims -- exact
     claim, source, why it matters, evidence gap, and recommended wording -- shown explicitly
@@ -509,26 +544,7 @@ def priority_claim_card(c):
     text = c.get('claim_text') or c.get('claim') or ''
     text = re.sub(r'\s+', ' ', str(text)).strip()
     matched_phrase = str(c.get('matched_phrase') or '').strip()
-    if len(text) > 260:
-        idx = text.lower().find(matched_phrase.lower()) if matched_phrase else -1
-        if idx >= 0:
-            start = max(0, idx - 90); end = min(len(text), idx + len(matched_phrase) + 110)
-            # v57u: snap the start to the nearest sentence/clause boundary within the window
-            # instead of a hard character cut -- avoids re-fragmenting an excerpt that the
-            # backend already assembled as a clean, complete sentence (e.g. cutting mid-way
-            # through "...in our value chain, particularly through Cacao-Trace..." because the
-            # matched phrase happened to sit further into a longer, already-clean sentence).
-            if start > 0:
-                window = text[start:idx]
-                boundary = max(window.rfind('. '), window.rfind('; '))
-                if boundary >= 0:
-                    start = start + boundary + 2
-            snippet = text[start:end]
-            if start > 0: snippet = '…' + snippet.lstrip()
-            if end < len(text): snippet = snippet.rstrip() + '…'
-            text = snippet
-        else:
-            text = smart_truncate(text, 257)
+    text = select_display_excerpt(text, matched_phrase, 320)
     terms = c.get('problematic_terms') or []
     if matched_phrase and matched_phrase not in terms:
         terms = [matched_phrase] + list(terms)
