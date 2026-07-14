@@ -169,13 +169,15 @@ def header_block(data, page_title, page_sub, company_name=''):
     return [tbl, rule]
 
 
-def score_box(label, num, risk):
+def score_box(label, num, risk, width=None):
+    if width is None:
+        width = (PAGE_W - 2 * MARGIN - 18) / 4
     color = risk_color(risk)
     inner = Table([
         [Paragraph(label.upper(), STY['score_lbl'])],
         [Paragraph(f'{num if num is not None else "—"}<font size=8 color="#8b9baa">/100</font>', STY['score_num'])],
         [Paragraph(esc(risk or '—'), ParagraphStyle('r', parent=STY['score_risk'], textColor=color))],
-    ], colWidths=[(PAGE_W - 2 * MARGIN - 18) / 4])
+    ], colWidths=[width])
     inner.setStyle(TableStyle([
         ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
         ('TOPPADDING', (0, 0), (-1, 0), 6), ('BOTTOMPADDING', (0, -1), (-1, -1), 6),
@@ -191,26 +193,12 @@ def scores_row(data):
     gs, grs = data.get('global_score', data.get('overall_score')), data.get('global_risk', data.get('overall_risk'))
     gns, gnrs = data.get('green_score'), data.get('green_risk')
     ss, srs = data.get('social_score'), data.get('social_risk')
-    boxes = [score_box('Global risk score', gs, grs),
-             score_box('Green risk score', gns, gnrs),
-             score_box('Social risk score', ss, srs),
-             score_box('Overall risk level', None, grs)]
-    # Overall-risk box shows the risk word large instead of a second number.
-    boxes[3] = Table([
-        [Paragraph('OVERALL RISK LEVEL', STY['score_lbl'])],
-        [Paragraph(esc(grs or '—'), ParagraphStyle('ov', parent=STY['score_num'], fontSize=15, textColor=risk_color(grs)))],
-        [Paragraph('Combined green + social', STY['small'])],
-    ], colWidths=[(PAGE_W - 2 * MARGIN - 18) / 4])
-    boxes[3].setStyle(TableStyle([
-        ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ('TOPPADDING', (0, 0), (-1, 0), 7), ('BOTTOMPADDING', (0, -1), (-1, -1), 7),
-        ('TOPPADDING', (0, 1), (-1, 1), 1), ('BOTTOMPADDING', (0, 1), (-1, 1), 3),
-        ('LINEBEFORE', (0, 0), (0, -1), 3, risk_color(grs)),
-        ('BOX', (0, 0), (-1, -1), 0.6, LINE),
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fff8f8') if risk_color(grs) == DANGER else colors.HexColor('#fbfcfe')),
-    ]))
-    row = Table([boxes], colWidths=[(PAGE_W - 2 * MARGIN) / 4] * 4)
-    row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+    box_w = (PAGE_W - 2 * MARGIN - 8) / 3
+    boxes = [score_box('Global claims risk', gs, grs, box_w),
+             score_box('Green claims risk', gns, gnrs, box_w),
+             score_box('Social claims risk', ss, srs, box_w)]
+    row = Table([boxes], colWidths=[(PAGE_W - 2 * MARGIN) / 3] * 3)
+    row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
                               ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
     return row
 
@@ -375,50 +363,166 @@ def footer(canvas, doc, right_text):
     canvas.restoreState()
 
 
+def entity_context_and_confidence_row(data):
+    """v57r: Entity context and Confidence shown as their own boxes, separate from the Global/
+    Green/Social claim-risk scores above -- an entity-level signal (sector exposure, a retained
+    controversy) is background, not evidence that a specific claim is misleading, and confidence
+    tells the reader how much weight the scores above can bear."""
+    eci = data.get('entity_context_indicator') or {}
+    conf = data.get('confidence') or {}
+    eci_level = eci.get('level', '—')
+    conf_level = conf.get('level', '—')
+    eci_color = {'Low': GREEN, 'Elevated': AMBER, 'High': DANGER, 'Very high': colors.HexColor('#7a1e1e')}.get(eci_level, MUTED)
+    conf_color = {'High': GREEN, 'Medium': AMBER, 'Low': DANGER, 'Insufficient coverage': colors.HexColor('#7a1e1e')}.get(conf_level, MUTED)
+    eci_box = Table([
+        [Paragraph('ENTITY CONTEXT', STY['score_lbl'])],
+        [Paragraph(esc(eci_level), ParagraphStyle('ec', parent=STY['score_num'], fontSize=15, textColor=eci_color))],
+        [Paragraph(esc((eci.get('note') or 'Not assessed.')[:150]), STY['small'])],
+    ], colWidths=[(PAGE_W - 2 * MARGIN - 8) / 2])
+    conf_box = Table([
+        [Paragraph('CONFIDENCE', STY['score_lbl'])],
+        [Paragraph(esc(conf_level), ParagraphStyle('cf', parent=STY['score_num'], fontSize=15, textColor=conf_color))],
+        [Paragraph(esc((conf.get('reliability_warning') or '; '.join(conf.get('reasons') or []) or 'Standard scan coverage.')[:150]), STY['small'])],
+    ], colWidths=[(PAGE_W - 2 * MARGIN - 8) / 2])
+    for box, c in ((eci_box, eci_color), (conf_box, conf_color)):
+        box.setStyle(TableStyle([
+            ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, 0), 6), ('BOTTOMPADDING', (0, -1), (-1, -1), 6),
+            ('TOPPADDING', (0, 1), (-1, 1), 1), ('BOTTOMPADDING', (0, 1), (-1, 1), 1),
+            ('LINEBEFORE', (0, 0), (0, -1), 3, c), ('BOX', (0, 0), (-1, -1), 0.6, LINE),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fbfcfe')),
+        ]))
+    row = Table([[eci_box, conf_box]], colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
+    row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                              ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    return row
+
+
+def combined_top_claims(data, n=3):
+    """v57r: rank ALL retained claims (green + social together) by claim_score and return the
+    top n -- the two-pager should surface the company's single most material issues, not a fixed
+    3-green-plus-3-social split regardless of relative severity."""
+    rows = [c for c in (data.get('claim_inventory') or []) if is_material(c)]
+    rows = _merge_duplicate_claims(rows)
+    rows.sort(key=lambda c: c.get('claim_score', 0), reverse=True)
+    return rows[:n]
+
+
+def top_risk_drivers_flow(data, n=3):
+    """v57r: a short, scannable 'top N risk drivers' list for the assessment-overview page,
+    distinct from (and above) the detailed priority-claim cards on page 2."""
+    claims = combined_top_claims(data, n)
+    if not claims:
+        return [Paragraph('<i>No material risk driver was identified in this scan.</i>', STY['small'])]
+    items = []
+    for c in claims:
+        typ = esc(c.get('claim_type') or c.get('type') or 'Claim signal')
+        risk = c.get('risk_level') or c.get('risk') or ''
+        src = esc((c.get('source_label') or c.get('source_url') or 'reviewed material')[:60])
+        items.append(f'&bull;&nbsp; <b>{typ}</b> <font color="#8b9baa">({esc(risk)} &middot; {src})</font>')
+    return [Paragraph('<br/>'.join(items), ParagraphStyle('trd', parent=STY['small'], leading=12))]
+
+
+def priority_claim_card(c):
+    """v57r: the five-field structure recommended for the two-pager's priority claims -- exact
+    claim, source, why it matters, evidence gap, and recommended wording -- shown explicitly
+    rather than folded into a single 'why retained' note, so a reader can act on each field."""
+    typ = c.get('claim_type') or c.get('type') or 'Claim signal'
+    risk = c.get('risk_level') or c.get('risk') or ''
+    src = (c.get('source_label') or c.get('source_url') or 'Reviewed material')[:80]
+    text = c.get('claim_text') or c.get('claim') or ''
+    text = re.sub(r'\s+', ' ', str(text)).strip()
+    matched_phrase = str(c.get('matched_phrase') or '').strip()
+    if len(text) > 160:
+        idx = text.lower().find(matched_phrase.lower()) if matched_phrase else -1
+        if idx >= 0:
+            start = max(0, idx - 55); end = min(len(text), idx + len(matched_phrase) + 70)
+            snippet = text[start:end]
+            if start > 0: snippet = '…' + snippet.lstrip()
+            if end < len(text): snippet = snippet.rstrip() + '…'
+            text = snippet
+        else:
+            text = text[:157].rsplit(' ', 1)[0] + '…'
+    terms = c.get('problematic_terms') or []
+    if matched_phrase and matched_phrase not in terms:
+        terms = [matched_phrase] + list(terms)
+
+    why = str(c.get('why_flagged') or c.get('risk_reason') or c.get('issue') or '').strip()
+    why = re.sub(r'\s+', ' ', why)
+    if len(why) > 190: why = why[:187].rsplit(' ', 1)[0] + '…'
+
+    evidence = c.get('evidence_needed')
+    if isinstance(evidence, (list, tuple)) and evidence:
+        gap = '; '.join(str(x) for x in evidence[:2])
+    elif isinstance(evidence, str) and evidence:
+        gap = evidence
+    else:
+        gap = 'Scope, methodology, evidence date and limitations should be disclosed alongside this claim.'
+    if len(gap) > 190: gap = gap[:187].rsplit(' ', 1)[0] + '…'
+
+    rewrite = str(c.get('suggested_rewrite') or c.get('rewrite') or '').strip()
+    rewrite = re.sub(r'\s+', ' ', rewrite)
+    if len(rewrite) > 190: rewrite = rewrite[:187].rsplit(' ', 1)[0] + '…'
+
+    head = Table([[Paragraph(esc(typ), STY['small_b']),
+                   Paragraph(esc(risk), ParagraphStyle('rp2', parent=STY['small_b'], textColor=risk_color(risk), alignment=TA_RIGHT))]],
+                 colWidths=[(PAGE_W - 2 * MARGIN - 40) * 0.7, (PAGE_W - 2 * MARGIN - 40) * 0.3])
+    head.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                               ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    rows = [head, Paragraph(f'<font color="#8b9baa">Source:</font> {esc(src)}', STY['small'])]
+    rows.append(Paragraph(highlight(text, terms), STY['quote']))
+    if why:
+        rows.append(Paragraph(f'<font color="#174e78"><b>Why it matters:</b></font> {esc(why)}', STY['small']))
+    rows.append(Paragraph(f'<font color="#6b4e00"><b>Evidence gap:</b></font> {esc(gap)}', STY['small']))
+    if rewrite:
+        rows.append(Paragraph(f'<font color="#276749"><b>Recommended wording:</b></font> {esc(rewrite)}', STY['small']))
+    accent = GREEN if str(c.get('dimension', '')).lower() == 'green' else AMBER
+    inner = Table([[r] for r in rows], colWidths=[PAGE_W - 2 * MARGIN - 20])
+    inner.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 1.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
+    ]))
+    wrap = Table([[inner]], colWidths=[PAGE_W - 2 * MARGIN])
+    wrap.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 9), ('RIGHTPADDING', (0, 0), (-1, -1), 9),
+        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('BOX', (0, 0), (-1, -1), 0.6, LINE), ('LINEBEFORE', (0, 0), (0, 0), 2.5, accent),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fafbfd')),
+    ]))
+    return KeepTogether(wrap)
+
+
 def build_company_report_pdf(data):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
                              topMargin=MARGIN, bottomMargin=MARGIN + 6)
 
     company_name = ((data.get('company') or {}).get('company') or '').strip()
-    flags = data.get('red_flags_by_dimension') or {}
-    green_claims = top_claims(data, 'Green', 3)
-    social_claims = top_claims(data, 'Social', 3)
-    all_claims = green_claims + social_claims
-    sources = {(c.get('source_label') or c.get('source_url') or '') for c in all_claims}
-    shared_source = len(sources) == 1 and all_claims
-    actions = (data.get('company_action_plan') or [])[:4]
+    priority_claims = combined_top_claims(data, 3)
+    sources = {(c.get('source_label') or c.get('source_url') or '') for c in priority_claims}
+    shared_source = len(sources) == 1 and priority_claims
+    actions = (data.get('company_action_plan') or [])[:3]
     ext = ((data.get('external_research', {}).get('green', {}).get('targeted_negative_sources') or []) +
            (data.get('external_research', {}).get('social', {}).get('targeted_negative_sources') or []) +
-           (data.get('external_research', {}).get('targeted_negative_sources') or []))[:3]
-    gc = (data.get('score_components') or {}).get('green') or {}
-    sc = (data.get('score_components') or {}).get('social') or {}
-    driver_details = data.get('score_driver_details') or {}
+           (data.get('external_research', {}).get('targeted_negative_sources') or []))[:2]
     who = company_name if company_name and company_name.lower() != 'company reviewed' else 'This company'
 
-    # ---------- PAGE 1 ----------
+    # ---------- PAGE 1: Assessment overview ----------
     page1 = []
-    page1 += header_block(data, 'Company claim-risk report',
+    page1 += header_block(data, 'Assessment overview',
                            'EmpCo (Directive (EU) 2024/825) · EU Forced Labour Regulation (EU) 2024/3015',
                            company_name)
     page1.append(scores_row(data))
+    page1.append(Spacer(1, 4))
+    page1.append(entity_context_and_confidence_row(data))
     page1.append(Spacer(1, 7))
 
     overall_risk = data.get('global_risk', data.get('overall_risk', ''))
-    g_summary = (driver_details.get('green') or {}).get('summary', '')
-    s_summary = (driver_details.get('social') or {}).get('summary', '')
-    narrative = f'<b>{esc(who)}</b> scores <b>{esc(str(data.get("global_score", data.get("overall_score", "—"))))}/100</b> overall (<b>{esc(overall_risk)}</b> claim-risk) on this scan. '
-    if g_summary:
-        narrative += esc(g_summary) + ' '
-    if s_summary:
-        narrative += esc(s_summary)
-    if not (g_summary or s_summary):
-        narrative += esc(data.get('assessment_summary_specific') or 'No further summary available.')
+    narrative = (f'<b>{esc(who)}</b> scores <b>{esc(str(data.get("global_score", data.get("overall_score", "—"))))}/100</b> '
+                 f'overall (<b>{esc(overall_risk)}</b> claim-risk) on this scan, covering EmpCo green/social claim wording '
+                 f'and EU Forced Labour Regulation supply-chain wording. See the risk drivers and entity-context note below '
+                 f'for what mainly drove this result.')
     summary_flow = [Paragraph(narrative, STY['body'])]
-    if shared_source:
-        src_label = (all_claims[0].get('source_label') or all_claims[0].get('source_url') or '')[:90]
-        summary_flow.append(Spacer(1, 3))
-        summary_flow.append(Paragraph(f'<font color="#8b9baa">All claim signals below are from:</font> {esc(src_label)}', STY['small']))
     if data.get('data_reliability_warning'):
         cd = data.get('crawl_diagnostics') or {}
         detail = f' ({cd.get("pages_failed", 0)}/{cd.get("pages_attempted", 0)} page fetches failed.)' if cd.get('pages_attempted') else ''
@@ -429,43 +533,44 @@ def build_company_report_pdf(data):
         summary_flow.append(Spacer(1, 4))
         summary_flow.append(Paragraph(f'<b>Note:</b> {esc(data.get("fallback_note"))}',
                                        ParagraphStyle('rn', parent=STY['small'], textColor=AMBER)))
-    page1.append(section_card('Executive summary', summary_flow))
+    page1.append(section_card('Executive conclusion', summary_flow))
     page1.append(Spacer(1, 5))
-    flagrow = Table([[concerns_list('Green claims — at a glance', flags.get('green'), GREEN),
-                       concerns_list('Social claims — at a glance', flags.get('social'), AMBER)]],
-                     colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
-    flagrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-                                  ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
-    page1.append(flagrow)
-    page1.append(Spacer(1, 5))
-    page1 += claim_section('Key green claim signals retained', green_claims, show_source=not shared_source)
-    page1.append(Spacer(1, 3))
-    page1 += claim_section('Key social claim signals retained', social_claims, show_source=not shared_source)
+    page1.append(section_card('Top risk drivers', top_risk_drivers_flow(data, 3)))
 
-    # ---------- PAGE 2 ----------
+    # ---------- PAGE 2: Findings and actions ----------
     page2 = []
-    page2 += header_block(data, 'Evidence, external signals & action plan',
-                           'Score drivers and recommended next steps', company_name)
-    HALF_W = (PAGE_W - 2 * MARGIN - 8) / 2
-    driverrow = Table([[section_card('Why the green score is what it is', driver_narrative(driver_details.get('green'), gc), HALF_W),
-                         section_card('Why the social score is what it is', driver_narrative(driver_details.get('social'), sc), HALF_W)]],
-                       colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
-    driverrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-                                    ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
-    page2.append(driverrow)
+    page2 += header_block(data, 'Findings and actions',
+                           'Priority claims, external signals and recommended next steps', company_name)
+
+    page2.append(Paragraph(esc(f'Priority claims (top {len(priority_claims)} by materiality)' if priority_claims else 'Priority claims'), STY['h3']))
+    page2.append(Spacer(1, 3))
+    if shared_source:
+        src_label = (priority_claims[0].get('source_label') or priority_claims[0].get('source_url') or '')[:90]
+        page2.append(Paragraph(f'<font color="#8b9baa">All claims below are from:</font> {esc(src_label)}', STY['small']))
+        page2.append(Spacer(1, 3))
+    if priority_claims:
+        for c in priority_claims:
+            page2.append(priority_claim_card(c))
+            page2.append(Spacer(1, 2))
+    else:
+        page2.append(Paragraph('<i>No material problematic claim signal was retained in this scan.</i>', STY['small']))
     page2.append(Spacer(1, 4))
 
     if ext:
         ext_flow = []
         for x in ext:
-            ext_flow.append(Paragraph(f'<b>{esc(x.get("title") or "External signal")}</b>', STY['small_b']))
+            title_line = f'<b>{esc(x.get("title") or "External signal")}</b>'
+            if x.get('status'): title_line += f'  <font color="#8b9baa">&middot; {esc(x.get("status"))}</font>'
+            ext_flow.append(Paragraph(title_line, STY['small_b']))
             if x.get('url'):
                 ext_flow.append(Paragraph(f'<font color="#174e78">{esc(x.get("url", "")[:100])}</font>', STY['small']))
-            ext_flow.append(Paragraph(esc((x.get('content') or '')[:200]), STY['small']))
+            ext_flow.append(Paragraph(esc((x.get('content') or '')[:180]), STY['small']))
+            if x.get('related_articles_count', 1) > 1:
+                ext_flow.append(Paragraph(f'<font color="#8b9baa">+{x.get("related_articles_count")-1} related article(s) on the same topic.</font>', STY['small']))
             ext_flow.append(Spacer(1, 4))
     else:
-        ext_flow = [Paragraph(f'<i>No negative external stakeholder signal retained for {esc(who)}, or external search not configured.</i>', STY['small'])]
-    page2.append(section_card('Negative external stakeholder signals retained', ext_flow))
+        ext_flow = [Paragraph(f'<i>No external public-source signal retained for {esc(who)}, or external search not configured for this scan (see Confidence, page 1).</i>', STY['small'])]
+    page2.append(section_card('External signals (verified, max 2 shown)', ext_flow))
     page2.append(Spacer(1, 4))
 
     if actions:
@@ -473,42 +578,26 @@ def build_company_report_pdf(data):
         for i, a in enumerate(actions, 1):
             act_flow.append(Paragraph(f'<b>{i}. {esc(a.get("title") or "")}</b>', STY['small_b']))
             txt = re.sub(r'\s+', ' ', str(a.get('action') or '')).strip()
-            if len(txt) > 185:
-                txt = txt[:182].rsplit(' ', 1)[0] + '…'
+            if len(txt) > 175:
+                txt = txt[:172].rsplit(' ', 1)[0] + '…'
             act_flow.append(Paragraph(esc(txt), STY['small']))
             act_flow.append(Spacer(1, 2))
     else:
         act_flow = [Paragraph('<b>1. Review retained claim signals</b>', STY['small_b']),
                     Paragraph('Attach evidence, scope and approval records to each claim before reuse.', STY['small'])]
-    page2.append(section_card(f'Recommended actions for {who}' if who != 'This company' else 'Recommended actions', act_flow))
+    page2.append(section_card(f'Priority actions for {who}' if who != 'This company' else 'Priority actions', act_flow))
     page2.append(Spacer(1, 4))
 
-    bands = [['Score range', 'Meaning'],
-              ['0–44  Low', 'No material problematic claim or limited wording risk.'],
-              ['45–74  Medium', 'Some claim signals, wording risk or evidence gaps for review.'],
-              ['75–89  High', 'Strong wording risk, evidence gaps or negative external signals.'],
-              ['90–100  Very high', 'Multiple severe signals with regulatory or external context.']]
-    band_colors = [None, GREEN, AMBER, DANGER, colors.HexColor('#7a1e1e')]
-    bdata = [[Paragraph(esc(bands[0][0]), STY['small_b']), Paragraph(esc(bands[0][1]), STY['small_b'])]]
-    for i, r in enumerate(bands[1:], 1):
-        bdata.append([Paragraph(esc(r[0]), ParagraphStyle(f'b{i}', parent=STY['small_b'], textColor=band_colors[i])),
-                       Paragraph(esc(r[1]), STY['small'])])
-    band_w = HALF_W - 20
-    btbl = Table(bdata, colWidths=[band_w * 0.4, band_w * 0.6])
-    btbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), SOFT), ('LINEBELOW', (0, 0), (-1, 0), 0.6, LINE),
-                               ('LINEBELOW', (0, 1), (-1, -2), 0.4, LINE),
-                               ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-                               ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
+    # v57r: reviewer feedback -- the two-pager is a management decision document, not the
+    # methodology document. The exact score formula, weights and gating rules now live only in
+    # the standalone methodology PDF; this page just points there.
     method_note = Paragraph(
-        'Claim wording (42%) + Evidence gap (24%) + External context (22%) + Sector/channel sensitivity (12%). '
-        'Lenses: EmpCo &mdash; Directive (EU) 2024/825, "Empowering Consumers for the Green Transition" &mdash; covers both green AND '
-        'social characteristics (Art. 6(1)(b)); applies from 27 September 2026. EU Forced Labour Regulation (EU) 2024/3015 covers '
-        'forced-labour and supply-chain claims; core provisions apply from 14 December 2027.', STY['small'])
-    lastrow = Table([[section_card('Score interpretation', btbl, HALF_W), section_card('Methodology note', method_note, HALF_W)]],
-                     colWidths=[(PAGE_W - 2 * MARGIN) / 2] * 2)
-    lastrow.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-                                  ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
-    page2.append(lastrow)
+        'Risk bands: 0&ndash;44 Low &middot; 45&ndash;74 Medium &middot; 75&ndash;89 High &middot; 90&ndash;100 Very high. '
+        'Lenses: EmpCo &mdash; Directive (EU) 2024/825 &mdash; for green and (secondarily, Art. 6(1)(b)) social claims, applicable '
+        'from 27 September 2026; EU Forced Labour Regulation (EU) 2024/3015) for forced-labour/supply-chain claims, core '
+        'provisions applicable from 14 December 2027. Full scoring formula, weights, gating rules and claim taxonomy: '
+        'see the methodology PDF.', STY['small'])
+    page2.append(section_card('Methodology snapshot', method_note))
 
     flowables = page1 + [PageBreak()] + page2
 
