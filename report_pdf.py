@@ -12,6 +12,7 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, Tab
                                  HRFlowable, PageBreak, KeepTogether)
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_RIGHT
+from reportlab.graphics.shapes import Drawing, Rect, Line, String
 
 NAVY = colors.HexColor('#173f5f')
 INK = colors.HexColor('#132033')
@@ -205,6 +206,64 @@ def score_box(label, num, risk, width=None):
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fbfcfe')),
     ]))
     return inner
+
+
+def risk_gauge(label, score, risk, width=None, height=30):
+    """v57y: a genuine visual element (a coloured risk-band bar with a marker) rather than only
+    numbers in boxes -- board-style reports typically pair a headline metric with a simple visual
+    read of where it sits on the scale. Also, deliberately, this fills page real estate with
+    purposeful content instead of leaving a large blank gap under a short text-only page 1."""
+    if width is None:
+        width = PAGE_W - 2 * MARGIN
+    if score is None:
+        score = 0
+    score = max(0, min(100, score))
+    d = Drawing(width, height)
+    bar_y = 11
+    bar_h = 11
+    bands = [(0, 45, GREEN), (45, 75, AMBER), (75, 90, DANGER), (90, 100, colors.HexColor('#7a1e1e'))]
+    for lo, hi, c in bands:
+        x = width * (lo / 100.0)
+        w = width * ((hi - lo) / 100.0)
+        d.add(Rect(x, bar_y, w, bar_h, fillColor=c, strokeColor=colors.white, strokeWidth=1))
+    marker_x = width * (score / 100.0)
+    marker_x = max(1.5, min(width - 1.5, marker_x))
+    d.add(Line(marker_x, bar_y - 4, marker_x, bar_y + bar_h + 4, strokeColor=INK, strokeWidth=2))
+    d.add(String(min(width - 4, max(14, marker_x)), bar_y + bar_h + 6, f'{label}: {score}/100 ({risk or "\u2014"})',
+                 fontName='Helvetica-Bold', fontSize=8.6, fillColor=INK, textAnchor='middle'))
+    for lo, hi, c, name in [(0, 45, GREEN, 'Low'), (45, 75, AMBER, 'Medium'), (75, 90, DANGER, 'High'), (90, 100, colors.HexColor('#7a1e1e'), 'Very high')]:
+        mid = width * ((lo + hi) / 2 / 100.0)
+        d.add(String(mid, bar_y - 7, name, fontName='Helvetica', fontSize=6.6, fillColor=MUTED, textAnchor='middle'))
+    return d
+
+
+def dual_mini_gauge(green_score, green_risk, social_score, social_risk, width=None):
+    """v57y: a compact side-by-side Green vs Social visual comparison -- two short horizontal
+    bars sharing the same 0-100 scale, so the relative balance between the two dimensions is
+    visible at a glance rather than only readable from two separate numbers."""
+    if width is None:
+        width = PAGE_W - 2 * MARGIN
+    half = (width - 16) / 2
+    height = 26
+    rows = []
+    for label, score, risk, accent in [('GREEN', green_score, green_risk, GREEN), ('SOCIAL', social_score, social_risk, AMBER)]:
+        d = Drawing(half, height)
+        track_y = 9
+        track_h = 8
+        d.add(Rect(0, track_y, half, track_h, fillColor=SOFT, strokeColor=LINE, strokeWidth=0.5))
+        sc = max(0, min(100, score or 0))
+        fill_w = half * (sc / 100.0)
+        fill_color = risk_color(risk)
+        if fill_w > 0:
+            d.add(Rect(0, track_y, fill_w, track_h, fillColor=fill_color, strokeColor=None))
+        d.add(String(0, track_y + track_h + 4, f'{label}  {sc}/100  ({esc(risk or "\u2014")})',
+                     fontName='Helvetica-Bold', fontSize=7.6, fillColor=INK))
+        rows.append(d)
+    row = Table([rows], colWidths=[half, half])
+    row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (0, 0), 0), ('RIGHTPADDING', (0, 0), (0, 0), 16),
+                              ('LEFTPADDING', (1, 0), (1, 0), 0), ('RIGHTPADDING', (1, 0), (1, 0), 0),
+                              ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    return row
 
 
 def executive_conclusion_block(data, who):
@@ -637,12 +696,42 @@ def build_company_report_pdf(data):
     page1.append(Spacer(1, 5))
 
     page1.append(Paragraph('SCORE SUMMARY', ParagraphStyle('ss_lbl', parent=STY['score_lbl'], fontSize=8.5, textColor=NAVY, spaceAfter=4)))
-    page1.append(scores_row(data))
-    page1.append(Spacer(1, 4))
+    gauge_wrap = Table([[risk_gauge('GLOBAL CLAIMS RISK', data.get('global_score', data.get('overall_score')),
+                                     data.get('global_risk', data.get('overall_risk')))]],
+                        colWidths=[PAGE_W - 2 * MARGIN])
+    gauge_wrap.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('BOX', (0, 0), (-1, -1), 0.6, LINE), ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fbfcfe')),
+    ]))
+    page1.append(gauge_wrap)
+    page1.append(Spacer(1, 6))
+    gs_box_w = (PAGE_W - 2 * MARGIN - 8) / 2
+    gs_row = Table([[score_box('Green claims risk', data.get('green_score'), data.get('green_risk'), gs_box_w),
+                      score_box('Social claims risk', data.get('social_score'), data.get('social_risk'), gs_box_w)]],
+                    colWidths=[gs_box_w, gs_box_w])
+    gs_row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                                 ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    page1.append(gs_row)
+    page1.append(Spacer(1, 6))
     page1.append(entity_context_and_confidence_row(data))
-    page1.append(Spacer(1, 5))
+    page1.append(Spacer(1, 7))
 
     page1.append(section_card('Top risk drivers', top_risk_drivers_flow(data, 3)))
+
+    # v57y: page 1 previously ended here with a large empty area below the risk-drivers card --
+    # a genuinely board-ready one-pager should look intentionally designed, not like it ran out
+    # of content partway down. Add a compact "what to do next" summary strip that mirrors (in
+    # brief) the priority actions detailed in full on page 2, giving page 1 a proper closing
+    # element and a self-contained "if you only read page 1" takeaway.
+    top_actions = (data.get('company_action_plan') or [])[:2]
+    if top_actions:
+        nxt_items = []
+        for i, a in enumerate(top_actions, 1):
+            nxt_items.append(f'<b>{i}.</b> {esc(a.get("title") or "")}')
+        page1.append(Spacer(1, 7))
+        page1.append(section_card('Immediate next steps (see page 2 for full detail)',
+                                   Paragraph('&nbsp;&nbsp;&nbsp;'.join(nxt_items), ParagraphStyle('nxt', parent=STY['body'], fontSize=8.8))))
 
     # ---------- PAGE 2: Findings and actions ----------
     page2 = []
