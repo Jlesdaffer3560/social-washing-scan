@@ -208,7 +208,7 @@ def score_box(label, num, risk, width=None):
     return inner
 
 
-def risk_gauge(label, score, risk, width=None, height=30):
+def risk_gauge(label, score, risk, width=None, height=36):
     """v57y: a genuine visual element (a coloured risk-band bar with a marker) rather than only
     numbers in boxes -- board-style reports typically pair a headline metric with a simple visual
     read of where it sits on the scale. Also, deliberately, this fills page real estate with
@@ -538,10 +538,11 @@ def combined_top_claims(data, n=3):
 
 
 def top_risk_drivers_flow(data, n=3):
-    """v57r/v57t: a short, scannable 'top N risk drivers' list for the assessment-overview page,
-    distinct from (and above) the detailed priority-claim cards on page 2. Numbered and sized to
-    read as a genuine headline list, matching the reviewer's own example ('1. Generic
-    environmental wording / 2. Evidence available only in a separate report / ...')."""
+    """v57r/v57t/v57z: a short, scannable 'top N risk drivers' list for the assessment-overview
+    page, distinct from (and above) the detailed priority-claim cards on page 2. Each driver now
+    also carries a one-line trigger snippet, so the list gives real differentiating information
+    (what specifically was flagged) rather than only a type label repeated three times with
+    different sources -- genuine content, not layout padding."""
     claims = combined_top_claims(data, n)
     if not claims:
         return [Paragraph('<i>No material risk driver was identified in this scan.</i>', STY['small'])]
@@ -552,8 +553,12 @@ def top_risk_drivers_flow(data, n=3):
         src = esc((c.get('source_label') or c.get('source_url') or 'reviewed material')[:55])
         rl = risk.lower()
         num_color = '#a43c3c' if ('very' in rl or 'high' in rl) else ('#9b6a17' if ('elev' in rl or 'medium' in rl or 'mod' in rl) else '#276749')
+        mp = str(c.get('matched_phrase') or '').strip()
+        trigger_line = f'flagged wording: "{esc(mp)}"' if mp else ''
+        second_line = f'<br/><font size=7.6 color="#5e6b7d">&nbsp;&nbsp;&nbsp;{trigger_line}</font>' if trigger_line else ''
         items.append(f'<font color="{num_color}"><b>{i}.</b></font>&nbsp; <b>{typ}</b> '
-                      f'<font size=7.4 color="#8b9baa">({esc(risk)} &middot; {src})</font>')
+                      f'<font size=7.4 color="#8b9baa">({esc(risk)} &middot; {src})</font>'
+                      f'{second_line}')
     joined = '<br/>'.join(items)
     return [Paragraph(joined, ParagraphStyle('trd', parent=STY['body'], fontSize=8.6, leading=13.5))]
 
@@ -591,6 +596,65 @@ def select_display_excerpt(text, matched_phrase, max_len=320):
                 if end < len(out): snippet = snippet.rstrip() + '…'
                 return snippet
     return smart_truncate(text, max_len)
+
+
+def most_material_finding_spotlight(c):
+    """v57z: page 1 previously closed with only meta-summary (score numbers, a bullet list of
+    driver *labels*, a two-item action teaser) -- board readers reasonably read that as "thin"
+    content even once the empty space below it was patched with a filler strip. This gives page 1
+    genuine substance: the single most material finding, shown with its exact quote, source and
+    recommended wording -- the actual headline fact of the report -- not just a pointer to detail
+    that lives entirely on page 2. Deliberately shorter than priority_claim_card (no Why-it-
+    matters/Evidence-gap split): this is the "if you read nothing else" spotlight, not a
+    replacement for the full card repeated in detail on page 2."""
+    if not c:
+        return Paragraph('<i>No material finding was retained in this scan.</i>', STY['small'])
+    typ = c.get('claim_type') or c.get('type') or 'Claim signal'
+    risk = c.get('risk_level') or c.get('risk') or ''
+    src = (c.get('source_label') or c.get('source_url') or 'Reviewed material')[:90]
+    text = c.get('claim_text') or c.get('claim') or ''
+    text = re.sub(r'\s+', ' ', str(text)).strip()
+    matched_phrase = str(c.get('matched_phrase') or '').strip()
+    text = select_display_excerpt(text, matched_phrase, 280)
+    terms = c.get('problematic_terms') or []
+    if matched_phrase and matched_phrase not in terms:
+        terms = [matched_phrase] + list(terms)
+    why = str(c.get('why_flagged') or c.get('risk_reason') or c.get('issue') or '').strip()
+    if len(why) > 170: why = why[:167].rsplit(' ', 1)[0] + '…'
+    rewrite = str(c.get('suggested_rewrite') or c.get('rewrite') or '').strip()
+    if len(rewrite) > 200: rewrite = rewrite[:197].rsplit(' ', 1)[0] + '…'
+    accent = GREEN if str(c.get('dimension', '')).lower() == 'green' else AMBER
+
+    head = Table([[Paragraph('MOST MATERIAL FINDING', ParagraphStyle('mmf_lbl', parent=STY['score_lbl'], textColor=accent)),
+                   Paragraph(esc(risk), ParagraphStyle('mmf_r', parent=STY['small_b'], fontSize=9.6, textColor=risk_color(risk), alignment=TA_RIGHT))]],
+                 colWidths=[(PAGE_W - 2 * MARGIN - 32) * 0.7, (PAGE_W - 2 * MARGIN - 32) * 0.3])
+    head.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                               ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
+    rows = [head,
+            Paragraph(esc(typ), ParagraphStyle('mmf_typ', parent=STY['body'], fontSize=11, fontName='Helvetica-Bold', textColor=NAVY)),
+            Spacer(1, 4),
+            Paragraph(f'<font color="#8b9baa">Source:</font> {esc(src)}', STY['small']),
+            Spacer(1, 4),
+            Paragraph(highlight(text, terms), STY['quote'])]
+    if why:
+        rows.append(Spacer(1, 4))
+        rows.append(Paragraph(f'<font color="#174e78"><b>WHY IT MATTERS</b></font> {esc(why)}',
+                               ParagraphStyle('mmf_why', parent=STY['small'], leading=10.5)))
+    if rewrite:
+        rows.append(Spacer(1, 4))
+        rows.append(Paragraph(f'<font color="#276749"><b>RECOMMENDED WORDING</b></font> {esc(rewrite)}',
+                               ParagraphStyle('mmf_rw', parent=STY['small'], leading=10.5, textColor=INK)))
+    inner = Table([[r] for r in rows], colWidths=[PAGE_W - 2 * MARGIN - 32])
+    inner.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                                ('TOPPADDING', (0, 0), (-1, -1), 1), ('BOTTOMPADDING', (0, 0), (-1, -1), 1)]))
+    wrap = Table([[inner]], colWidths=[PAGE_W - 2 * MARGIN])
+    wrap.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 16), ('RIGHTPADDING', (0, 0), (-1, -1), 16),
+        ('TOPPADDING', (0, 0), (-1, -1), 12), ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+        ('BOX', (0, 0), (-1, -1), 0.8, accent), ('LINEBEFORE', (0, 0), (0, 0), 4, accent),
+        ('BACKGROUND', (0, 0), (-1, -1), GREEN_SOFT if accent == GREEN else AMBER_SOFT),
+    ]))
+    return wrap
 
 
 def priority_claim_card(c):
@@ -700,12 +764,12 @@ def build_company_report_pdf(data):
                                      data.get('global_risk', data.get('overall_risk')))]],
                         colWidths=[PAGE_W - 2 * MARGIN])
     gauge_wrap.setStyle(TableStyle([
-        ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-        ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 12), ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ('TOPPADDING', (0, 0), (-1, -1), 11), ('BOTTOMPADDING', (0, 0), (-1, -1), 11),
         ('BOX', (0, 0), (-1, -1), 0.6, LINE), ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fbfcfe')),
     ]))
     page1.append(gauge_wrap)
-    page1.append(Spacer(1, 6))
+    page1.append(Spacer(1, 8))
     gs_box_w = (PAGE_W - 2 * MARGIN - 8) / 2
     gs_row = Table([[score_box('Green claims risk', data.get('green_score'), data.get('green_risk'), gs_box_w),
                       score_box('Social claims risk', data.get('social_score'), data.get('social_risk'), gs_box_w)]],
@@ -713,25 +777,19 @@ def build_company_report_pdf(data):
     gs_row.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
                                  ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
     page1.append(gs_row)
-    page1.append(Spacer(1, 6))
+    page1.append(Spacer(1, 8))
     page1.append(entity_context_and_confidence_row(data))
-    page1.append(Spacer(1, 7))
+    page1.append(Spacer(1, 9))
 
     page1.append(section_card('Top risk drivers', top_risk_drivers_flow(data, 3)))
+    page1.append(Spacer(1, 10))
 
-    # v57y: page 1 previously ended here with a large empty area below the risk-drivers card --
-    # a genuinely board-ready one-pager should look intentionally designed, not like it ran out
-    # of content partway down. Add a compact "what to do next" summary strip that mirrors (in
-    # brief) the priority actions detailed in full on page 2, giving page 1 a proper closing
-    # element and a self-contained "if you only read page 1" takeaway.
-    top_actions = (data.get('company_action_plan') or [])[:2]
-    if top_actions:
-        nxt_items = []
-        for i, a in enumerate(top_actions, 1):
-            nxt_items.append(f'<b>{i}.</b> {esc(a.get("title") or "")}')
-        page1.append(Spacer(1, 7))
-        page1.append(section_card('Immediate next steps (see page 2 for full detail)',
-                                   Paragraph('&nbsp;&nbsp;&nbsp;'.join(nxt_items), ParagraphStyle('nxt', parent=STY['body'], fontSize=8.8))))
+    # v57z: replaces the earlier "Immediate next steps" teaser (a title-only pointer to page 2,
+    # which read as filler rather than substance) with the single most material finding shown in
+    # full -- exact quote, source and recommended wording. This is genuine, board-relevant content
+    # in its own right, not a device to occupy space, and it also fixes the measured ~265pt of
+    # empty page-1 real estate below the risk-drivers card in earlier versions.
+    page1.append(most_material_finding_spotlight(priority_claims[0] if priority_claims else None))
 
     # ---------- PAGE 2: Findings and actions ----------
     page2 = []
