@@ -1,9 +1,0 @@
-01_GitHub_Render_Deployment/README.md
-01_GitHub_Render_Deployment/company_report_v2.py
-01_GitHub_Render_Deployment/example_report_data.json
-01_GitHub_Render_Deployment/integration_example.py
-02_Examples_and_Previews/generated_demo.html
-02_Examples_and_Previews/generated_demo.pdf
-03_Design_Reference/durably_company_report_layout_v2.pdf
-03_Design_Reference/durably_company_report_layout_v2_template.html
-START_HERE.md
