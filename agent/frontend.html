@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Durably Sustainability Scan</title>
+  <style>
+    :root{
+      --bg:#f6f8fb; --card:#ffffff; --ink:#132033; --muted:#5e6b7d; --line:#dfe5ee;
+      --soft:#eef3f8; --accent:#265f5c; --accent2:#173f5f; --danger:#a43c3c; --danger-soft:#fff1f1; --warn:#9b6a17; --warn-soft:#fff8ea; --ok:#276749; --ok-soft:#edf7f0;
+      --shadow:0 8px 24px rgba(20,35,55,.08); --radius:14px;
+    }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45;font-size:15px}
+    .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 60px}.hero{background:linear-gradient(135deg,#0f2d3b,#173f5f 55%,#1a5860);color:#fff;border-radius:20px;padding:30px 34px;box-shadow:var(--shadow)}
+    .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.12em;opacity:.9;font-weight:700}.hero h1{margin:8px 0 10px;font-size:34px;line-height:1.15}.hero p{max-width:940px;margin:0;color:#e7f0f3;font-size:16px}.version{margin-top:16px;font-size:12px;color:#d7e6eb}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+    h2{font-size:21px;margin:0 0 12px} h3{font-size:16px;margin:0 0 10px}.muted{color:var(--muted)} .small{font-size:12.5px;color:var(--muted)}
+    label{font-weight:700;display:block;margin-bottom:8px} input[type=url]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:12px;background:#fff;font:inherit;transition:border-color .15s} input[type=url]:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px rgba(38,95,92,.1)}.file-native{display:none}.file-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.file-name{font-size:13px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:180px}.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}.btn.primary-outline{background:#fff;color:#173f5f;border:1px solid #9cb3c8}.btn:disabled{opacity:.55;cursor:not-allowed}.notice{margin-top:14px;padding:11px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}.warning{background:#fff8ea;border-color:#ead8aa;color:#68470f}.error{background:#fff0f0;border-color:#e2baba;color:#842424}.hidden{display:none!important}
+    .purpose{margin-top:20px}.purpose ol{margin:10px 0 0;padding-left:20px}.purpose li{margin:5px 0}.how-it-works summary{cursor:pointer;font-weight:700;color:var(--accent-dark, #173f5f);padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px}.how-it-works summary::-webkit-details-marker{display:none}.how-it-works summary::before{content:"▸";transition:transform .15s}.how-it-works[open] summary::before{transform:rotate(90deg)}.how-it-works summary:hover{text-decoration:underline}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef3f8;border:1px solid var(--line);font-size:12px;margin:2px 4px 2px 0;color:#334}.pill.problem{background:#fff1f1;border-color:#efb8b8;color:#842424;font-weight:700}.pill.green{background:#edf7f0;border-color:#bfe2c8;color:#205b31}.pill.blue{background:#eef3f8;border-color:#ccd8e4;color:#173f5f}
+    .scores{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.score{border:1px solid var(--line);border-radius:16px;padding:18px;background:#fbfcfe;position:relative;overflow:hidden}.score:before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:#9cb3c8}.score.global:before{background:#173f5f}.score.green-score:before{background:#276749}.score.social-score:before{background:#9b6a17}.score .num{font-size:38px;font-weight:850;letter-spacing:-.03em}.score .label{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#46576b}.score .risk{font-weight:850;margin-top:4px}.risk.high,.risk.very-high{color:var(--danger)}.risk.medium,.risk.elevated{color:var(--warn)}.risk.low{color:var(--ok)}.score-bar{height:5px;background:#e5eaf2;border-radius:3px;margin-top:10px;overflow:hidden}.score-bar-fill{height:5px;border-radius:3px;transition:width .4s ease}.global .score-bar-fill{background:#173f5f}.green-score .score-bar-fill{background:#276749}.social-score .score-bar-fill{background:#9b6a17}.score-interp{font-size:11.5px;color:var(--muted);margin-top:5px}.score.entity-context{grid-column:1/-1;background:#fafbfd;border-style:dashed}.score.entity-context:before{background:#9cb3c8}.score.entity-context .num{font-size:22px}
+    table{width:100%;border-collapse:collapse;margin-top:8px} th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left} th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc} td{font-size:13.5px} .quote{color:#243449}.quote strong{background:#fff1a8;padding:1px 2px;border-radius:3px;color:#111827}.section{margin-top:20px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.list{margin:8px 0 0;padding-left:18px}.list li{margin:6px 0}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.download-panel{background:#f8fbff;border:1px solid #cbd9e8;border-radius:12px;padding:14px;margin-top:14px}.download-panel h3{margin-bottom:5px}.reportbox{white-space:pre-wrap;background:#0f172a;color:#e5edf7;border-radius:12px;padding:16px;max-height:420px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px}.source a{color:#174e78}.footer{margin-top:26px;color:var(--muted);font-size:12.5px}.empty{color:var(--muted);font-style:italic}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid #c7d4df;border-top-color:var(--accent);animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}@keyframes spin{to{transform:rotate(360deg)}}
+    .redflag-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.redflag{border:1px solid #e7c1c1;background:var(--danger-soft);border-radius:12px;padding:12px}.redflag.green-flag{background:#f1fbf4;border-color:#bfe2c8}.redflag.social-flag{background:#fff8ea;border-color:#ead8aa}.redflag.reg-flag{background:#fff1f1;border-color:#e7c1c1}.redflag h3{color:#842424;margin-bottom:6px}.redflag ul{margin:0;padding-left:18px}.redflag li{margin:5px 0}.redflag li.urgent{font-weight:700;color:var(--danger);list-style:none;margin-left:-18px}.action-card{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fbfcfe;margin:8px 0}.action-card.urgent-action{border-color:#e7c1c1;border-left:4px solid var(--danger);background:var(--danger-soft)}.urgent-priority{color:var(--danger)}.subtlebox{background:#fafbfd;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
+    .claim-card{border:1px solid var(--line);border-left:5px solid #9cb3c8;border-radius:14px;background:#fff;margin:12px 0;padding:14px;box-shadow:0 4px 14px rgba(20,35,55,.05);transition:box-shadow .15s}
+    .claim-group-heading{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;margin:20px 0 10px;font-size:16px;font-weight:800}
+    .claim-group-heading:first-child{margin-top:0}
+    .claim-group-heading.empco-heading{background:var(--ok-soft);color:var(--ok);border-left:5px solid var(--ok)}
+    .claim-group-heading.forcedlabour-heading{background:var(--danger-soft);color:var(--danger);border-left:5px solid var(--danger)}
+    .claim-group-heading.other-heading{background:var(--soft);color:var(--muted);border-left:5px solid #9cb3c8;font-size:14.5px;font-weight:700}
+    .claim-subheading{font-size:13.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin:14px 0 6px 4px;padding-top:6px;border-top:1px dashed var(--line)}
+    .claim-subheading:first-of-type{border-top:none;padding-top:0}
+    .claim-card:hover{box-shadow:0 8px 24px rgba(20,35,55,.10)}.claim-card.green{border-left-color:#276749}.claim-card.social{border-left-color:#9b6a17}.claim-head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;margin-bottom:10px;cursor:pointer;list-style:none}.claim-head::-webkit-details-marker{display:none}.claim-card>.claim-head::after{content:'▾';color:#9cb3c8;font-size:14px;margin-left:6px;align-self:center}.claim-card:not([open])>.claim-head::after{content:'▸'}.claim-card:not([open])>.claim-head{margin-bottom:0}.glance-list{background:#f7f9fc;border:1px solid #dfe5ee;border-radius:10px;padding:6px 10px;margin-bottom:12px}.glance-row{display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dashed #dfe5ee;font-size:12.5px}.glance-row:last-child{border-bottom:none}.glance-type{font-weight:700;color:#173f5f;white-space:nowrap}.glance-snippet{color:#5e6b7d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.claim-title{font-weight:850;color:#173f5f}.source-ref{background:#f7f9fc;border:1px solid #dfe5ee;border-radius:10px;padding:9px;margin-bottom:9px}.claim-step{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#516073;font-weight:850;margin-bottom:4px}.detected-passage{background:#fffdf4;border:1px solid #ead8aa;border-radius:10px;padding:11px;color:#263445;margin-bottom:8px}.detected-passage .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#68470f;font-weight:800;margin-bottom:4px}.trigger-row{margin-top:8px;background:#fff7f7;border:1px solid #efcaca;border-radius:10px;padding:9px}.stakeholder-note{background:#fff8ea;border:1px solid #ead8aa;border-radius:10px;padding:9px;margin-bottom:10px;color:#68470f}
+    .section h2{display:flex;align-items:center;gap:10px}
+    .section h2::before{content:'';display:inline-block;width:4px;height:20px;border-radius:2px;background:var(--accent2);vertical-align:middle}
+    .card.section{border-top:3px solid var(--accent2)}
+    @media(max-width:850px){.grid,.cols,.scores,.redflag-grid{grid-template-columns:1fr}.hero h1{font-size:28px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="hero">
+    <div class="kicker">EmpCo &middot; EU Forced Labour Regulation lenses</div>
+    <h1>Sustainability Scan</h1>
+    <p>Assess whether public sustainability claims are specific, substantiated, audience-appropriate and consistent with relevant public information. The scan applies two regulatory lenses: <strong>EmpCo</strong> &mdash; Directive (EU) 2024/825, officially the "Empowering Consumers for the Green Transition" Directive &mdash; for consumer-facing environmental (green) claims, and the <strong>EU Forced Labour Regulation</strong> (Regulation (EU) 2024/3015) for product, supplier and supply-chain claims related to forced labour.</p>
+    <div id="version" class="version">Checking backend version...</div>
+  </section>
+
+  <section class="card purpose">
+    <p class="muted" style="margin-bottom:10px">Assess sustainability claims for wording risk, evidence gaps, regulatory sensitivity and relevant public contradictions &mdash; not a broad ESG rating.</p>
+    <details class="how-it-works">
+      <summary>How the assessment works</summary>
+      <p class="muted" style="margin-top:10px">This is a claims-risk scan, not a broad ESG rating. It identifies sustainability wording that may be too broad, insufficiently evidenced, consumer-facing under EmpCo, exposed to the EU Forced Labour Regulation, or potentially contradicted by relevant external public-source context.</p>
+      <ol>
+        <li><strong>Claim wording:</strong> broad, generic, absolute, future-oriented, comparative or label/icon-based claims.</li>
+        <li><strong>Evidence gap:</strong> missing scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, traceability or due-diligence evidence.</li>
+        <li><strong>External context:</strong> relevant public signals that may contradict or qualify the claim.</li>
+        <li><strong>Regulatory lens:</strong> EmpCo (Directive (EU) 2024/825, "Empowering Consumers for the Green Transition") for consumer-facing green claims; the EU Forced Labour Regulation (Regulation (EU) 2024/3015) for forced-labour and supply-chain claims.</li>
+      </ol>
+      <div class="toolbar"><a class="btn secondary" href="/methodology.pdf" target="_blank" rel="noopener">Download detailed methodology PDF</a></div>
+    </details>
+  </section>
+
+  <section class="scan-area">
+    <div class="grid">
+      <div class="card">
+        <h2>Website scan &mdash; public sources</h2>
+        <p class="muted">Enter a company name or website (e.g. <strong>Inditex</strong>, <strong>inditex.com</strong>). The scan finds the official site and reviews its public pages &mdash; sustainability, policies, product/campaign pages, press and investor pages &mdash; plus public external signals (media, NGO, regulator, union) when configured. Only public material is checked.</p>
+        <label for="url">Company name or website</label>
+        <input id="url" type="text" placeholder="e.g. Inditex, inditex.com or www.inditex.com" />
+        <div class="toolbar"><button id="runUrl" class="btn">Run website scan</button></div>
+        <p class="small" style="margin-top:8px;color:var(--muted)">Public sources only. If a bare company name cannot be confidently matched to an official domain, the scan reports how it resolved the name so you can verify it.</p>
+      </div>
+      <div class="card">
+        <h2>Internal document scan &mdash; non-public upload</h2>
+        <p class="muted">Upload one <strong>non-public</strong> document &mdash; an internal policy draft, unpublished report, supplier contract or memo. Only the uploaded file is reviewed: no website crawl, no external search. Kept separate from website scan results.</p>
+        <label for="file">Internal document</label>
+        <input id="file" class="file-native" type="file" accept=".txt,.html,.htm,.md,.csv,.docx,.pdf" />
+        <div class="file-row"><button id="chooseFile" type="button" class="btn secondary">Choose file</button><span id="fileName" class="file-name">No file selected</span></div>
+        <label for="docCompanyName" style="margin-top:8px">Company name (optional, recommended)</label>
+        <input id="docCompanyName" type="text" placeholder="e.g. Acme Corp" />
+        <p class="small">Supported: TXT, HTML, MD, CSV, DOCX. PDF extraction is best-effort.</p>
+        <div class="toolbar"><button id="runDoc" class="btn">Upload and scan document</button></div>
+      </div>
+    </div>
+    <div id="status" class="notice">Ready.</div>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="card section">
+      <h2>Executive summary</h2>
+      <p id="resolutionNote" class="notice warning hidden" style="margin-bottom:12px"></p>
+      <p id="reliabilityWarning" class="notice warning hidden" style="margin-bottom:12px;background:#fff4e5;border:1px solid #e0a020;color:#7a4a00;padding:10px 14px;border-radius:8px;font-weight:600"></p>
+      <p id="summary" class="muted"></p>
+      <div id="scoreCards" class="scores"></div>
+      <div class="download-panel" style="background:#f0f9ff;border:1px solid #bfd7f0;border-radius:12px;padding:16px;margin-top:16px">
+        <h3 style="color:#173f5f;margin-bottom:6px">&#8595; Download company report</h3>
+        <p class="small"><strong>2-page PDF report:</strong> a board-ready claim-risk report with scores, red flags, claim signals, score drivers and action plan &mdash; generated as a native PDF and downloaded directly.</p>
+        <div class="toolbar">
+          <button class="btn" id="pdfReportBtn" onclick="downloadCompanyReportPdf()">Download 2-page company report (PDF)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card section">
+      <h2>Score composition and risk drivers</h2>
+      <p class="muted">Why the green and social scores are at their current level, based on what was actually retained in this scan.</p>
+      <div id="drivers" class="cols"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Key sustainability claim signals</h2>
+      <p class="muted">This scan is built around two EU legal lenses. EmpCo (Directive (EU) 2024/825) is primarily an environmental-claims law, with a narrower, secondary basis for social claims (Article 6(1)(b)); social signals under EmpCo are therefore limited to the most material, high-severity items. The EU Forced Labour Regulation (Regulation (EU) 2024/3015) covers forced-labour and supply-chain claims specifically. Claims that fit neither lens are shown separately. The table shows the exact wording detected in the reviewed material; potentially problematic words are highlighted in <strong>bold yellow</strong>, followed by a short list of the main trigger terms.</p>
+      <div id="claimSignals"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Recommended actions</h2>
+      <div id="actions"></div>
+    </div>
+
+    <div class="card section">
+      <h2>External public-source signals</h2>
+      <p class="muted">Only external sources are displayed here. Company-owned websites, reports, policies and supplier documents are evidence sources, not external public-source signals.</p>
+      <div id="external"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Red flags</h2>
+      <p class="muted">Grouped by review lens, based on what this scan actually found.</p>
+      <div id="redflags"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Methodology and limitations</h2>
+      <p id="methodology" class="muted"></p>
+      <div class="toolbar"><a class="btn secondary" href="/methodology.pdf" target="_blank" rel="noopener">Download detailed methodology PDF</a></div>
+      <p id="disclaimer" class="small"></p>
+    </div>
+  </section>
+
+  <div class="footer">© Durably. Proprietary Sustainability Scan methodology. Indicative first-pass assessment only; results require legal, compliance and subject-matter review before external use.</div>
+</div>
+<script>
+let lastData=null;
+const $=id=>document.getElementById(id);
+const PROBLEM_TERMS=['environmentally friendly','climate neutral','carbon neutral','co2 neutral','co₂ neutral','net zero','carbon positive','climate positive','offsetting','offset','climate compensated','reduced climate impact','better for the planet','greener than','more sustainable than','lowest emissions','lower emissions','reduced emissions','best environmental','sustainability label','self-declared label','eco-friendly','ecological','green','eco','natural','sustainable','recyclable','recycled','circular','renewable','biodegradable','energy efficient','water efficient','ethical','fair','responsible','socially responsible','trusted','human rights','labour rights','labor rights','forced labour','forced labor','child labour','child labor','modern slavery','living wage','supply chain','supplier','responsible sourcing','ethical sourcing','traceable','certified','audited','diversity','inclusion','inclusive','safe workplace','well-being','accessibility','vulnerable customers','for all','all suppliers','all employees','100%','always','never','guarantee','fully','zero'];
+function riskClass(r){r=(r||'').toLowerCase().replace(/\s+/g,'-');return r||'low'}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function arr(x){return Array.isArray(x)?x:(x?[x]:[])}
+function setStatus(msg,type='notice'){const el=$('status'); if(!el)return; el.className=type; el.innerHTML=msg}
+async function health(){try{let r=await fetch('/api/health',{cache:'no-store'});let j=await r.json();$('version').textContent='System status: ready · External search: '+((j.tavily_configured||j.google_search_configured)?'configured':'not configured');}catch(e){$('version').textContent='System status: backend unavailable';}}
+health();
+$('chooseFile')?.addEventListener('click',()=>$('file').click());
+$('file')?.addEventListener('change',()=>{$('fileName').textContent=$('file').files[0]?.name||'No file selected'});
+async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a company name or website.','notice warning');return} await runScan('/api/scan/url',{url});}
+async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return} let b64=await fileToBase64(f); await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64,company_name:$('docCompanyName').value.trim()});}
+async function runScan(endpoint,payload){$('runUrl').disabled=true;$('runDoc').disabled=true;$('results').classList.add('hidden');setStatus('<span class="spinner"></span> Running scan. This can take a moment while the website and external stakeholder signals are checked.','notice');try{let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let text=await r.text();let j;try{j=JSON.parse(text)}catch(_){throw new Error((text.trim().startsWith('<!DOCTYPE')||text.trim().startsWith('<html'))?'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up (this can take up to a minute) on top of the scan itself. Please try the same scan again \u2014 it should complete normally now that the server is awake.':(text.slice(0,250)||'The server returned an unreadable response.'))}if(!r.ok||j.error)throw new Error(j.error||'Scan failed');lastData=j;render(j);setStatus('Scan completed. Review the findings below and use the company report download buttons.','notice');}catch(e){setStatus('Scan failed: '+esc(e.message),'notice error')}finally{$('runUrl').disabled=false;$('runDoc').disabled=false;}}
+function fileToBase64(file){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
+$('runUrl').addEventListener('click',scanUrl);$('runDoc').addEventListener('click',scanDoc);
+function render(d){$('results').classList.remove('hidden');$('summary').textContent=d.assessment_summary_specific||d.report?.summary||'';$('methodology').textContent=d.methodology||'';$('disclaimer').textContent=d.disclaimer||'';let rn=$('resolutionNote');if(d.fallback_note){rn.textContent=d.fallback_note;rn.classList.remove('hidden')}else{rn.classList.add('hidden')}let rw=$('reliabilityWarning');if(d.data_reliability_warning){let cd=d.crawl_diagnostics||{};rw.textContent='⚠ Data reliability: '+d.data_reliability_warning+(cd.pages_attempted?` (${cd.pages_failed||0}/${cd.pages_attempted} page fetches failed.)`:'');rw.classList.remove('hidden')}else{rw.classList.add('hidden')}renderScores(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
+function scoreInterp(n){
+  if(n==null)return '';
+  if(n>=85)return 'Very high — multiple severe signals';
+  if(n>=70)return 'High — priority review needed';
+  if(n>=50)return 'Elevated — several claim signals';
+  if(n>=30)return 'Moderate — some wording needs review';
+  return 'Low — limited claim-risk signal';
+}
+function renderScores(d){
+  let scores=[['Global',d.global_score??d.overall_score,d.global_risk??d.overall_risk,'global'],
+              ['Green',d.green_score,d.green_risk,'green-score'],
+              ['Social',d.social_score,d.social_risk,'social-score']].filter(x=>x[1]!=null);
+  let html=scores.map(s=>`<div class="score ${esc(s[3])}">
+    <div class="label">${esc(s[0])} risk score</div>
+    <div class="num">${esc(s[1])}<span class="small">/100</span></div>
+    <div class="risk ${riskClass(s[2])}">${esc(s[2]||'')}</div>
+    <div class="score-bar"><div class="score-bar-fill" style="width:${s[1]}%"></div></div>
+    <div class="score-interp">${scoreInterp(s[1])}</div>
+    <div class="small" style="margin-top:4px">${s[0]==='Global'?'Combined green + social':s[0]==='Green'?'Environmental / EmpCo lens':'Social / forced-labour lens'}</div>
+  </div>`).join('');
+  // v57p: entity/sector/external-signal context is deliberately rendered as a separate,
+  // visually distinct card -- not a 0-100 score bar like the claim scores above -- because it
+  // is not blended into the claim-communication scores. A company controversy or sector
+  // exposure is relevant background, not evidence that a specific claim is misleading.
+  let eci=d.entity_context_indicator;
+  if(eci){
+    html+=`<div class="score entity-context">
+      <div class="label">Entity context</div>
+      <div class="num" style="font-size:22px">${esc(eci.level||'')}</div>
+      <div class="small" style="margin-top:6px">${esc(eci.note||'')}</div>
+      <div class="small" style="margin-top:8px;opacity:.75">Shown separately from the claim scores above &mdash; not blended into them.</div>
+    </div>`;
+  }
+  $('scoreCards').innerHTML=html;
+}
+function renderDrivers(d){let det=d.score_driver_details||{};let green=det.green||{};let social=det.social||{};let html=''; if(green.summary)html+=driverCard('Green score drivers',green); if(social.summary)html+=driverCard('Social score drivers',social); if(!html && d.why_score){html=Object.entries(d.why_score).map(([k,v])=>`<div><h3>${esc(k)}</h3><p class="muted">${esc(typeof v==='string'?v:JSON.stringify(v,null,2))}</p></div>`).join('')} $('drivers').innerHTML=html||'<p class="empty">No score-driver details available.</p>';}
+function driverCard(title,obj){let items=[];if(obj.key_drivers&&obj.key_drivers.length){items=obj.key_drivers.map(k=>`<li>${esc(k)}</li>`)}else{['claim_wording','substantiation','external_context','sector_context','audience'].forEach(k=>{if(obj[k])items.push(`<li><strong>${esc(k.replace(/_/g,' '))}:</strong> ${esc(obj[k])}</li>`)})}return `<div class="subtlebox"><h3>${esc(title)}</h3>${obj.summary?`<p class="muted">${esc(obj.summary)}</p>`:''}<ul class="list">${items.join('')}</ul></div>`}
+function termsInText(text){let low=String(text||'').toLowerCase();return PROBLEM_TERMS.filter(t=>low.includes(t)).slice(0,10)}
+function highlightTerms(text, explicit){let html=esc(text||'');let terms=arr(explicit).concat(termsInText(text)).filter(Boolean);terms=[...new Set(terms.map(x=>String(x).trim()).filter(x=>x.length>1))].sort((a,b)=>b.length-a.length).slice(0,12);for(let term of terms){let safe=esc(term).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');try{html=html.replace(new RegExp('('+safe+')','ig'),'<strong>$1</strong>')}catch(e){}}return {html,terms};}
+function isMaterialClaim(x){let t=String(x.claim_type||x.type||'').toLowerCase();return !(t.startsWith('no material')||t.startsWith('no major'))}
+// v57m: EmpCo's own operative provisions are overwhelmingly environmental (Annex I points
+// 2a/4a/4b/4c/10a, Art. 6(2)(d), Art. 7(7) are all environmental-claim rules) -- the social
+// angle is real but thin, resting on a single general clause (Art. 6(1)(b)) plus Recital 3's
+// short list of examples (wages, safety, human rights, equal treatment, gender equality,
+// inclusion, diversity). So EmpCo splits into two sub-groups under one heading: Environmental
+// (the full, well-developed claim set) and Social (flat, no further sub-headings, and limited
+// to the small set of types that map directly onto Recital 3's named characteristics, filtered
+// to High risk only so the section stays focused on the most material items rather than every
+// borderline signal). The Forced Labour Regulation section is kept strict: only the claim type
+// that is actually about forced labour / modern slavery falls under that Regulation -- general
+// "responsible sourcing" or "supplier" claims are not specific to it and move to "Other".
+const EMPCO_SOCIAL_TYPES=new Set(['aspirational or future social-performance claim',
+  'human-rights or labour-rights claim','human-rights / labour-rights claim',
+  'health, safety or worker-welfare claim']);
+const FORCED_LABOUR_TYPES=new Set(['forced-labour product or supply-chain claim']);
+function claimRegulatoryBucket(claimType, dimension){
+  let t=String(claimType||'').toLowerCase().trim();
+  let dim=String(dimension||'').toLowerCase();
+  if(FORCED_LABOUR_TYPES.has(t))return 'forced_labour';
+  if(dim==='green')return 'empco_environmental';
+  if(EMPCO_SOCIAL_TYPES.has(t))return 'empco_social';
+  return 'other';
+}
+function isHighRisk(x){return String(x.risk_level||x.risk||'').toLowerCase()==='high';}
+function renderClaims(d){let all=arr(d.claim_inventory).length?arr(d.claim_inventory):[...arr(d.green_findings),...arr(d.social_findings),...arr(d.findings)];all=all.filter(isMaterialClaim);
+  let envir=all.filter(x=>claimRegulatoryBucket(x.claim_type||x.type,x.dimension)==='empco_environmental');
+  let socialAll=all.filter(x=>claimRegulatoryBucket(x.claim_type||x.type,x.dimension)==='empco_social');
+  let social=socialAll.filter(isHighRisk);
+  let forcedLabour=all.filter(x=>claimRegulatoryBucket(x.claim_type||x.type,x.dimension)==='forced_labour');
+  let other=[...all.filter(x=>claimRegulatoryBucket(x.claim_type||x.type,x.dimension)==='other'),...socialAll.filter(x=>!isHighRisk(x))];
+  let empcoBlock=`<h3 class="claim-group-heading empco-heading">&#127793; EmpCo Directive (EU 2024/825)</h3>`
+    +`<h4 class="claim-subheading">Environmental claims</h4>${envir.length?claimCards(envir):'<p class="empty">No material environmental claim signal was retained.</p>'}`
+    +`<h4 class="claim-subheading">Social claims</h4>${social.length?claimCards(social):'<p class="empty">No material, high-severity social claim signal was retained.</p>'}`;
+  let forcedLabourBlock=`<h3 class="claim-group-heading forcedlabour-heading">&#9878; EU Forced Labour Regulation (EU 2024/3015)</h3>${forcedLabour.length?claimCards(forcedLabour):'<p class="empty">No material forced-labour or supply-chain assurance wording was retained.</p>'}`;
+  let blocks=[empcoBlock, forcedLabourBlock];
+  if(other.length)blocks.push(`<h3 class="claim-group-heading other-heading">Other sustainability or social claims</h3>${claimCards(other)}`);
+  $('claimSignals').innerHTML=blocks.join('');}
+function claimSource(r){let label=r.source_label||r.source_url||'Reviewed material';let url=r.source_url||'';let lens=r.audience_lens||r.audience_group||'';let link=url && /^https?:/i.test(url)?`<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>`:esc(label);return `<div>${link}</div>${lens?`<div class="small">${esc(lens)}</div>`:''}`}
+function claimCards(rows){rows=arr(rows).filter(isMaterialClaim);if(!rows.length)return '<p class="empty">No material problematic claim signal retained in this category.</p>';
+  // v57s: a quick-scan "at a glance" list up top -- type, risk, one-line snippet -- so a reader
+  // can see what was found before scrolling through the full detail cards below. Nothing is
+  // removed from the full cards; this is purely additive for scanability on longer result sets.
+  let glance=rows.map(r=>{let snippet=String(r.claim_text||r.claim||'').replace(/\s+/g,' ').trim();if(snippet.length>90)snippet=snippet.slice(0,87)+'…';return `<div class="glance-row"><span class="risk ${riskClass(r.risk_level||r.risk)}">${esc(r.risk_level||r.risk||'')}</span><span class="glance-type">${esc(r.claim_type||r.type||'Claim signal')}</span><span class="glance-snippet">${esc(snippet)}</span></div>`}).join('');
+  let glanceBlock=rows.length>1?`<div class="glance-list">${glance}</div>`:'';
+  let cards=rows.map((r,i)=>{let text=String(r.claim_text||r.claim||'').replace(/\s+/g,' ').trim();let h=highlightTerms(text,arr(r.problematic_terms).concat([r.matched_phrase]));let dim=String(r.dimension||r.claim_dimension||'').toLowerCase().includes('green')?'green':'social';let terms=h.terms.length?h.terms.map(t=>`<span class="pill problem">${esc(t)}</span>`).join(' '):'<span class="small">The full wording pattern implies a specific high-sensitivity sustainability claim.</span>';let source=claimSource(r);let why=[r.why_flagged||r.risk_reason||r.issue||r.analysis||''];if(r.regulatory_signal&&!why[0].includes(r.regulatory_signal))why.push(r.regulatory_signal);let spec=r.specification_check&&r.specification_check.comment;if(spec)why.push('In this passage: '+spec);return `<details class="claim-card ${dim}" open><summary class="claim-head"><div><div class="claim-title">${esc(r.claim_type||r.type||'Claim signal')}</div><div class="small">Problematic signal ${i+1} · ${esc(r.audience_lens||r.audience_group||'Audience not classified')}</div></div><span class="risk ${riskClass(r.risk_level||r.risk)}">${esc(r.risk_level||r.risk||'')}</span></summary><div class="source-ref"><div class="claim-step">1. Source page or document</div>${source}${r.source_interpretation?`<div class="small">${esc(r.source_interpretation)}</div>`:''}</div><div class="detected-passage"><div class="claim-step">2. Exact claim passage retained for review</div><div class="quote" translate="no">${h.html||'<span class="empty">No exact passage available.</span>'}</div></div><div class="trigger-row"><div class="claim-step">3. Specific trigger phrase(s) within the passage</div>${terms}</div><div class="subtlebox"><strong>Why this was retained:</strong> ${why.map(w=>esc(w)).join(' ')}</div><div class="subtlebox"><strong>Suggested improvement:</strong> ${esc(r.suggested_rewrite||r.rewrite||'')}</div></details>`;}).join('');
+  return glanceBlock+cards}
+function renderRedFlags(d){let by=d.red_flags_by_dimension||{};let green=arr(by.green);let social=arr(by.social);let flags=arr(d.stakeholder_red_flags);let regulatory=[];let external=[];for(let f of flags){let s=String(typeof f==='string'?f:JSON.stringify(f));let l=s.toLowerCase();if(l.includes('empco')||l.includes('regulation')||l.includes('forced labour')||l.includes('forced labor'))regulatory.push(s);if(l.includes('external')||l.includes('public-source')||l.includes('contradict'))external.push(s)}
+function isUrgent(s){let l=s.toLowerCase();return l.includes('high')||l.includes('empco')||l.includes('forced labour')||l.includes('forced labor')||l.includes('regulation')}
+function box(cls,title,items){items=arr(items).filter(Boolean);return `<div class="redflag ${cls}"><h3>${esc(title)}</h3><ul>${items.length?items.slice(0,6).map(x=>isUrgent(x)?`<li class="urgent">&#9888; ${esc(x)}</li>`:`<li>${esc(x)}</li>`).join(''):'<li>No specific red flag retained.</li>'}</ul></div>`}$('redflags').innerHTML=`<div class="redflag-grid">${box('green-flag','Green-claim red flags',green)}${box('social-flag','Social-claim red flags',social)}${box('reg-flag','Regulatory red flags',regulatory)}${box('', 'Negative external-context red flags', external)}</div>`;}
+function renderExternal(d){let g=arr(d.external_research?.green?.targeted_negative_sources);let s=arr(d.external_research?.social?.targeted_negative_sources);let legacy=arr(d.external_research?.targeted_negative_sources);let retained=g.length+s.length+legacy.length;function srcList(title,items){items=arr(items);if(!items.length)return '';return `<h3>${esc(title)}</h3>`+items.map(src=>`<div class="source"><strong>${esc(src.title||'External stakeholder signal')}</strong><br><a href="${esc(src.url||'#')}" target="_blank" rel="noopener">${esc(src.url||'')}</a><p class="small">${esc(src.category||'Negative external stakeholder source')} · ${esc(src.credibility||'')}</p><p>${esc(src.content||'')}</p></div>`).join('')}let html='<div class="stakeholder-note"><strong>Scope:</strong> this section only retains negative external stakeholder perceptions, such as criticism, allegations, complaints, investigations, enforcement, litigation, NGO/union/regulator signals or clearly negative press. Company-owned documents, policies, reports, corporate news, awards, partnerships and positive or neutral announcements are excluded.</div>';html+=srcList('Green-claim related negative external stakeholder signals',g);html+=srcList('Social-claim related negative external stakeholder signals',s);html+=srcList('Other retained negative external stakeholder signals',legacy);let msg=retained?'<p class="small">Only retained negative stakeholder signals are shown.</p>':'<p class="empty">No negative external stakeholder signal was retained after excluding company-owned documents and positive or neutral news. If external search is not configured, no live external-source check is performed.</p>';$('external').innerHTML=html+msg;}
+function renderActions(d){let actions=arr(d.company_action_plan);$('actions').innerHTML=actions.length?actions.map(a=>{let p=String(a.priority||'');let urgent=/priority\s*1\b/i.test(p);return `<div class="action-card${urgent?' urgent-action':''}"><strong class="${urgent?'urgent-priority':''}">${urgent?'&#9888; ':''}${esc(p)}</strong> ${esc(a.title||'')}<br><span class="muted">${esc(a.action||'')}</span></div>`}).join(''):'<p class="empty">No actions available.</p>'}
+function miniSource(r){return (r.source_label||r.source_url||'Reviewed material').replace(/\s+/g,' ').slice(0,90)}
+async function downloadCompanyReportPdf(){
+  if(!lastData) return;
+  let btn=document.getElementById('pdfReportBtn'), orig=btn?btn.textContent:null;
+  if(btn){btn.disabled=true;btn.textContent='Generating PDF\u2026'}
+  try{
+    let r=await fetch('/api/report/pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lastData)});
+    if(!r.ok){let t=await r.text();throw new Error(t.slice(0,200)||'PDF generation failed')}
+    let blob=await r.blob();
+    let stamp=(lastData.analysis_date||new Date().toISOString()).slice(0,10).replace(/[^0-9-]/g,'');
+    download(blob,'durably_company_report_'+stamp+'.pdf');
+  }catch(e){ setStatus('PDF download failed: '+esc(e.message),'notice error') }
+  finally{ if(btn){btn.disabled=false;btn.textContent=orig} }
+}
+
+function download(blob,name){let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+</script>
+</body>
+</html>

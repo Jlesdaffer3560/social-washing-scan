@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puratos - Durably company claim-risk report</title>
+<style>
+:root{
+  --navy:#173e52; --teal:#2c766b; --teal-dark:#195a53;
+  --green:#2f7d55; --green-soft:#eaf5ef; --blue-soft:#eff5f8;
+  --amber:#a87311; --amber-soft:#fff6df; --red:#af3d43;
+  --grey-900:#263238; --grey-700:#52616a; --grey-500:#7a8a93;
+  --grey-300:#d8e1e5; --grey-150:#edf1f3; --grey-100:#f7f9fa;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:#e9eef1;
+  font-family:Arial,Helvetica,sans-serif;
+  color:var(--grey-700);
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+}
+.report-controls{
+  position:fixed;right:18px;top:18px;z-index:30;
+  display:flex;gap:8px;
+}
+.report-controls button{
+  border:0;border-radius:5px;padding:9px 13px;cursor:pointer;
+  font-size:13px;font-weight:700;
+}
+.report-controls .primary{background:var(--navy);color:#fff}
+.report-controls .secondary{background:#fff;color:var(--navy);border:1px solid var(--grey-300)}
+.page{
+  width:210mm;height:297mm;margin:12px auto;background:#fff;
+  padding:11mm 13mm 14mm;position:relative;overflow:hidden;
+  page-break-after:always;
+}
+.page:last-child{page-break-after:auto}
+.header{
+  display:grid;grid-template-columns:minmax(0,2fr) minmax(45mm,1fr);
+  gap:8mm;border-bottom:1.5px solid var(--navy);
+  padding-bottom:3mm;margin-bottom:3mm;
+}
+.brand{font-size:8.2pt;font-weight:700;color:var(--teal-dark);letter-spacing:.3px}
+h1{font-size:20pt;line-height:1.04;margin:1.5mm 0 .8mm;color:var(--navy)}
+.subtitle{font-size:8.6pt;color:var(--grey-700)}
+.meta{text-align:right;font-size:7pt;line-height:1.32;color:var(--grey-700);overflow-wrap:anywhere}
+.meta strong{font-size:6.3pt;color:var(--grey-500);letter-spacing:.2px}
+.section{
+  font-size:9.2pt;font-weight:700;color:var(--navy);
+  letter-spacing:.2px;margin:3.4mm 0 1.7mm;
+}
+.summary{
+  display:grid;grid-template-columns:minmax(0,3fr) minmax(38mm,1.15fr);
+  border:1px solid var(--grey-300);margin-bottom:3.5mm;
+}
+.summary>div{padding:2.8mm 3.2mm;font-size:7.2pt;line-height:1.32}
+.summary-main{background:var(--amber-soft);border-left:3px solid var(--amber)}
+.summary-note{background:var(--grey-100);border-left:1px solid var(--grey-300);font-size:6.5pt!important}
+.scores{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2.5mm}
+.score{
+  border:1px solid var(--grey-300);padding:2.6mm;
+  border-left:3px solid var(--amber);min-height:25mm;overflow:hidden;
+}
+.score.low{border-left-color:var(--green)}
+.score.high,.score.very-high{border-left-color:var(--red)}
+.eyebrow{font-size:6.2pt;font-weight:700;color:var(--teal-dark);text-transform:uppercase}
+.number{font-size:18pt;line-height:1;font-weight:700;color:var(--navy);margin:2.3mm 0 .8mm}
+.number small{font-size:6.6pt}
+.risk{font-size:7.8pt;font-weight:700;color:var(--amber)}
+.risk.low{color:var(--green)}.risk.high,.risk.very-high{color:var(--red)}
+.small{font-size:6.35pt;line-height:1.25}.body{font-size:7.1pt;line-height:1.3}
+table{width:100%;border-collapse:collapse;font-size:6.7pt;line-height:1.25;table-layout:fixed}
+th{background:var(--navy);color:#fff;text-align:left;padding:1.9mm;font-size:6.3pt}
+td{padding:1.9mm;border:1px solid var(--grey-300);vertical-align:top;overflow-wrap:anywhere}
+tr:nth-child(even) td{background:var(--grey-100)}
+.col-rank{width:8mm}.col-area{width:58mm}.col-wording{width:48mm}
+mark{background:#fff1a8;padding:0 1px}
+.claim{border:1px solid var(--grey-300);margin-bottom:2.6mm;break-inside:avoid}
+.claim-head{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4mm;
+  padding:2.2mm 2.8mm;background:var(--blue-soft);
+  border-left:3px solid var(--teal);font-size:8.3pt;font-weight:700;color:var(--navy)
+}
+.claim-risk{color:var(--red)}
+.claim-body{padding:2.2mm 2.8mm;font-size:6.85pt;line-height:1.29}
+.source{font-size:6.1pt;color:var(--grey-500);margin-bottom:1.7mm;overflow-wrap:anywhere}
+.excerpt{background:#fffdf6;padding:1.6mm;margin:1.4mm 0 1.8mm}
+.claim-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3.5mm;margin:2mm 0}
+.claim-grid>div:first-child{border-right:1px solid var(--grey-300);padding-right:3.5mm}
+.label{font-size:6.2pt;font-weight:700;color:var(--teal-dark);text-transform:uppercase;margin-bottom:.7mm}
+.actions{border:1px solid var(--grey-300)}
+.action{
+  display:grid;grid-template-columns:10mm minmax(0,1fr);
+  border-bottom:1px solid var(--grey-300);background:var(--grey-100)
+}
+.action:last-child{border-bottom:0}
+.action>div{padding:2.2mm 2.8mm;font-size:6.65pt;line-height:1.27}
+.action-num{
+  font-size:8.6pt!important;font-weight:700;color:var(--navy);
+  text-align:center;border-right:1px solid var(--grey-300)
+}
+.bottom{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);
+  border:1px solid var(--grey-300);margin-top:2.7mm
+}
+.bottom>div{padding:2.6mm}
+.bottom>div+div{border-left:1px solid var(--grey-300)}
+.bottom h3{font-size:7.5pt;margin:0 0 1.5mm;color:var(--navy)}
+.bottom ul{margin:0;padding-left:4mm}
+.bottom li{font-size:6.2pt;line-height:1.25;margin-bottom:.8mm;overflow-wrap:anywhere}
+.muted{color:var(--grey-500);font-style:italic}
+.footer{
+  position:absolute;left:13mm;right:13mm;bottom:6.5mm;
+  border-top:1px solid var(--grey-300);padding-top:1.8mm;
+  display:flex;justify-content:space-between;gap:8mm;
+  font-size:5.4pt;font-style:italic;color:var(--grey-500)
+}
+.footer span:first-child{max-width:145mm}
+@page{size:A4;margin:0}
+@media print{
+  body{background:#fff}
+  .page{margin:0;box-shadow:none}
+  .report-controls{display:none!important}
+}
+</style>
+</head>
+<body>
+<div class="report-controls">
+  <button class="primary" onclick="window.print()">Print / Save as PDF</button>
+  <button class="secondary" onclick="window.close()">Close</button>
+</div>
+
+<section class="page">
+  <header class="header">
+    <div>
+      <div class="brand">DURABLY SUSTAINABILITY SCAN</div>
+      <h1>Puratos</h1>
+      <div class="subtitle">Company claim-risk report · Assessment overview</div>
+    </div>
+    <div class="meta">
+      <strong>REVIEWED SOURCE</strong><br>
+      https://www.puratos.com<br>
+      2026-07-15 · Website scan<br>
+      2 pages across 1 domain<br>
+      Confidence: Medium
+    </div>
+  </header>
+
+  <div class="summary">
+    <div class="summary-main">
+      <b>Overall result: 47/100 — Medium claim risk.</b>
+      The scan identified medium overall claim risk. The main issues concern climate-neutrality wording, certification terminology and broad environmental language.
+    </div>
+    <div class="summary-note">The company name was resolved to puratos.com. Confirm that the reviewed domain and entity are correct.</div>
+  </div>
+
+  <div class="section">SCORE OVERVIEW</div>
+  <div class="scores">
+    <div class="score medium">
+      <div class="eyebrow">Overall claims risk</div>
+      <div class="number">47<small>/100</small></div>
+      <div class="risk medium">Medium</div>
+    </div>
+    <div class="score medium">
+      <div class="eyebrow">Green claims risk</div>
+      <div class="number">51<small>/100</small></div>
+      <div class="risk medium">Medium</div>
+    </div>
+    <div class="score low">
+      <div class="eyebrow">Social claims risk</div>
+      <div class="number">41<small>/100</small></div>
+      <div class="risk low">Low</div>
+    </div>
+    <div class="score high">
+      <div class="eyebrow">Entity context</div>
+      <div class="number" style="font-size:14pt">High</div>
+      <div class="risk high">High</div>
+      <div class="small">No external signal was retained. Sector exposure remains high because of complex supply chains and labour-risk exposure.</div>
+    </div>
+  </div>
+
+  <div class="section">TOP RISK DRIVERS</div>
+  <table>
+    <thead><tr><th class="col-rank">#</th><th class="col-area">Claim area</th><th class="col-wording">Flagged wording</th><th>Source</th></tr></thead>
+    <tbody>
+    
+      <tr>
+        <td>1</td>
+        <td><b>Climate-neutrality or offsetting claim</b><br><span class="muted">High</span></td>
+        <td>carbon neutral</td>
+        <td>www.puratos.com</td>
+      </tr>
+    
+      <tr>
+        <td>2</td>
+        <td><b>Sustainability label / certification claim</b><br><span class="muted">High</span></td>
+        <td>certified sustainable</td>
+        <td>Puratos 2025 Sustainability GRI Report.pdf</td>
+      </tr>
+    
+      <tr>
+        <td>3</td>
+        <td><b>Generic environmental claim</b><br><span class="muted">High</span></td>
+        <td>more sustainable</td>
+        <td>www.puratos.com</td>
+      </tr>
+    
+    </tbody>
+  </table>
+
+  <div class="section">MOST MATERIAL FINDING</div>
+  
+  <article class="claim">
+    <div class="claim-head">
+      <span>Climate-neutrality or offsetting claim</span>
+      <span class="claim-risk">High</span>
+    </div>
+    <div class="claim-body">
+      <div class="source">Source: https://www.puratos.com</div>
+      <div class="excerpt">Puratos marks major sustainability milestone with <mark>carbon neutral</mark> operations.</div>
+      <div class="claim-grid">
+        <div><div class="label">Why it matters</div>The wording may imply complete neutrality without making the emissions boundary, residual emissions and role of offsets clear.</div>
+        <div><div class="label">Evidence gap</div>Scope, baseline, methodology, residual emissions, offset use and reporting period.</div>
+      </div>
+      <div><span class="label">Recommended wording</span> Separate verified emissions reductions from any offsetting and disclose scopes, baseline, methodology, residual emissions, offset use and progress.</div>
+    </div>
+  </article>
+  
+
+  <footer class="footer">
+    <span>Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use.</span>
+    <span>© Durably · Puratos · Page 1 of 2</span>
+  </footer>
+</section>
+
+<section class="page">
+  <header class="header">
+    <div>
+      <div class="brand">DURABLY SUSTAINABILITY SCAN</div>
+      <h1>Puratos</h1>
+      <div class="subtitle">Company claim-risk report · Priority findings and actions</div>
+    </div>
+    <div class="meta">
+      <strong>REVIEWED SOURCE</strong><br>
+      https://www.puratos.com<br>
+      2026-07-15 · Website scan<br>
+      2 pages across 1 domain<br>
+      Confidence: Medium
+    </div>
+  </header>
+
+  <div class="section">ADDITIONAL PRIORITY CLAIMS</div>
+  
+  <article class="claim">
+    <div class="claim-head">
+      <span>Sustainability label / certification claim</span>
+      <span class="claim-risk">High</span>
+    </div>
+    <div class="claim-body">
+      <div class="source">Source: Puratos 2025 Sustainability GRI Report.pdf</div>
+      <div class="excerpt">Cacao-Trace, our own <mark>certified sustainable</mark> cocoa sourcing program.</div>
+      <div class="claim-grid">
+        <div><div class="label">Why it matters</div>The wording may be understood as an independent sustainability certification.</div>
+        <div><div class="label">Evidence gap</div>Scheme owner, criteria, independent verifier, audit basis, scope and validity period.</div>
+      </div>
+      <div><span class="label">Recommended wording</span> Name the scheme owner, criteria, independent verification basis, audited scope and validity period, or clarify that it is a company programme rather than an independent certification.</div>
+    </div>
+  </article>
+  
+  <article class="claim">
+    <div class="claim-head">
+      <span>Generic environmental claim</span>
+      <span class="claim-risk">High</span>
+    </div>
+    <div class="claim-body">
+      <div class="source">Source: https://www.puratos.com</div>
+      <div class="excerpt">We support you in creating nutritious and <mark>more sustainable</mark> breads.</div>
+      <div class="claim-grid">
+        <div><div class="label">Why it matters</div>The comparative benefit and environmental attribute are not clear from the wording alone.</div>
+        <div><div class="label">Evidence gap</div>Specific attribute, comparison baseline, method, product scope, period and limitations.</div>
+      </div>
+      <div><span class="label">Recommended wording</span> Specify the exact environmental attribute, product scope, comparison baseline, method, evidence, reporting period and limitations.</div>
+    </div>
+  </article>
+  
+
+  <div class="section">PRIORITY ACTIONS</div>
+  <div class="actions">
+  
+    <div class="action">
+      <div class="action-num">1</div>
+      <div><b>Review client-facing green claims</b><br>Review the exact climate, certification and broad environmental wording used on webpages, campaigns and product communications.</div>
+    </div>
+  
+    <div class="action">
+      <div class="action-num">2</div>
+      <div><b>Close substantiation gaps</b><br>Create a claim-specific evidence file covering scope, method, baseline, reporting period, limitations, verification status and approval owner.</div>
+    </div>
+  
+    <div class="action">
+      <div class="action-num">3</div>
+      <div><b>Implement claim governance</b><br>Require sustainability, legal, compliance and marketing approval before high-risk claims or sustainability labels are published.</div>
+    </div>
+  
+  </div>
+
+  <div class="bottom">
+    <div>
+      <h3>External signals and coverage</h3>
+      
+      <div class="body muted">No relevant external public-source signal was retained in this scan.</div>
+      
+      <h3 style="margin-top:2.5mm">Sources reviewed</h3>
+      <ul><li>https://www.puratos.com</li><li>Puratos 2025 Sustainability GRI Report.pdf</li></ul>
+    </div>
+    <div>
+      <h3>Confidence and methodology</h3>
+      <div class="body"><b>Confidence:</b> Medium. The main company website and one sustainability report were reviewed. Several claim-level signals were retained.</div>
+      <div class="body" style="margin-top:2mm">
+        <b>Risk bands:</b> 0–44 Low · 45–74 Medium · 75–89 High · 90–100 Very high.
+        EmpCo / Directive (EU) 2024/825 is applied to consumer-facing environmental and selected social claims.
+        The EU Forced Labour Regulation lens is applied to forced-labour and supply-chain wording.
+      </div>
+      <div class="body" style="margin-top:2mm"><b>Full methodology:</b> Download the detailed methodology PDF from the Sustainability Scan homepage.</div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span>Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use.</span>
+    <span>© Durably · Puratos · Page 2 of 2</span>
+  </footer>
+</section>
+
+<script>
+(function(){
+  const params = new URLSearchParams(window.location.search);
+  if(params.get("print")==="1"){
+    window.addEventListener("load", function(){
+      setTimeout(function(){ window.print(); }, 250);
+    });
+  }
+})();
+</script>
+</body>
+</html>

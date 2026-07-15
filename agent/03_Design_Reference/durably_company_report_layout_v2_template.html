@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Durably company claim-risk report</title>
+<style>
+  :root{
+    --navy:#173e52; --teal:#2c766b; --teal-dark:#195a53;
+    --green:#2f7d55; --green-soft:#eaf5ef; --blue-soft:#eff5f8;
+    --amber:#a87311; --amber-soft:#fff6df; --red:#af3d43;
+    --grey-900:#263238; --grey-700:#52616a; --grey-500:#7a8a93;
+    --grey-300:#d8e1e5; --grey-150:#edf1f3; --grey-100:#f7f9fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#e9eef1;font-family:Arial,Helvetica,sans-serif;color:var(--grey-700)}
+  .page{width:210mm;min-height:297mm;margin:12px auto;background:white;padding:12mm 14mm 15mm;position:relative;page-break-after:always}
+  .page:last-child{page-break-after:auto}
+  .header{display:grid;grid-template-columns:2fr 1fr;gap:12mm;border-bottom:1.5px solid var(--navy);padding-bottom:4mm;margin-bottom:3mm}
+  .brand{font-size:8.5pt;font-weight:700;color:var(--teal-dark);letter-spacing:.3px}
+  h1{font-size:21pt;line-height:1.05;margin:2mm 0 1mm;color:var(--navy)}
+  .subtitle{font-size:9pt;color:var(--grey-700)}
+  .meta{text-align:right;font-size:7.4pt;line-height:1.35;color:var(--grey-700)}
+  .meta strong{font-size:6.7pt;color:var(--grey-500);letter-spacing:.2px}
+  .section{font-size:9.5pt;font-weight:700;color:var(--navy);letter-spacing:.2px;margin:4mm 0 2mm}
+  .summary{display:grid;grid-template-columns:3fr 1.2fr;border:1px solid var(--grey-300);margin-bottom:4mm}
+  .summary>div{padding:3mm 3.5mm;font-size:7.6pt;line-height:1.35}
+  .summary-main{background:var(--amber-soft);border-left:3px solid var(--amber)}
+  .summary-note{background:var(--grey-100);border-left:1px solid var(--grey-300);font-size:6.9pt!important}
+  .scores{display:grid;grid-template-columns:repeat(4,1fr);gap:3mm}
+  .score{border:1px solid var(--grey-300);padding:3mm;border-left:3px solid var(--amber);min-height:28mm}
+  .score.green{border-left-color:var(--green)} .score.red{border-left-color:var(--red)}
+  .eyebrow{font-size:6.6pt;font-weight:700;color:var(--teal-dark);text-transform:uppercase}
+  .number{font-size:20pt;line-height:1;font-weight:700;color:var(--navy);margin:3mm 0 1mm}
+  .number small{font-size:7pt}.risk{font-size:8.3pt;font-weight:700;color:var(--amber)}
+  .risk.low{color:var(--green)}.risk.high{color:var(--red)}
+  .small{font-size:6.9pt;line-height:1.3}.body{font-size:7.6pt;line-height:1.35}
+  table{width:100%;border-collapse:collapse;font-size:7pt;line-height:1.3}
+  th{background:var(--navy);color:white;text-align:left;padding:2.2mm;font-size:6.6pt}
+  td{padding:2.2mm;border:1px solid var(--grey-300);vertical-align:top}
+  tr:nth-child(even) td{background:var(--grey-100)}
+  mark{background:#fff1a8;padding:0 1px}
+  .claim{border:1px solid var(--grey-300);margin-bottom:3mm}
+  .claim-head{display:grid;grid-template-columns:1fr auto;gap:4mm;padding:2.5mm 3mm;background:var(--blue-soft);border-left:3px solid var(--teal);font-size:8.8pt;font-weight:700;color:var(--navy)}
+  .claim-risk{color:var(--red)}
+  .claim-body{padding:2.5mm 3mm;font-size:7.2pt;line-height:1.35}
+  .source{font-size:6.5pt;color:var(--grey-500);margin-bottom:2mm}
+  .claim-grid{display:grid;grid-template-columns:1fr 1fr;gap:4mm;margin:2.5mm 0}
+  .claim-grid>div:first-child{border-right:1px solid var(--grey-300);padding-right:4mm}
+  .label{font-size:6.6pt;font-weight:700;color:var(--teal-dark);text-transform:uppercase;margin-bottom:1mm}
+  .actions{border:1px solid var(--grey-300)}
+  .action{display:grid;grid-template-columns:11mm 1fr;border-bottom:1px solid var(--grey-300);background:var(--grey-100)}
+  .action:last-child{border-bottom:0}.action>div{padding:2.5mm 3mm;font-size:7pt;line-height:1.3}
+  .action-num{font-size:9pt!important;font-weight:700;color:var(--navy);text-align:center;border-right:1px solid var(--grey-300)}
+  .bottom{display:grid;grid-template-columns:1fr 1.08fr;border:1px solid var(--grey-300);margin-top:3mm}
+  .bottom>div{padding:3mm}.bottom>div+div{border-left:1px solid var(--grey-300)}
+  .footer{position:absolute;left:14mm;right:14mm;bottom:7mm;border-top:1px solid var(--grey-300);padding-top:2mm;display:flex;justify-content:space-between;font-size:5.8pt;font-style:italic;color:var(--grey-500)}
+  @page{size:A4;margin:0}
+  @media print{body{background:white}.page{margin:0;box-shadow:none}}
+</style>
+</head>
+<body>
+<!-- Replace sample values with report-data fields. Keep exactly two .page elements. -->
+<section class="page">
+  <header class="header">
+    <div><div class="brand">DURABLY SUSTAINABILITY SCAN</div><h1>{{ company }}</h1><div class="subtitle">Company claim-risk report · Assessment overview</div></div>
+    <div class="meta"><strong>REVIEWED SOURCE</strong><br>{{ source_display }}<br>{{ analysis_date }} · {{ scan_type }}<br>{{ coverage_short }}<br>Confidence: {{ confidence_level }}</div>
+  </header>
+  <div class="summary"><div class="summary-main"><b>Overall result: {{ global_score }}/100 - {{ global_risk }} claim risk.</b> {{ executive_summary }}</div><div class="summary-note">{{ entity_resolution_note }}</div></div>
+  <div class="section">SCORE OVERVIEW</div>
+  <div class="scores">
+    <div class="score"><div class="eyebrow">Overall claims risk</div><div class="number">{{ global_score }}<small>/100</small></div><div class="risk">{{ global_risk }}</div></div>
+    <div class="score"><div class="eyebrow">Green claims risk</div><div class="number">{{ green_score }}<small>/100</small></div><div class="risk">{{ green_risk }}</div></div>
+    <div class="score green"><div class="eyebrow">Social claims risk</div><div class="number">{{ social_score }}<small>/100</small></div><div class="risk low">{{ social_risk }}</div></div>
+    <div class="score red"><div class="eyebrow">Entity context</div><div class="number">{{ entity_context }}</div><div class="risk high">{{ entity_context }}</div><div class="small">{{ entity_context_short }}</div></div>
+  </div>
+  <div class="section">TOP RISK DRIVERS</div>
+  <table><thead><tr><th>#</th><th>Claim area</th><th>Flagged wording</th><th>Source</th></tr></thead><tbody>{{ top_driver_rows_html }}</tbody></table>
+  <div class="section">MOST MATERIAL FINDING</div>
+  {{ material_finding_card_html }}
+  <footer class="footer"><span>Indicative screening only - not legal advice. Results require legal, compliance and subject-matter review before external use.</span><span>© Durably · {{ company }} · Page 1 of 2</span></footer>
+</section>
+<section class="page">
+  <header class="header">
+    <div><div class="brand">DURABLY SUSTAINABILITY SCAN</div><h1>{{ company }}</h1><div class="subtitle">Company claim-risk report · Priority findings and actions</div></div>
+    <div class="meta"><strong>REVIEWED SOURCE</strong><br>{{ source_display }}<br>{{ analysis_date }} · {{ scan_type }}<br>{{ coverage_short }}<br>Confidence: {{ confidence_level }}</div>
+  </header>
+  <div class="section">PRIORITY CLAIMS 2-3</div>
+  {{ additional_claim_cards_html }}
+  <div class="section">PRIORITY ACTIONS</div>
+  <div class="actions">{{ priority_actions_html }}</div>
+  <div class="bottom"><div>{{ external_signals_and_coverage_html }}</div><div>{{ methodology_and_confidence_html }}</div></div>
+  <footer class="footer"><span>Indicative screening only - not legal advice. Results require legal, compliance and subject-matter review before external use.</span><span>© Durably · {{ company }} · Page 2 of 2</span></footer>
+</section>
+</body>
+</html>
