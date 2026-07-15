@@ -1,0 +1,12 @@
+V62 tests passed
+- Python syntax: passed
+- Frontend JavaScript syntax: passed
+- Positive external article exclusion: passed
+- Negative regulator signal retention: passed
+- Data-reliability threshold and caution text: passed
+- Duplicate claim-type clustering: passed
+- Normal PDF page count: 2
+- Stress PDF page count: 2
+- PDF caution text extraction: passed
+- Live health endpoint version: passed
+- Live /api/report/pdf endpoint page count: 2

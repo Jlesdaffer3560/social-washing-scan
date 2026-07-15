@@ -1,0 +1,16 @@
+DURABLY V62 — GITHUB / RENDER DEPLOYMENT
+
+1. Back up the current GitHub branch.
+2. Copy all files from this package to the repository root, replacing the existing files.
+3. Commit and push the changes.
+4. Wait for Render to complete the deployment.
+5. Open /api/health and confirm:
+   hostable_v62_professional_claim_signals_readable_pdf
+6. Run a fresh website scan. Old scan results and previously downloaded PDFs do not change.
+7. Check:
+   - Key sustainability claim signals uses four compact sections.
+   - Repeated claim types are clustered.
+   - External signals exclude neutral/positive announcements.
+   - The PDF remains exactly two pages and uses readable text.
+
+No new environment variable is mandatory. The existing external-search credentials remain unchanged.

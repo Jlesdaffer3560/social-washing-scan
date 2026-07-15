@@ -1,51 +1,21 @@
-# Durably Sustainability Scan — Complete Company Report v2 Package
+# Start here — Durably Sustainability Scan v62
 
-This package contains everything created for the revised two-page company claim-risk report.
+This is the complete GitHub/Render repository. It replaces the existing application files; it is not a separate report plug-in.
 
-## Folder 01 — GitHub and Render deployment
+## Main changes
 
-- `company_report_v2.py`  
-  Drop-in Flask report module. It contains the complete two-page HTML/CSS template,
-  data normalisation and the Flask route.
+- Clearer and more compact **Key sustainability claim signals** with four regulatory/theme sections.
+- Repeated claim types are clustered and details are collapsed by default.
+- Stronger external-signal precision and structured source/status metadata.
+- Data-reliability warning retained on screen and in the PDF.
+- Readable two-page company report with a two-page preflight check and no automatic font shrinking.
 
-- `integration_example.py`  
-  Minimal code example showing how to register the report route in the current Flask app.
+## Deploy
 
-- `example_report_data.json`  
-  Test payload based on the Puratos example.
+Copy the complete package to the GitHub repository connected to Render, commit and push. After deployment, verify `/api/health` returns:
 
-- `README.md`  
-  Detailed installation and deployment instructions.
+`hostable_v62_professional_claim_signals_readable_pdf`
 
-## Folder 02 — Examples and previews
+Then perform a new scan and download a new PDF.
 
-- `generated_demo.pdf`  
-  Reference PDF generated with the new module.
-
-- `generated_demo.html`  
-  Browser version of the same report.
-
-- `page-1.png` and `page-2.png`  
-  Quick visual previews.
-
-## Folder 03 — Design reference
-
-- `durably_company_report_layout_v2.pdf`  
-  The redesigned two-page visual concept.
-
-- `durably_company_report_layout_v2_template.html`  
-  Standalone HTML/CSS reference template.
-
-## Fast integration
-
-1. Copy `01_GitHub_Render_Deployment/company_report_v2.py` into the root of the
-   existing Flask project.
-2. Add the registration code from `integration_example.py` after the Flask app
-   has been created.
-3. Connect the current report button to `/company-report-v2?print=1`.
-4. Commit the changes to GitHub.
-5. Trigger a Render deployment.
-6. Test the output with the included `example_report_data.json`.
-
-The module limits content automatically so that the generated report remains
-within exactly two A4 pages.
+See `DEPLOY_V62.txt`, `V62_CHANGELOG.md` and `TEST_RESULTS_V62.txt`.

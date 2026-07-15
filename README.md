@@ -1,48 +1,24 @@
-# Durably Sustainability Scan — v60
+# Durably Sustainability Scan — v62
 
-**Current version:** `hostable_v60_external_signal_recall_precision`
+Current version: `hostable_v62_professional_claim_signals_readable_pdf`
 
-V60 improves the recall and precision of external public-source signals. See `START_HERE_V60.md` and `EXTERNAL_SIGNALS_V60_CHANGELOG.md`.
+## Main capabilities
 
-# Green & Social Claims Risk Assessment
+- Multi-page public website scan with resilient crawling and transparent coverage diagnostics.
+- Separate website and internal-document assessments.
+- Green, social and combined claim-risk scores.
+- Structured claim signals under EmpCo environmental, social-characteristics, forced-labour/supply-chain and other-claim sections.
+- External public-source search with company-ownership exclusion, entity matching, negative-polarity validation and duplicate-event clustering.
+- Separate entity context, confidence and data-reliability reporting.
+- Native, readable and exactly two-page company PDF report.
+- Detailed methodology PDF at `/methodology.pdf`.
 
-Professional hosted scan for green and social claims risk signals.
+## Render deployment
 
-## Main features
+Replace the current repository files with this package, commit and push. Render should redeploy automatically.
 
-- Website scan for company websites, product pages, brochures and sustainability/social-responsibility pages.
-- Related-domain scan where possible, for example a national website and corporate .com domain.
-- Internal document upload and scan for non-public company documents.
-- Separate green, social and global risk scores.
-- Green claims lens based on EmpCo / Directive (EU) 2024/825.
-- Social claims lens including Forced Labour Regulation / Regulation (EU) 2024/3015.
-- Conservative score calibration: sector exposure or broad wording alone should not create a High-risk score.
-- External signal filtering excludes company-owned documents from the external-source section.
-- Two-page client-ready PDF/print report.
-- Downloadable methodology PDF at `/methodology.pdf`.
+Health check: `/api/health`
 
-## Install on Render
-
-Copy the files in this folder to the root of the GitHub repository connected to Render:
-
-- `app.py`
-- `frontend.html`
-- `README.md`
-- `requirements.txt`
-- `render.yaml`
-- `methodology.pdf`
-
-Commit and push to the connected branch. Render will redeploy automatically.
-
-## Notes
+Expected version: `hostable_v62_professional_claim_signals_readable_pdf`
 
 The scan is an indicative first-pass assessment. It is not legal advice and does not establish a breach of EmpCo, the Forced Labour Regulation or any other law.
-
-
-## v40 refinements
-
-- Website scans and uploaded internal-document scans are separate. Results are not combined.
-- Internal document scans focus only on the uploaded file and do not run external public-source search.
-- The user interface has been simplified with smaller professional buttons and consistent typography.
-- The scoring logic is more conservative: sector exposure and broad wording cannot by themselves create a high-risk result.
-- Red flags remain split between green-claim and social-claim red flags.

@@ -47,7 +47,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v61_logical_two_page_report_structure"
+APP_VERSION="hostable_v62_professional_claim_signals_readable_pdf"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -1249,8 +1249,8 @@ def build_confidence(pages,ext,findings,crawl_log=None):
     reliability_warning=None
     if attempted:
         failure_ratio=len(blocked)/attempted
-        if failure_ratio>=0.5 or (len(pages)<=1 and blocked):
-            pts=max(0,pts-2)
+        if failure_ratio>0.25 or (len(pages)<3 and blocked):
+            pts=max(0,pts-(2 if failure_ratio>=0.5 else 1))
             reliability_warning=(f"{len(blocked)} of {attempted} page fetches failed (e.g. HTTP 403/blocked or unreachable). "
                                   "A low risk score from this scan may reflect limited access to the site's content, "
                                   "not necessarily a genuine absence of risky claims.")
@@ -1259,11 +1259,16 @@ def build_confidence(pages,ext,findings,crawl_log=None):
             reliability_warning=(f"{len(thin)} of {attempted} fetched page(s) returned unusually little text, which can happen "
                                   "with JavaScript-rendered pages or soft bot-blocks. A low risk score from this scan may reflect "
                                   "limited access to the site's content, not necessarily a genuine absence of risky claims.")
-        elif fallback_pages and len(pages)<3:
+        elif fallback_pages:
             pts=max(0,pts-1)
-            reliability_warning=(f"Only {len(pages)} company page(s) could be reviewed and {len(fallback_pages)} required a "
-                                  "public text-extraction fallback. A low risk score from this scan may reflect limited access "
-                                  "to the site's content, not necessarily a genuine absence of risky claims.")
+            reliability_warning=(f"{len(fallback_pages)} reviewed page(s) required a public text-extraction fallback. "
+                                  "A low risk score from this scan may reflect limited access to the site's content, "
+                                  "not necessarily a genuine absence of risky claims.")
+        elif len(pages)<3:
+            pts=max(0,pts-1)
+            reliability_warning=(f"Only {len(pages)} relevant company page(s) could be reviewed. "
+                                  "A low risk score from this scan may reflect limited access to the site's content, "
+                                  "not necessarily a genuine absence of risky claims.")
     if no_findings and (blocked or thin):
         reliability_warning=reliability_warning or ("No claims were detected, and part of the crawl did not return usable content. "
                                                       "This scan result should be treated as inconclusive rather than 'low risk'.")
@@ -3602,19 +3607,42 @@ def is_company_owned_source(result, company_name, reviewed_pages=None):
     return False
 
 
+def _v62_term_present(text, term):
+    """Match controversy terms as complete words/phrases, not substrings."""
+    term=(term or '').strip().lower()
+    if not term:
+        return False
+    pattern=r'(?<![a-z0-9])'+re.escape(term).replace(r'\ ',r'\s+')+r'(?![a-z0-9])'
+    return re.search(pattern,text or '',flags=re.I) is not None
+
+
+def _v62_clean_external_content(value):
+    text=re.sub(r'\s+',' ',str(value or '')).strip()
+    if not text:
+        return ''
+    noise=('an official website of','a .gov website','banner featuring','learn more button',
+           'cookie policy','accept cookies','all rights reserved','subscribe to our newsletter')
+    parts=[p.strip() for p in re.split(r'(?<=[.!?])\s+',text) if p.strip()]
+    kept=[p for p in parts if not any(n in p.lower() for n in noise)]
+    return ' '.join(kept or parts)[:420]
+
+
 def _v60_negative_strength(result, dimension='social'):
     text=_external_signal_text(result)
     terms=_V60_GREEN_NEGATIVE if dimension=='green' else _V60_SOCIAL_NEGATIVE
     anchors=_V60_GREEN_ANCHORS if dimension=='green' else _V60_SOCIAL_ANCHORS
-    hits=[t for t in terms if t in text]
-    anchor_hits=[t for t in anchors if t in text]
-    enforcement=[t for t in _V60_ENFORCEMENT_TERMS if t in text]
+    hits=[t for t in terms if _v62_term_present(text,t)]
+    anchor_hits=[t for t in anchors if _v62_term_present(text,t)]
+    enforcement=[t for t in _V60_ENFORCEMENT_TERMS if _v62_term_present(text,t)]
     kind=_v60_source_kind(result)
     recognised=kind!='Other public source'
-    # A controversy must match the relevant dimension. This prevents an unrelated consumer,
-    # privacy or competition-law investigation from being displayed as a green/social signal.
-    explicit=('greenwashing' in text) if dimension=='green' else any(x in text for x in ['social washing','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','labour rights','labor rights','worker rights','workers rights'])
-    accepted=bool(anchor_hits) and (explicit or bool(enforcement) or len(hits)>=2 or (recognised and len(hits)>=1))
+    if dimension=='green':
+        explicit=any(_v62_term_present(text,x) for x in ('greenwashing','misleading environmental','misleading green','deceptive environmental','unsubstantiated environmental','false environmental','environmental claim complaint','environmental claims investigation'))
+        negative_polarity=explicit or bool(enforcement) or any(_v62_term_present(text,x) for x in ('accused','alleged','allegation','criticism','criticised','criticized','complaint','watchdog','regulator','penalty','sanction','prohibited'))
+    else:
+        explicit=any(_v62_term_present(text,x) for x in ('social washing','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','labour rights','labor rights','worker rights','workers rights'))
+        negative_polarity=explicit or bool(enforcement) or any(_v62_term_present(text,x) for x in ('exploitation','unsafe working','wage theft','union busting','discrimination','harassment','accused','alleged','allegation','criticism','criticised','criticized','complaint','protest'))
+    accepted=bool(anchor_hits) and bool(negative_polarity) and (explicit or bool(enforcement) or len(hits)>=2 or (recognised and len(hits)>=1))
     return len(hits)+len(anchor_hits),len(enforcement),kind,accepted
 
 
@@ -3678,18 +3706,26 @@ def _v60_rank_dedupe(results, company_name, dimension='social', limit=20):
     return _dedupe_similar_sources(candidates)[:limit]
 
 
-def compact_sources(results,limit=6):
+def compact_sources(results,limit=6,dimension=None):
     out=[]
     for r in _dedupe_similar_sources(results or [])[:limit]:
         txt=_external_signal_text(r)
-        out.append({
-            'title':(r.get('title','') or '')[:170], 'url':r.get('url',''),
-            'content':(r.get('content','') or '')[:300], 'category':r.get('source_kind') or _v60_source_kind(r),
-            'credibility':source_credibility(r), 'provider':r.get('provider',''),
-            'published_date':r.get('published_date','') or 'Not available from source',
-            'status':_source_status(txt), 'severity':_source_severity(txt),
-            'related_articles_count':r.get('related_articles_count',1)
-        })
+        kind=r.get('source_kind') or _v60_source_kind(r)
+        manual=bool(r.get('manual_verified') or r.get('verified'))
+        dim=dimension or r.get('dimension') or ('green' if is_green_negative_source(r) else 'social')
+        url=r.get('url','') or ''
+        host=(urlparse(url).hostname or '').removeprefix('www.')
+        score=r.get('_signal_score',0) or 0
+        try: relevance='High' if float(score)>=70 else 'Medium'
+        except Exception: relevance='Medium'
+        out.append({'title':(r.get('title','') or '')[:170],'url':url,'source_name':host or kind,
+            'content':_v62_clean_external_content(r.get('content',''))[:320],
+            'category':kind,'source_kind':kind,'credibility':source_credibility(r),'provider':r.get('provider',''),
+            'published_date':r.get('published_date','') or 'Date not available','status':_source_status(txt),
+            'severity':_source_severity(txt),'review_status':'Verified' if manual else 'Retained — manual verification required',
+            'entity_match':'Direct','dimension':dim,'relevance':relevance,
+            'related_claim_area':'Environmental claims' if dim=='green' else 'Social / labour claims',
+            'related_articles_count':r.get('related_articles_count',1)})
     return out
 
 
@@ -3705,7 +3741,7 @@ def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=Non
             continue
         kept.append(r)
     ranked=_v60_rank_dedupe(kept,company_name,dimension,max(limit*3,limit))
-    return compact_sources(ranked,limit)
+    return compact_sources(ranked,limit,dimension)
 
 
 def search_public_sources(query,max_results=6):
@@ -3803,7 +3839,7 @@ def external(company, findings=None):
         return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':0}
     summary=summarise_ext(ranked)
     summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
-    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
+    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,'social'),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
 
 
 def external_green(company, findings=None):
@@ -3815,7 +3851,7 @@ def external_green(company, findings=None):
         return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':0}
     summary=summarise_green_ext(ranked)
     summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
-    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
+    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,'green'),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
 
 def main():
     print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()

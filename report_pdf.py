@@ -1,14 +1,14 @@
-"""Native two-page Durably company claim-risk report.
+"""Readable native two-page Durably company claim-risk report (v62).
 
-This module is called directly by app.py through build_company_report_pdf(data).
-It intentionally uses only ReportLab, which is already present in requirements.txt.
-The output is fixed to exactly two A4 pages and uses the live scan-result schema.
-Page 2 follows a findings -> external context -> actions -> methodology sequence.
+The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
+uses a minimum body size of 9 pt and protects the two-page format by reducing the
+amount of detail, never by shrinking fonts.
 """
 from __future__ import annotations
 
 import io
 import re
+from copy import deepcopy
 from html import escape as _escape
 from urllib.parse import urlparse
 
@@ -18,22 +18,15 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    KeepTogether,
-    PageBreak,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
+    KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
 PAGE_W, PAGE_H = A4
 MARGIN_X = 13 * mm
 MARGIN_TOP = 10 * mm
-MARGIN_BOTTOM = 12 * mm
+MARGIN_BOTTOM = 13 * mm
 CONTENT_W = PAGE_W - 2 * MARGIN_X
 
-# Brand / report palette
 NAVY = colors.HexColor("#173E52")
 TEAL = colors.HexColor("#2C766B")
 TEAL_DARK = colors.HexColor("#195A53")
@@ -48,36 +41,38 @@ GREY_900 = colors.HexColor("#263238")
 GREY_700 = colors.HexColor("#52616A")
 GREY_500 = colors.HexColor("#7A8A93")
 GREY_300 = colors.HexColor("#D8E1E5")
-GREY_150 = colors.HexColor("#EDF1F3")
 GREY_100 = colors.HexColor("#F7F9FA")
 WHITE = colors.white
 
 
 def _style(name: str, **kwargs) -> ParagraphStyle:
-    base = dict(fontName="Helvetica", fontSize=8.05, leading=10.3, textColor=GREY_700)
+    base = dict(fontName="Helvetica", fontSize=9.0, leading=11.3, textColor=GREY_700)
     base.update(kwargs)
     return ParagraphStyle(name, **base)
 
 
+# No report content is set below 7.5 pt. The footer is 6.5 pt.
 ST = {
-    "brand": _style("brand", fontName="Helvetica-Bold", fontSize=7.8, leading=9.2, textColor=TEAL_DARK),
-    "title": _style("title", fontName="Helvetica-Bold", fontSize=20.5, leading=22, textColor=NAVY),
-    "subtitle": _style("subtitle", fontSize=9.0, leading=11, textColor=GREY_700),
-    "meta": _style("meta", fontSize=7.1, leading=8.9, textColor=GREY_700, alignment=TA_RIGHT),
-    "meta_b": _style("meta_b", fontName="Helvetica-Bold", fontSize=6.6, leading=8, textColor=GREY_500, alignment=TA_RIGHT),
-    "section": _style("section", fontName="Helvetica-Bold", fontSize=9.7, leading=11.4, textColor=NAVY, spaceBefore=4, spaceAfter=3),
-    "body": _style("body", fontSize=8.0, leading=10.4, textColor=GREY_700),
-    "body_dark": _style("body_dark", fontSize=8.0, leading=10.4, textColor=GREY_900),
-    "small": _style("small", fontSize=7.8, leading=10.0, textColor=GREY_700),
-    "small_dark": _style("small_dark", fontSize=7.8, leading=10.0, textColor=GREY_900),
-    "tiny": _style("tiny", fontSize=6.25, leading=7.9, textColor=GREY_500),
-    "quote": _style("quote", fontSize=7.8, leading=10.0, textColor=GREY_900, backColor=colors.HexColor("#FFFDF6")),
-    "card_label": _style("card_label", fontName="Helvetica-Bold", fontSize=6.2, leading=7.5, textColor=TEAL_DARK),
-    "card_num": _style("card_num", fontName="Helvetica-Bold", fontSize=19, leading=20, textColor=NAVY),
-    "card_risk": _style("card_risk", fontName="Helvetica-Bold", fontSize=8.0, leading=9.2),
-    "claim_title": _style("claim_title", fontName="Helvetica-Bold", fontSize=9.2, leading=11, textColor=NAVY),
-    "claim_risk": _style("claim_risk", fontName="Helvetica-Bold", fontSize=8.2, leading=9.6, alignment=TA_RIGHT),
-    "footer": _style("footer", fontName="Helvetica-Oblique", fontSize=5.25, leading=6.5, textColor=GREY_500),
+    "brand": _style("brand", fontName="Helvetica-Bold", fontSize=8.2, leading=9.6, textColor=TEAL_DARK),
+    "title": _style("title", fontName="Helvetica-Bold", fontSize=20.0, leading=21.5, textColor=NAVY),
+    "subtitle": _style("subtitle", fontSize=9.2, leading=11.0, textColor=GREY_700),
+    "meta": _style("meta", fontSize=8.0, leading=9.5, textColor=GREY_700, alignment=TA_RIGHT),
+    "meta_b": _style("meta_b", fontName="Helvetica-Bold", fontSize=7.5, leading=8.7, textColor=GREY_500, alignment=TA_RIGHT),
+    "section": _style("section", fontName="Helvetica-Bold", fontSize=10.5, leading=12.0, textColor=NAVY, spaceBefore=3, spaceAfter=3),
+    "body": _style("body", fontSize=9.0, leading=11.4, textColor=GREY_700),
+    "body_dark": _style("body_dark", fontSize=9.0, leading=11.4, textColor=GREY_900),
+    "small": _style("small", fontSize=8.5, leading=10.6, textColor=GREY_700),
+    "small_dark": _style("small_dark", fontSize=8.5, leading=10.6, textColor=GREY_900),
+    "source": _style("source", fontSize=7.7, leading=9.3, textColor=GREY_500),
+    "quote": _style("quote", fontSize=8.5, leading=10.6, textColor=GREY_900, backColor=colors.HexColor("#FFFDF6")),
+    "card_label": _style("card_label", fontName="Helvetica-Bold", fontSize=7.5, leading=8.8, textColor=TEAL_DARK),
+    "card_num": _style("card_num", fontName="Helvetica-Bold", fontSize=18.0, leading=19.0, textColor=NAVY),
+    "claim_title": _style("claim_title", fontName="Helvetica-Bold", fontSize=9.4, leading=11.2, textColor=NAVY),
+    "claim_risk": _style("claim_risk", fontName="Helvetica-Bold", fontSize=8.5, leading=10.0, alignment=TA_RIGHT),
+    "table": _style("table", fontSize=8.0, leading=9.8, textColor=GREY_700),
+    "table_dark": _style("table_dark", fontSize=8.0, leading=9.8, textColor=GREY_900),
+    "table_head": _style("table_head", fontName="Helvetica-Bold", fontSize=8.0, leading=9.8, textColor=WHITE),
+    "footer": _style("footer", fontName="Helvetica-Oblique", fontSize=6.5, leading=7.5, textColor=GREY_500),
 }
 
 
@@ -89,21 +84,7 @@ def clean_text(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def first_sentence(value: str, max_chars: int = 240) -> str:
-    text = clean_text(value)
-    if not text:
-        return ""
-    match = re.search(r"(?<=[.!?])\s", text)
-    if match and match.start() <= max_chars:
-        return text[: match.start() + 1]
-    if len(text) <= max_chars:
-        return text
-    cut = text[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:")
-    return cut + "."
-
-
 def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
-    """Keep text within the fixed two-page format without showing visible ellipses."""
     text = clean_text(value)
     if len(text) <= max_chars:
         return text
@@ -111,7 +92,17 @@ def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
     return cut + suffix
 
 
-def risk_color(risk) -> colors.Color:
+def first_sentence(value, max_chars=190) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    if parts and len(parts[0]) <= max_chars:
+        return parts[0]
+    return bounded_text(text, max_chars)
+
+
+def risk_color(risk):
     text = str(risk or "").lower()
     if "high" in text:
         return RED
@@ -120,7 +111,7 @@ def risk_color(risk) -> colors.Color:
     return GREEN
 
 
-def risk_soft(risk) -> colors.Color:
+def risk_soft(risk):
     text = str(risk or "").lower()
     if "high" in text:
         return RED_SOFT
@@ -129,107 +120,34 @@ def risk_soft(risk) -> colors.Color:
     return GREEN_SOFT
 
 
-def risk_label_from_score(score) -> str:
-    try:
-        score = float(score)
-    except (TypeError, ValueError):
-        return "Not assessed"
-    if score >= 90:
-        return "Very high"
-    if score >= 75:
-        return "High"
-    if score >= 45:
-        return "Medium"
-    return "Low"
+def risk_rank(claim):
+    risk = str(claim.get("risk_level") or claim.get("risk") or "").lower()
+    return 4 if "very" in risk else 3 if "high" in risk else 2 if ("medium" in risk or "elev" in risk) else 1
 
 
-def is_material(claim: dict) -> bool:
+def is_material(claim):
     typ = str(claim.get("claim_type") or claim.get("type") or "").lower()
     return not (typ.startswith("no material") or typ.startswith("no major"))
 
 
-def merge_claims(rows: list[dict]) -> list[dict]:
-    merged: list[dict] = []
-    seen: dict[str, dict] = {}
-    for raw in rows:
-        if not isinstance(raw, dict) or not is_material(raw):
-            continue
-        item = dict(raw)
-        key = clean_text(item.get("claim_text") or item.get("claim") or "").lower()[:220]
-        if key and key in seen:
-            existing = seen[key]
-            typ = item.get("claim_type") or item.get("type") or ""
-            old = existing.get("claim_type") or existing.get("type") or ""
-            if typ and typ not in old:
-                existing["claim_type"] = old + " + " + typ
-            terms = list(existing.get("problematic_terms") or [])
-            for term in item.get("problematic_terms") or []:
-                if term not in terms:
-                    terms.append(term)
-            existing["problematic_terms"] = terms
-        else:
-            merged.append(item)
-            if key:
-                seen[key] = item
-    return merged
-
-
-def combined_top_claims(data: dict, limit: int = 3) -> list[dict]:
-    rows = list(data.get("claim_inventory") or data.get("findings") or [])
-    if not rows:
-        rows = list(data.get("green_findings") or []) + list(data.get("social_findings") or [])
-    rows = merge_claims(rows)
-
-    def ranking(item: dict):
-        risk = str(item.get("risk_level") or item.get("risk") or "").lower()
-        risk_rank = 3 if "very" in risk else 2 if "high" in risk else 1 if ("medium" in risk or "elev" in risk) else 0
-        score = item.get("claim_score") or item.get("score") or 0
-        try:
-            score = float(score)
-        except (TypeError, ValueError):
-            score = 0
-        return (risk_rank, score)
-
-    return sorted(rows, key=ranking, reverse=True)[:limit]
-
-
-def claim_title(claim: dict) -> str:
+def claim_title(claim):
     return clean_text(claim.get("claim_type") or claim.get("type") or "Sustainability claim")
 
 
-def claim_risk(claim: dict) -> str:
+def claim_risk(claim):
     return clean_text(claim.get("risk_level") or claim.get("risk") or "Review")
 
 
-def claim_source(claim: dict) -> str:
+def claim_source(claim):
     source = clean_text(claim.get("source_label") or claim.get("source_url") or "Reviewed material")
     if source.startswith("http"):
         parsed = urlparse(source)
-        if parsed.path and parsed.path != "/":
-            filename = parsed.path.rsplit("/", 1)[-1]
-            return filename or parsed.netloc
-        return parsed.netloc.replace("www.", "")
+        filename = parsed.path.rsplit("/", 1)[-1]
+        return filename or parsed.netloc.replace("www.", "")
     return source
 
 
-def claim_excerpt(claim: dict, max_chars: int = 330) -> str:
-    text = clean_text(claim.get("claim_text") or claim.get("claim") or "")
-    phrase = clean_text(claim.get("matched_phrase") or "")
-    if len(text) <= max_chars:
-        return text
-    if phrase:
-        idx = text.lower().find(phrase.lower())
-        if idx >= 0:
-            start = max(0, idx - 120)
-            end = min(len(text), idx + len(phrase) + 160)
-            snippet = text[start:end].strip()
-            if start > 0:
-                snippet = "Context: " + snippet
-            return bounded_text(snippet, max_chars)
-    return bounded_text(text, max_chars)
-
-
-def trigger_phrase(claim: dict) -> str:
+def trigger_phrase(claim):
     phrase = clean_text(claim.get("matched_phrase") or "")
     if phrase:
         return phrase
@@ -237,107 +155,156 @@ def trigger_phrase(claim: dict) -> str:
     return clean_text(terms[0]) if terms else ""
 
 
-def highlighted_excerpt(claim: dict, max_chars: int = 330) -> str:
+def claim_excerpt(claim, max_chars=220):
+    text = clean_text(claim.get("claim_text") or claim.get("claim") or "")
+    if len(text) <= max_chars:
+        return text
+    phrase = trigger_phrase(claim)
+    if phrase:
+        i = text.lower().find(phrase.lower())
+        if i >= 0:
+            start = max(0, i - 80)
+            if start:
+                next_space = text.find(" ", start)
+                if 0 <= next_space < i:
+                    start = next_space + 1
+            end = min(len(text), i + len(phrase) + 110)
+            snippet = text[start:end]
+            if start:
+                snippet = "Context: " + snippet
+            return bounded_text(snippet, max_chars)
+    return bounded_text(text, max_chars)
+
+
+def highlighted_excerpt(claim, max_chars=220):
     text = esc(claim_excerpt(claim, max_chars))
     phrase = trigger_phrase(claim)
     if not phrase:
         return text
     try:
-        return re.sub(
-            re.escape(esc(phrase)),
-            lambda match: f'<b backColor="#FFF1A8">{match.group(0)}</b>',
-            text,
-            flags=re.IGNORECASE,
-        )
+        return re.sub(re.escape(esc(phrase)), lambda m: f'<b backColor="#FFF1A8">{m.group(0)}</b>', text, flags=re.I)
     except re.error:
         return text
 
 
-def why_text(claim: dict) -> str:
-    raw = claim.get("why_flagged") or claim.get("risk_reason") or claim.get("issue")
+def why_text(claim, max_chars=150):
+    raw = claim.get("why_flagged") or claim.get("risk_reason") or claim.get("issue") or claim.get("analysis")
     if raw:
-        return bounded_text(raw, 245)
+        return bounded_text(raw, max_chars)
     phrase = trigger_phrase(claim)
-    typ = claim_title(claim)
-    if phrase:
-        return f'The wording “{phrase}” was retained under the {typ.lower()} module and requires claim-specific substantiation.'
-    return f"The wording was retained under the {typ.lower()} module and requires claim-specific review."
+    return bounded_text(f'The wording “{phrase}” requires claim-specific substantiation and audience review.', max_chars)
 
 
-def evidence_gap_text(claim: dict) -> str:
+def evidence_gap_text(claim, max_chars=125):
     evidence = claim.get("evidence_needed")
     if isinstance(evidence, (list, tuple)) and evidence:
-        return bounded_text("; ".join(str(x) for x in evidence[:4]), 205)
+        return bounded_text("; ".join(str(x) for x in evidence[:5]), max_chars)
     if isinstance(evidence, str) and evidence:
-        return bounded_text(evidence, 205)
-    return "Scope, methodology, evidence date, verification basis and limitations."
+        return bounded_text(evidence, max_chars)
+    return "Scope, methodology, evidence period, verification basis and limitations."
 
 
-def rewrite_text(claim: dict) -> str:
+def rewrite_text(claim, max_chars=180):
     raw = clean_text(claim.get("suggested_rewrite") or claim.get("rewrite") or "")
     if raw:
-        return bounded_text(raw, 300)
+        return bounded_text(raw, max_chars)
     typ = claim_title(claim).lower()
-    if "label" in typ or "certification" in typ:
-        return "Name the scheme owner, criteria, independent verifier, audited scope and validity period, or clarify that the wording does not refer to independent certification."
-    if "climate" in typ or "offset" in typ or "carbon" in typ:
-        return "Separate actual emissions reductions from offsetting and disclose the boundary, baseline, methodology, residual emissions, offset use and reporting period."
-    if "generic environmental" in typ:
-        return "Specify the exact environmental attribute, product scope, comparison baseline, method, evidence, reporting period and limitations."
-    return "Use precise, claim-specific wording and disclose scope, methodology, evidence, reporting period and limitations."
+    if "label" in typ or "certif" in typ:
+        return bounded_text("Name the scheme owner, criteria, independent verifier, audited scope and validity period, or clarify that the wording is not independent certification.", max_chars)
+    if "climate" in typ or "carbon" in typ or "offset" in typ:
+        return bounded_text("Separate actual reductions from offsets and disclose boundary, baseline, method, residual emissions, offset use and reporting period.", max_chars)
+    return bounded_text("Use precise wording and disclose scope, method, evidence, reporting period and limitations.", max_chars)
 
 
-def compact_action(action: dict, company: str) -> tuple[str, str]:
-    title = clean_text(action.get("title") or "Priority action")
-    low = title.lower()
-    who = company or "the company"
-    if "green claims" in low or "empco" in low:
-        return title, f"Review the exact consumer-facing environmental wording used by {who}. Confirm scope, product coverage, methodology, evidence, verification basis and limitations before reuse."
-    if "social claims" in low:
-        return title, f"For retained social claims, document stakeholder scope, KPIs, audit or workforce evidence, grievance and remedy arrangements, and clear limitations."
-    if "forced" in low or "supplier" in low:
-        return title, "Document supplier and product traceability, geography and product risk assessment, mitigation, grievance and remediation, and withdrawal or customs-response readiness."
-    if "evidence file" in low:
-        return title, "Create one evidence file per priority claim, including approved wording, source, owner, evidence link, review status, approval date and next review deadline."
-    if "label" in low or "certification" in low:
-        return title, "Confirm the scheme owner, criteria, scope, verification body, surveillance process and validity period for every label or certification referenced."
-    raw = clean_text(action.get("action") or action.get("description") or "")
-    return title, bounded_text(raw, 285) if raw else "Assign an owner, supporting evidence, review status and completion date."
-
-
-def reviewed_sources(data: dict, limit: int = 3) -> list[str]:
-    pages = list((data.get("report") or {}).get("pages_reviewed") or [])
-    out: list[str] = []
-    for value in pages:
-        text = clean_text(value)
-        if not text:
+def cluster_claims(data):
+    rows = list(data.get("claim_inventory") or data.get("findings") or [])
+    if not rows:
+        rows = list(data.get("green_findings") or []) + list(data.get("social_findings") or [])
+    clusters = {}
+    for raw in rows:
+        if not isinstance(raw, dict) or not is_material(raw):
             continue
-        if text.startswith("http"):
-            parsed = urlparse(text)
-            domain = parsed.netloc.replace("www.", "")
-            filename = parsed.path.rsplit("/", 1)[-1]
-            label = domain if not filename else f"{domain} · {filename}"
+        item = dict(raw)
+        key = claim_title(item).lower()
+        if key not in clusters:
+            clusters[key] = {"representative": item, "occurrences": [item]}
         else:
-            label = text
-        label = bounded_text(label, 105)
-        if label not in out:
-            out.append(label)
-        if len(out) >= limit:
-            break
-    if not out and data.get("source_label"):
-        out.append(bounded_text(data.get("source_label"), 105))
+            c = clusters[key]
+            c["occurrences"].append(item)
+            old = c["representative"]
+            if (risk_rank(item), float(item.get("claim_score") or 0)) > (risk_rank(old), float(old.get("claim_score") or 0)):
+                c["representative"] = item
+    out = list(clusters.values())
+    out.sort(key=lambda c: (risk_rank(c["representative"]), float(c["representative"].get("claim_score") or 0)), reverse=True)
+    for c in out:
+        c["representative"]["_occurrence_count"] = len(c["occurrences"])
+        c["representative"]["_occurrence_sources"] = list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))
     return out
 
 
-def external_signals(data: dict, limit: int = 2) -> list[dict]:
+def company_name(data):
+    comp = data.get("company") or {}
+    if isinstance(comp, dict):
+        name = clean_text(comp.get("company") or comp.get("name"))
+    else:
+        name = clean_text(comp)
+    return name if name and name.lower() != "company reviewed" else "Company"
+
+
+def metadata(data):
+    pages = list((data.get("report") or {}).get("pages_reviewed") or [])
+    domains = {urlparse(str(p)).netloc.replace("www.", "") for p in pages if urlparse(str(p)).netloc}
+    confidence = data.get("confidence") or {}
+    context = data.get("entity_context_indicator") or {}
+    assessment = "Internal document scan" if data.get("document_type") or "document" in str(data.get("assessment_type", "")).lower() else "Website scan"
+    reasons = confidence.get("reasons") or []
+    reason_text = ". ".join(clean_text(x).rstrip(".") for x in reasons if clean_text(x))
+    if reason_text:
+        reason_text += "."
+    return {
+        "source": clean_text(data.get("source_label") or data.get("original_url") or "Reviewed material"),
+        "date": clean_text(data.get("analysis_date") or "")[:10],
+        "assessment": assessment,
+        "coverage": f"{len(pages)} page(s) across {len(domains)} domain(s)" if pages else "Coverage not available",
+        "confidence": clean_text(confidence.get("level") or "Not assessed"),
+        "confidence_reason": bounded_text(reason_text or "Confidence reflects source access, coverage and external-search availability.", 210),
+        "entity_level": clean_text(context.get("level") or "Not assessed"),
+        "entity_note": bounded_text(context.get("note") or "Entity context is shown separately from claim risk.", 145),
+    }
+
+
+def reliability_warning(data):
+    warning = clean_text(data.get("data_reliability_warning") or (data.get("confidence") or {}).get("reliability_warning"))
+    if warning:
+        return warning
+    diag = data.get("crawl_diagnostics") or {}
+    attempted = int(diag.get("pages_attempted") or 0)
+    failed = int(diag.get("pages_failed") or 0)
+    thin = int(diag.get("pages_thin") or 0)
+    fallback = int(diag.get("pages_retrieved_via_fallback") or 0)
+    pages = len((data.get("report") or {}).get("pages_reviewed") or [])
+    caution = "A low risk score from this scan may reflect limited access to the site's content, not necessarily a genuine absence of risky claims."
+    if attempted and failed / max(1, attempted) > .25:
+        return f"{failed} of {attempted} page fetches failed. {caution}"
+    if pages < 3:
+        return f"Only {pages} relevant company page(s) could be reviewed. {caution}"
+    if thin:
+        return f"{thin} reviewed page(s) returned unusually little text. {caution}"
+    if fallback:
+        return f"{fallback} reviewed page(s) required a public text-extraction fallback. {caution}"
+    return ""
+
+
+def external_signals(data, limit=2):
     ext = data.get("external_research") or {}
     rows = []
     for branch in (ext.get("green") or {}, ext.get("social") or {}, ext):
         rows.extend(branch.get("targeted_negative_sources") or [])
-    unique = []
-    seen = set()
+    unique, seen = [], set()
     for item in rows:
         if not isinstance(item, dict):
+            continue
+        if str(item.get("review_status") or "").lower().startswith("candidate"):
             continue
         key = item.get("url") or item.get("title")
         if not key or key in seen:
@@ -349,537 +316,292 @@ def external_signals(data: dict, limit: int = 2) -> list[dict]:
     return unique
 
 
-def company_name(data: dict) -> str:
-    comp = data.get("company") or {}
-    if isinstance(comp, dict):
-        name = clean_text(comp.get("company") or comp.get("name"))
-    else:
-        name = clean_text(comp)
-    return name if name and name.lower() != "company reviewed" else "Company"
-
-
-def metadata(data: dict) -> dict:
+def reviewed_sources(data, limit=3):
     pages = list((data.get("report") or {}).get("pages_reviewed") or [])
-    domains = set()
-    for page in pages:
-        parsed = urlparse(str(page))
-        if parsed.netloc:
-            domains.add(parsed.netloc.replace("www.", ""))
-    assessment = "Internal document scan" if data.get("document_type") or "document" in str(data.get("assessment_type", "")).lower() else "Website scan"
-    confidence = data.get("confidence") or {}
-    context = data.get("entity_context_indicator") or {}
-    return {
-        "source": clean_text(data.get("source_label") or data.get("original_url") or "Reviewed material"),
-        "date": clean_text(data.get("analysis_date") or "")[:10],
-        "assessment": assessment,
-        "coverage": f"{len(pages)} page(s) across {len(domains)} domain(s)" if pages else "Coverage not available",
-        "confidence": clean_text(confidence.get("level") or "Not assessed"),
-        "confidence_reason": bounded_text(" ".join(confidence.get("reasons") or []), 260) or "Confidence reflects source access, coverage and external-search availability.",
-        "entity_level": clean_text(context.get("level") or "Not assessed"),
-        "entity_note": bounded_text(context.get("note") or "Entity context is shown separately from claim-communication risk.", 230),
-    }
+    out = []
+    for value in pages:
+        text = clean_text(value)
+        if not text:
+            continue
+        if text.startswith("http"):
+            parsed = urlparse(text)
+            domain = parsed.netloc.replace("www.", "")
+            filename = parsed.path.rsplit("/", 1)[-1]
+            label = domain if not filename else f"{domain} · {filename}"
+        else:
+            label = text
+        label = bounded_text(label, 82)
+        if label not in out:
+            out.append(label)
+        if len(out) >= limit:
+            break
+    return out
 
 
-def header_block(data: dict, page_subtitle: str) -> list:
-    name = company_name(data)
+def header_block(data, subtitle):
     meta = metadata(data)
-    left = [
-        Paragraph("DURABLY SUSTAINABILITY SCAN", ST["brand"]),
-        Spacer(1, 1.2 * mm),
-        Paragraph(esc(name), ST["title"]),
-        Paragraph(esc(page_subtitle), ST["subtitle"]),
-    ]
-    source = bounded_text(meta["source"], 75)
-    right = [
-        Paragraph("REVIEWED SOURCE", ST["meta_b"]),
-        Paragraph(esc(source), ST["meta"]),
-        Paragraph(f'{esc(meta["date"])} · {esc(meta["assessment"])}', ST["meta"]),
-        Paragraph(esc(meta["coverage"]), ST["meta"]),
-        Paragraph(f'Confidence: <b>{esc(meta["confidence"])}</b>', ST["meta"]),
-    ]
-    top = Table([[left, right]], colWidths=[CONTENT_W * 0.64, CONTENT_W * 0.36])
-    top.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    bar = Table([["", ""]], colWidths=[CONTENT_W * 0.74, CONTENT_W * 0.26], rowHeights=[3.0 * mm])
-    bar.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 0), NAVY),
-        ("BACKGROUND", (1, 0), (1, 0), TEAL),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    return [bar, Spacer(1, 3.2 * mm), top, Spacer(1, 3.0 * mm)]
+    left = [Paragraph("DURABLY SUSTAINABILITY SCAN", ST["brand"]), Spacer(1, 1 * mm), Paragraph(esc(company_name(data)), ST["title"]), Paragraph(esc(subtitle), ST["subtitle"])]
+    right = [Paragraph("REVIEWED SOURCE", ST["meta_b"]), Paragraph(esc(bounded_text(meta["source"], 70)), ST["meta"]), Paragraph(f'{esc(meta["date"])} · {esc(meta["assessment"])}', ST["meta"]), Paragraph(esc(meta["coverage"]), ST["meta"]), Paragraph(f'Confidence: <b>{esc(meta["confidence"])}</b>', ST["meta"])]
+    t = Table([[left, right]], colWidths=[CONTENT_W * .64, CONTENT_W * .36])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, -1), 1.2, NAVY), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    return [t, Spacer(1, 2 * mm)]
 
 
-def section_title(text: str) -> Paragraph:
+def section_title(text):
     return Paragraph(esc(text.upper()), ST["section"])
 
 
-def summary_box(data: dict) -> Table:
-    name = company_name(data)
-    global_score = data.get("global_score", data.get("overall_score"))
-    global_risk = data.get("global_risk", data.get("overall_risk")) or risk_label_from_score(global_score)
-    claims = combined_top_claims(data, 3)
-    areas = []
-    for claim in claims:
-        area = claim_title(claim)
-        if area and area.lower() not in {a.lower() for a in areas}:
-            areas.append(area)
-    if areas:
-        if len(areas) == 1:
-            focus = areas[0].lower()
-        else:
-            focus = ", ".join(a.lower() for a in areas[:-1]) + " and " + areas[-1].lower()
-        summary = f"The main retained issues concern {focus}."
-    else:
-        summary = "No material problematic claim signal was retained in the reviewed material."
-    main = Paragraph(
-        f'<b>Overall result: {esc(global_score)}/100 — {esc(global_risk)} claim risk.</b> {esc(summary)}',
-        ST["body_dark"],
-    )
-    note = clean_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on this result.")
-    note = bounded_text(note, 220)
-    box = Table([[main, Paragraph(esc(note), ST["small"]) ]], colWidths=[CONTENT_W * 0.73, CONTENT_W * 0.27])
-    box.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 0), AMBER_SOFT),
-        ("BACKGROUND", (1, 0), (1, 0), GREY_100),
-        ("LINEBEFORE", (0, 0), (0, 0), 3, AMBER),
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("INNERGRID", (0, 0), (-1, -1), 0.4, GREY_300),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-    ]))
-    return box
+def summary_box(data, clusters):
+    global_score = data.get("global_score", data.get("overall_score", "—"))
+    global_risk = data.get("global_risk", data.get("overall_risk", "Not assessed"))
+    types = [claim_title(c["representative"]) for c in clusters[:3]]
+    summary = "The main retained claim areas are " + ", ".join(types) + "." if types else "No material claim signal was retained."
+    left = Paragraph(f'<b>Overall result: {esc(global_score)}/100 — {esc(global_risk)} claim risk.</b> {esc(summary)}', ST["body_dark"])
+    note = Paragraph(esc(bounded_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on the result.", 170)), ST["small"])
+    t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (0, 0), AMBER_SOFT), ("LINEBEFORE", (0, 0), (0, 0), 2.8, AMBER), ("BACKGROUND", (1, 0), (1, 0), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+    return t
 
 
-def score_card(label: str, value, risk: str, note: str = "") -> Table:
-    color = risk_color(risk)
-    if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
-        number = f'{esc(value)}<font size="6.5" color="#7A8A93">/100</font>'
-    else:
-        number = esc(value or "—")
-    rows = [
-        [Paragraph(esc(label.upper()), ST["card_label"])],
-        [Paragraph(number, ST["card_num"])],
-        [Paragraph(esc(risk or "Not assessed"), ParagraphStyle("cr", parent=ST["card_risk"], textColor=color))],
-    ]
+def score_card(label, value, risk, note=""):
+    risk_col = risk_color(risk)
+    rows = [[Paragraph(esc(label.upper()), ST["card_label"])], [Paragraph(f'{esc(value)}<font size="7.5" color="#7A8A93">/100</font>' if isinstance(value, (int, float)) else esc(value), ST["card_num"])], [Paragraph(f'<font color="{risk_col.hexval()}"><b>{esc(risk)}</b></font>', ST["small_dark"])]]
     if note:
-        rows.append([Paragraph(esc(bounded_text(note, 105)), ST["tiny"])])
-    card = Table(rows, colWidths=[CONTENT_W / 4 - 3.5])
-    card.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("LINEBEFORE", (0, 0), (0, -1), 2.8, color),
-        ("BACKGROUND", (0, 0), (-1, -1), WHITE),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, 0), 8),
-        ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
-        ("TOPPADDING", (0, 1), (-1, -1), 1.2),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 1.2),
-    ]))
+        rows.append([Paragraph(esc(bounded_text(note, 115)), ST["source"])])
+    inner = Table(rows, colWidths=[CONTENT_W * .245 - 12])
+    inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+    card = Table([[inner]], colWidths=[CONTENT_W * .245])
+    card.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.6, risk_col), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return card
 
 
-def score_row(data: dict) -> Table:
-    meta = metadata(data)
-    global_score = data.get("global_score", data.get("overall_score"))
-    global_risk = data.get("global_risk", data.get("overall_risk")) or risk_label_from_score(global_score)
-    green_score = data.get("green_score")
-    green_risk = data.get("green_risk") or risk_label_from_score(green_score)
-    social_score = data.get("social_score")
-    social_risk = data.get("social_risk") or risk_label_from_score(social_score)
-    cards = [
-        score_card("Overall claims risk", global_score, global_risk),
-        score_card("Green claims risk", green_score, green_risk),
-        score_card("Social claims risk", social_score, social_risk),
-        score_card("Entity context", meta["entity_level"], meta["entity_level"], meta["entity_note"]),
+
+def context_card(level, note):
+    risk_col = risk_color(level)
+    rows = [
+        [Paragraph("ENTITY CONTEXT", ST["card_label"])],
+        [Paragraph(esc(level), ST["card_num"])],
+        [Paragraph(esc(bounded_text(note, 115)), ST["source"])],
     ]
-    table = Table([cards], colWidths=[CONTENT_W / 4] * 4)
-    table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    return table
+    inner = Table(rows, colWidths=[CONTENT_W * .245 - 12])
+    inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+    card = Table([[inner]], colWidths=[CONTENT_W * .245])
+    card.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.6, risk_col), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    return card
+
+def score_row(data):
+    ctx = data.get("entity_context_indicator") or {}
+    cards = [score_card("Overall claims risk", data.get("global_score", data.get("overall_score", "—")), data.get("global_risk", data.get("overall_risk", "Not assessed"))), score_card("Green claims risk", data.get("green_score", "—"), data.get("green_risk", "Not assessed")), score_card("Social claims risk", data.get("social_score", "—"), data.get("social_risk", "Not assessed")), context_card(clean_text(ctx.get("level") or "Not assessed"), ctx.get("note") or "")]
+    t = Table([cards], colWidths=[CONTENT_W * .25] * 4)
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    return t
 
 
-def risk_driver_table(claims: list[dict]) -> Table:
-    rows = [[
-        Paragraph("#", ParagraphStyle("th1", parent=ST["tiny"], fontName="Helvetica-Bold", textColor=WHITE)),
-        Paragraph("CLAIM AREA", ParagraphStyle("th2", parent=ST["tiny"], fontName="Helvetica-Bold", textColor=WHITE)),
-        Paragraph("FLAGGED WORDING", ParagraphStyle("th3", parent=ST["tiny"], fontName="Helvetica-Bold", textColor=WHITE)),
-        Paragraph("SOURCE", ParagraphStyle("th4", parent=ST["tiny"], fontName="Helvetica-Bold", textColor=WHITE)),
-    ]]
-    for idx, claim in enumerate(claims, 1):
-        rows.append([
-            Paragraph(str(idx), ST["small_dark"]),
-            Paragraph(f'<b>{esc(bounded_text(claim_title(claim), 65))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["small_dark"]),
-            Paragraph(esc(trigger_phrase(claim) or "Review retained wording"), ST["small_dark"]),
-            Paragraph(esc(bounded_text(claim_source(claim), 55)), ST["small"]),
-        ])
-    if not claims:
-        rows.append([Paragraph("—", ST["small"]), Paragraph("No material claim signal retained", ST["small"]), Paragraph("—", ST["small"]), Paragraph("—", ST["small"])])
-    table = Table(rows, colWidths=[8 * mm, 57 * mm, 47 * mm, CONTENT_W - 112 * mm], repeatRows=1)
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("INNERGRID", (0, 0), (-1, -1), 0.45, GREY_300),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]
-    for row in range(2, len(rows), 2):
-        style.append(("BACKGROUND", (0, row), (-1, row), GREY_100))
-    table.setStyle(TableStyle(style))
-    return table
+def reliability_panel(data):
+    warning = reliability_warning(data)
+    if not warning:
+        return None
+    p = Paragraph(f'<b>DATA RELIABILITY</b><br/>{esc(warning)}', ST["small_dark"])
+    t = Table([[p]], colWidths=[CONTENT_W])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), AMBER_SOFT), ("BOX", (0, 0), (-1, -1), .7, AMBER), ("LINEBEFORE", (0, 0), (0, 0), 3, AMBER), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    return t
 
 
-def claim_card(claim: dict, material: bool = False) -> Table:
-    risk = claim_risk(claim)
-    accent = risk_color(risk)
-    title_row = Table([[
-        Paragraph(esc(claim_title(claim)), ST["claim_title"]),
-        Paragraph(esc(risk), ParagraphStyle("rr", parent=ST["claim_risk"], textColor=accent)),
-    ]], colWidths=[CONTENT_W * 0.78 - 20, CONTENT_W * 0.22])
-    title_row.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-    ]))
-    src = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(claim_source(claim))}', ST["tiny"])
-    excerpt = Paragraph(highlighted_excerpt(claim, 290 if material else 330), ST["quote"])
-    why = Paragraph(f'<font color="#195A53"><b>WHY IT MATTERS</b></font><br/>{esc(why_text(claim))}', ST["small_dark"])
-    gap = Paragraph(f'<font color="#A87311"><b>EVIDENCE GAP</b></font><br/>{esc(evidence_gap_text(claim))}', ST["small_dark"])
-    wg = Table([[why, gap]], colWidths=[(CONTENT_W - 34) / 2] * 2)
-    wg.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LINEBEFORE", (1, 0), (1, 0), 0.5, GREY_300),
-        ("LEFTPADDING", (0, 0), (0, 0), 0),
-        ("RIGHTPADDING", (0, 0), (0, 0), 7),
-        ("LEFTPADDING", (1, 0), (1, 0), 7),
-        ("RIGHTPADDING", (1, 0), (1, 0), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    recommendation = Paragraph(
-        f'<font color="#2F7D55"><b>RECOMMENDED WORDING</b></font> {esc(rewrite_text(claim))}',
-        ST["small_dark"],
-    )
-    inner = Table([[title_row], [src], [excerpt], [wg], [recommendation]], colWidths=[CONTENT_W - 22])
-    inner.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.1),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.1),
-    ]))
+def risk_driver_table(clusters):
+    headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("FLAGGED WORDING", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
+    rows = [headers]
+    for idx, c in enumerate(clusters[:3], 1):
+        claim = c["representative"]
+        count = len(c["occurrences"])
+        title = claim_title(claim) + (f" · {count} occurrences" if count > 1 else "")
+        sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
+        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(trigger_phrase(claim) or "Review retained wording", 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
+    if len(rows) == 1:
+        rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
+    t = Table(rows, colWidths=[9*mm, 67*mm, 47*mm, CONTENT_W-123*mm], repeatRows=1)
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE), ("BOX", (0, 0), (-1, -1), .55, GREY_300), ("INNERGRID", (0, 0), (-1, -1), .4, GREY_300), ("BACKGROUND", (0, 2), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    return t
+
+
+def claim_card(cluster, excerpt_chars=220, material=False):
+    claim = cluster["representative"]
+    count = len(cluster["occurrences"])
+    title = claim_title(claim) + (f" · {count} occurrences" if count > 1 else "")
+    sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in cluster["occurrences"]))[:2])
+    head = Table([[Paragraph(esc(title), ST["claim_title"]), Paragraph(f'<font color="{risk_color(claim_risk(claim)).hexval()}"><b>{esc(claim_risk(claim))}</b></font>', ST["claim_risk"]) ]], colWidths=[CONTENT_W-35*mm, 35*mm])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
+    quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
+    why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
+    gap = Paragraph(f'<b>EVIDENCE GAP</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
+    grid = Table([[why, gap]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
+    grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
+    inner = Table([[head], [source], [quote], [grid], [rec]], colWidths=[CONTENT_W-16])
+    inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
-    card.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), GREEN_SOFT if material else GREY_100),
-        ("BOX", (0, 0), (-1, -1), 0.75, accent if material else GREY_300),
-        ("LINEBEFORE", (0, 0), (0, 0), 3.5 if material else 2.5, TEAL if not material else accent),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, -1), 11 if material else 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 11 if material else 8),
-    ]))
+    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREEN_SOFT if material else GREY_100), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
     return card
 
 
-def actions_table(data: dict) -> Table:
-    name = company_name(data)
+def compact_action(action, company):
+    title = clean_text(action.get("title") or "Priority action")
+    low = title.lower()
+    if "green" in low or "empco" in low:
+        return title, "Review exact consumer-facing wording and confirm scope, methodology, evidence, verification basis and limitations before reuse."
+    if "social" in low:
+        return title, "Document stakeholder scope, KPIs, workforce or audit evidence, grievance and remedy arrangements, and clear limitations."
+    if "forced" in low or "supplier" in low:
+        return title, "Document product and supplier traceability, risk assessment, mitigation, grievance, remediation and response readiness."
+    if "evidence file" in low or "evidence" in low:
+        return title, "Create one evidence file per claim with approved wording, source, owner, evidence link, review status and next review date."
+    raw = clean_text(action.get("action") or action.get("description") or "")
+    return title, bounded_text(raw, 155) if raw else "Assign an owner, evidence file, review status and completion date."
+
+
+def actions_table(data):
     raw = list(data.get("company_action_plan") or [])[:3]
-    defaults = [
-        {"title": "Review priority claims", "action": "Review the exact wording, audience, scope and supporting evidence for each retained claim."},
-        {"title": "Close evidence gaps", "action": "Create or update claim-specific evidence files and assign an accountable owner."},
-        {"title": "Implement claim governance", "action": "Require sustainability, legal, compliance and marketing review before publication."},
-    ]
+    defaults = [{"title":"Review priority claims","action":"Review exact wording, audience, scope and supporting evidence."},{"title":"Close evidence gaps","action":"Create claim-specific evidence files with accountable owners."},{"title":"Implement claim governance","action":"Require sustainability, legal, compliance and marketing approval before publication."}]
     while len(raw) < 3:
         raw.append(defaults[len(raw)])
     rows = []
     for idx, item in enumerate(raw, 1):
-        title, description = compact_action(item, name)
-        rows.append([
-            Paragraph(str(idx), ParagraphStyle("an", parent=ST["claim_title"], alignment=TA_CENTER)),
-            Paragraph(f'<b>{esc(title)}</b><br/>{esc(description)}', ST["small_dark"]),
-        ])
-    table = Table(rows, colWidths=[10 * mm, CONTENT_W - 10 * mm])
-    style = [
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("INNERGRID", (0, 0), (-1, -1), 0.45, GREY_300),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BACKGROUND", (0, 0), (-1, -1), GREY_100),
-        ("TEXTCOLOR", (0, 0), (0, -1), NAVY),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]
-    table.setStyle(TableStyle(style))
-    return table
+        title, desc = compact_action(item, company_name(data))
+        rows.append([Paragraph(str(idx), ParagraphStyle(f"act{idx}", parent=ST["claim_title"], alignment=TA_CENTER)), Paragraph(f'<b>{esc(title)}</b><br/>{esc(desc)}', ST["small_dark"])])
+    t = Table(rows, colWidths=[10*mm, CONTENT_W-10*mm])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("INNERGRID", (0, 0), (-1, -1), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    return t
 
 
-def external_signal_card(signal: dict) -> Table:
-    """Compact external-context card used in the dedicated page-2 section."""
-    title = bounded_text(signal.get("title") or "External public-source signal", 105)
-    status = bounded_text(signal.get("status") or "Review signal", 52)
-    content = first_sentence(signal.get("content") or "", 205)
-    url = clean_text(signal.get("url") or "")
-    if url:
-        parsed = urlparse(url)
-        source_line = bounded_text((parsed.netloc + parsed.path).replace("www.", ""), 105)
-    else:
-        source_line = "Source link not available"
-
-    rows = [
-        [Paragraph(esc(title), ST["claim_title"])],
-        [Paragraph(f'<font color="#AF3D43"><b>{esc(status)}</b></font>', ST["tiny"])],
-    ]
+def external_signal_card(signal, width):
+    title = bounded_text(signal.get("title") or "External public-source signal", 90)
+    status = bounded_text(signal.get("status") or "Status unclear", 38)
+    review = bounded_text(signal.get("review_status") or "Retained — manual verification required", 50)
+    source = signal.get("source_name") or urlparse(clean_text(signal.get("url"))).netloc.replace("www.", "") or clean_text(signal.get("category") or "External source")
+    date = clean_text(signal.get("published_date") or "Date not available")
+    content = first_sentence(signal.get("content") or "", 160)
+    related = clean_text(signal.get("related_claim_area") or ("Environmental claims" if signal.get("dimension") == "green" else "Social / labour claims"))
+    rows = [[Paragraph(esc(title), ST["claim_title"])], [Paragraph(f'<b>{esc(source)}</b> · {esc(date)}<br/><font color="#AF3D43">{esc(status)}</font> · {esc(review)}', ST["source"])]]
     if content:
-        rows.append([Paragraph(esc(content), ST["tiny"])])
-    rows.append([Paragraph(f'<font color="#7A8A93">Source:</font> {esc(source_line)}', ST["tiny"])])
-
-    inner = Table(rows, colWidths=[CONTENT_W * 0.49 - 16])
-    inner.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.1),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.1),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
-    card = Table([[inner]], colWidths=[CONTENT_W * 0.49])
-    card.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), RED_SOFT),
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("LINEBEFORE", (0, 0), (0, 0), 2.7, RED),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
+        rows.append([Paragraph(esc(content), ST["small"])])
+    rows.append([Paragraph(f'<b>Related claim area:</b> {esc(related)} · <b>Entity match:</b> {esc(signal.get("entity_match") or "Direct")}', ST["source"])])
+    inner = Table(rows, colWidths=[width-16])
+    inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+    card = Table([[inner]], colWidths=[width])
+    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), RED_SOFT), ("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.8, RED), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return card
 
 
-def external_signals_panel(data: dict) -> Table:
-    """Dedicated external public-source section, separate from methodology."""
-    signals = external_signals(data, 2)
-    context_note = Paragraph(
-        "Contextual public-source signals only. Their status, entity link and relevance to a specific claim require manual verification.",
-        ST["tiny"],
-    )
+def external_panel(data, limit):
+    signals = external_signals(data, limit)
+    note = Paragraph("Contextual public-source signals only. Automated retained signals require manual verification of status, entity link and claim relevance.", ST["source"])
     if not signals:
-        empty = Table([[Paragraph(
-            "No relevant external public-source signal was retained in this scan, or external search coverage was insufficient.",
-            ST["small"],
-        )]], colWidths=[CONTENT_W])
-        empty.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), GREY_100),
-            ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 7),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ]))
-        wrapper = Table([[context_note], [empty]], colWidths=[CONTENT_W])
+        cards = Table([[Paragraph("No negative external public-source signal was retained. If external search was unavailable, this does not confirm an absence of relevant criticism or enforcement.", ST["small"])]], colWidths=[CONTENT_W])
+        cards.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     elif len(signals) == 1:
-        wrapper = Table([[context_note], [external_signal_card(signals[0])]], colWidths=[CONTENT_W])
+        cards = external_signal_card(signals[0], CONTENT_W)
     else:
-        cards = Table([[external_signal_card(signals[0]), external_signal_card(signals[1])]],
-                      colWidths=[CONTENT_W * 0.5, CONTENT_W * 0.5])
-        cards.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (0, 0), 0),
-            ("RIGHTPADDING", (0, 0), (0, 0), 3),
-            ("LEFTPADDING", (1, 0), (1, 0), 3),
-            ("RIGHTPADDING", (1, 0), (1, 0), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        wrapper = Table([[context_note], [cards]], colWidths=[CONTENT_W])
-    wrapper.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
-        ("BOTTOMPADDING", (0, 1), (-1, 1), 0),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
-    return wrapper
+        cards = Table([[external_signal_card(signals[0], CONTENT_W*.5), external_signal_card(signals[1], CONTENT_W*.5)]], colWidths=[CONTENT_W*.5, CONTENT_W*.5])
+        cards.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 3), ("LEFTPADDING", (1, 0), (1, 0), 3), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    wrap = Table([[note], [cards]], colWidths=[CONTENT_W])
+    wrap.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, 1), (-1, 1), 0)]))
+    return wrap
 
 
-def sources_methodology_panel(data: dict) -> Table:
-    """Compact closing notes panel. External signals are intentionally excluded."""
-    source_items = reviewed_sources(data, 3)
-    source_html = "<br/>".join(f'• {esc(item)}' for item in source_items) if source_items else "No source list available."
-    methodology = (
-        "Risk bands: 0–44 Low · 45–74 Medium · 75–89 High · 90–100 Very high. "
-        "EmpCo is applied to consumer-facing environmental and selected social claims. "
-        "The Forced Labour Regulation lens is applied to forced-labour and supply-chain wording."
-    )
-    left = [
-        Paragraph("<b>SOURCES REVIEWED</b>", ST["card_label"]),
-        Paragraph(source_html, ST["tiny"]),
-    ]
-    right = [
-        Paragraph("<b>METHODOLOGY REFERENCE</b>", ST["card_label"]),
-        Paragraph(esc(methodology), ST["tiny"]),
-        Spacer(1, 1.2 * mm),
-        Paragraph("<b>Full methodology:</b> see the methodology PDF available from the scan homepage.", ST["tiny"]),
-    ]
-    panel = Table([[left, right]], colWidths=[CONTENT_W * 0.43, CONTENT_W * 0.57])
-    panel.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("LINEBEFORE", (1, 0), (1, 0), 0.45, GREY_300),
-        ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-    ]))
-    return panel
-
-
-
-def assessment_basis_panel(data: dict) -> Table:
+def assessment_basis(data):
     meta = metadata(data)
-    lens = (
-        "EmpCo / Directive (EU) 2024/825 for consumer-facing environmental and selected social claims; "
-        "EU Forced Labour Regulation for forced-labour and supply-chain wording."
-    )
-    coverage = [
-        Paragraph("<b>COVERAGE</b>", ST["card_label"]),
-        Paragraph(esc(meta["coverage"]), ST["small_dark"]),
-        Paragraph(esc(bounded_text(meta["source"], 72)), ST["tiny"]),
-    ]
-    confidence = [
-        Paragraph("<b>CONFIDENCE</b>", ST["card_label"]),
-        Paragraph(esc(meta["confidence"]), ParagraphStyle("ab_conf", parent=ST["claim_title"], textColor=risk_color(meta["confidence"]))),
-        Paragraph(esc(meta["confidence_reason"]), ST["tiny"]),
-    ]
-    regulatory = [
-        Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]),
-        Paragraph(esc(lens), ST["tiny"]),
-    ]
-    panel = Table([[coverage, confidence, regulatory]], colWidths=[CONTENT_W * 0.27, CONTENT_W * 0.30, CONTENT_W * 0.43])
-    panel.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("INNERGRID", (0, 0), (-1, -1), 0.45, GREY_300),
-        ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    return panel
+    left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
+    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("EmpCo for consumer-facing environmental and selected social claims; Forced Labour Regulation for forced-labour and supply-chain wording.", ST["source"])]
+    t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    return t
+
+
+def sources_methodology(data):
+    sources = reviewed_sources(data, 3)
+    left = [Paragraph("<b>SOURCES REVIEWED</b>", ST["card_label"]), Paragraph("<br/>".join(f'• {esc(x)}' for x in sources) if sources else "Source list not available.", ST["source"])]
+    right = [Paragraph("<b>METHODOLOGY</b>", ST["card_label"]), Paragraph("EmpCo, Forced Labour Regulation and Durably claim-risk methodology. See the detailed methodology PDF on the scan homepage.", ST["source"])]
+    t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    return t
+
 
 def draw_footer(canvas, doc):
     page = canvas.getPageNumber()
-    name = company_name(getattr(doc, "report_data", {}) or {})
     canvas.saveState()
     canvas.setStrokeColor(GREY_300)
-    canvas.setLineWidth(0.5)
-    canvas.line(MARGIN_X, 8.2 * mm, PAGE_W - MARGIN_X, 8.2 * mm)
-    canvas.setFont("Helvetica-Oblique", 5.4)
+    canvas.setLineWidth(.5)
+    canvas.line(MARGIN_X, 8.5*mm, PAGE_W-MARGIN_X, 8.5*mm)
+    canvas.setFont("Helvetica-Oblique", 6.5)
     canvas.setFillColor(GREY_500)
     disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
-    canvas.drawString(MARGIN_X, 5.4 * mm, disclaimer)
-    canvas.drawRightString(PAGE_W - MARGIN_X, 5.4 * mm, f"© Durably · {name} · Page {page} of 2")
+    canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
+    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · Page {page} of 2")
     canvas.restoreState()
 
 
-def build_company_report_pdf(data: dict) -> bytes:
-    """Build the live two-page native PDF used by /api/report/pdf."""
+def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220):
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        leftMargin=MARGIN_X,
-        rightMargin=MARGIN_X,
-        topMargin=MARGIN_TOP,
-        bottomMargin=MARGIN_BOTTOM,
-        allowSplitting=1,
-    )
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
     doc.report_data = data
-
-    claims = combined_top_claims(data, 3)
-    material = claims[0] if claims else {
-        "claim_type": "No material claim signal retained",
-        "risk": "Low",
-        "claim_text": "No material problematic sustainability claim was retained in the reviewed material.",
-        "why_flagged": "No material wording issue was retained in this first-pass screening.",
-        "evidence_needed": ["Continue maintaining claim-specific evidence and approval records"],
-        "suggested_rewrite": "Continue using precise, claim-specific wording supported by current evidence.",
-    }
-    additional = claims[1:3]
-
+    clusters = cluster_claims(data)
+    material = clusters[0] if clusters else {"representative":{"claim_type":"No material claim signal retained","risk":"Low","claim_text":"No material sustainability claim was retained in the reviewed material.","why_flagged":"No material wording issue was retained in this first-pass screening.","evidence_needed":["Maintain claim-specific evidence and approval records"],"suggested_rewrite":"Continue using precise wording supported by current evidence."},"occurrences":[]}
+    additional = clusters[1:1+additional_limit]
     flow = []
-    # Page 1
     flow += header_block(data, "Company claim-risk report · Assessment overview")
-    flow.append(summary_box(data))
-    flow.append(Spacer(1, 3.5 * mm))
-    flow.append(section_title("Score overview"))
-    flow.append(score_row(data))
-    flow.append(Spacer(1, 3.5 * mm))
-    flow.append(section_title("Top risk drivers"))
-    flow.append(risk_driver_table(claims))
-    flow.append(Spacer(1, 3.8 * mm))
-    flow.append(section_title("Most material finding"))
-    flow.append(KeepTogether(claim_card(material, material=True)))
-    flow.append(Spacer(1, 3.2 * mm))
-    flow.append(assessment_basis_panel(data))
-
-    flow.append(PageBreak())
-
-    # Page 2: internal findings -> external context -> actions -> reference notes
-    flow += header_block(data, "Company claim-risk report · Findings, external context and actions")
-    flow.append(section_title("Additional priority claims"))
+    flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))
+    flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 2.5*mm))
+    rp = reliability_panel(data)
+    if rp is not None:
+        flow.append(rp); flow.append(Spacer(1, 2.2*mm))
+    flow.append(section_title("Top risk drivers")); flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
+    flow.append(section_title("Most material finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
+    flow.append(assessment_basis(data)); flow.append(PageBreak())
+    flow += header_block(data, "Company claim-risk report · Context and response")
+    flow.append(section_title("Additional material findings"))
     if additional:
-        for claim in additional:
-            flow.append(KeepTogether(claim_card(claim, material=False)))
-            flow.append(Spacer(1, 2.2 * mm))
+        for c in additional:
+            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 1.7*mm))
     else:
-        flow.append(Table([[Paragraph("No additional material claim signal was retained beyond the finding shown on page 1.", ST["small"])]], colWidths=[CONTENT_W], style=TableStyle([
-            ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-            ("BACKGROUND", (0, 0), (-1, -1), GREY_100),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ])))
-    flow.append(Spacer(1, 1.8 * mm))
-    flow.append(section_title("External public-source signals"))
-    flow.append(external_signals_panel(data))
-    flow.append(Spacer(1, 2.0 * mm))
-    flow.append(section_title("Priority actions"))
-    flow.append(actions_table(data))
-    flow.append(Spacer(1, 2.2 * mm))
-    flow.append(sources_methodology_panel(data))
-
+        flow.append(Paragraph("No additional material claim group is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
+    flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("External public-source signals")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
+    flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.8*mm)); flow.append(sources_methodology(data))
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
 
 
-if __name__ == "__main__":
-    import json
-    import sys
+def _page_count(pdf_bytes):
+    try:
+        from pypdf import PdfReader
+        return len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+    except Exception:
+        return None
 
+
+def build_company_report_pdf(data: dict) -> bytes:
+    """Build an exactly two-page PDF without reducing font sizes.
+
+    If content would spill to a third page, the generator progressively limits the
+    number of additional findings/external signals and shortens excerpts. Detailed
+    content remains available in the online scan.
+    """
+    variants = [
+        dict(additional_limit=2, external_limit=2, excerpt_chars=220),
+        dict(additional_limit=1, external_limit=2, excerpt_chars=200),
+        dict(additional_limit=1, external_limit=1, excerpt_chars=180),
+        dict(additional_limit=0, external_limit=1, excerpt_chars=165),
+    ]
+    last = b""
+    for variant in variants:
+        last = _build_once(deepcopy(data), **variant)
+        count = _page_count(last)
+        if count == 2 or count is None:
+            return last
+    return last
+
+
+if __name__ == "__main__":
+    import json, sys
     source = sys.argv[1] if len(sys.argv) > 1 else "/tmp/scan_result.json"
     target = sys.argv[2] if len(sys.argv) > 2 else "/tmp/company_report_test.pdf"
     with open(source, "r", encoding="utf-8") as handle:
