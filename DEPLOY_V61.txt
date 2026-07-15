@@ -1,0 +1,12 @@
+DEPLOYMENT - v61 LOGICAL TWO-PAGE REPORT STRUCTURE
+
+1. Extract this ZIP.
+2. Replace the files in the current GitHub repository with the files in this folder.
+3. Commit and push to GitHub.
+4. Trigger a new deployment in Render, or wait for automatic deployment.
+5. Confirm /api/health reports:
+   hostable_v61_logical_two_page_report_structure
+6. Run a new scan and download the 2-page company report.
+
+The existing POST /api/report/pdf route and existing PDF download button remain unchanged.
+Only the native report_pdf.py structure has been reorganised.

@@ -3,6 +3,7 @@
 This module is called directly by app.py through build_company_report_pdf(data).
 It intentionally uses only ReportLab, which is already present in requirements.txt.
 The output is fixed to exactly two A4 pages and uses the live scan-result schema.
+Page 2 follows a findings -> external context -> actions -> methodology sequence.
 """
 from __future__ import annotations
 
@@ -328,7 +329,7 @@ def reviewed_sources(data: dict, limit: int = 3) -> list[str]:
     return out
 
 
-def external_signals(data: dict, limit: int = 1) -> list[dict]:
+def external_signals(data: dict, limit: int = 2) -> list[dict]:
     ext = data.get("external_research") or {}
     rows = []
     for branch in (ext.get("green") or {}, ext.get("social") or {}, ext):
@@ -425,7 +426,11 @@ def summary_box(data: dict) -> Table:
     global_score = data.get("global_score", data.get("overall_score"))
     global_risk = data.get("global_risk", data.get("overall_risk")) or risk_label_from_score(global_score)
     claims = combined_top_claims(data, 3)
-    areas = [claim_title(c) for c in claims]
+    areas = []
+    for claim in claims:
+        area = claim_title(claim)
+        if area and area.lower() not in {a.lower() for a in areas}:
+            areas.append(area)
     if areas:
         if len(areas) == 1:
             focus = areas[0].lower()
@@ -628,55 +633,124 @@ def actions_table(data: dict) -> Table:
     return table
 
 
-def bottom_panel(data: dict) -> Table:
-    meta = metadata(data)
-    signals = external_signals(data, 1)
-    if signals:
-        sig = signals[0]
-        title = clean_text(sig.get("title") or "External public-source signal")
-        status = clean_text(sig.get("status") or "Review signal")
-        content = first_sentence(sig.get("content") or "", 190)
-        url = clean_text(sig.get("url") or "")
-        external_content = [
-            Paragraph(f'<b>{esc(bounded_text(title, 115))}</b> · {esc(status)}', ST["small_dark"]),
-            Paragraph(esc(content), ST["tiny"]),
-        ]
-        if url:
-            parsed = urlparse(url)
-            external_content.append(Paragraph(esc(parsed.netloc + parsed.path), ST["tiny"]))
+def external_signal_card(signal: dict) -> Table:
+    """Compact external-context card used in the dedicated page-2 section."""
+    title = bounded_text(signal.get("title") or "External public-source signal", 105)
+    status = bounded_text(signal.get("status") or "Review signal", 52)
+    content = first_sentence(signal.get("content") or "", 205)
+    url = clean_text(signal.get("url") or "")
+    if url:
+        parsed = urlparse(url)
+        source_line = bounded_text((parsed.netloc + parsed.path).replace("www.", ""), 105)
     else:
-        external_content = [Paragraph("No relevant external public-source signal was retained in this scan.", ST["small"])]
+        source_line = "Source link not available"
+
+    rows = [
+        [Paragraph(esc(title), ST["claim_title"])],
+        [Paragraph(f'<font color="#AF3D43"><b>{esc(status)}</b></font>', ST["tiny"])],
+    ]
+    if content:
+        rows.append([Paragraph(esc(content), ST["tiny"])])
+    rows.append([Paragraph(f'<font color="#7A8A93">Source:</font> {esc(source_line)}', ST["tiny"])])
+
+    inner = Table(rows, colWidths=[CONTENT_W * 0.49 - 16])
+    inner.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.1),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    card = Table([[inner]], colWidths=[CONTENT_W * 0.49])
+    card.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), RED_SOFT),
+        ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
+        ("LINEBEFORE", (0, 0), (0, 0), 2.7, RED),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    return card
+
+
+def external_signals_panel(data: dict) -> Table:
+    """Dedicated external public-source section, separate from methodology."""
+    signals = external_signals(data, 2)
+    context_note = Paragraph(
+        "Contextual public-source signals only. Their status, entity link and relevance to a specific claim require manual verification.",
+        ST["tiny"],
+    )
+    if not signals:
+        empty = Table([[Paragraph(
+            "No relevant external public-source signal was retained in this scan, or external search coverage was insufficient.",
+            ST["small"],
+        )]], colWidths=[CONTENT_W])
+        empty.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), GREY_100),
+            ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        wrapper = Table([[context_note], [empty]], colWidths=[CONTENT_W])
+    elif len(signals) == 1:
+        wrapper = Table([[context_note], [external_signal_card(signals[0])]], colWidths=[CONTENT_W])
+    else:
+        cards = Table([[external_signal_card(signals[0]), external_signal_card(signals[1])]],
+                      colWidths=[CONTENT_W * 0.5, CONTENT_W * 0.5])
+        cards.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ("RIGHTPADDING", (0, 0), (0, 0), 3),
+            ("LEFTPADDING", (1, 0), (1, 0), 3),
+            ("RIGHTPADDING", (1, 0), (1, 0), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        wrapper = Table([[context_note], [cards]], colWidths=[CONTENT_W])
+    wrapper.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    return wrapper
+
+
+def sources_methodology_panel(data: dict) -> Table:
+    """Compact closing notes panel. External signals are intentionally excluded."""
     source_items = reviewed_sources(data, 3)
     source_html = "<br/>".join(f'• {esc(item)}' for item in source_items) if source_items else "No source list available."
-    left = [
-        Paragraph("<b>External signals</b>", ST["small_dark"]),
-        *external_content,
-        Spacer(1, 2.2 * mm),
-        Paragraph("<b>Sources reviewed</b>", ST["small_dark"]),
-        Paragraph(source_html, ST["tiny"]),
-    ]
     methodology = (
         "Risk bands: 0–44 Low · 45–74 Medium · 75–89 High · 90–100 Very high. "
         "EmpCo is applied to consumer-facing environmental and selected social claims. "
         "The Forced Labour Regulation lens is applied to forced-labour and supply-chain wording."
     )
+    left = [
+        Paragraph("<b>SOURCES REVIEWED</b>", ST["card_label"]),
+        Paragraph(source_html, ST["tiny"]),
+    ]
     right = [
-        Paragraph("<b>Confidence and methodology</b>", ST["small_dark"]),
-        Paragraph(f'<b>Confidence:</b> {esc(meta["confidence"])}. {esc(meta["confidence_reason"])}', ST["tiny"]),
-        Spacer(1, 2 * mm),
+        Paragraph("<b>METHODOLOGY REFERENCE</b>", ST["card_label"]),
         Paragraph(esc(methodology), ST["tiny"]),
-        Spacer(1, 2 * mm),
+        Spacer(1, 1.2 * mm),
         Paragraph("<b>Full methodology:</b> see the methodology PDF available from the scan homepage.", ST["tiny"]),
     ]
-    panel = Table([[left, right]], colWidths=[CONTENT_W * 0.49, CONTENT_W * 0.51])
+    panel = Table([[left, right]], colWidths=[CONTENT_W * 0.43, CONTENT_W * 0.57])
     panel.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
-        ("LINEBEFORE", (1, 0), (1, 0), 0.5, GREY_300),
+        ("LINEBEFORE", (1, 0), (1, 0), 0.45, GREY_300),
+        ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
     return panel
 
@@ -773,13 +847,13 @@ def build_company_report_pdf(data: dict) -> bytes:
 
     flow.append(PageBreak())
 
-    # Page 2
-    flow += header_block(data, "Company claim-risk report · Priority findings and actions")
+    # Page 2: internal findings -> external context -> actions -> reference notes
+    flow += header_block(data, "Company claim-risk report · Findings, external context and actions")
     flow.append(section_title("Additional priority claims"))
     if additional:
         for claim in additional:
             flow.append(KeepTogether(claim_card(claim, material=False)))
-            flow.append(Spacer(1, 2.8 * mm))
+            flow.append(Spacer(1, 2.2 * mm))
     else:
         flow.append(Table([[Paragraph("No additional material claim signal was retained beyond the finding shown on page 1.", ST["small"])]], colWidths=[CONTENT_W], style=TableStyle([
             ("BOX", (0, 0), (-1, -1), 0.6, GREY_300),
@@ -789,11 +863,14 @@ def build_company_report_pdf(data: dict) -> bytes:
             ("TOPPADDING", (0, 0), (-1, -1), 8),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
         ])))
-    flow.append(Spacer(1, 2.8 * mm))
+    flow.append(Spacer(1, 1.8 * mm))
+    flow.append(section_title("External public-source signals"))
+    flow.append(external_signals_panel(data))
+    flow.append(Spacer(1, 2.0 * mm))
     flow.append(section_title("Priority actions"))
     flow.append(actions_table(data))
-    flow.append(Spacer(1, 3.2 * mm))
-    flow.append(bottom_panel(data))
+    flow.append(Spacer(1, 2.2 * mm))
+    flow.append(sources_methodology_panel(data))
 
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
