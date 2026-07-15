@@ -1,0 +1,47 @@
+DURABLY COMPANY REPORT LAYOUT UPDATE
+======================================
+
+What changed
+------------
+The live native PDF generator used by the existing button and endpoint has been replaced.
+The application still uses the existing route:
+
+    POST /api/report/pdf
+
+No new route or frontend integration is required. The existing button
+"Download 2-page company report (PDF)" now calls the redesigned generator.
+
+Files changed
+-------------
+- report_pdf.py: complete two-page report layout redesign
+- app.py: application version updated to hostable_v58_company_report_layout_redesign
+
+Deployment
+----------
+1. Replace the files in the GitHub repository with the files in this package.
+2. Commit and push to the branch connected to Render.
+3. In Render, deploy the latest commit or wait for automatic deployment.
+4. Run a new scan. Old PDFs already downloaded will not change.
+5. Click "Download 2-page company report (PDF)" and verify the new layout.
+
+Expected new layout
+-------------------
+Page 1:
+- coloured Durably header band
+- concise executive summary
+- four compact score cards
+- top-risk-driver table
+- full most-material-finding card
+- assessment-basis panel
+
+Page 2:
+- two additional priority-claim cards
+- three complete priority actions without visible truncation
+- external signal and reviewed-source panel
+- confidence and methodology panel
+
+Technical notes
+---------------
+- Native ReportLab PDF remains in use.
+- No new Python package is required.
+- The generator is constrained and stress-tested to remain exactly two A4 pages.

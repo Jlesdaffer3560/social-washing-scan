@@ -1,0 +1,12 @@
+Report layout changelog - v58
+
+- Replaced the former risk-gauge layout with four compact score cards.
+- Replaced the top-risk-driver bullet list with a structured table.
+- Added a clear two-column executive summary and entity-resolution note.
+- Added a full material-finding card with exact claim, evidence gap and recommended wording.
+- Added an assessment-basis panel for coverage, confidence and regulatory lenses.
+- Reworked page 2 into two readable claim cards and three numbered action rows.
+- Removed visible mid-sentence ellipsis from priority actions.
+- Shortened long source URLs to readable domain/file labels.
+- Kept entity context separate from green and social claim-risk scores.
+- Preserved the existing /api/report/pdf endpoint and download button.
