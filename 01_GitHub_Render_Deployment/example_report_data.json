@@ -1,0 +1,71 @@
+{
+  "company": "Puratos",
+  "source_display": "https://www.puratos.com",
+  "analysis_date": "2026-07-15",
+  "scan_type": "Website scan",
+  "coverage_short": "2 pages across 1 domain",
+  "confidence_level": "Medium",
+  "confidence_reason": "The main company website and one sustainability report were reviewed. Several claim-level signals were retained.",
+  "global_score": 47,
+  "green_score": 51,
+  "social_score": 41,
+  "global_risk": "Medium",
+  "green_risk": "Medium",
+  "social_risk": "Low",
+  "entity_context": "High",
+  "entity_context_short": "No external signal was retained. Sector exposure remains high because of complex supply chains and labour-risk exposure.",
+  "executive_summary": "The scan identified medium overall claim risk. The main issues concern climate-neutrality wording, certification terminology and broad environmental language.",
+  "entity_resolution_note": "The company name was resolved to puratos.com. Confirm that the reviewed domain and entity are correct.",
+  "top_findings": [
+    {
+      "title": "Climate-neutrality or offsetting claim",
+      "risk": "High",
+      "source": "https://www.puratos.com",
+      "excerpt": "Puratos marks major sustainability milestone with carbon neutral operations.",
+      "flagged_wording": "carbon neutral",
+      "why_it_matters": "The wording may imply complete neutrality without making the emissions boundary, residual emissions and role of offsets clear.",
+      "evidence_gap": "Scope, baseline, methodology, residual emissions, offset use and reporting period.",
+      "recommended_wording": "Separate verified emissions reductions from any offsetting and disclose scopes, baseline, methodology, residual emissions, offset use and progress."
+    },
+    {
+      "title": "Sustainability label / certification claim",
+      "risk": "High",
+      "source": "Puratos 2025 Sustainability GRI Report.pdf",
+      "excerpt": "Cacao-Trace, our own certified sustainable cocoa sourcing program.",
+      "flagged_wording": "certified sustainable",
+      "why_it_matters": "The wording may be understood as an independent sustainability certification.",
+      "evidence_gap": "Scheme owner, criteria, independent verifier, audit basis, scope and validity period.",
+      "recommended_wording": "Name the scheme owner, criteria, independent verification basis, audited scope and validity period, or clarify that it is a company programme rather than an independent certification."
+    },
+    {
+      "title": "Generic environmental claim",
+      "risk": "High",
+      "source": "https://www.puratos.com",
+      "excerpt": "We support you in creating nutritious and more sustainable breads.",
+      "flagged_wording": "more sustainable",
+      "why_it_matters": "The comparative benefit and environmental attribute are not clear from the wording alone.",
+      "evidence_gap": "Specific attribute, comparison baseline, method, product scope, period and limitations.",
+      "recommended_wording": "Specify the exact environmental attribute, product scope, comparison baseline, method, evidence, reporting period and limitations."
+    }
+  ],
+  "priority_actions": [
+    {
+      "title": "Review client-facing green claims",
+      "description": "Review the exact climate, certification and broad environmental wording used on webpages, campaigns and product communications."
+    },
+    {
+      "title": "Close substantiation gaps",
+      "description": "Create a claim-specific evidence file covering scope, method, baseline, reporting period, limitations, verification status and approval owner."
+    },
+    {
+      "title": "Implement claim governance",
+      "description": "Require sustainability, legal, compliance and marketing approval before high-risk claims or sustainability labels are published."
+    }
+  ],
+  "external_signals": [],
+  "sources_reviewed": [
+    "https://www.puratos.com",
+    "Puratos 2025 Sustainability GRI Report.pdf"
+  ],
+  "methodology_reference": "Download the detailed methodology PDF from the Sustainability Scan homepage."
+}
