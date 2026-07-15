@@ -1,3 +1,9 @@
+# Durably Sustainability Scan — v60
+
+**Current version:** `hostable_v60_external_signal_recall_precision`
+
+V60 improves the recall and precision of external public-source signals. See `START_HERE_V60.md` and `EXTERNAL_SIGNALS_V60_CHANGELOG.md`.
+
 # Green & Social Claims Risk Assessment
 
 Professional hosted scan for green and social claims risk signals.

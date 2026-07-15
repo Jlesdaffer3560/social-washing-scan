@@ -47,7 +47,7 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v59_resilient_multi_page_crawler"
+APP_VERSION="hostable_v60_external_signal_recall_precision"
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -3471,6 +3471,351 @@ def _v55_sentence_list(text, trigger, window=850):
     if i < 0:
         return raw[:620]
     return raw[max(0,i-180):min(len(raw),i+300)][:620]
+
+
+# -----------------------------
+# V60 EXTERNAL PUBLIC-SOURCE SIGNALS
+# -----------------------------
+# Generic recall/precision improvements for regulator, NGO, union, litigation and
+# reputable-media signals. The previous implementation could lose relevant results
+# because (1) only three narrow queries were run, (2) it stopped after the first search
+# provider returned anything, (3) stakeholder status had to be stated literally in the
+# snippet, and (4) an external article could be misclassified as company-owned merely
+# because it discussed a company's sustainability report or policy.
+
+EXTERNAL_SIGNAL_MAX_QUERIES=max(4,min(8,int(os.environ.get('EXTERNAL_SIGNAL_MAX_QUERIES','6'))))
+EXTERNAL_SIGNAL_RESULTS_PER_QUERY=max(4,min(10,int(os.environ.get('EXTERNAL_SIGNAL_RESULTS_PER_QUERY','6'))))
+EXTERNAL_SIGNAL_WORKERS=max(2,min(6,int(os.environ.get('EXTERNAL_SIGNAL_WORKERS','4'))))
+EXTERNAL_SEARCH_ALL_PROVIDERS=os.environ.get('EXTERNAL_SEARCH_ALL_PROVIDERS','1').strip().lower() not in {'0','false','no','off'}
+
+_V60_CORPORATE_WORDS={'group','company','companies','holding','holdings','international','global','corporation','corp','inc','limited','ltd','plc','sa','nv','bv','srl','llc','ag','se','the'}
+_V60_OFFICIAL_HOST_MARKERS=(
+    '.gov','.gouv.','europa.eu','ec.europa.eu','commission.europa.eu','agcm.it','acm.nl',
+    'cma.gov.uk','ftc.gov','asa.org.uk','jep.be','oecd.org','ilo.org','ohchr.org',
+    'bund.de','autoritedelaconcurrence.fr','economie.gouv.fr','competition-policy.ec.europa.eu',
+    'nclc.gov','nlrb.gov','justice.gov','parliament.uk','senat.fr','assemblee-nationale.fr'
+)
+_V60_NGO_HOST_MARKERS=(
+    'business-humanrights.org','antislavery.org','amnesty.','hrw.org','humanrightswatch.org',
+    'cleanclothes.org','publiceye.ch','chinalaborwatch.org','workersrights.org','remake.world',
+    'changingmarkets.org','greenpeace.org','clientearth.org','duh.de','oxfam.','fairwear.org',
+    'labourbehindthelabel.org','ethicalconsumer.org','somo.nl','banktrack.org','globalwitness.org'
+)
+_V60_MEDIA_HOST_MARKERS=(
+    'reuters.com','apnews.com','bbc.','theguardian.com','ft.com','bloomberg.com','politico.',
+    'euractiv.','lemonde.fr','dw.com','cnn.com','nytimes.com','washingtonpost.com','esgdive.com',
+    'esgtoday.com','thefashionlaw.com','businessoffashion.com','supplychaindive.com'
+)
+_V60_UNION_HOST_MARKERS=('union','workers','labour','labor','tradeunion','aflcio','ituc-csi','industriall-union')
+
+_V60_GREEN_NEGATIVE=(
+    'greenwashing','misleading environmental','misleading green','misleading sustainability',
+    'deceptive environmental','unsubstantiated environmental','vague environmental','false environmental',
+    'environmental claims investigation','environmental claim complaint','sustainability claims investigation',
+    'fine','fined','penalty','sanction','ban','prohibited','complaint','lawsuit','court','investigation',
+    'probe','watchdog','regulator','authority','advertising standards','net-zero claim','net zero claim',
+    'carbon neutral claim','climate neutral claim','accused','alleged','criticism','criticised','criticized'
+)
+_V60_SOCIAL_NEGATIVE=(
+    'social washing','forced labour','forced labor','child labour','child labor','modern slavery',
+    'labour rights','labor rights','worker rights','workers rights','human rights abuse','human rights concern',
+    'exploitation','exploitative','excessive overtime','underpaid','wage theft','unsafe working',
+    'working conditions','union busting','discrimination','harassment','complaint','lawsuit','court',
+    'investigation','probe','fine','fined','penalty','sanction','strike','union','protest','boycott',
+    'breach','violation','misconduct','accused','alleged','allegation','criticism','criticised','criticized'
+)
+_V60_ENFORCEMENT_TERMS=('investigation','probe','complaint','lawsuit','court','fine','fined','penalty','sanction','ban','prohibited','settlement','decision','ruling','enforcement')
+_V60_GREEN_ANCHORS=('greenwashing','environmental','sustainability claim','green claim','climate','carbon','net zero','net-zero','recyclable','recycled','circular','eco label','ecolabel')
+_V60_SOCIAL_ANCHORS=('social washing','forced labour','forced labor','child labour','child labor','modern slavery','labour','labor','worker','human rights','working conditions','wage','union','discrimination','supply chain')
+
+
+def _v60_host(result):
+    return (urlparse((result or {}).get('url','')).hostname or '').lower().removeprefix('www.')
+
+
+def _v60_source_kind(result):
+    host=_v60_host(result)
+    text=_external_signal_text(result)
+    if any(m in host for m in _V60_OFFICIAL_HOST_MARKERS) or host.endswith('.gov') or '.gov.' in host:
+        return 'Government / regulator'
+    if any(m in host for m in _V60_NGO_HOST_MARKERS):
+        return 'NGO / civil society'
+    if any(m in host for m in _V60_UNION_HOST_MARKERS) or any(x in text for x in ['trade union','workers union','labour union','labor union']):
+        return 'Union / worker organisation'
+    if any(m in host for m in _V60_MEDIA_HOST_MARKERS):
+        return 'Press / investigative media'
+    if any(x in text for x in ['court','lawsuit','legal action','class action','complaint filed']):
+        return 'Legal / complaint'
+    if host.endswith('.edu') or '.ac.' in host or 'university' in text or 'research institute' in text:
+        return 'Academic / research'
+    return 'Other public source'
+
+
+def _v60_company_terms(company_name):
+    raw=re.sub(r'\s+',' ',(company_name or '').lower()).strip()
+    phrase=re.sub(r'[^a-z0-9]+',' ',raw).strip()
+    tokens=[t for t in phrase.split() if len(t)>=3 and t not in _V60_CORPORATE_WORDS]
+    compact=''.join(tokens)
+    return phrase,tokens,compact
+
+
+def source_mentions_company(result, company_name):
+    text=_external_signal_text(result)
+    phrase,tokens,compact=_v60_company_terms(company_name)
+    if phrase and re.search(r'(?<![a-z0-9])'+re.escape(phrase)+r'(?![a-z0-9])', text):
+        return True
+    host=_v60_host(result).replace('-','').replace('_','').replace('.','')
+    if compact and len(compact)>=4 and compact in host:
+        return True
+    # For multi-word names, require either the compact brand or at least two material tokens.
+    hits=sum(1 for t in tokens if re.search(r'(?<![a-z0-9])'+re.escape(t)+r'(?![a-z0-9])',text))
+    if len(tokens)>=2:
+        return hits>=2
+    return hits>=1
+
+
+def is_company_owned_source(result, company_name, reviewed_pages=None):
+    """Domain-led ownership test.
+
+    Do not classify an external article as company-owned merely because its title or
+    snippet discusses the company's sustainability report, policy or supplier code.
+    """
+    host=_v60_host(result)
+    if not host:
+        return False
+    root=_root_domain(host)
+    if root and root in company_owned_roots(reviewed_pages):
+        return True
+    phrase,tokens,compact=_v60_company_terms(company_name)
+    host_compact=host.replace('-','').replace('_','').replace('.','')
+    if compact and len(compact)>=4 and compact in host_compact:
+        return True
+    # Retain the established parent-brand aliases, but apply them to the hostname only.
+    aliases={
+        'delhaize':['aholddelhaize','ahold','delhaize'], 'lidl':['lidl','schwarz'],
+        'aldi':['aldi'], 'zara':['zara','inditex'], 'inditex':['inditex','zara'],
+        'kbc':['kbc'], 'proximus':['proximus'], 'fluxys':['fluxys'], 'shein':['shein']
+    }
+    for token in tokens:
+        if any(a in host_compact for a in aliases.get(token,[])):
+            return True
+    return False
+
+
+def _v60_negative_strength(result, dimension='social'):
+    text=_external_signal_text(result)
+    terms=_V60_GREEN_NEGATIVE if dimension=='green' else _V60_SOCIAL_NEGATIVE
+    anchors=_V60_GREEN_ANCHORS if dimension=='green' else _V60_SOCIAL_ANCHORS
+    hits=[t for t in terms if t in text]
+    anchor_hits=[t for t in anchors if t in text]
+    enforcement=[t for t in _V60_ENFORCEMENT_TERMS if t in text]
+    kind=_v60_source_kind(result)
+    recognised=kind!='Other public source'
+    # A controversy must match the relevant dimension. This prevents an unrelated consumer,
+    # privacy or competition-law investigation from being displayed as a green/social signal.
+    explicit=('greenwashing' in text) if dimension=='green' else any(x in text for x in ['social washing','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','labour rights','labor rights','worker rights','workers rights'])
+    accepted=bool(anchor_hits) and (explicit or bool(enforcement) or len(hits)>=2 or (recognised and len(hits)>=1))
+    return len(hits)+len(anchor_hits),len(enforcement),kind,accepted
+
+
+def is_negative_external_source(result):
+    return _v60_negative_strength(result,'social')[3]
+
+
+def is_green_negative_source(result):
+    return _v60_negative_strength(result,'green')[3]
+
+
+def source_credibility(result):
+    kind=_v60_source_kind(result)
+    if kind=='Government / regulator': return 'High'
+    if kind in {'NGO / civil society','Union / worker organisation','Press / investigative media'}: return 'Medium-high'
+    if kind in {'Legal / complaint','Academic / research'}: return 'Medium'
+    text=_external_signal_text(result)
+    if any(x in text for x in ['blog','forum','opinion','linkedin.com','facebook.com','instagram.com','youtube.com']): return 'Low'
+    return 'Medium'
+
+
+def _v60_signal_score(result, company_name, dimension='social'):
+    hits,enforcement,kind,accepted=_v60_negative_strength(result,dimension)
+    if not accepted:
+        return -999
+    kind_weight={
+        'Government / regulator':48, 'NGO / civil society':42,
+        'Union / worker organisation':40, 'Press / investigative media':35,
+        'Legal / complaint':30, 'Academic / research':22, 'Other public source':12
+    }.get(kind,12)
+    title=(result.get('title','') or '').lower()
+    company_phrase=_v60_company_terms(company_name)[0]
+    company_bonus=14 if company_phrase and company_phrase in title else 5
+    provider_score=result.get('score',0) or 0
+    try: provider_bonus=min(10,max(0,float(provider_score)*10))
+    except Exception: provider_bonus=0
+    return kind_weight + min(24,hits*6) + min(10,enforcement*4) + company_bonus + provider_bonus
+
+
+def _v60_canonical_url(url):
+    p=urlparse(url or '')
+    host=(p.hostname or '').lower().removeprefix('www.')
+    path=re.sub(r'/+$','',p.path or '/')
+    return host+path
+
+
+def _v60_rank_dedupe(results, company_name, dimension='social', limit=20):
+    candidates=[]; seen=set()
+    for r in results or []:
+        if not source_mentions_company(r,company_name):
+            continue
+        key=_v60_canonical_url(r.get('url',''))
+        if not key or key in seen:
+            continue
+        score=_v60_signal_score(r,company_name,dimension)
+        if score<0:
+            continue
+        item=dict(r); item['_signal_score']=score; item['source_kind']=_v60_source_kind(item)
+        candidates.append(item); seen.add(key)
+    candidates.sort(key=lambda x:(x.get('_signal_score',0),x.get('published_date','')),reverse=True)
+    return _dedupe_similar_sources(candidates)[:limit]
+
+
+def compact_sources(results,limit=6):
+    out=[]
+    for r in _dedupe_similar_sources(results or [])[:limit]:
+        txt=_external_signal_text(r)
+        out.append({
+            'title':(r.get('title','') or '')[:170], 'url':r.get('url',''),
+            'content':(r.get('content','') or '')[:300], 'category':r.get('source_kind') or _v60_source_kind(r),
+            'credibility':source_credibility(r), 'provider':r.get('provider',''),
+            'published_date':r.get('published_date','') or 'Not available from source',
+            'status':_source_status(txt), 'severity':_source_severity(txt),
+            'related_articles_count':r.get('related_articles_count',1)
+        })
+    return out
+
+
+def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=None, negative_fn=None):
+    dimension='green' if negative_fn is is_green_negative_source else 'social'
+    kept=[]
+    for r in results or []:
+        if is_company_owned_source(r,company_name,reviewed_pages):
+            continue
+        if not source_mentions_company(r,company_name):
+            continue
+        if not (negative_fn or is_negative_external_source)(r):
+            continue
+        kept.append(r)
+    ranked=_v60_rank_dedupe(kept,company_name,dimension,max(limit*3,limit))
+    return compact_sources(ranked,limit)
+
+
+def search_public_sources(query,max_results=6):
+    """Search-provider ensemble with de-duplication.
+
+    The old cascade stopped after the first provider returned any result, even when those
+    results were weak or company-owned. V60 combines configured providers by default.
+    """
+    attempts=[]; gathered=[]
+    def _run(provider):
+        if provider=='Tavily':
+            if not TAVILY_API_KEY: return [],{'provider':provider,'status':'not_configured'}
+            try:
+                res=tavily_search(query,max_results)
+                for r in res: r['provider']=provider
+                return res,{'provider':provider,'status':'ok','results':len(res)}
+            except Exception as e: return [],{'provider':provider,'status':'failed','error':str(e)[:180]}
+        if not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
+            return [],{'provider':provider,'status':'not_configured'}
+        try:
+            res=google_search(query,max_results)
+            for r in res: r['provider']=provider
+            return res,{'provider':provider,'status':'ok','results':len(res)}
+        except Exception as e: return [],{'provider':provider,'status':'failed','error':str(e)[:180]}
+    providers=['Tavily','Google Custom Search']
+    if EXTERNAL_SEARCH_ALL_PROVIDERS:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures={pool.submit(_run,p):p for p in providers}
+            for fut in as_completed(futures):
+                res,att=fut.result(); gathered.extend(res); attempts.append(att)
+    else:
+        for p in providers:
+            res,att=_run(p); gathered.extend(res); attempts.append(att)
+            if len(gathered)>=max_results: break
+    unique=[]; seen=set()
+    for r in gathered:
+        key=_v60_canonical_url(r.get('url',''))
+        if key and key not in seen:
+            unique.append(r); seen.add(key)
+    unique.sort(key=lambda x:float(x.get('score',0) or 0),reverse=True)
+    return unique[:max_results*2],attempts
+
+
+def _v60_run_queries(queries):
+    allr=[]; attempts=[]; providers=set(); seen=set()
+    queries=list(dict.fromkeys(q for q in queries if q))[:EXTERNAL_SIGNAL_MAX_QUERIES]
+    def _one(q):
+        return q,search_public_sources(q,EXTERNAL_SIGNAL_RESULTS_PER_QUERY)
+    with ThreadPoolExecutor(max_workers=min(EXTERNAL_SIGNAL_WORKERS,len(queries) or 1)) as pool:
+        futures=[pool.submit(_one,q) for q in queries]
+        for fut in as_completed(futures):
+            q,(res,atts)=fut.result()
+            attempts.extend([dict(a,query=q) for a in atts])
+            for r in res:
+                key=_v60_canonical_url(r.get('url',''))
+                if key and key not in seen:
+                    item=dict(r); item['query']=q; item['credibility']=source_credibility(item)
+                    allr.append(item); seen.add(key)
+                    if item.get('provider'): providers.add(item['provider'])
+    return allr,attempts,providers,queries
+
+
+def _v60_social_queries(company,findings=None):
+    quoted='"'+str(company).replace('"','')+'"'
+    base=[
+        f'{quoted} forced labour labor workers NGO report',
+        f'{quoted} labour rights working conditions union investigation',
+        f'{quoted} human rights supply chain complaint lawsuit regulator',
+        f'{quoted} social washing misleading social claims criticism',
+    ]
+    for theme in query_themes_from_findings(findings or []):
+        base.append(f'{quoted} {theme}')
+    return list(dict.fromkeys(base))
+
+
+def _v60_green_queries(company,findings=None):
+    quoted='"'+str(company).replace('"','')+'"'
+    base=[
+        f'{quoted} greenwashing environmental claims regulator fine investigation',
+        f'{quoted} misleading sustainability claims complaint watchdog',
+        f'{quoted} environmental claims NGO criticism',
+        f'{quoted} climate claim net zero carbon neutral challenge',
+    ]
+    for theme in green_query_themes(findings or []):
+        base.append(f'{quoted} {theme}')
+    return list(dict.fromkeys(base))
+
+
+def external(company, findings=None):
+    themes=query_themes_from_findings(findings or [])
+    queries=_v60_social_queries(company,findings)
+    allr,attempts,providers,run_queries=_v60_run_queries(queries)
+    ranked=_v60_rank_dedupe(allr,company,'social',30)
+    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
+        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':0}
+    summary=summarise_ext(ranked)
+    summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
+    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
+
+
+def external_green(company, findings=None):
+    themes=green_query_themes(findings or [])
+    queries=_v60_green_queries(company,findings)
+    allr,attempts,providers,run_queries=_v60_run_queries(queries)
+    ranked=_v60_rank_dedupe(allr,company,'green',30)
+    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
+        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':0}
+    summary=summarise_green_ext(ranked)
+    summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
+    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
 
 def main():
     print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()

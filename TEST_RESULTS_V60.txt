@@ -1,0 +1,4 @@
+green retained 3 ['Government / regulator', 'Press / investigative media', 'Press / investigative media']
+social retained 2 ['NGO / civil society', 'NGO / civil society']
+V60 external-signal tests passed
+query orchestration passed 3 2

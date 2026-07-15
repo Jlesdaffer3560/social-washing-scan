@@ -1,0 +1,9 @@
+DEPLOYMENT
+
+1. Upload all files in this package to the current GitHub repository, replacing the existing files.
+2. Commit and push.
+3. Trigger a Render deployment.
+4. Confirm /api/health returns version hostable_v60_external_signal_recall_precision.
+5. Run a new scan. Previously generated scan results will not change.
+
+No new Python package is required.
