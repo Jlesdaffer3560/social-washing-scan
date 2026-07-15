@@ -739,8 +739,16 @@ def build_company_report_pdf(data):
 
     company_name = ((data.get('company') or {}).get('company') or '').strip()
     priority_claims = combined_top_claims(data, 3)
-    sources = {(c.get('source_label') or c.get('source_url') or '') for c in priority_claims}
-    shared_source = len(sources) == 1 and priority_claims
+    # v58a: the #1 claim is already shown in full on page 1 (Most Material Finding spotlight) --
+    # repeating the identical quote, "why it matters" and "recommended wording" verbatim as the
+    # first priority-claim card on page 2 read as accidental duplication, not a deliberate
+    # summary-then-detail structure, and wasted roughly a third of page 2 on content that added
+    # nothing new. Page 2 now covers claims #2 and #3 only; "Top risk drivers" (page 1) still
+    # lists all three as a compact headline, so materiality coverage across the two pages is
+    # unchanged -- only the wasteful verbatim repeat is removed.
+    page2_claims = priority_claims[1:]
+    sources = {(c.get('source_label') or c.get('source_url') or '') for c in page2_claims}
+    shared_source = len(sources) == 1 and page2_claims
     actions = (data.get('company_action_plan') or [])[:3]
     ext = ((data.get('external_research', {}).get('green', {}).get('targeted_negative_sources') or []) +
            (data.get('external_research', {}).get('social', {}).get('targeted_negative_sources') or []) +
@@ -796,18 +804,23 @@ def build_company_report_pdf(data):
     page2 += header_block(data, 'Findings and actions',
                            'Priority claims, external signals and recommended next steps', company_name)
 
-    page2.append(Paragraph(esc(f'Priority claims (top {len(priority_claims)} by materiality)' if priority_claims else 'Priority claims'), STY['h3']))
+    claims_title = ('Additional priority claims (#2\u2013#3 of top 3 by materiality \u2014 #1 featured on page 1)'
+                     if len(priority_claims) > 1 else
+                     ('Priority claims' if priority_claims else 'Priority claims'))
+    page2.append(Paragraph(esc(claims_title), STY['h3']))
     page2.append(Spacer(1, 3))
     if shared_source:
-        src_label = (priority_claims[0].get('source_label') or priority_claims[0].get('source_url') or '')[:90]
+        src_label = (page2_claims[0].get('source_label') or page2_claims[0].get('source_url') or '')[:90]
         page2.append(Paragraph(f'<font color="#8b9baa">All claims below are from:</font> {esc(src_label)}', STY['small']))
         page2.append(Spacer(1, 3))
-    if priority_claims:
-        for c in priority_claims:
+    if page2_claims:
+        for c in page2_claims:
             page2.append(priority_claim_card(c))
             page2.append(Spacer(1, 2))
-    else:
+    elif not priority_claims:
         page2.append(Paragraph('<i>No material problematic claim signal was retained in this scan.</i>', STY['small']))
+    else:
+        page2.append(Paragraph('<i>Only one material claim was retained in this scan \u2014 see the Most Material Finding on page 1 for full detail.</i>', STY['small']))
     page2.append(Spacer(1, 4))
 
     HALF_W2 = (PAGE_W - 2 * MARGIN - 8) / 2
@@ -847,6 +860,27 @@ def build_company_report_pdf(data):
                                      ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
     page2.append(bottom_row)
     page2.append(Spacer(1, 4))
+
+    # v58a: genuine content to fill the space freed up by removing the page-1/page-2 claim
+    # duplication -- and directly what the reviewer originally asked for ("7 pages reviewed
+    # across 2 domains..."), previously only implied by the header's page/domain count. Listing
+    # the actual pages reviewed lets a reader (or an auditor) see precisely what was and was not
+    # covered by this scan, which the header's summary count alone cannot show.
+    pages_reviewed = (data.get('report') or {}).get('pages_reviewed') or []
+    cd = data.get('crawl_diagnostics') or {}
+    if pages_reviewed:
+        cov_items = []
+        for p in pages_reviewed[:8]:
+            short = p if len(p) <= 95 else p[:92] + '…'
+            cov_items.append(f'&bull;&nbsp; {esc(short)}')
+        if len(pages_reviewed) > 8:
+            cov_items.append(f'&bull;&nbsp; <i>+ {len(pages_reviewed) - 8} more page(s)</i>')
+        cov_text = '<br/>'.join(cov_items)
+        if cd.get('pages_failed'):
+            cov_text += (f'<br/><font color="#8b9baa">{cd.get("pages_failed")} additional page fetch attempt(s) '
+                         f'could not be accessed and are not reflected above.</font>')
+        page2.append(section_card('Coverage & sources reviewed', Paragraph(cov_text, ParagraphStyle('cov', parent=STY['small'], leading=11.5))))
+        page2.append(Spacer(1, 4))
 
     # v57r: reviewer feedback -- the two-pager is a management decision document, not the
     # methodology document. The exact score formula, weights and gating rules now live only in
