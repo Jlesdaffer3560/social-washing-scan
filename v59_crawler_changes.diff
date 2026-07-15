@@ -1,0 +1,671 @@
+--- app_before_crawlfix.py	2026-07-15 13:58:26.633965704 +0000
++++ app.py	2026-07-15 13:59:53.280812756 +0000
+@@ -1,11 +1,12 @@
+ #!/usr/bin/env python3
+ from http.server import HTTPServer, BaseHTTPRequestHandler
+-from urllib.parse import urlparse, urljoin
++from urllib.parse import urlparse, urljoin, quote
+ from urllib.request import Request, urlopen
+ from urllib.error import HTTPError, URLError
+ from html.parser import HTMLParser
+ from pathlib import Path
+-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time
++import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip
++from concurrent.futures import ThreadPoolExecutor, as_completed
+ 
+ def _get_build_company_report_pdf():
+     """Lazily import the ReportLab-based PDF generator on first use, instead of at
+@@ -46,13 +47,27 @@
+ _pypdf_module = None
+ _pypdf_import_error = None
+ 
+-APP_VERSION="hostable_v58_company_report_layout_redesign"
++APP_VERSION="hostable_v59_resilient_multi_page_crawler"
+ # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
+ # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
+ # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
+ # independent of any other fingerprinting. This does not defeat sophisticated bot
+ # detection, but removes the most trivial and unnecessary self-inflicted cause of it.
+ CRAWLER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
++# v59: crawl more than the first three candidate pages. The crawler keeps trying
++# additional discovered URLs until it has enough usable pages or reaches the shared
++# time/attempt budget. These values can be tuned in Render without changing code.
++CRAWL_TARGET_EXTRA_PAGES=max(3, min(10, int(os.environ.get("CRAWL_TARGET_EXTRA_PAGES", "6"))))
++CRAWL_MAX_PAGE_ATTEMPTS=max(CRAWL_TARGET_EXTRA_PAGES, min(24, int(os.environ.get("CRAWL_MAX_PAGE_ATTEMPTS", "14"))))
++CRAWL_BUDGET_SECONDS=max(16, min(35, int(os.environ.get("CRAWL_BUDGET_SECONDS", "24"))))
++CRAWL_FETCH_WORKERS=max(2, min(5, int(os.environ.get("CRAWL_FETCH_WORKERS", "4"))))
++ENABLE_READER_FALLBACK=os.environ.get("ENABLE_READER_FALLBACK", "1").strip().lower() not in {"0","false","no","off"}
++JINA_API_KEY=os.environ.get("JINA_API_KEY", "").strip()
++
++BROWSER_USER_AGENTS=[
++    CRAWLER_USER_AGENT,
++    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
++]
+ # v56: known corporate-group domains that are not simple TLD variants of the scanned
+ # brand's own hostname (e.g. zara.com's real sustainability/CSR reporting lives mainly
+ # under the parent group's own domain, not under zara.<tld>). Extend this map as more
+@@ -336,204 +351,442 @@
+             out.append(c)
+     return out[:max_sites]
+ 
++def _canonical_url(url):
++    """Normalise a candidate URL for de-duplication without changing its meaning."""
++    p=urlparse(url)
++    scheme=(p.scheme or 'https').lower()
++    host=(p.hostname or '').lower()
++    if not host:
++        return url
++    path=re.sub(r'/+','/',p.path or '/')
++    if path != '/':
++        path=path.rstrip('/')
++    # Marketing/tracking parameters create duplicate candidates without adding content.
++    query_parts=[]
++    for part in (p.query or '').split('&'):
++        if not part: continue
++        key=part.split('=',1)[0].lower()
++        if key.startswith('utm_') or key in {'gclid','fbclid','mc_cid','mc_eid'}:
++            continue
++        query_parts.append(part)
++    query='&'.join(query_parts)
++    return p._replace(scheme=scheme,netloc=host,path=path,query=query,fragment='').geturl()
++
++
++def _browser_headers(url, accept='text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8', user_agent=None):
++    p=urlparse(url)
++    origin=f'{p.scheme}://{p.netloc}' if p.scheme and p.netloc else ''
++    return {
++        'User-Agent': user_agent or CRAWLER_USER_AGENT,
++        'Accept': accept,
++        'Accept-Language': 'en-GB,en;q=0.9,nl;q=0.7,fr;q=0.6',
++        'Cache-Control': 'no-cache',
++        'Pragma': 'no-cache',
++        'Referer': origin+'/' if origin else '',
++    }
++
++
++def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8', max_bytes=2000000):
++    """Open a public URL with browser-like headers and one conservative UA retry.
++
++    The retry is useful for sites that reject one generic browser signature but allow
++    another. It does not attempt to bypass authentication, robots rules or access controls.
++    """
++    p=urlparse(url)
++    if p.scheme not in ('http','https') or not p.hostname:
++        raise ValueError('Invalid URL.')
++    if is_private(p.hostname):
++        raise ValueError('Private/local URLs are blocked.')
++    last_error=None
++    for idx,ua in enumerate(BROWSER_USER_AGENTS):
++        try:
++            req=Request(url,headers=_browser_headers(url,accept,user_agent=ua))
++            with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
++                return r.read(max_bytes), r.headers.get('content-type','').lower(), r.geturl()
++        except HTTPError as e:
++            last_error=e
++            # Authentication/permission failures are unlikely to improve through repeated
++            # direct requests. Leave them to the optional Reader fallback below.
++            if e.code in (401,403,404):
++                break
++            if e.code not in (408,425,429,500,502,503,504) or idx==len(BROWSER_USER_AGENTS)-1:
++                break
++            time.sleep(0.15)
++        except (URLError, TimeoutError, socket.timeout) as e:
++            last_error=e
++            if idx==len(BROWSER_USER_AGENTS)-1:
++                break
++            time.sleep(0.15)
++    raise last_error or ValueError('The page could not be retrieved.')
++
++
++def _reader_url(url):
++    # Jina Reader's documented URL-prefix interface accepts a full public URL after
++    # https://r.jina.ai/. Quote spaces only; keep URL delimiters intact.
++    return 'https://r.jina.ai/'+quote(url, safe=':/?&=%#@+;,')
++
++
++def fetch_reader_text(url,timeout=9):
++    """Optional public-page fallback for blocked or JavaScript-heavy pages.
++
++    Reader returns extracted text/Markdown, not the site's original HTML. It is used only
++    when direct retrieval fails or returns a thin shell, and the report diagnostics record
++    that fallback method. Set ENABLE_READER_FALLBACK=0 to disable it.
++    """
++    if not ENABLE_READER_FALLBACK:
++        raise ValueError('Reader fallback is disabled.')
++    headers={
++        'User-Agent': CRAWLER_USER_AGENT,
++        'Accept': 'text/plain,text/markdown;q=0.9,*/*;q=0.5',
++        'X-Return-Format': 'text',
++        'X-Timeout': str(max(5,min(20,int(timeout)))),
++    }
++    if JINA_API_KEY:
++        headers['Authorization']='Bearer '+JINA_API_KEY
++    req=Request(_reader_url(url),headers=headers)
++    with urlopen(req,timeout=max(3,timeout),context=ssl.create_default_context()) as r:
++        raw=r.read(2500000).decode('utf-8',errors='ignore')
++    # Remove common Reader metadata lines but retain headings and substantive text.
++    lines=[]
++    for line in raw.splitlines():
++        if re.match(r'^(Title|URL Source|Published Time|Markdown Content):\s*',line,re.I):
++            continue
++        lines.append(line)
++    text='\n'.join(lines)
++    text=re.sub(r'!\[[^\]]*\]\([^\)]+\)',' ',text)
++    text=re.sub(r'\[([^\]]+)\]\([^\)]+\)',r'\1',text)
++    text=re.sub(r'[`*_>#|]+',' ',text)
++    text='\n'.join(' '.join(line.split()) for line in text.splitlines() if line.strip())
++    if len(text)<120:
++        raise ValueError('Reader fallback returned insufficient usable text.')
++    return text[:180000]
++
++
+ def crawl_with_related_sites(original_url,overall_deadline=None):
+-    """Crawl the requested URL plus a small number of likely related company sites.
+-    The requested URL remains the primary source. Related domains are added only when reachable.
+-    A single shared wall-clock deadline caps the ENTIRE operation (not per sub-step) so the
+-    request reliably returns well within Render's gateway timeout.
+-
+-    v56: also returns a per-page crawl_log (list of dicts: url, ok, chars, thin, error) so the
+-    caller can tell "no risky claims found because none exist" apart from "no risky claims
+-    found because the crawl barely reached any real content" -- these are not the same thing
+-    and were previously indistinguishable in the output.
++    """Crawl the requested URL and, only when primary coverage remains limited, a
++    conservative related/group-domain fallback.
++
++    v59 keeps trying additional candidate pages after individual 403/404/time-out failures.
++    Earlier versions stopped after the first three candidates, so three blocked guesses could
++    leave the scan with only the homepage even when valid pages existed later in the queue.
+     """
+     if overall_deadline is None:
+-        overall_deadline=time.time()+18
+-    crawl_log=[]
+-    source_notes=[]
+-    all_text=[]; all_pages=[]
+-    primary_error=None
++        overall_deadline=time.time()+CRAWL_BUDGET_SECONDS
++    crawl_log=[]; source_notes=[]; all_text=[]; all_pages=[]; primary_error=None
+     try:
+-        txt,pages=crawl(original_url,deadline=overall_deadline,log=crawl_log)
++        txt,pages=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,
++                        deadline=overall_deadline,log=crawl_log)
+         all_text.append(txt); all_pages.extend(pages)
+     except Exception as e:
+-        # v57 fix: previously an outright failure here (e.g. a 403 on the primary domain)
+-        # propagated immediately and skipped related_group_sites() below entirely -- so the
+-        # Zara -> Inditex style fallback never actually ran in the exact case it exists for
+-        # (the primary brand domain being fully blocked). Now we still try known related/group
+-        # domains before giving up.
+         primary_error=e
+-    if time.time() < overall_deadline-3:
+-        for candidate in related_group_sites(original_url):
++
++    # Try known parent/group domains whenever configured. Speculative same-brand TLD variants
++    # are used only when the primary crawl produced fewer than three usable pages.
++    host=(urlparse(original_url).hostname or '').lower()
++    known=[]
++    for brand,domains in KNOWN_GROUP_DOMAINS.items():
++        if brand in host:
++            known.extend(domains)
++    candidates=list(dict.fromkeys(known))
++    if len(all_pages)<3:
++        for c in related_company_sites(original_url,max_sites=1):
++            if c not in candidates: candidates.append(c)
++
++    if time.time()<overall_deadline-3:
++        for candidate in candidates:
+             if time.time()>=overall_deadline-2: break
+             try:
+-                rt,rpages=crawl(candidate,deadline=overall_deadline,log=crawl_log)
++                remaining_slots=max(1,min(3,CRAWL_TARGET_EXTRA_PAGES-(len(all_pages)-1)))
++                rt,rpages=crawl(candidate,max_extra_pages=remaining_slots,
++                                deadline=overall_deadline,log=crawl_log,
++                                candidate_source='related_domain')
+                 if len(rt)>500:
+                     all_text.append('\n\nRELATED COMPANY SITE: '+candidate+'\n'+rt)
+                     all_pages.extend([p for p in rpages if p not in all_pages])
+-                    source_notes.append(f"Related company site also checked: {candidate}")
++                    source_notes.append(f'Related company site also checked: {candidate}')
+             except Exception:
+                 pass
+     if not all_text:
+         raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
+-    return '\n\n'.join(all_text)[:150000], all_pages[:16], source_notes, crawl_log
++    return '\n\n'.join(all_text)[:180000], all_pages[:16], source_notes, crawl_log
++
+ 
+ def replace_tld_with_be(url):
+     """If a .com domain cannot be reached, try the same host with .be."""
+     parsed=urlparse(url)
+-    host=parsed.hostname or ""
+-    if not host.endswith(".com"):
++    host=parsed.hostname or ''
++    if not host.endswith('.com'):
+         return None
+-    new_host=host[:-4]+".be"
++    new_host=host[:-4]+'.be'
+     netloc=new_host
+     if parsed.port:
+-        netloc += f":{parsed.port}"
++        netloc += f':{parsed.port}'
+     return parsed._replace(netloc=netloc).geturl()
++
++
+ def is_private(host):
+-    if host in {"localhost","127.0.0.1","0.0.0.0"}: return True
++    if host in {'localhost','127.0.0.1','0.0.0.0'}: return True
+     try:
+         for r in socket.getaddrinfo(host,None):
+             ip=ipaddress.ip_address(r[4][0])
+             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved: return True
+     except Exception: return False
+     return False
++
++
+ def fetch_html(url,timeout=7):
+-    p=urlparse(url)
+-    if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
+-    if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
+-    req=Request(url,headers={"User-Agent":CRAWLER_USER_AGENT,"Accept":"text/html,application/xhtml+xml"})
+-    with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
+-        if "html" not in r.headers.get("content-type","").lower(): raise ValueError("URL does not return an HTML page.")
+-        return r.read(2000000).decode("utf-8",errors="ignore")
++    data,ctype,_=_open_public_url(url,timeout=timeout,accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',max_bytes=2500000)
++    if 'html' not in ctype:
++        raise ValueError('URL does not return an HTML page.')
++    return data.decode('utf-8',errors='ignore')
++
+ 
+ def fetch_page_content(url,timeout=7):
+-    """Like fetch_html, but also accepts PDFs (the format company annual/CSR/ESG/sustainability
+-    reports are almost always published in) and returns extracted plain text either way.
+-    v56: this is what lets the crawler pick up "the company's own reporting" -- e.g. a
+-    'Download our Sustainability Report' PDF link discovered on the company's own site --
+-    without depending on any external search API. Returns (text, content_kind)."""
+-    p=urlparse(url)
+-    if p.scheme not in ("http","https") or not p.hostname: raise ValueError("Invalid URL.")
+-    if is_private(p.hostname): raise ValueError("Private/local URLs are blocked.")
+-    req=Request(url,headers={"User-Agent":CRAWLER_USER_AGENT,"Accept":"text/html,application/xhtml+xml,application/pdf"})
+-    with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
+-        ctype=r.headers.get("content-type","").lower()
+-        if "pdf" in ctype or url.lower().split("?")[0].endswith(".pdf"):
+-            data=r.read(4000000)
+-            return extract_pdf_text_best_effort(data), "pdf"
+-        if "html" not in ctype: raise ValueError("URL does not return an HTML or PDF document.")
+-        raw=r.read(2000000).decode("utf-8",errors="ignore")
+-        text,_=parse_html(raw)
+-        return text, "html"
++    """Retrieve an HTML/PDF page, with an optional Reader fallback for blocked or
++    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method)."""
++    direct_error=None
++    try:
++        data,ctype,_=_open_public_url(url,timeout=timeout,max_bytes=5000000)
++        if 'pdf' in ctype or url.lower().split('?')[0].endswith('.pdf'):
++            text=extract_pdf_text_best_effort(data)
++            if len(text)>=80:
++                return text,'pdf','direct'
++            direct_error=ValueError('PDF text extraction returned insufficient content.')
++        elif 'html' in ctype:
++            raw=data.decode('utf-8',errors='ignore')
++            text,_=parse_html(raw)
++            if len(text)>=THIN_CONTENT_CHARS:
++                return text,'html','direct'
++            # Keep usable short text, but first try to enrich a likely JS shell via Reader.
++            direct_short=text
++            direct_error=ValueError('Direct HTML retrieval returned a thin page shell.')
++        else:
++            direct_error=ValueError('URL does not return an HTML or PDF document.')
++    except Exception as e:
++        direct_error=e
++        direct_short=''
++    if ENABLE_READER_FALLBACK and not url.lower().split('?')[0].endswith(('.xml','.txt')):
++        try:
++            return fetch_reader_text(url,timeout=max(5,min(10,timeout+2))), 'reader', 'reader_fallback'
++        except Exception:
++            pass
++    if 'direct_short' in locals() and len(direct_short)>=120:
++        return direct_short,'html','direct_thin'
++    raise direct_error or ValueError('The page could not be retrieved.')
++
++
+ def same_domain(u,base):
+-    h=urlparse(u).hostname or ""
+-    return h==base or h.endswith("."+base)
++    def normalise_host(value):
++        value=(value or '').lower().strip('.')
++        for prefix in ('www.','m.'):
++            if value.startswith(prefix):
++                value=value[len(prefix):]
++        return value
++    h=normalise_host(urlparse(u).hostname or '')
++    base=normalise_host(base)
++    return bool(h and base) and (h==base or h.endswith('.'+base) or base.endswith('.'+h))
++
++
+ def relevant(h):
+     h=h.lower()
+-    return any(k in h for k in ["sustain","responsib","people","human","rights","divers","inclusion","supplier","ethic","impact","community","accessibility","safety","annual","report","esg","environment","climate","circular","green","sourcing","governance","modern-slavery","modern_slavery","non-financial","investor"])
++    return any(k in h for k in ['sustain','responsib','people','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','environment','climate','circular','green','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','planet','decarbon','net-zero','net_zero'])
++
++
+ COMMON_PUBLIC_PATHS=['/sustainability','/sustainability-report','/csr','/esg','/responsibility',
+     '/corporate-responsibility','/human-rights','/supply-chain','/policies','/investors',
+     '/investor-relations','/about/sustainability','/about-us/sustainability','/en/sustainability',
+-    '/news','/press','/newsroom']
++    '/our-impact','/planet','/people','/climate','/responsible-sourcing','/news','/press','/newsroom']
++
++
++def _fetch_text_document(url,timeout=5,max_bytes=1600000):
++    data,ctype,_=_open_public_url(url,timeout=timeout,accept='application/xml,text/xml,text/plain,application/gzip,*/*;q=0.5',max_bytes=max_bytes)
++    if data[:2]==b'\x1f\x8b' or 'gzip' in ctype or url.lower().split('?')[0].endswith('.gz'):
++        try:
++            data=gzip.decompress(data)
++        except Exception:
++            pass
++    return data.decode('utf-8',errors='ignore')
+ 
+-def discover_sitemap_urls(base_url, limit=40, deadline=None):
+-    """Best-effort sitemap discovery so the scan can reach pages that are not linked
+-    from the homepage. Silently returns [] on any failure (missing/blocked sitemap) or
+-    once the shared crawl deadline is reached."""
++
++def discover_sitemap_urls(base_url,limit=160,deadline=None):
++    """Discover relevant pages from robots.txt and common sitemap locations.
++
++    Supports sitemap indexes and several child sitemaps instead of reading only the first
++    child. This substantially improves coverage on multilingual/corporate CMS websites.
++    """
+     host=urlparse(base_url).hostname or ''
+     if not host: return []
+-    if deadline and time.time()>=deadline: return []
+     scheme=urlparse(base_url).scheme or 'https'
+-    found=[]
+-    for path in ('/sitemap.xml',):
+-        if deadline and time.time()>=deadline: break
++    sitemap_queue=[]
++    try:
++        if not deadline or time.time()<deadline:
++            t=min(4,max(2,deadline-time.time())) if deadline else 4
++            robots=_fetch_text_document(f'{scheme}://{host}/robots.txt',timeout=t,max_bytes=350000)
++            sitemap_queue.extend(re.findall(r'^\s*Sitemap:\s*(\S+)',robots,flags=re.I|re.M))
++    except Exception:
++        pass
++    sitemap_queue.extend([
++        f'{scheme}://{host}/sitemap.xml',
++        f'{scheme}://{host}/sitemap_index.xml',
++        f'{scheme}://{host}/sitemap-index.xml',
++    ])
++    queue=[]; seen_maps=set()
++    for u in sitemap_queue:
++        u=_canonical_url(u)
++        if u not in seen_maps:
++            seen_maps.add(u); queue.append((u,0))
++    found=[]; seen_urls=set(); processed=0
++    while queue and processed<8 and len(found)<limit*3:
++        if deadline and time.time()>=deadline-1: break
++        sitemap_url,depth=queue.pop(0); processed+=1
+         try:
+-            t=min(5, max(2, deadline-time.time())) if deadline else 5
+-            req=Request(f'{scheme}://{host}{path}',headers={"User-Agent":CRAWLER_USER_AGENT})
+-            with urlopen(req,timeout=t,context=ssl.create_default_context()) as r:
+-                body=r.read(1000000).decode("utf-8",errors="ignore")
+-            locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.IGNORECASE)
+-            if '<sitemapindex' in body.lower() and locs and (not deadline or time.time()<deadline):
+-                try:
+-                    t2=min(4, max(2, deadline-time.time())) if deadline else 4
+-                    req2=Request(locs[0],headers={"User-Agent":CRAWLER_USER_AGENT})
+-                    with urlopen(req2,timeout=t2,context=ssl.create_default_context()) as r2:
+-                        body2=r2.read(1000000).decode("utf-8",errors="ignore")
+-                    locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body2,flags=re.IGNORECASE)
+-                except Exception: pass
+-            if locs: found=locs; break
+-        except Exception: continue
+-    out=[]; seen=set()
+-    for u in found:
+-        u=u.strip()
+-        if same_domain(u,host) and u not in seen:
+-            seen.add(u); out.append(u)
+-    return out[:limit]
+-
+-THIN_CONTENT_CHARS=400  # v56: a 200-OK page with less extracted text than this is flagged
+-                         # "thin" -- most likely a JS-rendered shell or a soft-block/interstitial,
+-                         # not a genuinely near-empty page. Used for confidence, not scoring.
++            t=min(5,max(2,deadline-time.time())) if deadline else 5
++            body=_fetch_text_document(sitemap_url,timeout=t)
++        except Exception:
++            continue
++        locs=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',body,flags=re.I)
++        is_index='<sitemapindex' in body.lower() or any(x.lower().split('?')[0].endswith(('.xml','.xml.gz')) for x in locs[:5])
++        if is_index and depth<1:
++            # Rank likely content sitemaps before image/video/news-only indexes.
++            locs.sort(key=lambda x:(0 if relevant(x) else 1, 1 if any(k in x.lower() for k in ['image','video']) else 0))
++            for child in locs[:6]:
++                child=_canonical_url(child)
++                if child not in seen_maps:
++                    seen_maps.add(child); queue.append((child,depth+1))
++            continue
++        for u in locs:
++            u=_canonical_url(u.strip())
++            if same_domain(u,host) and u not in seen_urls:
++                seen_urls.add(u); found.append(u)
++    # Relevant URLs first; retain a small number of PDFs/reports and avoid non-content assets.
++    def score(u):
++        low=u.lower(); s=0
++        if low.split('?')[0].endswith('.pdf'): s+=80
++        for word,weight in [('sustainab',65),('esg',60),('responsib',55),('human-right',55),('modern-slavery',55),('climate',45),('environment',42),('supplier',38),('annual-report',38),('report',25),('people',22),('planet',22),('impact',20),('governance',18)]:
++            if word in low: s+=weight
++        if any(low.endswith(ext) for ext in ['.jpg','.jpeg','.png','.gif','.svg','.webp','.mp4']): s-=200
++        return -s,len(u)
++    found.sort(key=score)
++    relevant_found=[u for u in found if relevant(u) or u.lower().split('?')[0].endswith('.pdf')]
++    return relevant_found[:limit]
+ 
+-def _log_fetch_success(log,url,chars):
++
++THIN_CONTENT_CHARS=400
++
++
++def _log_fetch_success(log,url,chars,method='direct',source='discovered'):
+     if log is not None:
+-        log.append({"url":url,"ok":True,"http_status":200,"chars":chars,"thin":chars<THIN_CONTENT_CHARS,"error":None})
++        log.append({'url':url,'ok':True,'http_status':200,'chars':chars,
++                    'thin':chars<THIN_CONTENT_CHARS,'error':None,'method':method,
++                    'source':source})
+ 
+-def _log_fetch_failure(log,url,err):
++
++def _log_fetch_failure(log,url,err,source='discovered'):
+     if log is not None:
+         code=err.code if isinstance(err,HTTPError) else None
+-        log.append({"url":url,"ok":False,"http_status":code,"chars":0,"thin":False,"error":_describe_fetch_error(err)})
++        log.append({'url':url,'ok':False,'http_status':code,'chars':0,'thin':False,
++                    'error':_describe_fetch_error(err),'method':'failed','source':source})
++
+ 
+-def crawl(url,max_extra_pages=3,deadline=None,log=None):
++def _candidate_score(item):
++    url,source=item
++    low=url.lower(); score=0
++    if source=='linked': score+=35
++    elif source=='sitemap': score+=25
++    elif source=='common_path': score-=5
++    if low.split('?')[0].endswith('.pdf'): score+=70
++    for word,weight in [('sustainab',55),('esg',50),('responsib',45),('human-right',45),('modern-slavery',45),('climate',38),('environment',35),('supplier',32),('annual',25),('report',24),('people',18),('planet',18),('impact',16),('governance',15)]:
++        if word in low: score+=weight
++    return -score,len(url)
++
++
++def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
++    """Crawl the homepage and continue through a ranked candidate queue until the target
++    number of usable extra pages is reached. Individual failures no longer consume the whole
++    page allowance."""
++    max_extra_pages=max_extra_pages or CRAWL_TARGET_EXTRA_PAGES
+     if deadline is None:
+-        deadline=time.time()+18
++        deadline=time.time()+CRAWL_BUDGET_SECONDS
+     def remaining(): return max(1,deadline-time.time())
++
++    # Homepage: direct HTML first so internal links can be discovered; Reader fallback if the
++    # direct request is blocked. Reader text cannot provide a reliable link list.
++    homepage_method='direct'; links=[]
+     try:
+         html=fetch_html(url,timeout=min(7,remaining()))
+-    except Exception as e:
+-        _log_fetch_failure(log,url,e)
+-        raise
+-    text,links=parse_html(html); host=urlparse(url).hostname or ""
+-    _log_fetch_success(log,url,len(text))
+-    pages=[url]; chunks=[text]; cands=[]
++        text,links=parse_html(html)
++        if len(text)<THIN_CONTENT_CHARS and ENABLE_READER_FALLBACK and remaining()>4:
++            try:
++                reader_text=fetch_reader_text(url,timeout=min(9,remaining()))
++                if len(reader_text)>len(text):
++                    text=reader_text; homepage_method='reader_fallback'
++            except Exception:
++                homepage_method='direct_thin'
++    except Exception as direct_error:
++        if ENABLE_READER_FALLBACK and remaining()>3:
++            try:
++                text=fetch_reader_text(url,timeout=min(9,remaining())); homepage_method='reader_fallback'
++            except Exception:
++                _log_fetch_failure(log,url,direct_error,source='homepage')
++                raise direct_error
++        else:
++            _log_fetch_failure(log,url,direct_error,source='homepage')
++            raise
++    _log_fetch_success(log,url,len(text),method=homepage_method,source='homepage')
++    host=urlparse(url).hostname or ''
++    pages=[url]; chunks=[text]
++
++    candidates=[]; seen={_canonical_url(url)}
++    def add_candidate(candidate,source):
++        candidate=_canonical_url(candidate.split('#')[0])
++        if not candidate or candidate in seen: return
++        if not same_domain(candidate,host): return
++        seen.add(candidate); candidates.append((candidate,source))
++
+     for href in links:
+-        full=urljoin(url,href).split("#")[0]
+-        if same_domain(full,host) and relevant(full) and full not in cands and full!=url: cands.append(full)
+-    if len(cands)<max_extra_pages and time.time()<deadline:
++        full=urljoin(url,href)
++        if relevant(full) or full.lower().split('?')[0].endswith('.pdf'):
++            add_candidate(full,'linked')
++
++    if time.time()<deadline-2:
+         try:
+             for u in discover_sitemap_urls(url,deadline=deadline):
+-                if relevant(u) and u not in cands and u!=url: cands.append(u)
+-                if len(cands)>=max_extra_pages*2: break
+-        except Exception: pass
+-    if len(cands)<3:
+-        scheme=urlparse(url).scheme or 'https'
+-        for path in COMMON_PUBLIC_PATHS:
+-            guess=f'{scheme}://{host}{path}'
+-            if guess not in cands and guess!=url: cands.append(guess)
+-    # v56: prioritise .pdf candidates (annual/CSR/ESG/sustainability reports) within the
+-    # existing relevance-filtered candidate list -- these are the company's own formal
+-    # reporting and are more likely to contain the kind of specific, substantiation-heavy
+-    # (or conspicuously unsubstantiated) claims that plain marketing pages do not.
+-    cands.sort(key=lambda u: 0 if u.lower().split('?')[0].endswith('.pdf') else 1)
+-    for i,link in enumerate(cands[:max_extra_pages]):
+-        if time.time()>=deadline: break
+-        if i>0 and remaining()>2: time.sleep(0.5)
+-        try:
+-            t,kind=fetch_page_content(link,timeout=min(8,remaining()))
+-            _log_fetch_success(log,link,len(t))
+-            # v57e/v57g: a PDF that yields *any* readable extracted text is already a much
+-            # stronger substance signal than an HTML page of the same length (successful text
+-            # extraction from a PDF rarely happens by accident) -- kept at 80 chars. The original
+-            # 200-char bar for HTML sub-pages had the same false-negative problem: a company's
+-            # actual sustainability/CSR sub-page is often short (one or two paragraphs) and was
+-            # being silently dropped exactly where the crawler most needs to reach it. Lowered to
+-            # 120, still enough to filter genuinely near-empty shell/loading pages.
+-            min_chars=80 if kind=="pdf" else 120
+-            if len(t)>min_chars:
+-                label="REPORT (PDF): " if kind=="pdf" else "PAGE: "
+-                chunks.append("\n\n"+label+link+"\n"+t); pages.append(link)
+-        except Exception as e:
+-            _log_fetch_failure(log,link,e)
+-    return "\n\n".join(chunks)[:90000], pages
++                add_candidate(u,'sitemap')
++        except Exception:
++            pass
++
++    scheme=urlparse(url).scheme or 'https'
++    for path in COMMON_PUBLIC_PATHS:
++        add_candidate(f'{scheme}://{host}{path}','common_path')
++
++    candidates.sort(key=_candidate_score)
++    candidates=candidates[:CRAWL_MAX_PAGE_ATTEMPTS]
++    successful=0
++    cursor=0
++    # Small parallel batches prevent two slow/blocked pages from exhausting the entire crawl
++    # budget while keeping request concurrency modest for the target site.
++    while cursor<len(candidates) and successful<max_extra_pages and time.time()<deadline-2:
++        batch=candidates[cursor:cursor+CRAWL_FETCH_WORKERS]; cursor+=len(batch)
++        per_timeout=min(8,max(3,remaining()-1))
++        with ThreadPoolExecutor(max_workers=min(CRAWL_FETCH_WORKERS,len(batch))) as executor:
++            futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
++            for future in as_completed(futures):
++                link,source=futures[future]
++                try:
++                    t,kind,method=future.result()
++                    min_chars=80 if kind=='pdf' else 120
++                    if len(t)>min_chars:
++                        _log_fetch_success(log,link,len(t),method=method,source=source)
++                        if successful<max_extra_pages:
++                            label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
++                            chunks.append('\n\n'+label+link+'\n'+t)
++                            pages.append(link); successful+=1
++                    else:
++                        _log_fetch_failure(log,link,ValueError('The page returned insufficient usable text.'),source=source)
++                except Exception as e:
++                    _log_fetch_failure(log,link,e,source=source)
++    return '\n\n'.join(chunks)[:150000], pages
++
+ COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
+ _COMPANY_NAME_RE=re.compile(r'\b([A-Z][A-Za-z0-9&\'\.\-]*(?:\s+[A-Z][A-Za-z0-9&\'\.\-]*){0,3}\s+'+COMPANY_SUFFIXES+r')\b')
+ 
+@@ -991,6 +1244,7 @@
+     # scan that genuinely reached the site and found little to flag.
+     blocked=[e for e in (crawl_log or []) if not e.get("ok")]
+     thin=[e for e in (crawl_log or []) if e.get("ok") and e.get("thin")]
++    fallback_pages=[e for e in (crawl_log or []) if e.get("ok") and e.get("method")=='reader_fallback']
+     attempted=len(crawl_log or [])
+     reliability_warning=None
+     if attempted:
+@@ -1003,8 +1257,13 @@
+         elif thin:
+             pts=max(0,pts-1)
+             reliability_warning=(f"{len(thin)} of {attempted} fetched page(s) returned unusually little text, which can happen "
+-                                  "with JavaScript-rendered pages or soft bot-blocks. Treat a low score with some caution and "
+-                                  "consider checking the site's sustainability/CSR pages manually.")
++                                  "with JavaScript-rendered pages or soft bot-blocks. A low risk score from this scan may reflect "
++                                  "limited access to the site's content, not necessarily a genuine absence of risky claims.")
++        elif fallback_pages and len(pages)<3:
++            pts=max(0,pts-1)
++            reliability_warning=(f"Only {len(pages)} company page(s) could be reviewed and {len(fallback_pages)} required a "
++                                  "public text-extraction fallback. A low risk score from this scan may reflect limited access "
++                                  "to the site's content, not necessarily a genuine absence of risky claims.")
+     if no_findings and (blocked or thin):
+         reliability_warning=reliability_warning or ("No claims were detected, and part of the crawl did not return usable content. "
+                                                       "This scan result should be treated as inconclusive rather than 'low risk'.")
+@@ -2246,7 +2505,7 @@
+ 
+ def analyse_url_v27(raw):
+     original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
+-    scan_deadline=time.time()+18
++    scan_deadline=time.time()+CRAWL_BUDGET_SECONDS
+     try:
+         txt,pages,related_notes,crawl_log=crawl_with_related_sites(original_url,overall_deadline=scan_deadline); url=original_url
+     except Exception as first_error:
+@@ -2360,7 +2619,7 @@
+         'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,
+         'screening_conclusion':screening_conclusion,
+         'data_reliability_warning':reliability_warning,
+-        'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'detail':crawl_log},
++        'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'pages_retrieved_via_fallback':len([e for e in crawl_log if e.get('ok') and e.get('method')=='reader_fallback']),'detail':crawl_log},
+         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
+         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
+         'documents_checked':documents_checked,'channel_analysis':channel_analysis,'related_source_notes':related_notes,

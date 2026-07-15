@@ -1,0 +1,32 @@
+DEPLOYMENT STEPS
+================
+
+1. Replace the current GitHub repository with the contents of this package, or copy the
+   updated app.py into the existing repository.
+2. Commit and push to the branch connected to Render.
+3. Trigger a manual deploy in Render if automatic deployment does not start.
+4. Check /api/health. The version should show:
+      hostable_v59_resilient_multi_page_crawler
+5. Run a new website scan. Previously downloaded reports will not change.
+
+OPTIONAL RENDER SETTINGS
+========================
+
+The defaults are already active in code. For tuning, add these environment variables:
+
+CRAWL_TARGET_EXTRA_PAGES=6
+CRAWL_MAX_PAGE_ATTEMPTS=14
+CRAWL_BUDGET_SECONDS=24
+CRAWL_FETCH_WORKERS=4
+ENABLE_READER_FALLBACK=1
+
+JINA_API_KEY is optional. Without a key, the public Reader fallback may still work but
+is subject to the provider's public limits.
+
+WHAT SHOULD CHANGE
+==================
+
+- The scan should normally review more than one to four pages when relevant pages exist.
+- A few blocked or missing candidate pages no longer stop the crawl.
+- The warning remains when access is genuinely limited.
+- Crawl diagnostics now also show pages_retrieved_via_fallback.
