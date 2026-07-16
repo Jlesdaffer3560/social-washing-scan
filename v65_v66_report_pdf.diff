@@ -1,0 +1,59 @@
+--- /mnt/data/Durably_v65_Generic_Entity_Lock_and_PDF_Layout_Fix/report_pdf.py	2026-07-16 12:53:30.455495568 +0000
++++ /mnt/data/Durably_v66_Claim_Risk_Badge_Layout_Fix/report_pdf.py	2026-07-16 13:20:28.310535250 +0000
+@@ -1,4 +1,4 @@
+-"""Readable native two-page Durably company claim-risk report (v62).
++"""Readable native two-page Durably company claim-risk report (v66).
+ 
+ The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
+ uses a minimum body size of 9 pt and protects the two-page format by reducing the
+@@ -69,6 +69,7 @@
+     "card_num": _style("card_num", fontName="Helvetica-Bold", fontSize=18.0, leading=19.0, textColor=NAVY),
+     "claim_title": _style("claim_title", fontName="Helvetica-Bold", fontSize=9.4, leading=11.2, textColor=NAVY),
+     "claim_risk": _style("claim_risk", fontName="Helvetica-Bold", fontSize=8.5, leading=10.0, alignment=TA_RIGHT, wordWrap="LTR"),
++    "claim_risk_badge": _style("claim_risk_badge", fontName="Helvetica-Bold", fontSize=8.2, leading=9.4, alignment=TA_CENTER, textColor=WHITE, wordWrap="LTR"),
+     "table": _style("table", fontSize=8.0, leading=9.8, textColor=GREY_700),
+     "table_dark": _style("table_dark", fontSize=8.0, leading=9.8, textColor=GREY_900),
+     "table_head": _style("table_head", fontName="Helvetica-Bold", fontSize=8.0, leading=9.8, textColor=WHITE),
+@@ -434,13 +435,36 @@
+     count = len(cluster["occurrences"])
+     title = claim_title(claim) + (f" · {count} occurrences" if count > 1 else "")
+     sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in cluster["occurrences"]))[:2])
+-    # The outer card has 8 pt left/right padding. Every nested table must use the
+-    # resulting inner width; using CONTENT_W here made the risk label overflow the
+-    # right border in Microsoft/ReportLab renderings.
+-    inner_width = CONTENT_W - 16
++    # The risk level is deliberately rendered as a fixed-width badge on the LEFT
++    # of the title. Earlier versions placed a right-aligned risk label at the outer
++    # edge of a nested table. ReportLab can expand that nested table when a long
++    # title has a large minimum width, allowing "High" / "Very high" to cross the
++    # card border. The left badge removes that edge condition completely and keeps
++    # every risk label inside the claim card in all renderers.
++    outer_padding = 8  # points, must match the card TableStyle below
++    safety_gutter = 2 * mm
++    inner_width = CONTENT_W - (2 * outer_padding) - safety_gutter
+     risk_width = 25 * mm
+-    head = Table([[Paragraph(esc(title), ST["claim_title"]), Paragraph(f'<font color="{risk_color(claim_risk(claim)).hexval()}"><b>{esc(claim_risk(claim))}</b></font>', ST["claim_risk"]) ]], colWidths=[inner_width-risk_width, risk_width])
+-    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
++    title_width = inner_width - risk_width
++    risk_value = claim_risk(claim)
++    risk_badge = Paragraph(esc(risk_value), ST["claim_risk_badge"])
++    head = Table(
++        [[risk_badge, Paragraph(esc(title), ST["claim_title"])]],
++        colWidths=[risk_width, title_width],
++        hAlign="LEFT",
++    )
++    head.setStyle(TableStyle([
++        ("BACKGROUND", (0, 0), (0, 0), risk_color(risk_value)),
++        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
++        ("LEFTPADDING", (0, 0), (0, 0), 4),
++        ("RIGHTPADDING", (0, 0), (0, 0), 4),
++        ("TOPPADDING", (0, 0), (0, 0), 3),
++        ("BOTTOMPADDING", (0, 0), (0, 0), 3),
++        ("LEFTPADDING", (1, 0), (1, 0), 6),
++        ("RIGHTPADDING", (1, 0), (1, 0), 0),
++        ("TOPPADDING", (1, 0), (1, 0), 0),
++        ("BOTTOMPADDING", (1, 0), (1, 0), 0),
++    ]))
+     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
+     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
+     why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])

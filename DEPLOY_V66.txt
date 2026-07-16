@@ -1,0 +1,10 @@
+DURABLY V66 - DEPLOYMENT
+
+1. Replace the files in the GitHub repository connected to Render with the contents of this package.
+2. Commit and push the changes.
+3. Wait for the Render deployment to complete.
+4. Open /api/health and verify the version is:
+   hostable_v66_claim_risk_badge_layout_fix
+5. Run a completely new scan and download a new two-page company report.
+
+The correction is in report_pdf.py. Existing PDFs will not change retroactively.

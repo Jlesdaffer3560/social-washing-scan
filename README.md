@@ -1,3 +1,13 @@
+# Durably Sustainability Scan - v66
+
+Current version: `hostable_v66_claim_risk_badge_layout_fix`
+
+v66 definitively fixes the claim-card risk label that could appear outside the right-hand border. The risk level is now rendered as a fixed-width coloured badge on the left of each claim title.
+
+Read `V66_CHANGELOG.md`, `DEPLOY_V66.txt` and `TEST_RESULTS_V66.txt` first.
+
+---
+
 # Durably Sustainability Scan — V64
 
 V64 fixes cross-company entity contamination and restores official-site claim coverage. Read `V64_CHANGELOG.md`, `DEPLOY_V64.txt` and `TEST_RESULTS_V64.txt` first.

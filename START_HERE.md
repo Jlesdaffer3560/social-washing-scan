@@ -1,3 +1,13 @@
+# Start here - v66
+
+This is the complete GitHub/Render repository. Deploy the whole package and verify `/api/health` returns `hostable_v66_claim_risk_badge_layout_fix`.
+
+The PDF fix is structural: `High` and `Very high` now appear in a left-side badge and can no longer overflow the right border.
+
+See `DEPLOY_V66.txt` and `V66_CHANGELOG.md`.
+
+---
+
 # Start here — V64
 
 Read `V64_CHANGELOG.md` and `DEPLOY_V64.txt`. This package contains the complete repository, not only a patch.

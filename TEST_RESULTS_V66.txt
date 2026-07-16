@@ -1,0 +1,12 @@
+Durably v66 test results
+
+PASS - Python compilation: app.py, report_pdf.py and methodology_pdf.py.
+PASS - Existing v62 report regression tests.
+PASS - v63 external public-source signal tests.
+PASS - v64 entity-lock and internal-claim tests.
+PASS - v65 generic entity and PDF page-boundary tests.
+PASS - v66 long-title claim-card risk-badge regression test.
+PASS - High and Very high remain inside the claim cards.
+PASS - Generated preview contains exactly two A4 pages.
+PASS - PyMuPDF word-coordinate check: no text outside the physical page.
+PASS - PDF preflight: openable, unencrypted, two pages, not image-only.
