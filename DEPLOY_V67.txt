@@ -1,0 +1,26 @@
+DURABLY V67 DEPLOYMENT
+======================
+
+1. Replace the current GitHub repository with the contents of this package, or copy the changed files:
+   - app.py
+   - frontend.html
+   - report_pdf.py
+
+2. Commit and push to the branch connected to Render.
+
+3. Trigger a new Render deployment.
+
+4. Check:
+   /api/health
+
+   Expected version:
+   hostable_v67_scan_coverage_source_register
+
+5. Run a new website scan.
+
+6. Confirm that the results page shows:
+   Scan coverage and reviewed sources
+
+7. Download the CSV source register and the new two-page report.
+
+Existing scan results and previously downloaded PDFs are not changed retroactively.

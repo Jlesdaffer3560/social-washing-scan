@@ -1,0 +1,23 @@
+Durably v67 test results
+========================
+
+PASS - scan inventory separates website pages from PDF/documents
+PASS - source inventory counts reviewed pages, documents and domains
+PASS - failed fetch attempts are listed separately
+PASS - public text-extraction fallback is recorded
+PASS - uploaded-document inventory remains supported
+PASS - web interface includes the source-register section
+PASS - web interface includes CSV download
+PASS - frontend JavaScript syntax check
+PASS - PDF contains a separate ASSESSMENT COVERAGE section
+PASS - PDF lists PAGE and DOC source labels
+PASS - PDF remains exactly two A4 pages
+PASS - no PDF text extends outside page boundaries
+PASS - v62 regression suite
+PASS - v63 external-signal regression suite
+PASS - v64 entity-lock regression suite
+PASS - v65 generic entity and PDF-boundary suite
+PASS - v66 claim-risk badge layout suite
+
+Expected health version:
+hostable_v67_scan_coverage_source_register

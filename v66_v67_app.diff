@@ -1,0 +1,192 @@
+--- Durably_v66_Claim_Risk_Badge_Layout_Fix/app.py	2026-07-16 13:20:28.322301840 +0000
++++ Durably_v67_Scan_Coverage_Source_Register/app.py	2026-07-16 14:05:43.892464047 +0000
+@@ -47,7 +47,7 @@
+ _pypdf_module = None
+ _pypdf_import_error = None
+ 
+-APP_VERSION="hostable_v66_claim_risk_badge_layout_fix"
++APP_VERSION="hostable_v67_scan_coverage_source_register"
+ # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
+ # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
+ # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
+@@ -674,11 +674,11 @@
+ THIN_CONTENT_CHARS=400
+ 
+ 
+-def _log_fetch_success(log,url,chars,method='direct',source='discovered'):
++def _log_fetch_success(log,url,chars,method='direct',source='discovered',content_kind='html'):
+     if log is not None:
+         log.append({'url':url,'ok':True,'http_status':200,'chars':chars,
+                     'thin':chars<THIN_CONTENT_CHARS,'error':None,'method':method,
+-                    'source':source})
++                    'source':source,'content_kind':content_kind})
+ 
+ 
+ def _log_fetch_failure(log,url,err,source='discovered'):
+@@ -732,7 +732,7 @@
+         else:
+             _log_fetch_failure(log,url,direct_error,source='homepage')
+             raise
+-    _log_fetch_success(log,url,len(text),method=homepage_method,source='homepage')
++    _log_fetch_success(log,url,len(text),method=homepage_method,source='homepage',content_kind='html')
+     host=urlparse(url).hostname or ''
+     pages=[url]; chunks=[text]
+ 
+@@ -776,7 +776,7 @@
+                     t,kind,method=future.result()
+                     min_chars=80 if kind=='pdf' else 120
+                     if len(t)>min_chars:
+-                        _log_fetch_success(log,link,len(t),method=method,source=source)
++                        _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
+                         if successful<max_extra_pages:
+                             label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
+                             chunks.append('\n\n'+label+link+'\n'+t)
+@@ -1776,6 +1776,114 @@
+         })
+     return out
+ 
++
++def build_scan_inventory(pages, documents_checked=None, crawl_log=None):
++    """Build a transparent register of everything the scan actually reviewed.
++
++    The register separates successful website pages from PDF/documents, records the
++    retrieval method and discovery route, and keeps failed fetch attempts separate.
++    This is deliberately descriptive: it does not imply that every discovered URL
++    was successfully analysed.
++    """
++    pages=list(pages or [])
++    documents_checked=list(documents_checked or [])
++    crawl_log=list(crawl_log or [])
++
++    def canon(value):
++        try:
++            return _canonical_url(str(value or ''))
++        except Exception:
++            return str(value or '').strip()
++
++    docs_by_url={canon(d.get('url')):d for d in documents_checked if isinstance(d,dict) and d.get('url')}
++    success_by_url={}
++    for entry in crawl_log:
++        if isinstance(entry,dict) and entry.get('ok') and entry.get('url'):
++            success_by_url[canon(entry.get('url'))]=entry
++
++    reviewed=[]; seen=set()
++    for value in pages:
++        url=str(value or '').strip()
++        if not url: continue
++        key=canon(url)
++        if key in seen: continue
++        seen.add(key)
++        doc=docs_by_url.get(key,{})
++        log=success_by_url.get(key,{})
++        kind=(log.get('content_kind') or '').lower()
++        low=url.lower().split('?',1)[0]
++        is_document=(kind=='pdf' or low.endswith('.pdf') or 'uploaded document' in str(doc.get('document_type','')).lower())
++        parsed=urlparse(url) if url.startswith(('http://','https://')) else None
++        domain=((parsed.hostname or '').replace('www.','') if parsed else '')
++        reviewed.append({
++            'name': doc.get('name') or page_name_from_url(url),
++            'url': url,
++            'source_type': 'Document / PDF' if is_document else 'Website page',
++            'domain': domain,
++            'document_type': doc.get('document_type') or ('PDF document' if is_document else 'Website page'),
++            'audience_assessment': doc.get('audience_assessment') or 'Not assessed',
++            'empco_relevance': doc.get('empco_relevance') or 'Not assessed',
++            'fetch_method': log.get('method') or ('uploaded' if not url.startswith(('http://','https://')) else 'direct'),
++            'discovery_source': log.get('source') or ('uploaded' if not url.startswith(('http://','https://')) else 'reviewed'),
++            'characters_extracted': int(log.get('chars') or 0),
++            'used_fallback': bool(log.get('method')=='reader_fallback'),
++        })
++
++    # Include uploaded or explicitly checked documents that are not represented in pages.
++    for doc in documents_checked:
++        if not isinstance(doc,dict): continue
++        url=str(doc.get('url') or '').strip()
++        key=canon(url)
++        if not url or key in seen: continue
++        seen.add(key)
++        reviewed.append({
++            'name': doc.get('name') or page_name_from_url(url),
++            'url': url,
++            'source_type': 'Document / PDF',
++            'domain': '',
++            'document_type': doc.get('document_type') or 'Document',
++            'audience_assessment': doc.get('audience_assessment') or 'Not assessed',
++            'empco_relevance': doc.get('empco_relevance') or 'Not assessed',
++            'fetch_method': 'uploaded',
++            'discovery_source': 'uploaded',
++            'characters_extracted': 0,
++            'used_fallback': False,
++        })
++
++    failed=[]; failed_seen=set()
++    for entry in crawl_log:
++        if not isinstance(entry,dict) or entry.get('ok') or not entry.get('url'): continue
++        key=canon(entry.get('url'))
++        if key in failed_seen: continue
++        failed_seen.add(key)
++        failed.append({
++            'url':entry.get('url'),
++            'name':page_name_from_url(entry.get('url')),
++            'http_status':entry.get('http_status'),
++            'error':entry.get('error') or 'The page could not be accessed.',
++            'discovery_source':entry.get('source') or 'discovered',
++        })
++
++    page_items=[x for x in reviewed if x.get('source_type')=='Website page']
++    document_items=[x for x in reviewed if x.get('source_type')!='Website page']
++    domains=sorted({x.get('domain') for x in reviewed if x.get('domain')})
++    return {
++        'summary':{
++            'reviewed_total':len(reviewed),
++            'website_pages_reviewed':len(page_items),
++            'documents_reviewed':len(document_items),
++            'domains_reviewed':len(domains),
++            'fetch_attempts':len(crawl_log),
++            'fetch_failures':len(failed),
++            'fallback_pages':len([x for x in reviewed if x.get('used_fallback')]),
++        },
++        'website_pages':page_items,
++        'documents':document_items,
++        'failed_fetches':failed,
++        'domains':domains,
++        'note':'This register lists sources successfully reviewed by the scan. Failed attempts are shown separately and were not analysed as evidence.',
++    }
++
+ def build_channel_analysis(documents):
+     docs=documents or []
+     def pick(group): return [d for d in docs if d.get('audience_group')==group]
+@@ -2457,6 +2565,7 @@
+     if audience.get('group')=='mixed':
+         audience={'audience':'Investor or internal document','group':'internal','empco_relevance':'Indirect / evidence source','note':'Uploaded non-public document. Treated primarily as internal evidence, governance and consistency context unless claim wording is clearly consumer-facing.'}
+     documents_checked=[{'name':filename or 'uploaded document','url':source,'document_type':'Uploaded internal document','audience_assessment':audience.get('audience','Internal document'),'audience_group':audience.get('group','internal'),'empco_relevance':audience.get('empco_relevance','Indirect'),'interpretation':'User-uploaded internal company document scanned for claim wording and substantiation gaps.'}]
++    scan_inventory=build_scan_inventory([source],documents_checked,[])
+     page_segments=[{'url':source,'text':text}]
+     social_fs=detect_claims(text)
+     green_fs=detect_green_claims(text)
+@@ -2483,7 +2592,7 @@
+     methodology='Sustainability Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
+     summary=f"{comp['company']} receives a global sustainability scan score of {overall}/100 for the uploaded internal document. Green risk: {green_score}/100 ({green_conclusion}). Social risk: {social_score}/100 ({social_conclusion})."
+     return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
+-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
++        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+ 
+ def _describe_fetch_error(err):
+     """Turns a raw fetch exception into a clear, non-technical explanation."""
+@@ -2539,6 +2648,7 @@
+     page_segments=extract_page_segments(txt,pages)
+     audience=classify_document_audience(url,txt,pages)
+     documents_checked=build_documents_checked(pages,audience,txt)
++    scan_inventory=build_scan_inventory(pages,documents_checked,crawl_log)
+     discovered_docs=[]
+     try:
+         discovered_docs=[]  # v53: skip secondary investor-document discovery during live website scans to avoid Render gateway timeouts
+@@ -2640,7 +2750,7 @@
+         'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'pages_retrieved_via_fallback':len([e for e in crawl_log if e.get('ok') and e.get('method')=='reader_fallback']),'detail':crawl_log},
+         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
+         'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
+-        'documents_checked':documents_checked,'channel_analysis':channel_analysis,'related_source_notes':related_notes,
++        'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':channel_analysis,'related_source_notes':related_notes,
+         'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
+         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
+         'merged_claims':all_claims,'claim_inventory':all_claims,

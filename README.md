@@ -1,10 +1,10 @@
-# Durably Sustainability Scan - v66
+# Durably Sustainability Scan - v67
 
-Current version: `hostable_v66_claim_risk_badge_layout_fix`
+This package adds a transparent scan-coverage and source-register section. After every scan, the application lists the exact website pages and documents successfully reviewed, separates failed access attempts, supports a CSV export, and adds a compact assessment-coverage section to the two-page PDF.
 
-v66 definitively fixes the claim-card risk label that could appear outside the right-hand border. The risk level is now rendered as a fixed-width coloured badge on the left of each claim title.
+Expected health version: `hostable_v67_scan_coverage_source_register`.
 
-Read `V66_CHANGELOG.md`, `DEPLOY_V66.txt` and `TEST_RESULTS_V66.txt` first.
+See `START_HERE_V67.md`, `V67_CHANGELOG.md` and `DEPLOY_V67.txt`.
 
 ---
 

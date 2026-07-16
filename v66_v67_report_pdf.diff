@@ -1,0 +1,119 @@
+--- Durably_v66_Claim_Risk_Badge_Layout_Fix/report_pdf.py	2026-07-16 13:20:28.310535250 +0000
++++ Durably_v67_Scan_Coverage_Source_Register/report_pdf.py	2026-07-16 14:07:27.114732808 +0000
+@@ -1,4 +1,4 @@
+-"""Readable native two-page Durably company claim-risk report (v66).
++"""Readable native two-page Durably company claim-risk report (v67).
+ 
+ The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
+ uses a minimum body size of 9 pt and protects the two-page format by reducing the
+@@ -339,6 +339,45 @@
+     return out
+ 
+ 
++
++def scan_inventory_items(data):
++    inventory=data.get("scan_inventory") or {}
++    pages=list(inventory.get("website_pages") or [])
++    documents=list(inventory.get("documents") or [])
++    if pages or documents:
++        return pages, documents, inventory.get("summary") or {}
++    # Backward-compatible fallback for older scan payloads.
++    fallback=[]
++    for value in (data.get("report") or {}).get("pages_reviewed") or []:
++        url=clean_text(value)
++        if not url: continue
++        low=url.lower().split("?",1)[0]
++        fallback.append({
++            "name": claim_source({"source_label":url}),
++            "url":url,
++            "source_type":"Document / PDF" if low.endswith(".pdf") else "Website page",
++            "document_type":"PDF document" if low.endswith(".pdf") else "Website page",
++        })
++    pages=[x for x in fallback if x.get("source_type")=="Website page"]
++    documents=[x for x in fallback if x.get("source_type")!="Website page"]
++    domains={urlparse(clean_text(x.get("url"))).netloc.replace("www.","") for x in fallback if urlparse(clean_text(x.get("url"))).netloc}
++    return pages,documents,{"website_pages_reviewed":len(pages),"documents_reviewed":len(documents),"domains_reviewed":len(domains),"reviewed_total":len(fallback)}
++
++
++def inventory_source_label(item, max_chars=72):
++    url=clean_text(item.get("url") or "")
++    name=clean_text(item.get("name") or "")
++    prefix="DOC" if item.get("source_type")!="Website page" else "PAGE"
++    if url.startswith("http"):
++        parsed=urlparse(url)
++        domain=parsed.netloc.replace("www.","")
++        path=(parsed.path or "").strip("/")
++        path_label=path.rsplit("/",1)[-1].replace("-"," ").replace("_"," ") if path else "homepage"
++        label=f"{prefix} - {domain} - {path_label}"
++    else:
++        label=f"{prefix} - {name or url or 'reviewed source'}"
++    return bounded_text(label,max_chars)
++
+ def header_block(data, subtitle):
+     meta = metadata(data)
+     left = [Paragraph("DURABLY SUSTAINABILITY SCAN", ST["brand"]), Spacer(1, 1 * mm), Paragraph(esc(company_name(data)), ST["title"]), Paragraph(esc(subtitle), ST["subtitle"])]
+@@ -555,12 +594,24 @@
+     return t
+ 
+ 
+-def sources_methodology(data):
+-    sources = reviewed_sources(data, 3)
+-    left = [Paragraph("<b>SOURCES REVIEWED</b>", ST["card_label"]), Paragraph("<br/>".join(f'• {esc(x)}' for x in sources) if sources else "Source list not available.", ST["source"])]
+-    right = [Paragraph("<b>METHODOLOGY</b>", ST["card_label"]), Paragraph("EmpCo, Forced Labour Regulation and Durably claim-risk methodology. See the detailed methodology PDF on the scan homepage.", ST["source"])]
+-    t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
+-    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
++def coverage_sources_methodology(data, limit=5):
++    pages,documents,summary=scan_inventory_items(data)
++    combined=pages+documents
++    shown=combined[:max(1,limit)]
++    total=len(combined)
++    count_line=(f'{int(summary.get("website_pages_reviewed",len(pages)))} website page(s) · '
++                f'{int(summary.get("documents_reviewed",len(documents)))} document(s) / PDF(s) · '
++                f'{int(summary.get("domains_reviewed",0))} domain(s)')
++    source_lines=[inventory_source_label(x) for x in shown]
++    if total>len(shown):
++        source_lines.append(f'+ {total-len(shown)} additional reviewed source(s) listed in the online scan')
++    left=[Paragraph("<b>REVIEWED PAGES AND DOCUMENTS</b>",ST["card_label"]),
++          Paragraph(esc(count_line),ST["small_dark"]),
++          Paragraph("<br/>".join(f'• {esc(x)}' for x in source_lines) if source_lines else "Source list not available.",ST["source"])]
++    right=[Paragraph("<b>METHODOLOGY</b>",ST["card_label"]),
++           Paragraph("Only successfully retrieved sources contribute to the claim analysis. Failed access attempts are reported separately in the online scan. EmpCo, Forced Labour Regulation and Durably claim-risk methodology apply. See the detailed methodology PDF on the scan homepage.",ST["source"])]
++    t=Table([[left,right]],colWidths=[CONTENT_W*.58,CONTENT_W*.42])
++    t.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.6,GREY_300),("LINEBEFORE",(1,0),(1,0),.4,GREY_300),("BACKGROUND",(0,0),(-1,-1),BLUE_SOFT),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+     return t
+ 
+ 
+@@ -578,7 +629,7 @@
+     canvas.restoreState()
+ 
+ 
+-def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220):
++def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5):
+     buf = io.BytesIO()
+     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
+     doc.report_data = data
+@@ -603,7 +654,8 @@
+     else:
+         flow.append(Paragraph("No additional material claim group is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
+     flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("External public-source signals")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
+-    flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.8*mm)); flow.append(sources_methodology(data))
++    flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.6*mm))
++    flow.append(section_title("Assessment coverage")); flow.append(coverage_sources_methodology(data, source_limit))
+     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
+     return buf.getvalue()
+ 
+@@ -624,10 +676,10 @@
+     content remains available in the online scan.
+     """
+     variants = [
+-        dict(additional_limit=2, external_limit=2, excerpt_chars=220),
+-        dict(additional_limit=1, external_limit=2, excerpt_chars=200),
+-        dict(additional_limit=1, external_limit=1, excerpt_chars=180),
+-        dict(additional_limit=0, external_limit=1, excerpt_chars=165),
++        dict(additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=6),
++        dict(additional_limit=1, external_limit=2, excerpt_chars=200, source_limit=5),
++        dict(additional_limit=1, external_limit=1, excerpt_chars=180, source_limit=4),
++        dict(additional_limit=0, external_limit=1, excerpt_chars=165, source_limit=3),
+     ]
+     last = b""
+     for variant in variants:
