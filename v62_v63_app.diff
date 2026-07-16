@@ -1,0 +1,273 @@
+--- v62_repo_full/Durably_v62_Professional_Claims_and_Readable_Report/app.py	2026-07-15 16:56:06.000000000 +0000
++++ Durably_v63_External_Signal_Recall_Fix/app.py	2026-07-16 11:22:43.286910484 +0000
+@@ -47,7 +47,7 @@
+ _pypdf_module = None
+ _pypdf_import_error = None
+ 
+-APP_VERSION="hostable_v62_professional_claim_signals_readable_pdf"
++APP_VERSION="hostable_v63_external_signal_recall_diagnostics"
+ # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
+ # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
+ # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
+@@ -3853,6 +3853,260 @@
+     summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
+     return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,'green'),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
+ 
++
++
++# -----------------------------
++# V63 EXTERNAL SIGNAL RECALL + DIAGNOSTICS
++# -----------------------------
++# V63 addresses false negatives where well-documented regulator, NGO, union and
++# investigative-media signals were not retained. The main causes were overly long
++# search queries, exact singular/plural matching, and a company-owned-domain test
++# that could reject independent sites merely because the brand appeared in the host.
++
++_V63_SOCIAL_EXPLICIT = (
++    'social washing','forced labour','forced labor','child labour','child labor','modern slavery',
++    'labour rights','labor rights','worker rights','workers rights','workers\' rights',
++    'human rights abuse','human rights abuses','human rights concern','human rights concerns',
++    'labour exploitation','labor exploitation','worker exploitation','workers exploitation',
++    'illegal working hours','excessive working hours','long working hours','low wages',
++    'piecework wages','unsafe working conditions','poor working conditions','union busting'
++)
++_V63_SOCIAL_ANCHORS = (
++    'labour','labor','worker','workers','workforce','working hours','working conditions',
++    'wage','wages','overtime','factory','factories','supplier','suppliers','supply chain',
++    'human rights','trade union','union','child labour','child labor','forced labour','forced labor'
++)
++_V63_SOCIAL_NEGATIVE = (
++    'investigation','investigating','probe','inquiry','report reveals','report finds','exposed',
++    'accused','alleged','allegation','allegations','criticism','criticised','criticized',
++    'concern','concerns','violation','violations','breach','breaches','illegal','exploitative',
++    'exploitation','abuse','abuses','underpaid','unsafe','risk','risks','complaint','complaints',
++    'lawsuit','court','fine','fined','penalty','sanction','strike','protest','boycott'
++)
++_V63_GREEN_EXPLICIT = (
++    'greenwashing','misleading environmental claim','misleading environmental claims',
++    'misleading green claim','misleading green claims','deceptive environmental claim',
++    'deceptive environmental claims','unsubstantiated environmental claim',
++    'unsubstantiated environmental claims','false environmental claim','false environmental claims',
++    'environmental claim complaint','environmental claims complaint',
++    'environmental claim investigation','environmental claims investigation','misleading sustainability claim','misleading sustainability claims',
++    'sustainability claim investigation','sustainability claims investigation'
++)
++_V63_GREEN_ANCHORS = (
++    'environmental','green','climate','carbon','emission','emissions',
++    'net zero','net-zero','climate neutral','carbon neutral','recyclable','recycled','recycling',
++    'circular','eco','ecological','evolushein'
++)
++_V63_GREEN_NEGATIVE = (
++    'misleading','deceptive','vague','generic','omissive','unsubstantiated','false',
++    'investigation','investigating','probe','inquiry','complaint','watchdog','regulator','authority',
++    'fine','fined','penalty','sanction','prohibited','ban','accused','alleged','allegation',
++    'criticism','criticised','criticized','contradicted','contradiction','violation','violations'
++)
++_V63_STAKEHOLDER_SITE_QUERIES = {
++    'green': (
++        'site:agcm.it {q}',
++        'site:commission.europa.eu {q} environmental claims',
++        'site:ec.europa.eu {q} sustainability claims',
++        'site:reuters.com {q} greenwashing',
++        'site:theguardian.com {q} greenwashing',
++        'site:business-humanrights.org {q} environmental claims',
++    ),
++    'social': (
++        'site:business-humanrights.org {q}',
++        'site:publiceye.ch {q} workers',
++        'site:chinalaborwatch.org {q}',
++        'site:antislavery.org {q}',
++        'site:reuters.com {q} child labour workers',
++        'site:theguardian.com {q} working conditions',
++    ),
++}
++
++
++def _v63_any(text, terms):
++    return any(_v62_term_present(text, t) for t in terms)
++
++
++def _v60_negative_strength(result, dimension='social'):
++    """V63 polarity test with plural/variant coverage and source-aware acceptance."""
++    text=_external_signal_text(result)
++    kind=_v60_source_kind(result)
++    recognised=kind!='Other public source'
++    enforcement=[t for t in _V60_ENFORCEMENT_TERMS if _v62_term_present(text,t)]
++    if dimension=='green':
++        explicit=[t for t in _V63_GREEN_EXPLICIT if _v62_term_present(text,t)]
++        anchors=[t for t in _V63_GREEN_ANCHORS if _v62_term_present(text,t)]
++        negative=[t for t in _V63_GREEN_NEGATIVE if _v62_term_present(text,t)]
++    else:
++        explicit=[t for t in _V63_SOCIAL_EXPLICIT if _v62_term_present(text,t)]
++        anchors=[t for t in _V63_SOCIAL_ANCHORS if _v62_term_present(text,t)]
++        negative=[t for t in _V63_SOCIAL_NEGATIVE if _v62_term_present(text,t)]
++    # Accept explicit controversy language directly. Otherwise require a thematic anchor
++    # plus enforcement/negative language. Recognised stakeholder sources need only one
++    # clear negative marker; unknown sources need stronger corroborating wording.
++    accepted=bool(explicit) or (
++        bool(anchors) and (
++            bool(enforcement) or
++            (recognised and bool(negative)) or
++            len(negative)>=2
++        )
++    )
++    strength=len(explicit)*3 + len(anchors) + len(negative) + len(enforcement)
++    return strength,len(enforcement),kind,accepted
++
++
++def is_negative_external_source(result):
++    return _v60_negative_strength(result,'social')[3]
++
++
++def is_green_negative_source(result):
++    return _v60_negative_strength(result,'green')[3]
++
++
++def is_company_owned_source(result, company_name, reviewed_pages=None):
++    """V63 domain-led ownership test.
++
++    When the official site was crawled, only its registrable root(s) are treated as
++    company-owned. This avoids excluding independent domains such as brand-watch,
++    campaign or stakeholder sites merely because the company name occurs in the host.
++    """
++    host=_v60_host(result)
++    if not host:
++        return False
++    root=_root_domain(host)
++    official_roots=company_owned_roots(reviewed_pages)
++    if official_roots:
++        return bool(root and root in official_roots)
++    # Fallback for calls without reviewed pages: use exact domain-label matching, never a
++    # broad substring match. Company-specific aliases remain deliberately conservative.
++    phrase,tokens,compact=_v60_company_terms(company_name)
++    root_label=(root.split('.')[0] if root else '')
++    if compact and len(compact)>=4 and root_label.replace('-','')==compact:
++        return True
++    aliases={
++        'delhaize':{'aholddelhaize','delhaize'}, 'lidl':{'lidl','schwarz'},
++        'aldi':{'aldi'}, 'zara':{'zara','inditex'}, 'inditex':{'inditex','zara'},
++        'kbc':{'kbc'}, 'proximus':{'proximus'}, 'fluxys':{'fluxys'}, 'shein':{'shein','sheingroup'}
++    }
++    return any(root_label.replace('-','') in aliases.get(t,set()) for t in tokens)
++
++
++def _v63_company_query_names(company_name):
++    raw=re.sub(r'\s+',' ',str(company_name or '')).strip()
++    phrase,tokens,compact=_v60_company_terms(raw)
++    names=[]
++    # A short brand query generally has much better recall than a long legal entity name.
++    if tokens:
++        query_tokens=list(tokens)
++        if len(query_tokens)>=3 and query_tokens[0] in {'bank','banco','banque'}:
++            query_tokens=query_tokens[1:]
++        names.append(' '.join(query_tokens[:2]))
++        names.append(query_tokens[0])
++    if phrase:
++        names.append(phrase)
++    if raw:
++        names.append(raw)
++    out=[]
++    for n in names:
++        n=re.sub(r'\s+',' ',n).strip(' "')
++        if len(n)>=3 and n.lower() not in {x.lower() for x in out}:
++            out.append(n)
++    return out[:3] or [raw or 'company']
++
++
++def _v63_primary_queries(company_name, dimension, findings=None):
++    brand=_v63_company_query_names(company_name)[0]
++    q='"'+brand.replace('"','')+'"'
++    if dimension=='green':
++        base=[
++            f'{q} greenwashing',
++            f'{q} misleading environmental claims',
++            f'{q} environmental claims regulator',
++            f'{q} sustainability claims fine investigation',
++            f'{q} climate carbon emissions criticism',
++            f'{q} eco sustainable claims complaint',
++        ]
++        themes=green_query_themes(findings or [])[:2]
++    else:
++        base=[
++            f'{q} forced labor',
++            f'{q} forced labour',
++            f'{q} working conditions wages',
++            f'{q} labor rights NGO report',
++            f'{q} labour rights investigation',
++            f'{q} child labor supplier',
++        ]
++        themes=query_themes_from_findings(findings or [])[:2]
++    for theme in themes:
++        base.append(f'{q} {theme}')
++    return list(dict.fromkeys(base))
++
++
++def _v63_fallback_queries(company_name, dimension):
++    brand=_v63_company_query_names(company_name)[0]
++    q='"'+brand.replace('"','')+'"'
++    queries=[template.format(q=q) for template in _V63_STAKEHOLDER_SITE_QUERIES[dimension]]
++    if dimension=='green':
++        queries.extend([f'{q} vague misleading sustainability claims',f'{q} environmental marketing allegations'])
++    else:
++        queries.extend([f'{q} excessive working hours low wages',f'{q} supplier labour exploitation'])
++    return list(dict.fromkeys(queries))
++
++
++def _v63_search_dimension(company_name, findings, dimension):
++    first_queries=_v63_primary_queries(company_name,dimension,findings)
++    allr,attempts,providers,run_queries=_v60_run_queries(first_queries)
++    ranked=_v60_rank_dedupe(allr,company_name,dimension,30)
++    fallback_used=False
++    if len(ranked)<2:
++        fallback_used=True
++        more,atts,provs,qs=_v60_run_queries(_v63_fallback_queries(company_name,dimension))
++        attempts.extend(atts); providers.update(provs); run_queries.extend(qs)
++        seen={_v60_canonical_url(r.get('url','')) for r in allr}
++        for r in more:
++            key=_v60_canonical_url(r.get('url',''))
++            if key and key not in seen:
++                allr.append(r); seen.add(key)
++        ranked=_v60_rank_dedupe(allr,company_name,dimension,30)
++    company_matched=sum(1 for r in allr if source_mentions_company(r,company_name))
++    negative_candidates=sum(1 for r in allr if source_mentions_company(r,company_name) and (is_green_negative_source(r) if dimension=='green' else is_negative_external_source(r)))
++    diagnostics={
++        'raw_result_count':len(allr),
++        'company_matched_count':company_matched,
++        'negative_candidate_count':negative_candidates,
++        'retained_count':len(ranked),
++        'fallback_used':fallback_used,
++        'providers_used':sorted(providers),
++        'queries_run':list(dict.fromkeys(run_queries)),
++    }
++    return ranked,allr,attempts,providers,run_queries,diagnostics
++
++
++def _v63_external_response(company, findings, dimension):
++    configured=bool(TAVILY_API_KEY or (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX))
++    themes=(green_query_themes(findings or []) if dimension=='green' else query_themes_from_findings(findings or []))
++    if not configured:
++        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':[],'query_themes':themes,'queries_run':[],'raw_result_count':0,'search_diagnostics':{'raw_result_count':0,'company_matched_count':0,'negative_candidate_count':0,'retained_count':0,'fallback_used':False,'providers_used':[],'queries_run':[]}}
++    ranked,allr,attempts,providers,run_queries,diagnostics=_v63_search_dimension(company,findings,dimension)
++    if ranked:
++        summary=(summarise_green_ext(ranked) if dimension=='green' else summarise_ext(ranked))
++    elif diagnostics['raw_result_count']:
++        summary=(f"External search returned {diagnostics['raw_result_count']} result(s), but none passed all entity-match, external-ownership, negative-polarity and {dimension}-relevance checks. Manual review may still be appropriate.")
++    else:
++        summary='No external public-source result was returned by the configured providers.'
++    if providers:
++        summary+=' Search provider(s) used: '+', '.join(sorted(providers))+'.'
++    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':list(dict.fromkeys(run_queries)),'raw_result_count':len(allr),'search_diagnostics':diagnostics}
++
++
++def external(company, findings=None):
++    return _v63_external_response(company,findings,'social')
++
++
++def external_green(company, findings=None):
++    return _v63_external_response(company,findings,'green')
++
++
+ def main():
+     print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()
+ if __name__=="__main__": main()
+\ No newline at end of file

@@ -1,0 +1,15 @@
+V63 OFFLINE TEST RESULTS
+
+PASS — Python syntax compilation
+PASS — Existing V62 two-page PDF and reliability-warning regression tests
+PASS — Official green-claim enforcement signal retained
+PASS — NGO working-hours and wage investigation retained as social signal
+PASS — China Labor Watch labour-rights investigation retained
+PASS — Company-owned SHEIN source excluded
+PASS — Positive/neutral sustainability announcement excluded
+PASS — Independent brand-watch hostname not automatically classified as company-owned
+PASS — Stakeholder-domain fallback search activates when initial recall is low
+PASS — Search diagnostics report raw, matched, negative-candidate and retained counts
+PASS — Frontend JavaScript syntax check
+
+Live provider results cannot be reproduced offline without the Render search API credentials. V63 therefore adds visible per-scan diagnostics so provider or filtering failures can be distinguished after deployment.

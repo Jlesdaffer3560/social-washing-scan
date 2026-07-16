@@ -1,0 +1,14 @@
+DURABLY V63 DEPLOYMENT
+
+1. Replace the current GitHub repository contents with this package.
+2. Keep the existing Render environment variables.
+3. Confirm that at least one external search provider is configured:
+   - TAVILY_API_KEY, or
+   - GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX.
+4. Push to GitHub and deploy on Render.
+5. Open /api/health and confirm version:
+   hostable_v63_external_signal_recall_diagnostics
+6. Run a new website scan. Previous scan results are not recalculated.
+7. In External public-source signals, review the new Search diagnostics line.
+
+Important: If both external search providers are unconfigured, code changes cannot produce external signals. The scan will state that external search was not performed.
