@@ -3443,6 +3443,27 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         return False
     if _looks_like_toc_or_index(excerpt):
         return False
+    # v70: a sentence explaining what a term MEANS (FAQ/glossary style) is not a claim that the
+    # company achieves it -- e.g. "What does 'carbon neutral' mean? It refers to balancing
+    # emitted carbon with removed or offset carbon." or a dictionary-style "Term: definition"
+    # entry ("Living wage: a wage level sufficient to..."). Detect the two common shapes: an
+    # explicit "what does/is X mean/refer to" question, or the trigger phrase sitting right
+    # before a colon that introduces a definition.
+    if re.search(r"what (does|is|are)\b.{0,40}\b(mean|refer to|means)\b", c):
+        return False
+    if re.search(r'^[^.!?]{0,60}:\s', excerpt.strip()) and not any(sig in c for sig in ASSERTION_SIGNALS):
+        # a short "Term:" style opener followed by explanatory text, without any first-person
+        # assertion signal, reads as a definition/glossary entry rather than a claim.
+        return False
+    # v70: an explicit denial or not-yet-achieved statement immediately around the trigger is the
+    # opposite of a claim -- flagging "we do not currently claim to be zero waste, and we are
+    # transparent about this gap" penalises exactly the kind of honest disclosure this tool
+    # should encourage. Look for a negation marker within a short window before the trigger.
+    trig_idx = c.find(trig) if trig else -1
+    if trig_idx >= 0:
+        window_before = c[max(0, trig_idx - 45):trig_idx]
+        if re.search(r"\b(do not|does not|don't|doesn't|not yet|cannot yet|can't yet|no longer|not currently|not able to|unable to)\b", window_before):
+            return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
     # document heading in the same "sentence" (very common in PDF-extracted text, which often
