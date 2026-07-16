@@ -1,38 +1,21 @@
-# Durably Sustainability Scan - v67
+# Durably Sustainability Scan - v68
 
-This package adds a transparent scan-coverage and source-register section. After every scan, the application lists the exact website pages and documents successfully reviewed, separates failed access attempts, supports a CSV export, and adds a compact assessment-coverage section to the two-page PDF.
+V68 is a stability, methodology, transparency and security release. It preserves the v67 scan-coverage register and adds stricter source-status reporting, safer company-domain resolution, consistent score bands, clearer privacy wording, signed PDF payloads, request/rate controls, threaded serving and automated pytest/CI checks.
 
-Expected health version: `hostable_v67_scan_coverage_source_register`.
+Expected health version: `hostable_v68_stability_methodology_privacy_security`.
 
-See `START_HERE_V67.md`, `V67_CHANGELOG.md` and `DEPLOY_V67.txt`.
-
----
-
-# Durably Sustainability Scan — V64
-
-V64 fixes cross-company entity contamination and restores official-site claim coverage. Read `V64_CHANGELOG.md`, `DEPLOY_V64.txt` and `TEST_RESULTS_V64.txt` first.
-
-# Durably Sustainability Scan — v62
-
-Current version: `hostable_v62_professional_claim_signals_readable_pdf`
+Read `START_HERE_V68.md`, `V68_CHANGELOG.md`, `DEPLOY_V68.txt` and `TEST_RESULTS_V68.txt` before deployment.
 
 ## Main capabilities
 
-- Multi-page public website scan with resilient crawling and transparent coverage diagnostics.
-- Separate website and internal-document assessments.
-- Green, social and combined claim-risk scores.
-- Structured claim signals under EmpCo environmental, social-characteristics, forced-labour/supply-chain and other-claim sections.
-- External public-source search with company-ownership exclusion, entity matching, negative-polarity validation and duplicate-event clustering.
-- Separate entity context, confidence and data-reliability reporting.
-- Native, readable and exactly two-page company PDF report.
-- Detailed methodology PDF at `/methodology.pdf`.
-
-## Render deployment
-
-Replace the current repository files with this package, commit and push. Render should redeploy automatically.
-
-Health check: `/api/health`
-
-Expected version: `hostable_v62_professional_claim_signals_readable_pdf`
+- Multi-page public website scan with resilient crawling and transparent source coverage.
+- Separate internal-document assessment.
+- Green, social and combined claim-risk scores with one consistent banding system.
+- Structured claim signals under EmpCo environmental, social-characteristics and forced-labour/supply-chain lenses.
+- External public-source search with direct-entity checks and retained/verified status.
+- Native, readable, exactly two-page company report.
+- Detailed three-page methodology PDF at `/methodology.pdf`.
+- Signed report payloads to prevent arbitrary user-created Durably reports.
+- In-memory scan rate limits and bounded concurrent scans.
 
 The scan is an indicative first-pass assessment. It is not legal advice and does not establish a breach of EmpCo, the Forced Labour Regulation or any other law.

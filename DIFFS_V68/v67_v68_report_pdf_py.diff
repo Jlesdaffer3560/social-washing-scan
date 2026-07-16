@@ -1,0 +1,30 @@
+--- /mnt/data/_v67_extract/Durably_v67_Scan_Coverage_Source_Register/report_pdf.py	2026-07-16 14:07:27.000000000 +0000
++++ /mnt/data/Durably_v68_Stability_Methodology_Privacy/report_pdf.py	2026-07-16 17:04:30.053348242 +0000
+@@ -376,6 +376,9 @@
+         label=f"{prefix} - {domain} - {path_label}"
+     else:
+         label=f"{prefix} - {name or url or 'reviewed source'}"
++    status=clean_text(item.get("analysis_status") or "")
++    if status:
++        label=f"{label} - {status}"
+     return bounded_text(label,max_chars)
+ 
+ def header_block(data, subtitle):
+@@ -588,7 +591,7 @@
+ def assessment_basis(data):
+     meta = metadata(data)
+     left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
+-    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("EmpCo for consumer-facing environmental and selected social claims; Forced Labour Regulation for forced-labour and supply-chain wording.", ST["source"])]
++    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("EmpCo for consumer-facing environmental and selected social claims; Forced Labour Regulation as the forced-labour and supply-chain assurance lens.", ST["source"])]
+     t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
+     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+     return t
+@@ -609,7 +612,7 @@
+           Paragraph(esc(count_line),ST["small_dark"]),
+           Paragraph("<br/>".join(f'• {esc(x)}' for x in source_lines) if source_lines else "Source list not available.",ST["source"])]
+     right=[Paragraph("<b>METHODOLOGY</b>",ST["card_label"]),
+-           Paragraph("Only successfully retrieved sources contribute to the claim analysis. Failed access attempts are reported separately in the online scan. EmpCo, Forced Labour Regulation and Durably claim-risk methodology apply. See the detailed methodology PDF on the scan homepage.",ST["source"])]
++           Paragraph("The online source register distinguishes fully analysed, partially analysed, limited-text and failed sources. Only text that entered the analysis can support findings. EmpCo, Forced Labour Regulation and Durably claim-risk methodology apply. See the detailed methodology PDF on the scan homepage.",ST["source"])]
+     t=Table([[left,right]],colWidths=[CONTENT_W*.58,CONTENT_W*.42])
+     t.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.6,GREY_300),("LINEBEFORE",(1,0),(1,0),.4,GREY_300),("BACKGROUND",(0,0),(-1,-1),BLUE_SOFT),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+     return t

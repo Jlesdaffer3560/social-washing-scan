@@ -35,7 +35,7 @@ STY = {
     'tag': _style('tag', fontSize=9, textColor=INK, leading=12.5),
     'tagsmall': _style('tagsmall', fontSize=8.5, textColor=MUTED, leading=11.5),
     'intro': _style('intro', fontSize=9, leading=12.5),
-    'h2': _style('h2', fontName='Helvetica-Bold', fontSize=12, textColor=NAVY, leading=15, spaceBefore=12, spaceAfter=5),
+    'h2': _style('h2', fontName='Helvetica-Bold', fontSize=11.7, textColor=NAVY, leading=14, spaceBefore=9, spaceAfter=4),
     'body': _style('body', fontSize=8.5, leading=12),
     'th': _style('th', fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, leading=10.5),
     'td_b': _style('td_b', fontName='Helvetica-Bold', fontSize=8, textColor=NAVY, leading=11),
@@ -58,7 +58,7 @@ def section_table(rows, col_widths, header_bg=NAVY):
         ('LINEBELOW', (0, 0), (-1, 0), 0.6, header_bg),
         ('LINEBELOW', (0, 1), (-1, -1), 0.4, LINE),
         ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
-        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
     ]))
     return t
@@ -71,7 +71,7 @@ def build_methodology_pdf():
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v68 &middot; 16 July 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '
@@ -81,8 +81,8 @@ def build_methodology_pdf():
 
     flow.append(Paragraph(
         'This is a claims-risk screening tool, not a legal opinion, certification or assurance. It identifies '
-        'sustainability wording that may be too broad, insufficiently evidenced, consumer-facing under EmpCo, '
-        'or exposed to forced-labour regulation risk, or contradicted by relevant external public-source context.',
+        'sustainability wording that may be too broad or insufficiently evidenced, may fall within consumer-facing '
+        'EmpCo rules, may create forced-labour-related assurance risk, or may be contradicted by relevant external public-source context.',
         STY['intro']))
 
     flow.append(Paragraph('1. Purpose and regulatory lenses', STY['h2']))
@@ -103,7 +103,7 @@ def build_methodology_pdf():
                    'sustainability labels, broad absolute wording, future environmental-performance claims, comparative '
                    'claims, and legal compliance presented as a sustainability benefit.', STY['td'])),
         (Paragraph('<b>EU Forced Labour Regulation</b> / Regulation (EU) 2024/3015', STY['td_b']),
-         Paragraph('Main social-claim lens. A product-market-access and customs-enforcement regime, not a claims law: '
+         Paragraph('Main forced-labour and supply-chain assurance lens. A product-market-access and customs-enforcement regime, not a claims law: '
                    'Art. 1(3) confirms it creates no new due-diligence obligation of its own. Flags wording that may '
                    'imply products, suppliers or value chains are free from forced labour, or that traceability, due '
                    'diligence or import/export controls provide assurance beyond what is evidenced. Core prohibition '
@@ -147,7 +147,7 @@ def build_methodology_pdf():
          Paragraph('Require robust traceability, risk assessment, mitigation, remediation and response procedures under Regulation (EU) 2024/3015.', STY['td'])),
         (Paragraph('Aspirational / future social-performance wording', STY['td_b']),
          Paragraph('working towards a foundation for living wages, wish to build a world where human rights are respected, our ambition is...', STY['td']),
-         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Research (KU Leuven/HIVA, 2026) found this the dominant driver of social-washing risk in fashion-sector communication.', STY['td'])),
+         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Research on fast-fashion sustainability communication (KU Leuven/HIVA, 2026) identified aspirational wording as a recurring social-washing risk pattern. The scan does not treat that research as proof that it is always the dominant driver.', STY['td'])),
     ]
     flow.append(section_table(signal_rows, [W * 0.24, W * 0.36, W * 0.40]))
 
@@ -204,16 +204,39 @@ def build_methodology_pdf():
     flow.append(Paragraph('5. External stakeholder signals', STY['h2']))
     flow.append(Spacer(1, 3))
     ext_rows = [
-        ('Retained', 'Excluded'),
-        (Paragraph('Media criticism, regulator action, court cases, investigations, NGO/union concerns, complaints, '
-                   'allegations, fines, sanctions, watchdog findings, negative stakeholder campaigns.', STY['td']),
-         Paragraph('Company websites, sustainability reports, annual reports, ESG policies, supplier policies, codes '
-                   'of conduct, corporate press releases, awards, positive partnerships, brand campaigns and neutral '
-                   'business news.', STY['td'])),
+        ('Status', 'Meaning and score treatment'),
+        (Paragraph('Candidate', STY['td_b']), Paragraph('Automatically discovered result that has not passed all entity, ownership, negative-polarity and relevance checks. Not displayed as a retained signal and no score impact.', STY['td'])),
+        (Paragraph('Retained', STY['td_b']), Paragraph('Passed automated direct-entity, external-source, negative-content and green/social relevance checks. May affect entity context, but requires manual verification before external use.', STY['td'])),
+        (Paragraph('Verified', STY['td_b']), Paragraph('Manually checked for source status, entity link, date and claim relevance. This is the strongest status available in the scan output.', STY['td'])),
+        (Paragraph('Excluded', STY['td_b']), Paragraph('Company-owned evidence, positive or neutral news, competitor-primary articles, duplicates or results with insufficient entity/relevance evidence. No score impact.', STY['td'])),
     ]
-    flow.append(section_table(ext_rows, [W * 0.5, W * 0.5]))
+    flow.append(section_table(ext_rows, [W * 0.22, W * 0.78]))
 
-    flow.append(Paragraph('6. Limits of the scan', STY['h2']))
+    flow.append(Paragraph('6. Coverage, confidence and source status', STY['h2']))
+    coverage_rows=[
+        ('Source status','Meaning'),
+        (Paragraph('Retrieved and analysed',STY['td_b']),Paragraph('Usable text from the source entered the claim analysis.',STY['td'])),
+        (Paragraph('Retrieved and partially analysed',STY['td_b']),Paragraph('Only part of the extracted text entered the bounded analysis text.',STY['td'])),
+        (Paragraph('Limited text extracted',STY['td_b']),Paragraph('The page or document returned too little usable text for a complete assessment, often because of JavaScript rendering or extraction limits.',STY['td'])),
+        (Paragraph('Retrieved but not analysed',STY['td_b']),Paragraph('The source was fetched but did not enter the final analysis because the crawl or text budget was reached.',STY['td'])),
+        (Paragraph('Failed / skipped',STY['td_b']),Paragraph('The source could not be accessed, was a duplicate, was low relevance or was outside the crawl budget. It does not support findings.',STY['td'])),
+    ]
+    flow.append(section_table(coverage_rows,[W*.31,W*.69]))
+    flow.append(Spacer(1,5))
+    flow.append(Paragraph('Confidence reflects source coverage, extraction quality, access failures, fallback use, claim-level signals and whether external search was performed. It is reported separately from claim risk. A low detected risk with limited coverage must not be read as proof that risky claims are absent.',STY['body']))
+
+    flow.append(Paragraph('7. Illustrative score example', STY['h2']))
+    example_rows=[
+        ('Illustrative input','Risk contribution'),
+        (Paragraph('Generic consumer-facing environmental claim',STY['td_b']),Paragraph('Raises claim-wording severity; exact contribution depends on the retained pattern and channel.',STY['td'])),
+        (Paragraph('Missing scope, methodology and verification',STY['td_b']),Paragraph('Raises evidence-gap risk.',STY['td'])),
+        (Paragraph('Retained regulator investigation in the same claim area',STY['td_b']),Paragraph('Raises external-context risk; duplicate articles about the same incident should be treated as one incident.',STY['td'])),
+        (Paragraph('High-sensitivity sector and consumer channel',STY['td_b']),Paragraph('Applies a bounded sector/channel modifier.',STY['td'])),
+        (Paragraph('Result',STY['td_b']),Paragraph('The weighted components are capped at 100 and mapped to the published Low / Medium / High / Very high bands. The example is illustrative, not a fixed point schedule for every claim.',STY['td'])),
+    ]
+    flow.append(section_table(example_rows,[W*.38,W*.62]))
+
+    flow.append(Paragraph('8. Limits of the scan', STY['h2']))
     flow.append(Paragraph(
         'The scan is a structured screening and prioritisation tool. It does not determine whether greenwashing or '
         'social washing legally occurred. Final assessment requires human review of the complete communication, '

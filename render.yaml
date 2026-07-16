@@ -5,6 +5,17 @@ services:
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python app.py"
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
+      - key: MAX_REQUEST_BYTES
+        value: "12000000"
+      - key: RATE_LIMIT_SCANS
+        value: "5"
+      - key: RATE_LIMIT_REPORTS
+        value: "20"
+      - key: RATE_LIMIT_WINDOW_SECONDS
+        value: "3600"
+      - key: MAX_CONCURRENT_SCANS
+        value: "2"

@@ -1,0 +1,7 @@
+--- /mnt/data/_v67_extract/Durably_v67_Scan_Coverage_Source_Register/requirements.txt	2026-07-14 08:07:14.000000000 +0000
++++ /mnt/data/Durably_v68_Stability_Methodology_Privacy/requirements.txt	2026-07-16 17:09:08.161219479 +0000
+@@ -1,2 +1,2 @@
+-reportlab
+-pypdf
++reportlab==4.4.9
++pypdf==5.9.0

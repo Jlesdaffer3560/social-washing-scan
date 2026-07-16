@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, urljoin, quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, hmac, hashlib, secrets, threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _get_build_company_report_pdf():
@@ -47,7 +47,19 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v67_scan_coverage_source_register"
+APP_VERSION="hostable_v68_stability_methodology_privacy_security"
+APP_RELEASE_LABEL="v68"
+APP_RELEASE_DATE="2026-07-16"
+MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
+RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
+RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
+RATE_LIMIT_REPORTS=max(1, int(os.environ.get("RATE_LIMIT_REPORTS", "20")))
+MAX_CONCURRENT_SCANS=max(1, min(4, int(os.environ.get("MAX_CONCURRENT_SCANS", "2"))))
+ALLOWED_ORIGINS={x.strip().rstrip('/') for x in os.environ.get("DURABLY_ALLOWED_ORIGINS", "").split(',') if x.strip()}
+_REPORT_SIGNING_KEY=(os.environ.get("DURABLY_REPORT_SIGNING_KEY", "").encode("utf-8") or secrets.token_bytes(32))
+_RATE_LOCK=threading.Lock()
+_RATE_EVENTS={}
+_SCAN_SEMAPHORE=threading.BoundedSemaphore(MAX_CONCURRENT_SCANS)
 # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
 # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
 # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
@@ -1604,7 +1616,7 @@ def reader_friendly_summary(company, sector, findings, external_research, score,
 
 EMPCO_LENS=[
  {'name':'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive)','use':'Amends the Unfair Commercial Practices Directive (2005/29/EC) and the Consumer Rights Directive (2011/83/EU). Member States must transpose by 27 March 2026; the rules apply from 27 September 2026. Covers both green AND social claims: Article 6(1)(b), as amended, brings "environmental or social characteristics" of a product or trader within the general misleading-claims test (Recital 3 names wages, safety, human rights, equal treatment, gender equality, inclusion and diversity as social characteristics in scope) -- this lens is therefore not limited to green claims.'},
- {'name':'EU Forced Labour Regulation / Regulation (EU) 2024/3015 (core provisions apply from 14 December 2027)','use':'Main social-claim lens for forced-labour/traceability wording. Flags wording that may imply products, suppliers or value chains are free from forced labour, or that traceability, due diligence or import/export controls provide assurance beyond what is evidenced. It is a market-prohibition and customs-enforcement regime, not a claims law, and Art. 1(3) confirms it creates no new due-diligence obligation of its own -- readiness matters ahead of 2027, not an existing statutory breach today.'},
+ {'name':'EU Forced Labour Regulation / Regulation (EU) 2024/3015 (core provisions apply from 14 December 2027)','use':'Main forced-labour and supply-chain assurance lens for forced-labour/traceability wording. Flags wording that may imply products, suppliers or value chains are free from forced labour, or that traceability, due diligence or import/export controls provide assurance beyond what is evidenced. It is a market-prohibition and customs-enforcement regime, not a claims law, and Art. 1(3) confirms it creates no new due-diligence obligation of its own -- readiness matters ahead of 2027, not an existing statutory breach today.'},
  {'name':'UCPD environmental-claim definition','use':'Checks whether text, images, symbols, labels, brand names, trade names or presentation imply positive, zero, reduced, comparative or improved environmental impact of a product, brand or trader.'},
  {'name':'Blacklisted-practices lens (Annex I)','use':'Flags high-sensitivity indicators that Annex I treats as unfair in all circumstances: generic environmental claims without recognised excellent environmental performance (4a), claiming an entire product/business benefit when only one aspect or activity is meant (4b), product-level claims of neutral/reduced/positive climate impact based on offsetting (4c), self-declared sustainability labels not based on a certification scheme or public authority (2a), and presenting a legal requirement as a distinctive feature (10a).'},
  {'name':'Same-medium specification check','use':'Checks whether broad wording is specified clearly and prominently on the same page, advertisement, packaging text or product interface.'},
@@ -1777,29 +1789,33 @@ def build_documents_checked(pages, audience, full_text=None):
     return out
 
 
-def build_scan_inventory(pages, documents_checked=None, crawl_log=None):
-    """Build a transparent register of everything the scan actually reviewed.
-
-    The register separates successful website pages from PDF/documents, records the
-    retrieval method and discovery route, and keeps failed fetch attempts separate.
-    This is deliberately descriptive: it does not imply that every discovered URL
-    was successfully analysed.
-    """
+def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_text=None):
+    """Build a transparent source register with retrieval and analysis status."""
     pages=list(pages or [])
     documents_checked=list(documents_checked or [])
     crawl_log=list(crawl_log or [])
 
     def canon(value):
-        try:
-            return _canonical_url(str(value or ''))
-        except Exception:
-            return str(value or '').strip()
+        try: return _canonical_url(str(value or ''))
+        except Exception: return str(value or '').strip()
 
+    segments=extract_page_segments(full_text or '', pages) if full_text is not None else []
+    analysed_by_url={canon(seg.get('url')):len((seg.get('text') or '').strip()) for seg in segments if seg.get('url')}
     docs_by_url={canon(d.get('url')):d for d in documents_checked if isinstance(d,dict) and d.get('url')}
     success_by_url={}
     for entry in crawl_log:
         if isinstance(entry,dict) and entry.get('ok') and entry.get('url'):
             success_by_url[canon(entry.get('url'))]=entry
+
+    def classify_status(extracted, analysed, method):
+        extracted=max(0,int(extracted or 0)); analysed=max(0,int(analysed or 0))
+        if extracted and analysed==0:
+            return 'Retrieved but not analysed due to budget','The source was retrieved, but its text did not enter the final analysis text.'
+        if str(method or '').lower()=='direct_thin' or extracted<500 or analysed<350:
+            return 'Limited text extracted','Only a limited amount of usable text was available; findings may be incomplete.'
+        if extracted>1200 and analysed < max(500,int(extracted*0.55)):
+            return 'Retrieved and partially analysed','Only part of the extracted text entered the bounded analysis text.'
+        return 'Retrieved and analysed','Usable source text entered the claim analysis.'
 
     reviewed=[]; seen=set()
     for value in pages:
@@ -1812,43 +1828,36 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None):
         log=success_by_url.get(key,{})
         kind=(log.get('content_kind') or '').lower()
         low=url.lower().split('?',1)[0]
-        is_document=(kind=='pdf' or low.endswith('.pdf') or 'uploaded document' in str(doc.get('document_type','')).lower())
+        doc_type_low=str(doc.get('document_type','')).lower()
+        is_document=(kind=='pdf' or low.endswith('.pdf') or ('uploaded' in doc_type_low and 'document' in doc_type_low))
         parsed=urlparse(url) if url.startswith(('http://','https://')) else None
         domain=((parsed.hostname or '').replace('www.','') if parsed else '')
+        extracted=int(log.get('chars') or 0)
+        analysed=int(analysed_by_url.get(key, len(full_text or '') if len(pages)==1 and full_text else 0))
+        status,status_note=classify_status(extracted or analysed,analysed,log.get('method'))
         reviewed.append({
-            'name': doc.get('name') or page_name_from_url(url),
-            'url': url,
-            'source_type': 'Document / PDF' if is_document else 'Website page',
-            'domain': domain,
-            'document_type': doc.get('document_type') or ('PDF document' if is_document else 'Website page'),
-            'audience_assessment': doc.get('audience_assessment') or 'Not assessed',
-            'empco_relevance': doc.get('empco_relevance') or 'Not assessed',
-            'fetch_method': log.get('method') or ('uploaded' if not url.startswith(('http://','https://')) else 'direct'),
-            'discovery_source': log.get('source') or ('uploaded' if not url.startswith(('http://','https://')) else 'reviewed'),
-            'characters_extracted': int(log.get('chars') or 0),
-            'used_fallback': bool(log.get('method')=='reader_fallback'),
-        })
+            'name':doc.get('name') or page_name_from_url(url),'url':url,
+            'source_type':'Document / PDF' if is_document else 'Website page','domain':domain,
+            'document_type':doc.get('document_type') or ('PDF document' if is_document else 'Website page'),
+            'audience_assessment':doc.get('audience_assessment') or 'Not assessed','empco_relevance':doc.get('empco_relevance') or 'Not assessed',
+            'fetch_method':log.get('method') or ('uploaded' if not url.startswith(('http://','https://')) else 'direct'),
+            'discovery_source':log.get('source') or ('uploaded' if not url.startswith(('http://','https://')) else 'reviewed'),
+            'characters_extracted':extracted or analysed,'characters_analysed':analysed,
+            'analysis_status':status,'analysis_note':status_note,'claim_signal_count':0,'claim_dimensions':[],
+            'used_fallback':bool(log.get('method')=='reader_fallback')})
 
-    # Include uploaded or explicitly checked documents that are not represented in pages.
     for doc in documents_checked:
         if not isinstance(doc,dict): continue
-        url=str(doc.get('url') or '').strip()
-        key=canon(url)
+        url=str(doc.get('url') or '').strip(); key=canon(url)
         if not url or key in seen: continue
         seen.add(key)
-        reviewed.append({
-            'name': doc.get('name') or page_name_from_url(url),
-            'url': url,
-            'source_type': 'Document / PDF',
-            'domain': '',
-            'document_type': doc.get('document_type') or 'Document',
-            'audience_assessment': doc.get('audience_assessment') or 'Not assessed',
-            'empco_relevance': doc.get('empco_relevance') or 'Not assessed',
-            'fetch_method': 'uploaded',
-            'discovery_source': 'uploaded',
-            'characters_extracted': 0,
-            'used_fallback': False,
-        })
+        analysed=len(full_text or '') if len(pages)<=1 else 0
+        status,status_note=classify_status(analysed,analysed,'uploaded')
+        reviewed.append({'name':doc.get('name') or page_name_from_url(url),'url':url,'source_type':'Document / PDF','domain':'',
+                         'document_type':doc.get('document_type') or 'Document','audience_assessment':doc.get('audience_assessment') or 'Not assessed',
+                         'empco_relevance':doc.get('empco_relevance') or 'Not assessed','fetch_method':'uploaded','discovery_source':'uploaded',
+                         'characters_extracted':analysed,'characters_analysed':analysed,'analysis_status':status,'analysis_note':status_note,
+                         'claim_signal_count':0,'claim_dimensions':[],'used_fallback':False})
 
     failed=[]; failed_seen=set()
     for entry in crawl_log:
@@ -1856,33 +1865,44 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None):
         key=canon(entry.get('url'))
         if key in failed_seen: continue
         failed_seen.add(key)
-        failed.append({
-            'url':entry.get('url'),
-            'name':page_name_from_url(entry.get('url')),
-            'http_status':entry.get('http_status'),
-            'error':entry.get('error') or 'The page could not be accessed.',
-            'discovery_source':entry.get('source') or 'discovered',
-        })
+        failed.append({'url':entry.get('url'),'name':page_name_from_url(entry.get('url')),'http_status':entry.get('http_status'),
+                       'error':entry.get('error') or 'The page could not be accessed.','discovery_source':entry.get('source') or 'discovered'})
 
     page_items=[x for x in reviewed if x.get('source_type')=='Website page']
     document_items=[x for x in reviewed if x.get('source_type')!='Website page']
     domains=sorted({x.get('domain') for x in reviewed if x.get('domain')})
-    return {
-        'summary':{
-            'reviewed_total':len(reviewed),
-            'website_pages_reviewed':len(page_items),
-            'documents_reviewed':len(document_items),
-            'domains_reviewed':len(domains),
-            'fetch_attempts':len(crawl_log),
-            'fetch_failures':len(failed),
-            'fallback_pages':len([x for x in reviewed if x.get('used_fallback')]),
-        },
-        'website_pages':page_items,
-        'documents':document_items,
-        'failed_fetches':failed,
-        'domains':domains,
-        'note':'This register lists sources successfully reviewed by the scan. Failed attempts are shown separately and were not analysed as evidence.',
-    }
+    status_counts={}
+    for item in reviewed: status_counts[item.get('analysis_status','Unknown')]=status_counts.get(item.get('analysis_status','Unknown'),0)+1
+    return {'summary':{'reviewed_total':len(reviewed),'website_pages_reviewed':len(page_items),'documents_reviewed':len(document_items),
+                       'domains_reviewed':len(domains),'fetch_attempts':len(crawl_log),'fetch_failures':len(failed),
+                       'fallback_pages':len([x for x in reviewed if x.get('used_fallback')]),
+                       'fully_analysed':status_counts.get('Retrieved and analysed',0),
+                       'partially_analysed':status_counts.get('Retrieved and partially analysed',0),
+                       'limited_text':status_counts.get('Limited text extracted',0),
+                       'retrieved_not_analysed':status_counts.get('Retrieved but not analysed due to budget',0)},
+            'website_pages':page_items,'documents':document_items,'failed_fetches':failed,'domains':domains,
+            'note':'The register distinguishes retrieval from actual analysis. Only text that entered the claim analysis can support findings; limited, partial and failed sources are labelled separately.'}
+
+
+def attach_claim_counts_to_inventory(inventory, claims):
+    if not isinstance(inventory,dict): return inventory
+    items=list(inventory.get('website_pages') or [])+list(inventory.get('documents') or [])
+    for item in items:
+        item['claim_signal_count']=0; item['claim_dimensions']=[]
+    for claim in claims or []:
+        source=str(claim.get('source_url') or claim.get('source') or claim.get('source_label') or '').strip()
+        if not source: continue
+        try: skey=_canonical_url(source)
+        except Exception: skey=source
+        for item in items:
+            try: ikey=_canonical_url(str(item.get('url') or ''))
+            except Exception: ikey=str(item.get('url') or '')
+            if skey==ikey or source==item.get('name'):
+                item['claim_signal_count']=int(item.get('claim_signal_count') or 0)+1
+                dim=str(claim.get('dimension') or ('green' if 'environment' in str(claim.get('claim_type','')).lower() else 'social')).title()
+                if dim and dim not in item['claim_dimensions']: item['claim_dimensions'].append(dim)
+                break
+    return inventory
 
 def build_channel_analysis(documents):
     docs=documents or []
@@ -2565,7 +2585,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     if audience.get('group')=='mixed':
         audience={'audience':'Investor or internal document','group':'internal','empco_relevance':'Indirect / evidence source','note':'Uploaded non-public document. Treated primarily as internal evidence, governance and consistency context unless claim wording is clearly consumer-facing.'}
     documents_checked=[{'name':filename or 'uploaded document','url':source,'document_type':'Uploaded internal document','audience_assessment':audience.get('audience','Internal document'),'audience_group':audience.get('group','internal'),'empco_relevance':audience.get('empco_relevance','Indirect'),'interpretation':'User-uploaded internal company document scanned for claim wording and substantiation gaps.'}]
-    scan_inventory=build_scan_inventory([source],documents_checked,[])
+    scan_inventory=build_scan_inventory([source],documents_checked,[],full_text=text)
     page_segments=[{'url':source,'text':text}]
     social_fs=detect_claims(text)
     green_fs=detect_green_claims(text)
@@ -2587,6 +2607,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     for c in all_claims:
         c.setdefault('source_url', source); c.setdefault('source_label', filename or 'Uploaded document'); c.setdefault('audience_lens', audience.get('audience','Internal document')); c.setdefault('audience_group', audience.get('group','internal'))
+    attach_claim_counts_to_inventory(scan_inventory, all_claims)
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
     methodology='Sustainability Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
@@ -2625,30 +2646,16 @@ def analyse_url_v27(raw):
         try:
             txt,pages,related_notes,crawl_log=crawl_with_related_sites(original_url,overall_deadline=scan_deadline,company_name_hint=company_name_hint)
         except TypeError as crawl_type_error:
-            if 'company_name_hint' not in str(crawl_type_error):
-                raise
+            if 'company_name_hint' not in str(crawl_type_error): raise
             txt,pages,related_notes,crawl_log=crawl_with_related_sites(original_url,overall_deadline=scan_deadline)
         url=original_url
     except Exception as first_error:
-        fallback_url=replace_tld_with_be(original_url)
-        if fallback_url:
-            try:
-                try:
-                    txt,pages,related_notes,crawl_log=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline,company_name_hint=company_name_hint)
-                except TypeError as crawl_type_error:
-                    if 'company_name_hint' not in str(crawl_type_error):
-                        raise
-                    txt,pages,related_notes,crawl_log=crawl_with_related_sites(fallback_url,overall_deadline=scan_deadline)
-                url=fallback_url; fallback_note=(fallback_note+' ' if fallback_note else '')+f'The original website was not accessible. The scan was automatically performed on {fallback_url}.'
-            except Exception as second_error:
-                raise ValueError(f'Could not access {original_url} ({_describe_fetch_error(first_error)}) and the {fallback_url} fallback also failed ({_describe_fetch_error(second_error)}).')
-        else:
-            raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)}')
+        raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)} No country-domain substitution was attempted; verify the exact official URL and try again.')
     comp=infer_company(url,txt,company_name_hint)
     page_segments=extract_page_segments(txt,pages)
     audience=classify_document_audience(url,txt,pages)
     documents_checked=build_documents_checked(pages,audience,txt)
-    scan_inventory=build_scan_inventory(pages,documents_checked,crawl_log)
+    scan_inventory=build_scan_inventory(pages,documents_checked,crawl_log,full_text=txt)
     discovered_docs=[]
     try:
         discovered_docs=[]  # v53: skip secondary investor-document discovery during live website scans to avoid Render gateway timeouts
@@ -2714,6 +2721,7 @@ def analyse_url_v27(raw):
             c['source_label']=page_name_from_url(url) if url else 'Reviewed website / document'
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
+    attach_claim_counts_to_inventory(scan_inventory, all_claims)
     methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log)
     reliability_warning=confidence_result.get('reliability_warning')
@@ -3033,7 +3041,7 @@ CLAIMS=[
  (['human rights compliant','respect human rights across our value chain','protect human rights across our value chain','respect human rights in our supply chain','living wage across our supply chain','decent work guaranteed','guaranteed labour rights','guaranteed labor rights','fair wages across our supply chain','no discrimination','zero discrimination','equal pay guaranteed'],'Human-rights or labour-rights claim','High','The claim refers to sensitive rights topics and may overstate outcomes or control without due diligence, grievance channels, tracking and remedy.','State the due-diligence process, salient risks, coverage, grievance channels, tracking, limits and remediation process.'),
  (['safe workplace guaranteed','zero accidents','zero harm','injury free','guaranteed safe workplace','no workplace injuries'],'Health, safety or worker-welfare claim','High','Absolute safety or welfare wording creates a high evidence burden and can overstate outcomes, particularly where contractors or suppliers are involved.','Use scoped wording linked to incident data, controls, coverage, training and corrective actions.'),
  (['all employees included','fully inclusive workplace','100% inclusive','guaranteed equal opportunities','no pay gap','zero pay gap'],'Diversity, equality and inclusion claim','Medium','Absolute inclusion, equality or pay-gap wording may overstate outcomes unless backed by data, scope, baseline and progress evidence.','Add workforce data, baseline, scope, limitations, methodology and progress indicators.'),
- (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Research on fashion-sector sustainability communication (KU Leuven/HIVA, 2026) found this pattern -- vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result -- to be the dominant driver of social-washing risk, distinct from absolute assurance wording.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
+ (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Research on fashion-sector sustainability communication (KU Leuven/HIVA, 2026) identified this pattern as a recurring social-washing risk: vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. This scan does not treat that research as proof that the pattern is always the dominant driver.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
 ]
 
 
@@ -3093,57 +3101,130 @@ def _near_sentence(text, trigger, max_len=620):
         out=' '.join(text[max(0,i-80):min(len(text),i+len(trig)+160)].split()).strip()
     return out[:max_len]+('...' if len(out)>max_len else '')
 
+def _client_ip(handler):
+    forwarded=(handler.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+    return forwarded or (handler.client_address[0] if handler.client_address else 'unknown')
+
+
+def _rate_limit_allowed(client,bucket,maximum):
+    now=time.time(); key=(client,bucket)
+    with _RATE_LOCK:
+        recent=[t for t in _RATE_EVENTS.get(key,[]) if now-t<RATE_LIMIT_WINDOW_SECONDS]
+        if len(recent)>=maximum:
+            _RATE_EVENTS[key]=recent; return False
+        recent.append(now); _RATE_EVENTS[key]=recent
+    return True
+
+
+def _unsigned_report_payload(payload):
+    return {k:v for k,v in (payload or {}).items() if k not in {'_report_signature','_report_signature_version'}}
+
+
+def _report_signature(payload):
+    raw=json.dumps(_unsigned_report_payload(payload),ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')
+    return hmac.new(_REPORT_SIGNING_KEY,raw,hashlib.sha256).hexdigest()
+
+
+def attach_report_signature(payload):
+    if isinstance(payload,dict):
+        payload['_report_signature_version']='hmac-sha256-v1'
+        payload['_report_signature']=_report_signature(payload)
+    return payload
+
+
+def verify_report_signature(payload):
+    supplied=str((payload or {}).get('_report_signature') or '')
+    return bool(supplied) and hmac.compare_digest(supplied,_report_signature(payload))
+
+
 class Handler(BaseHTTPRequestHandler):
+    server_version='DurablyScan/68'
+
+    def _allowed_origin(self):
+        origin=(self.headers.get('Origin') or '').rstrip('/')
+        if not origin: return ''
+        try: same_host=(urlparse(origin).netloc.lower()==(self.headers.get('Host') or '').lower())
+        except Exception: same_host=False
+        return origin if same_host or origin in ALLOWED_ORIGINS else ''
+
     def _send(self,body,ctype="text/html; charset=utf-8",status=200,extra_headers=None):
         if isinstance(body,str): body=body.encode()
-        self.send_response(status); self.send_header("Content-Type",ctype); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS"); self.send_header("Access-Control-Allow-Headers","Content-Type")
+        self.send_response(status); self.send_header('Content-Type',ctype)
+        self.send_header('X-Content-Type-Options','nosniff'); self.send_header('Referrer-Policy','same-origin')
+        allowed=self._allowed_origin()
+        if allowed:
+            self.send_header('Access-Control-Allow-Origin',allowed); self.send_header('Vary','Origin')
+            self.send_header('Access-Control-Allow-Methods','GET, POST, OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type')
         for k,v in (extra_headers or {}).items(): self.send_header(k,v)
-        self.end_headers(); self.wfile.write(body)
-    def _json(self,d,status=200): self._send(json.dumps(d,ensure_ascii=False,indent=2),"application/json; charset=utf-8",status)
+        self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    def _json(self,d,status=200): self._send(json.dumps(d,ensure_ascii=False,indent=2),'application/json; charset=utf-8',status)
+
+    def _read_json(self):
+        try: n=int(self.headers.get('Content-Length',0) or 0)
+        except Exception: n=0
+        if n<=0: return {}
+        if n>MAX_REQUEST_BYTES: raise OverflowError(f'Request exceeds the {MAX_REQUEST_BYTES//1_000_000} MB application limit.')
+        try: return json.loads(self.rfile.read(n).decode('utf-8') or '{}')
+        except Exception as exc: raise ValueError('Request body is not valid JSON.') from exc
+
     def _respond_pdf(self,scan_result):
         build_fn=_get_build_company_report_pdf()
-        if build_fn is None:
-            return self._json({"error":"PDF report generation is unavailable: "+(_report_pdf_import_error or "unknown import error")},500)
-        try:
-            pdf_bytes=build_fn(scan_result)
-        except Exception as e:
-            return self._json({"error":"Could not generate PDF report: "+str(e)},500)
-        stamp=re.sub(r"[^0-9-]","",(scan_result.get("analysis_date") or datetime.date.today().isoformat())[:10])
-        fname=f"durably_company_report_{stamp or datetime.date.today().isoformat()}.pdf"
-        return self._send(pdf_bytes,"application/pdf",200,{"Content-Disposition":f'attachment; filename="{fname}"'})
-    def do_HEAD(self): self.send_response(200); self.end_headers()
-    def do_OPTIONS(self): self._json({"ok":True})
+        if build_fn is None: return self._json({'error':'PDF report generation is unavailable: '+(_report_pdf_import_error or 'unknown import error')},500)
+        try: pdf_bytes=build_fn(_unsigned_report_payload(scan_result))
+        except Exception as e: return self._json({'error':'Could not generate PDF report: '+str(e)},500)
+        stamp=re.sub(r'[^0-9-]','',(scan_result.get('analysis_date') or datetime.date.today().isoformat())[:10])
+        fname=f'durably_company_report_{stamp or datetime.date.today().isoformat()}.pdf'
+        return self._send(pdf_bytes,'application/pdf',200,{'Content-Disposition':f'attachment; filename="{fname}"'})
+
+    def do_HEAD(self): self._send(b'',status=200)
+    def do_OPTIONS(self):
+        if self.headers.get('Origin') and not self._allowed_origin(): return self._json({'error':'Origin is not allowed.'},403)
+        return self._json({'ok':True})
+
     def do_GET(self):
-        if self.path=="/" or self.path.startswith("/?"): self._send((APP_DIR/"frontend.html").read_text(encoding="utf-8"))
-        elif self.path=="/methodology.pdf":
-            pdf=APP_DIR/"methodology.pdf"
-            if pdf.exists(): self._send(pdf.read_bytes(),"application/pdf")
-            else: self._json({"error":"Methodology PDF not found"},404)
-        elif self.path=="/api/health": self._json({"status":"ok","version":APP_VERSION,"tavily_configured":bool(TAVILY_API_KEY),"google_search_configured":bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),"google_api_key_configured":bool(GOOGLE_SEARCH_API_KEY),"google_cx_configured":bool(GOOGLE_SEARCH_CX),"report_pdf_available":(_report_pdf_fn is not None or _report_pdf_import_error is None)})
-        else: self._json({"error":"Not found"},404)
+        if self.path=='/' or self.path.startswith('/?'):
+            html=(APP_DIR/'frontend.html').read_text(encoding='utf-8')
+            html=html.replace('{{APP_VERSION}}',APP_VERSION).replace('{{APP_RELEASE_LABEL}}',APP_RELEASE_LABEL).replace('{{APP_RELEASE_DATE}}',APP_RELEASE_DATE)
+            return self._send(html)
+        if self.path=='/methodology.pdf':
+            pdf=APP_DIR/'methodology.pdf'; return self._send(pdf.read_bytes(),'application/pdf') if pdf.exists() else self._json({'error':'Methodology PDF not found'},404)
+        if self.path=='/api/health':
+            return self._json({'status':'ok','version':APP_VERSION,'release':APP_RELEASE_LABEL,'release_date':APP_RELEASE_DATE,
+                               'tavily_configured':bool(TAVILY_API_KEY),'google_search_configured':bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),
+                               'google_api_key_configured':bool(GOOGLE_SEARCH_API_KEY),'google_cx_configured':bool(GOOGLE_SEARCH_CX),
+                               'report_pdf_available':(_report_pdf_fn is not None or _report_pdf_import_error is None)})
+        return self._json({'error':'Not found'},404)
+
     def do_POST(self):
+        client=_client_ip(self)
         try:
-            n=int(self.headers.get("Content-Length",0)); data=json.loads(self.rfile.read(n).decode("utf-8") or "{}")
-            if self.path=="/api/scan/url":
-                u=data.get("url","")
-                if not u: return self._json({"error":"No URL provided"},400)
-                result=analyse_url(u)
-                if data.get("format")=="pdf": return self._respond_pdf(result)
-                return self._json(result)
-            if self.path=="/api/scan/document":
-                filename=data.get("filename","uploaded_document")
-                content=data.get("content_base64","")
-                if not content: return self._json({"error":"No document content provided"},400)
-                txt=decode_uploaded_document(filename, content, data.get("mime_type",""))
-                result=analyse_uploaded_document(filename, txt, data.get("company_name",""))
-                if data.get("format")=="pdf": return self._respond_pdf(result)
-                return self._json(result)
-            if self.path=="/api/report/pdf":
-                if not data:
-                    return self._json({"error":"No scan result provided"},400)
+            data=self._read_json()
+            if self.path in {'/api/scan/url','/api/scan/document'}:
+                if not _rate_limit_allowed(client,'scan',RATE_LIMIT_SCANS): return self._json({'error':'Scan rate limit reached. Try again later.'},429)
+                if not _SCAN_SEMAPHORE.acquire(blocking=False): return self._json({'error':'The scan service is busy. Try again in a few moments.'},429)
+                try:
+                    if self.path=='/api/scan/url':
+                        u=data.get('url','')
+                        if not u: return self._json({'error':'No URL provided'},400)
+                        result=analyse_url(u)
+                    else:
+                        filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')
+                        if not content: return self._json({'error':'No document content provided'},400)
+                        txt=decode_uploaded_document(filename,content,data.get('mime_type',''))
+                        result=analyse_uploaded_document(filename,txt,data.get('company_name',''))
+                    if data.get('format')=='pdf': return self._respond_pdf(result)
+                    return self._json(attach_report_signature(result))
+                finally: _SCAN_SEMAPHORE.release()
+            if self.path=='/api/report/pdf':
+                if not _rate_limit_allowed(client,'report',RATE_LIMIT_REPORTS): return self._json({'error':'Report download rate limit reached. Try again later.'},429)
+                if not data: return self._json({'error':'No scan result provided'},400)
+                if not verify_report_signature(data): return self._json({'error':'The report payload is missing a valid server signature. Run a new scan before downloading the report.'},403)
                 return self._respond_pdf(data)
-            self._json({"error":"Unknown endpoint"},404)
-        except Exception as e: self._json({"error":str(e)},500)
+            return self._json({'error':'Unknown endpoint'},404)
+        except OverflowError as e: return self._json({'error':str(e)},413)
+        except ValueError as e: return self._json({'error':str(e)},400)
+        except Exception as e: return self._json({'error':str(e)},500)
 
 # V55 claim-signal sensitivity and report layout refinements
 
@@ -4777,6 +4858,7 @@ def _v65_official_candidate_score(result, company_name):
 
 
 def resolve_company_website(name):
+    """Resolve a bare company name only when the official domain is sufficiently verified."""
     known=_v64_known_site(name)
     if known:
         host=urlparse(known).hostname or known
@@ -4787,21 +4869,20 @@ def resolve_company_website(name):
         a=tavily_search(query,max_results=6) or []
         for r in a: r.setdefault('provider','Tavily')
         results.extend(a)
-    except Exception:
-        pass
+    except Exception: pass
     try:
         b=google_search(query,max_results=6) or []
         for r in b: r.setdefault('provider','Google Custom Search')
         seen={_v60_canonical_url(r.get('url','')) for r in results}
         results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
-    except Exception:
-        pass
+    except Exception: pass
     ranked=sorted(((_v65_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
     if ranked and ranked[0][0]>=70:
         host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
-        return f'https://{host}', f'Company name "{name}" was resolved to {host} after an exact brand/domain and title-content match. Verify the entity before relying on the result.'
-    guess=f'https://www.{slugify_company_name(name)}.com'
-    return guess, f'Company name "{name}" could not be confidently matched to an official search result. The scan used the best-guess domain {guess}; verify it or re-run with the exact official URL.'
+        return f'https://{host}', f'Company name "{name}" was resolved to {host} after a strong brand/domain and title-content match. Verify the entity before relying on the result.'
+    candidate=(urlparse(ranked[0][1].get('url','')).hostname or '').lower() if ranked and ranked[0][0]>0 else ''
+    detail=f' Candidate found: {candidate}.' if candidate else ''
+    raise ValueError(f'Official domain for "{name}" could not be verified with sufficient confidence.{detail} Enter the exact official website URL before starting the scan.')
 
 
 def infer_company(url,text,company_name_hint=''):
@@ -4969,5 +5050,5 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
 
 
 def main():
-    print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()
+    print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()

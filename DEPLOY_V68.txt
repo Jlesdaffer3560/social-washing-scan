@@ -1,0 +1,29 @@
+DURABLY V68 DEPLOYMENT
+
+1. Replace the GitHub repository with the complete contents of this package.
+2. Commit and push.
+3. Let Render rebuild and redeploy.
+4. Open /api/health and verify:
+   hostable_v68_stability_methodology_privacy_security
+5. Hard-refresh the browser.
+6. Run a completely new scan.
+7. Download a new PDF; old v67 scan payloads are intentionally rejected because v68 requires a server signature.
+
+RECOMMENDED RENDER ENVIRONMENT VARIABLES
+
+DURABLY_REPORT_SIGNING_KEY=<long random secret>
+MAX_REQUEST_BYTES=12000000
+RATE_LIMIT_SCANS=5
+RATE_LIMIT_REPORTS=20
+RATE_LIMIT_WINDOW_SECONDS=3600
+MAX_CONCURRENT_SCANS=2
+
+Optional extra cross-origin frontend domains:
+DURABLY_ALLOWED_ORIGINS=https://your-approved-domain.example
+
+Existing search configuration remains unchanged:
+TAVILY_API_KEY or GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX
+
+Notes:
+- Without DURABLY_REPORT_SIGNING_KEY, the app creates a random in-memory key at startup. That is secure for the running instance, but signatures created before a restart will no longer validate.
+- Rate limits are in-memory and reset after a restart. They are intended as low-cost abuse protection, not enterprise-grade distributed rate limiting.

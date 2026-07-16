@@ -85,7 +85,7 @@ def clean_text(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def bounded_text(value, max_chars: int, suffix: str = "\u2026") -> str:
+def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
     text = clean_text(value)
     if len(text) <= max_chars:
         return text
@@ -376,6 +376,9 @@ def inventory_source_label(item, max_chars=72):
         label=f"{prefix} - {domain} - {path_label}"
     else:
         label=f"{prefix} - {name or url or 'reviewed source'}"
+    status=clean_text(item.get("analysis_status") or "")
+    if status:
+        label=f"{label} - {status}"
     return bounded_text(label,max_chars)
 
 def header_block(data, subtitle):
@@ -588,7 +591,7 @@ def external_panel(data, limit):
 def assessment_basis(data):
     meta = metadata(data)
     left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
-    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("EmpCo for consumer-facing environmental and selected social claims; Forced Labour Regulation for forced-labour and supply-chain wording.", ST["source"])]
+    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("EmpCo for consumer-facing environmental and selected social claims; Forced Labour Regulation as the forced-labour and supply-chain assurance lens.", ST["source"])]
     t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     return t
@@ -609,36 +612,23 @@ def coverage_sources_methodology(data, limit=5):
           Paragraph(esc(count_line),ST["small_dark"]),
           Paragraph("<br/>".join(f'• {esc(x)}' for x in source_lines) if source_lines else "Source list not available.",ST["source"])]
     right=[Paragraph("<b>METHODOLOGY</b>",ST["card_label"]),
-           Paragraph("Only successfully retrieved sources contribute to the claim analysis. Failed access attempts are reported separately in the online scan. EmpCo, Forced Labour Regulation and Durably claim-risk methodology apply. See the detailed methodology PDF on the scan homepage.",ST["source"])]
+           Paragraph("The online source register distinguishes fully analysed, partially analysed, limited-text and failed sources. Only text that entered the analysis can support findings. EmpCo, Forced Labour Regulation and Durably claim-risk methodology apply. See the detailed methodology PDF on the scan homepage.",ST["source"])]
     t=Table([[left,right]],colWidths=[CONTENT_W*.58,CONTENT_W*.42])
     t.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.6,GREY_300),("LINEBEFORE",(1,0),(1,0),.4,GREY_300),("BACKGROUND",(0,0),(-1,-1),BLUE_SOFT),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
     return t
 
 
 def draw_footer(canvas, doc):
-    """Bugfix: the disclaimer (left) and "© Durably ... Page X of 2" (right) were drawn with
-    canvas.drawString/drawRightString and no width check against each other. With a longer
-    company name the two strings visually collide (confirmed reproducible with e.g. "A Very Long
-    Company Name International Holdings NV"). Measure both strings and shrink the disclaimer with
-    an ellipsis if there is not enough room, so overlap is structurally impossible."""
     page = canvas.getPageNumber()
     canvas.saveState()
     canvas.setStrokeColor(GREY_300)
     canvas.setLineWidth(.5)
     canvas.line(MARGIN_X, 8.5*mm, PAGE_W-MARGIN_X, 8.5*mm)
-    canvas.setFillColor(GREY_500)
-    right_text = f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · Page {page} of 2"
-    canvas.setFont("Helvetica", 6.5)
-    right_w = canvas.stringWidth(right_text, "Helvetica", 6.5)
-    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, right_text)
-    disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
     canvas.setFont("Helvetica-Oblique", 6.5)
-    available_w = (PAGE_W - 2*MARGIN_X) - right_w - 10
-    disc_w = canvas.stringWidth(disclaimer, "Helvetica-Oblique", 6.5)
-    while disc_w > available_w and len(disclaimer) > 20:
-        disclaimer = disclaimer[:-4].rstrip() + "\u2026"
-        disc_w = canvas.stringWidth(disclaimer, "Helvetica-Oblique", 6.5)
+    canvas.setFillColor(GREY_500)
+    disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
     canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
+    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · Page {page} of 2")
     canvas.restoreState()
 
 

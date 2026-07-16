@@ -1,0 +1,23 @@
+DURABLY V68 TEST RESULTS
+Date: 16 July 2026
+
+PASS - Python syntax compilation for app.py, report_pdf.py and methodology_pdf.py
+PASS - v62 readable two-page report regression
+PASS - v63 external-signal regression
+PASS - v64 entity-lock and internal-claims regression
+PASS - v65 generic entity and PDF-boundary regression
+PASS - v66 claim-risk badge geometry regression
+PASS - v67 source-register regression
+PASS - v68 stability, methodology, privacy and security regression
+PASS - pytest: 4 tests passed
+PASS - frontend JavaScript syntax check with Node
+PASS - local /api/health integration test
+PASS - local internal-document scan returns signed payload
+PASS - unsigned PDF payload rejected with HTTP 403
+PASS - signed PDF endpoint returns exactly two pages
+PASS - methodology PDF preflight: openable, text PDF, exactly three pages
+PASS - two-page company-report geometric preflight: no words outside A4 page bounds
+PASS - methodology and company-report visual render inspection
+
+Expected health version:
+hostable_v68_stability_methodology_privacy_security
