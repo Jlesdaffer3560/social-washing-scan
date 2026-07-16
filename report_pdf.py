@@ -85,7 +85,7 @@ def clean_text(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
+def bounded_text(value, max_chars: int, suffix: str = "\u2026") -> str:
     text = clean_text(value)
     if len(text) <= max_chars:
         return text
@@ -616,16 +616,29 @@ def coverage_sources_methodology(data, limit=5):
 
 
 def draw_footer(canvas, doc):
+    """Bugfix: the disclaimer (left) and "© Durably ... Page X of 2" (right) were drawn with
+    canvas.drawString/drawRightString and no width check against each other. With a longer
+    company name the two strings visually collide (confirmed reproducible with e.g. "A Very Long
+    Company Name International Holdings NV"). Measure both strings and shrink the disclaimer with
+    an ellipsis if there is not enough room, so overlap is structurally impossible."""
     page = canvas.getPageNumber()
     canvas.saveState()
     canvas.setStrokeColor(GREY_300)
     canvas.setLineWidth(.5)
     canvas.line(MARGIN_X, 8.5*mm, PAGE_W-MARGIN_X, 8.5*mm)
-    canvas.setFont("Helvetica-Oblique", 6.5)
     canvas.setFillColor(GREY_500)
+    right_text = f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · Page {page} of 2"
+    canvas.setFont("Helvetica", 6.5)
+    right_w = canvas.stringWidth(right_text, "Helvetica", 6.5)
+    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, right_text)
     disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
+    canvas.setFont("Helvetica-Oblique", 6.5)
+    available_w = (PAGE_W - 2*MARGIN_X) - right_w - 10
+    disc_w = canvas.stringWidth(disclaimer, "Helvetica-Oblique", 6.5)
+    while disc_w > available_w and len(disclaimer) > 20:
+        disclaimer = disclaimer[:-4].rstrip() + "\u2026"
+        disc_w = canvas.stringWidth(disclaimer, "Helvetica-Oblique", 6.5)
     canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
-    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · Page {page} of 2")
     canvas.restoreState()
 
 
