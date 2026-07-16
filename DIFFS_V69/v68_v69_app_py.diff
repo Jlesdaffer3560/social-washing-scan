@@ -1,0 +1,325 @@
+--- /mnt/data/Durably_v68_Stability_Methodology_Privacy_Security/app.py	2026-07-16 17:15:36.975656057 +0000
++++ /mnt/data/Durably_v69_Report_Token_and_Strict_Negative_External_Signals/app.py	2026-07-16 17:56:23.224988980 +0000
+@@ -5,7 +5,7 @@
+ from urllib.error import HTTPError, URLError
+ from html.parser import HTMLParser
+ from pathlib import Path
+-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, hmac, hashlib, secrets, threading
++import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading
+ from concurrent.futures import ThreadPoolExecutor, as_completed
+ 
+ def _get_build_company_report_pdf():
+@@ -47,8 +47,8 @@
+ _pypdf_module = None
+ _pypdf_import_error = None
+ 
+-APP_VERSION="hostable_v68_stability_methodology_privacy_security"
+-APP_RELEASE_LABEL="v68"
++APP_VERSION="hostable_v69_report_token_strict_negative_external_signals"
++APP_RELEASE_LABEL="v69"
+ APP_RELEASE_DATE="2026-07-16"
+ MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
+ RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
+@@ -56,7 +56,15 @@
+ RATE_LIMIT_REPORTS=max(1, int(os.environ.get("RATE_LIMIT_REPORTS", "20")))
+ MAX_CONCURRENT_SCANS=max(1, min(4, int(os.environ.get("MAX_CONCURRENT_SCANS", "2"))))
+ ALLOWED_ORIGINS={x.strip().rstrip('/') for x in os.environ.get("DURABLY_ALLOWED_ORIGINS", "").split(',') if x.strip()}
+-_REPORT_SIGNING_KEY=(os.environ.get("DURABLY_REPORT_SIGNING_KEY", "").encode("utf-8") or secrets.token_bytes(32))
++_REPORT_SIGNING_KEY_TEXT=os.environ.get("DURABLY_REPORT_SIGNING_KEY", "").strip()
++_REPORT_SIGNING_KEY_CONFIGURED=bool(_REPORT_SIGNING_KEY_TEXT)
++# A configured secret remains strongly recommended. The deterministic fallback prevents
++# report downloads from breaking after a Render worker restart when the optional secret
++# has not yet been configured. It provides integrity against accidental modification, not
++# strong secrecy for a publicly distributed source package.
++_REPORT_SIGNING_KEY=(_REPORT_SIGNING_KEY_TEXT.encode("utf-8") if _REPORT_SIGNING_KEY_CONFIGURED
++                     else hashlib.sha256(("durably-report-token-fallback|"+APP_VERSION).encode("utf-8")).digest())
++REPORT_TOKEN_MAX_AGE_SECONDS=max(900,min(86400,int(os.environ.get("REPORT_TOKEN_MAX_AGE_SECONDS","21600"))))
+ _RATE_LOCK=threading.Lock()
+ _RATE_EVENTS={}
+ _SCAN_SEMAPHORE=threading.BoundedSemaphore(MAX_CONCURRENT_SCANS)
+@@ -3117,18 +3125,82 @@
+ 
+ 
+ def _unsigned_report_payload(payload):
+-    return {k:v for k,v in (payload or {}).items() if k not in {'_report_signature','_report_signature_version'}}
++    return {k:v for k,v in (payload or {}).items() if k not in {
++        '_report_signature','_report_signature_version','_report_token','_report_token_version'
++    }}
+ 
+ 
+ def _report_signature(payload):
++    """Legacy whole-payload signature retained for backward compatibility.
++
++    Browser JSON round-trips can alter numeric spellings (for example Python 1.0 becomes
++    JavaScript 1), so v69 no longer relies on this signature for normal PDF downloads.
++    """
+     raw=json.dumps(_unsigned_report_payload(payload),ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')
+     return hmac.new(_REPORT_SIGNING_KEY,raw,hashlib.sha256).hexdigest()
+ 
+ 
++def _b64url_encode(value):
++    return base64.urlsafe_b64encode(value).decode('ascii').rstrip('=')
++
++
++def _b64url_decode(value):
++    value=str(value or '')
++    return base64.urlsafe_b64decode(value+'='*((4-len(value)%4)%4))
++
++
++def create_report_token(payload):
++    """Create an opaque, stateless report token that survives browser JSON parsing.
++
++    The exact server-side scan payload is compressed inside the token. The browser sends
++    the token back unchanged; it never has to reproduce the server's JSON number syntax.
++    """
++    envelope={'issued_at':int(time.time()),'payload':_unsigned_report_payload(payload)}
++    raw=json.dumps(envelope,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')
++    body=_b64url_encode(zlib.compress(raw,9))
++    signature=hmac.new(_REPORT_SIGNING_KEY,('v1.'+body).encode('ascii'),hashlib.sha256).hexdigest()
++    return 'v1.'+body+'.'+signature
++
++
++def decode_report_token(token):
++    try:
++        version,body,supplied=str(token or '').split('.',2)
++    except ValueError as exc:
++        raise ValueError('The report token is malformed. Run a new scan before downloading the report.') from exc
++    if version!='v1':
++        raise ValueError('The report token version is not supported. Run a new scan before downloading the report.')
++    expected=hmac.new(_REPORT_SIGNING_KEY,('v1.'+body).encode('ascii'),hashlib.sha256).hexdigest()
++    if not hmac.compare_digest(supplied,expected):
++        raise ValueError('The report token is invalid. Run a new scan before downloading the report.')
++    try:
++        compressed=_b64url_decode(body)
++        decomp=zlib.decompressobj()
++        raw=decomp.decompress(compressed,MAX_REQUEST_BYTES+1)
++        raw+=decomp.flush()
++        if len(raw)>MAX_REQUEST_BYTES or decomp.unconsumed_tail:
++            raise ValueError('The report token exceeds the application limit.')
++        envelope=json.loads(raw.decode('utf-8'))
++    except ValueError:
++        raise
++    except Exception as exc:
++        raise ValueError('The report token could not be decoded. Run a new scan before downloading the report.') from exc
++    issued=int(envelope.get('issued_at') or 0)
++    if not issued or abs(time.time()-issued)>REPORT_TOKEN_MAX_AGE_SECONDS:
++        raise ValueError('The report token has expired. Run a new scan before downloading the report.')
++    payload=envelope.get('payload')
++    if not isinstance(payload,dict):
++        raise ValueError('The report token does not contain a valid scan result.')
++    return payload
++
++
+ def attach_report_signature(payload):
+     if isinstance(payload,dict):
++        # Keep the legacy fields for one-release compatibility, but use the opaque token
++        # for the normal browser-to-server PDF workflow.
+         payload['_report_signature_version']='hmac-sha256-v1'
+         payload['_report_signature']=_report_signature(payload)
++        payload['_report_token_version']='compressed-hmac-v1'
++        payload['_report_token']=create_report_token(payload)
+     return payload
+ 
+ 
+@@ -3138,7 +3210,7 @@
+ 
+ 
+ class Handler(BaseHTTPRequestHandler):
+-    server_version='DurablyScan/68'
++    server_version='DurablyScan/69'
+ 
+     def _allowed_origin(self):
+         origin=(self.headers.get('Origin') or '').rstrip('/')
+@@ -3193,7 +3265,8 @@
+             return self._json({'status':'ok','version':APP_VERSION,'release':APP_RELEASE_LABEL,'release_date':APP_RELEASE_DATE,
+                                'tavily_configured':bool(TAVILY_API_KEY),'google_search_configured':bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),
+                                'google_api_key_configured':bool(GOOGLE_SEARCH_API_KEY),'google_cx_configured':bool(GOOGLE_SEARCH_CX),
+-                               'report_pdf_available':(_report_pdf_fn is not None or _report_pdf_import_error is None)})
++                               'report_pdf_available':(_report_pdf_fn is not None or _report_pdf_import_error is None),
++                               'report_token_enabled':True,'report_signing_key_configured':_REPORT_SIGNING_KEY_CONFIGURED})
+         return self._json({'error':'Not found'},404)
+ 
+     def do_POST(self):
+@@ -3218,9 +3291,16 @@
+                 finally: _SCAN_SEMAPHORE.release()
+             if self.path=='/api/report/pdf':
+                 if not _rate_limit_allowed(client,'report',RATE_LIMIT_REPORTS): return self._json({'error':'Report download rate limit reached. Try again later.'},429)
+-                if not data: return self._json({'error':'No scan result provided'},400)
+-                if not verify_report_signature(data): return self._json({'error':'The report payload is missing a valid server signature. Run a new scan before downloading the report.'},403)
+-                return self._respond_pdf(data)
++                if not data: return self._json({'error':'No report token or scan result provided'},400)
++                token=data.get('report_token') or data.get('_report_token')
++                if token:
++                    try: report_payload=decode_report_token(token)
++                    except ValueError as exc: return self._json({'error':str(exc)},403)
++                    return self._respond_pdf(report_payload)
++                # Backward-compatible path for a v68 result that has not passed through
++                # JavaScript numeric normalisation. New v69 scans use report_token.
++                if verify_report_signature(data): return self._respond_pdf(data)
++                return self._json({'error':'The report download token is missing or invalid. Run a new scan before downloading the report.'},403)
+             return self._json({'error':'Unknown endpoint'},404)
+         except OverflowError as e: return self._json({'error':str(e)},413)
+         except ValueError as e: return self._json({'error':str(e)},400)
+@@ -4610,7 +4690,8 @@
+             'published_date':r.get('published_date','') or 'Date not available','status':_source_status(txt),
+             'severity':_source_severity(txt),'review_status':'Verified' if manual else 'Retained — manual verification required',
+             'entity_match':r.get('entity_match','Direct — target in source'),'entity_match_reason':r.get('entity_match_reason',''),
+-            'dimension':dim,'relevance':relevance,
++            'dimension':dim,'relevance':relevance,'polarity':'negative',
++            'polarity_reason':r.get('_negative_reason','Explicit adverse event or criticism linked to the assessed company'),
+             'related_claim_area':'Environmental claims' if dim=='green' else 'Social / labour claims',
+             'related_articles_count':r.get('related_articles_count',1)})
+     return out
+@@ -5049,6 +5130,151 @@
+     return '\n\n'.join(all_text)[:180000],all_pages[:16],source_notes,crawl_log
+ 
+ 
++
++# -----------------------------
++# V69 strict negative external-source gate
++# -----------------------------
++# External public-source signals must be adverse context, not merely articles that contain
++# sustainability or labour vocabulary. The gate below is generic: it requires an explicit
++# adverse event/criticism linked to the target and rejects promotional, achievement and
++# exoneration headlines unless a strong regulator/legal event is also clearly stated.
++_V69_POSITIVE_HEADLINE_TERMS=(
++    'achieves','achieved','achievement','launches','launched','unveils','announces','signs mou',
++    'partnership','partners with','collaboration','wins award','awarded','recognised','recognized',
++    'certified','certification achieved','reports progress','milestone','cuts emissions',
++    'reduces emissions','reaches target','opens new','invests in','initiative to','commits to',
++    'pledges to','success story','named leader','tops ranking','improves sustainability'
++)
++_V69_EXONERATION_TERMS=(
++    'cleared of','acquitted','complaint dismissed','case dismissed','no evidence of',
++    'found no evidence','not misleading','claims were compliant','investigation closed without action',
++    'charges dropped','allegations rejected','allegations unfounded'
++)
++_V69_GENERIC_ADVERSE=(
++    'accused','alleged','allegation','criticised','criticized','criticism','backlash','controversy',
++    'complaint','lawsuit','sued','court','investigation','investigating','probe','inquiry','watchdog',
++    'regulator','authority','fine','fined','penalty','sanction','settlement','ruling','decision',
++    'ban','banned','prohibited','breach','violation','misconduct','boycott','protest','strike'
++)
++_V69_GREEN_ADVERSE=(
++    'greenwashing','misleading environmental','misleading green','deceptive environmental',
++    'unsubstantiated environmental','false environmental','environmental claims complaint',
++    'environmental claims investigation','misleading sustainability claims','advertising ban'
++)
++_V69_GREEN_ANCHORS_STRICT=(
++    'greenwashing','environmental claim','environmental claims','sustainability claim',
++    'sustainability claims','green claim','green claims','climate claim','carbon claim','carbon neutral','climate neutral',
++    'net zero','emissions claim','recyclable','recycled content','eco claim','green claim'
++)
++_V69_SOCIAL_ADVERSE=(
++    'forced labour','forced labor','child labour','child labor','modern slavery','wage theft',
++    'illegal working hours','excessive working hours','unsafe working conditions','worker exploitation',
++    'labour exploitation','labor exploitation','union busting','human rights abuse',
++    'labour rights violation','labor rights violation','excessive overtime','low wages','poverty wages','discrimination','harassment','underpaid workers',
++    'poverty wages','low wages','unpaid wages','workplace deaths','factory deaths'
++)
++_V69_SOCIAL_ANCHORS_STRICT=(
++    'worker','workers','employee','employees','labour','labor','wage','wages','working hours',
++    'factory','factories','supplier','supply chain','human rights','union','workplace','forced labour',
++    'forced labor','child labour','child labor','modern slavery','discrimination','harassment'
++)
++_V69_STRONG_ACTION_PATTERNS=(
++    r'\b(fined|penalised|penalized|sanctioned|banned|prohibited|convicted|found liable)\b',
++    r'\b(regulator|authority|watchdog|court|prosecutor)\b.{0,80}\b(investigat|accus|fine|penalt|sanction|rule|complaint)',
++    r'\b(lawsuit|legal action|formal complaint|criminal investigation|regulatory investigation)\b',
++    r'\b(found|documented|reported)\b.{0,80}\b(forced labour|forced labor|child labour|child labor|illegal working hours|wage theft|unsafe working conditions)\b',
++)
++
++
++def _v69_term_hits(text,terms):
++    return [term for term in terms if _v62_term_present(text,term)]
++
++
++def _v69_strong_action(text):
++    return any(re.search(pattern,text or '',flags=re.I|re.S) for pattern in _V69_STRONG_ACTION_PATTERNS)
++
++
++def _v69_external_polarity(result,dimension='social'):
++    title=re.sub(r'\s+',' ',str(result.get('title','') or '')).strip().lower()
++    content=re.sub(r'\s+',' ',str(result.get('content','') or '')).strip().lower()
++    url=str(result.get('url','') or '').lower()
++    combined=' '.join((title,content,url))
++    first_content=content[:700]
++    if any(_v62_term_present(title,term) for term in _V69_EXONERATION_TERMS):
++        return False,'Exoneration or dismissal headline, not negative stakeholder news'
++    positive_title=_v69_term_hits(title,_V69_POSITIVE_HEADLINE_TERMS)
++    generic_title=_v69_term_hits(title,_V69_GENERIC_ADVERSE)
++    generic_body=_v69_term_hits(first_content,_V69_GENERIC_ADVERSE)
++    strong_action=_v69_strong_action(title+' '+first_content)
++    if dimension=='green':
++        explicit_title=_v69_term_hits(title,_V69_GREEN_ADVERSE)
++        explicit_body=_v69_term_hits(first_content,_V69_GREEN_ADVERSE)
++        anchors=_v69_term_hits(combined,_V69_GREEN_ANCHORS_STRICT)
++        explicit=explicit_title or explicit_body
++    else:
++        explicit_title=_v69_term_hits(title,_V69_SOCIAL_ADVERSE)
++        explicit_body=_v69_term_hits(first_content,_V69_SOCIAL_ADVERSE)
++        anchors=_v69_term_hits(combined,_V69_SOCIAL_ANCHORS_STRICT)
++        explicit=explicit_title or explicit_body
++    if not anchors:
++        return False,'No relevant environmental or social controversy anchor'
++    # Promotional headlines are rejected unless the headline itself states an adverse
++    # event or the opening summary contains a strong formal action linked to the issue.
++    if positive_title and not (explicit_title or generic_title or strong_action):
++        return False,'Positive/promotional headline without an explicit adverse event'
++    # A negative word buried in a long positive article is insufficient. Require either
++    # explicit adverse issue language, a negative headline, or a strong formal action in
++    # the opening summary. Generic criticism in body text alone must have at least two
++    # distinct markers to reduce false positives.
++    accepted=bool(explicit) or bool(generic_title) or strong_action or len(set(generic_body))>=2
++    if not accepted:
++        return False,'No sufficiently explicit adverse event or criticism'
++    reason=[]
++    if explicit_title: reason.append('explicit adverse issue in title')
++    elif explicit_body: reason.append('explicit adverse issue in opening summary')
++    if generic_title: reason.append('negative event in title')
++    if strong_action: reason.append('formal enforcement/legal action')
++    if not reason: reason.append('multiple adverse markers in opening summary')
++    return True,', '.join(reason)
++
++
++def is_negative_external_source(result):
++    accepted,reason=_v69_external_polarity(result,'social')
++    if isinstance(result,dict) and accepted: result['_negative_reason']=reason
++    return accepted
++
++
++def is_green_negative_source(result):
++    accepted,reason=_v69_external_polarity(result,'green')
++    if isinstance(result,dict) and accepted: result['_negative_reason']=reason
++    return accepted
++
++
++def _v60_rank_dedupe(results,company_name,dimension='social',limit=20,reviewed_pages=None):
++    """V69 ranker: only explicitly negative sources can enter the retained result set."""
++    negative_fn=is_green_negative_source if dimension=='green' else is_negative_external_source
++    candidates=[]; seen=set()
++    for r in results or []:
++        match=entity_match_details(r,company_name,reviewed_pages)
++        if not match['matched']:
++            continue
++        if is_company_owned_source(r,company_name,reviewed_pages):
++            continue
++        if not negative_fn(r):
++            continue
++        key=_v60_canonical_url(r.get('url',''))
++        if not key or key in seen:
++            continue
++        score=_v60_signal_score(r,company_name,dimension)
++        if score<0:
++            continue
++        item=dict(r); item['_signal_score']=score+match['score']; item['source_kind']=_v60_source_kind(item)
++        item['entity_match']=match['label']; item['entity_match_reason']=match['reason']
++        item['_negative_reason']=r.get('_negative_reason','Explicit adverse event or criticism')
++        candidates.append(item); seen.add(key)
++    candidates.sort(key=lambda x:(x.get('_signal_score',0),x.get('published_date','')),reverse=True)
++    return _dedupe_similar_sources(candidates)[:limit]
++
+ def main():
+     print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
+ if __name__=="__main__": main()
+\ No newline at end of file

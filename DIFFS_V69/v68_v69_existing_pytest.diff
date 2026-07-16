@@ -1,0 +1,11 @@
+--- /mnt/data/Durably_v68_Stability_Methodology_Privacy_Security/test_v68_pytest.py	2026-07-16 17:15:37.012250119 +0000
++++ /mnt/data/Durably_v69_Report_Token_and_Strict_Negative_External_Signals/test_v68_pytest.py	2026-07-16 17:52:30.648338371 +0000
+@@ -3,7 +3,7 @@
+ 
+ 
+ def test_release_and_security_signature():
+-    assert app.APP_VERSION == 'hostable_v68_stability_methodology_privacy_security'
++    assert app.APP_VERSION == 'hostable_v69_report_token_strict_negative_external_signals'
+     payload={'company':{'company':'Example'},'global_score':50}
+     app.attach_report_signature(payload)
+     assert app.verify_report_signature(payload)

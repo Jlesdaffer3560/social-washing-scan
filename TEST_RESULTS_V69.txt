@@ -1,0 +1,39 @@
+DURABLY V69 TEST RESULTS
+========================
+
+Release: hostable_v69_report_token_strict_negative_external_signals
+
+1. Python syntax
+PASS - app.py, report_pdf.py and methodology_pdf.py compile.
+
+2. Frontend JavaScript syntax
+PASS - frontend JavaScript parses.
+
+3. Pytest regression suite
+...........                                                              [100%]
+11 passed in 1.20s
+
+4. Historical regression scripts
+-- test_v62.py
+V62 report regression tests passed under V65
+-- test_v63_external_signals.py
+V63 external signal tests passed
+-- test_v64_entity_lock.py
+V64 entity lock and internal-claims regression tests passed
+V64 extended resolver/corporate-site tests passed
+-- test_v65_generic_entity_and_layout.py
+V65 generic entity-lock and PDF-boundary tests passed
+-- test_v66_claim_badge_layout.py
+V66 claim-risk badge layout test passed
+-- test_v67_scan_coverage.py
+V67 scan coverage/source register tests passed
+-- test_v68_stability.py
+V68 stability, methodology, privacy and security tests passed
+
+5. Report-token HTTP endpoint
+PASS - endpoint returned 7638 PDF bytes with HTTP 200.
+
+6. PDF structure and visual preflight
+PASS - preview contains exactly 2 pages.
+
+Final result: PASS

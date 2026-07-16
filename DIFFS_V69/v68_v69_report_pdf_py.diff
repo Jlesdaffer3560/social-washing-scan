@@ -1,0 +1,22 @@
+--- /mnt/data/Durably_v68_Stability_Methodology_Privacy_Security/report_pdf.py	2026-07-16 17:15:36.976929471 +0000
++++ /mnt/data/Durably_v69_Report_Token_and_Strict_Negative_External_Signals/report_pdf.py	2026-07-16 17:55:34.335887511 +0000
+@@ -307,6 +307,10 @@
+             continue
+         if str(item.get("review_status") or "").lower().startswith("candidate"):
+             continue
++        # V69 safety gate: the report displays only signals that passed the backend's
++        # explicit negative-polarity classifier. Positive or neutral articles are omitted.
++        if str(item.get("polarity") or "").lower() != "negative":
++            continue
+         key = item.get("url") or item.get("title")
+         if not key or key in seen:
+             continue
+@@ -571,7 +575,7 @@
+ 
+ def external_panel(data, limit):
+     signals = external_signals(data, limit)
+-    note = Paragraph("Contextual public-source signals only. Automated retained signals require manual verification of status, entity link and claim relevance.", ST["source"])
++    note = Paragraph("Negative external stakeholder signals only. Positive, neutral and company-owned sources are excluded. Automated retained signals require manual verification of status, entity link and claim relevance.", ST["source"])
+     if not signals:
+         cards = Table([[Paragraph("No negative external public-source signal was retained. If external search was unavailable, this does not confirm an absence of relevant criticism or enforcement.", ST["small"])]], colWidths=[CONTENT_W])
+         cards.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))

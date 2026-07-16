@@ -1,21 +1,22 @@
-# Durably Sustainability Scan - v68
+# Durably Sustainability Scan - v69
 
-V68 is a stability, methodology, transparency and security release. It preserves the v67 scan-coverage register and adds stricter source-status reporting, safer company-domain resolution, consistent score bands, clearer privacy wording, signed PDF payloads, request/rate controls, threaded serving and automated pytest/CI checks.
+V69 corrects the PDF-download signature regression and makes the negative-news restriction for external public-source signals enforceable throughout the complete output pipeline.
 
-Expected health version: `hostable_v68_stability_methodology_privacy_security`.
+Expected health version:
 
-Read `START_HERE_V68.md`, `V68_CHANGELOG.md`, `DEPLOY_V68.txt` and `TEST_RESULTS_V68.txt` before deployment.
+`hostable_v69_report_token_strict_negative_external_signals`
 
-## Main capabilities
+Read `START_HERE_V69.md`, `V69_CHANGELOG.md`, `DEPLOY_V69.txt` and `TEST_RESULTS_V69.txt` before deployment.
 
-- Multi-page public website scan with resilient crawling and transparent source coverage.
-- Separate internal-document assessment.
-- Green, social and combined claim-risk scores with one consistent banding system.
-- Structured claim signals under EmpCo environmental, social-characteristics and forced-labour/supply-chain lenses.
-- External public-source search with direct-entity checks and retained/verified status.
-- Native, readable, exactly two-page company report.
-- Detailed three-page methodology PDF at `/methodology.pdf`.
-- Signed report payloads to prevent arbitrary user-created Durably reports.
-- In-memory scan rate limits and bounded concurrent scans.
+## Main v69 changes
+
+- Opaque, compressed and signed report token for reliable two-page PDF downloads.
+- Report token survives browser JSON parsing and number normalisation.
+- Deterministic fallback key prevents restart-related failures when no production secret is configured.
+- Negative-polarity filtering before external results are ranked or retained.
+- Positive achievements, partnerships, awards, certifications, launches and neutral coverage are excluded.
+- Exoneration and dismissed-allegation articles are excluded.
+- Negative-only enforcement in backend, frontend and PDF report.
+- All previous crawler, entity-lock, claim-signal, source-register, methodology and layout improvements are retained.
 
 The scan is an indicative first-pass assessment. It is not legal advice and does not establish a breach of EmpCo, the Forced Labour Regulation or any other law.

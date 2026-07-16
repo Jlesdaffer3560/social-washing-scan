@@ -1,0 +1,27 @@
+DURABLY V69 DEPLOYMENT
+======================
+
+1. Push the full contents of this folder to the GitHub repository connected to Render.
+2. Wait until the Render deployment reports "Live".
+3. Check:
+   https://social-washing-scan-python.onrender.com/api/health
+
+Expected version:
+   hostable_v69_report_token_strict_negative_external_signals
+
+4. Strongly recommended Render environment variable:
+   DURABLY_REPORT_SIGNING_KEY=<long-random-private-value>
+
+5. Optional:
+   REPORT_TOKEN_MAX_AGE_SECONDS=21600
+
+6. Run a NEW scan. Do not reuse a v68 browser result.
+7. Confirm the scan JSON contains _report_token.
+8. Click "Download 2-page company report (PDF)".
+9. Confirm the downloaded file opens and contains exactly two pages.
+10. Confirm External public-source signals contains only negative external stakeholder news.
+
+Important:
+- V69 sends a report token to the PDF endpoint. The full browser-mutated payload is no longer used for normal downloads.
+- A positive sustainability article must not appear merely because it contains environmental or labour vocabulary.
+- Company-owned sources remain evidence sources and are excluded from external signals.

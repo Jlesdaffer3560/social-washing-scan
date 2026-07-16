@@ -16,7 +16,7 @@ def load(name, path):
 app = load("app_v62", ROOT / "app.py")
 report = load("report_v62", ROOT / "report_pdf.py")
 
-assert app.APP_VERSION == "hostable_v68_stability_methodology_privacy_security"
+assert app.APP_VERSION == "hostable_v69_report_token_strict_negative_external_signals"
 
 positive = {
     "title": "Company achieves carbon-neutral operations",
@@ -39,11 +39,31 @@ confidence = app.build_confidence(
 )
 assert "A low risk score from this scan may reflect limited access" in confidence.get("reliability_warning", "")
 
-sample = json.loads((ROOT / "PREVIEW_V62" / "frontend_preview_payload.json").read_text())
-sample["data_reliability_warning"] = (
-    "2 of 6 page fetches failed. A low risk score from this scan may reflect limited access "
-    "to the site's content, not necessarily a genuine absence of risky claims."
-)
+sample = {
+    "company":{"company":"Example Group"},
+    "source_label":"https://example.com",
+    "original_url":"https://example.com",
+    "analysis_date":"2026-07-16T12:00:00+00:00",
+    "global_score":55,"global_risk":"Medium",
+    "green_score":62,"green_risk":"Medium",
+    "social_score":43,"social_risk":"Low",
+    "entity_context_indicator":{"level":"Low","note":"No negative external signal retained."},
+    "claim_inventory":[{
+        "claim_type":"Generic environmental claim","risk_level":"High","claim_score":74,
+        "matched_phrase":"sustainable product","claim_text":"Our sustainable product supports a better future.",
+        "why_flagged":"Generic environmental wording requires precise scope and evidence.",
+        "evidence_needed":["scope","methodology","verification"],
+        "suggested_rewrite":"Specify the exact environmental attribute, scope, method and limitations.",
+        "source_label":"https://example.com/sustainability"
+    }],
+    "company_action_plan":[{"title":"Review claim","action":"Confirm scope and evidence."}],
+    "report":{"pages_reviewed":["https://example.com","https://example.com/sustainability"]},
+    "scan_inventory":{"website_pages":[],"documents":[],"failed_fetches":[],"summary":{}},
+    "crawl_diagnostics":{"pages_attempted":6,"pages_failed":2,"pages_thin":0,"pages_retrieved_via_fallback":0,"detail":[]},
+    "confidence":{"level":"Medium","reasons":["two sources reviewed"]},
+    "external_research":{"green":{"targeted_negative_sources":[]},"social":{"targeted_negative_sources":[]}},
+}
+
 pdf = report.build_company_report_pdf(sample)
 reader = PdfReader(io.BytesIO(pdf))
 assert len(reader.pages) == 2

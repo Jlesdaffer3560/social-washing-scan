@@ -6,8 +6,8 @@ from pypdf import PdfReader
 import app
 import report_pdf
 
-assert app.APP_VERSION == 'hostable_v68_stability_methodology_privacy_security'
-assert app.APP_RELEASE_LABEL == 'v68'
+assert app.APP_VERSION == 'hostable_v69_report_token_strict_negative_external_signals'
+assert app.APP_RELEASE_LABEL == 'v69'
 
 # Score bands and UI transparency must match backend bands.
 frontend=Path('frontend.html').read_text(encoding='utf-8')
@@ -72,7 +72,7 @@ sample={
  'report':{'pages_reviewed':pages},'scan_inventory':inv,
  'crawl_diagnostics':{'pages_attempted':3,'pages_failed':0,'pages_thin':1,'pages_retrieved_via_fallback':0,'detail':log},
  'confidence':{'level':'Medium','reasons':['three sources were reviewed','one page returned limited text','external search was active']},
- 'external_research':{'green':{'targeted_negative_sources':[{'title':'Regulator reviews environmental claims','url':'https://news.example.net/example-review','source_name':'Public authority','published_date':'2026-06-01','status':'Investigation / regulatory review','review_status':'Retained - manual verification required','content':'The regulator is reviewing environmental claims made by Example Group.','related_claim_area':'Environmental claims','entity_match':'Direct'}]},'social':{'targeted_negative_sources':[]}},
+ 'external_research':{'green':{'targeted_negative_sources':[{'title':'Regulator reviews environmental claims','url':'https://news.example.net/example-review','source_name':'Public authority','published_date':'2026-06-01','status':'Investigation / regulatory review','review_status':'Retained - manual verification required','content':'The regulator is reviewing environmental claims made by Example Group.','related_claim_area':'Environmental claims','entity_match':'Direct','polarity':'negative'}]},'social':{'targeted_negative_sources':[]}},
 }
 pdf=report_pdf.build_company_report_pdf(sample)
 assert len(PdfReader(io.BytesIO(pdf)).pages)==2
