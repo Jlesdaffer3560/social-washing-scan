@@ -68,7 +68,7 @@ ST = {
     "card_label": _style("card_label", fontName="Helvetica-Bold", fontSize=7.5, leading=8.8, textColor=TEAL_DARK),
     "card_num": _style("card_num", fontName="Helvetica-Bold", fontSize=18.0, leading=19.0, textColor=NAVY),
     "claim_title": _style("claim_title", fontName="Helvetica-Bold", fontSize=9.4, leading=11.2, textColor=NAVY),
-    "claim_risk": _style("claim_risk", fontName="Helvetica-Bold", fontSize=8.5, leading=10.0, alignment=TA_RIGHT),
+    "claim_risk": _style("claim_risk", fontName="Helvetica-Bold", fontSize=8.5, leading=10.0, alignment=TA_RIGHT, wordWrap="LTR"),
     "table": _style("table", fontSize=8.0, leading=9.8, textColor=GREY_700),
     "table_dark": _style("table_dark", fontSize=8.0, leading=9.8, textColor=GREY_900),
     "table_head": _style("table_head", fontName="Helvetica-Bold", fontSize=8.0, leading=9.8, textColor=WHITE),
@@ -363,36 +363,42 @@ def summary_box(data, clusters):
     return t
 
 
-def score_card(label, value, risk, note=""):
+def score_card(label, value, risk, note="", card_width=None):
     risk_col = risk_color(risk)
+    card_width = card_width or (CONTENT_W * .25 - 4)
+    inner_width = card_width - 14
     rows = [[Paragraph(esc(label.upper()), ST["card_label"])], [Paragraph(f'{esc(value)}<font size="7.5" color="#7A8A93">/100</font>' if isinstance(value, (int, float)) else esc(value), ST["card_num"])], [Paragraph(f'<font color="{risk_col.hexval()}"><b>{esc(risk)}</b></font>', ST["small_dark"])]]
     if note:
         rows.append([Paragraph(esc(bounded_text(note, 115)), ST["source"])])
-    inner = Table(rows, colWidths=[CONTENT_W * .245 - 12])
+    inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
-    card = Table([[inner]], colWidths=[CONTENT_W * .245])
+    card = Table([[inner]], colWidths=[card_width])
     card.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.6, risk_col), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return card
 
 
 
-def context_card(level, note):
+def context_card(level, note, card_width=None):
     risk_col = risk_color(level)
+    card_width = card_width or (CONTENT_W * .25 - 4)
+    inner_width = card_width - 14
     rows = [
         [Paragraph("ENTITY CONTEXT", ST["card_label"])],
         [Paragraph(esc(level), ST["card_num"])],
         [Paragraph(esc(bounded_text(note, 115)), ST["source"])],
     ]
-    inner = Table(rows, colWidths=[CONTENT_W * .245 - 12])
+    inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
-    card = Table([[inner]], colWidths=[CONTENT_W * .245])
+    card = Table([[inner]], colWidths=[card_width])
     card.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.6, risk_col), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return card
 
 def score_row(data):
     ctx = data.get("entity_context_indicator") or {}
-    cards = [score_card("Overall claims risk", data.get("global_score", data.get("overall_score", "—")), data.get("global_risk", data.get("overall_risk", "Not assessed"))), score_card("Green claims risk", data.get("green_score", "—"), data.get("green_risk", "Not assessed")), score_card("Social claims risk", data.get("social_score", "—"), data.get("social_risk", "Not assessed")), context_card(clean_text(ctx.get("level") or "Not assessed"), ctx.get("note") or "")]
-    t = Table([cards], colWidths=[CONTENT_W * .25] * 4)
+    column_width = CONTENT_W * .25
+    card_width = column_width - 4
+    cards = [score_card("Overall claims risk", data.get("global_score", data.get("overall_score", "—")), data.get("global_risk", data.get("overall_risk", "Not assessed")), card_width=card_width), score_card("Green claims risk", data.get("green_score", "—"), data.get("green_risk", "Not assessed"), card_width=card_width), score_card("Social claims risk", data.get("social_score", "—"), data.get("social_risk", "Not assessed"), card_width=card_width), context_card(clean_text(ctx.get("level") or "Not assessed"), ctx.get("note") or "", card_width=card_width)]
+    t = Table([cards], colWidths=[column_width] * 4)
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     return t
 
@@ -428,16 +434,21 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     count = len(cluster["occurrences"])
     title = claim_title(claim) + (f" · {count} occurrences" if count > 1 else "")
     sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in cluster["occurrences"]))[:2])
-    head = Table([[Paragraph(esc(title), ST["claim_title"]), Paragraph(f'<font color="{risk_color(claim_risk(claim)).hexval()}"><b>{esc(claim_risk(claim))}</b></font>', ST["claim_risk"]) ]], colWidths=[CONTENT_W-35*mm, 35*mm])
+    # The outer card has 8 pt left/right padding. Every nested table must use the
+    # resulting inner width; using CONTENT_W here made the risk label overflow the
+    # right border in Microsoft/ReportLab renderings.
+    inner_width = CONTENT_W - 16
+    risk_width = 25 * mm
+    head = Table([[Paragraph(esc(title), ST["claim_title"]), Paragraph(f'<font color="{risk_color(claim_risk(claim)).hexval()}"><b>{esc(claim_risk(claim))}</b></font>', ST["claim_risk"]) ]], colWidths=[inner_width-risk_width, risk_width])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
     why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
     gap = Paragraph(f'<b>EVIDENCE GAP</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
-    grid = Table([[why, gap]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
+    grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
     grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
-    inner = Table([[head], [source], [quote], [grid], [rec]], colWidths=[CONTENT_W-16])
+    inner = Table([[head], [source], [quote], [grid], [rec]], colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
     card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREEN_SOFT if material else GREY_100), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
@@ -501,7 +512,10 @@ def external_panel(data, limit):
     elif len(signals) == 1:
         cards = external_signal_card(signals[0], CONTENT_W)
     else:
-        cards = Table([[external_signal_card(signals[0], CONTENT_W*.5), external_signal_card(signals[1], CONTENT_W*.5)]], colWidths=[CONTENT_W*.5, CONTENT_W*.5])
+        half_width = CONTENT_W * .5
+        # Each outer cell adds a 3 pt gutter, so the card itself must be narrower
+        # than the nominal half-page column.
+        cards = Table([[external_signal_card(signals[0], half_width-3), external_signal_card(signals[1], half_width-3)]], colWidths=[half_width, half_width])
         cards.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 3), ("LEFTPADDING", (1, 0), (1, 0), 3), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     wrap = Table([[note], [cards]], colWidths=[CONTENT_W])
     wrap.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, 1), (-1, 1), 0)]))

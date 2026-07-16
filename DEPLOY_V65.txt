@@ -1,0 +1,13 @@
+1. Download Durably_v65_Generic_Entity_Lock_and_PDF_Layout_Fix.zip.
+2. Replace the repository contents with the files in the ZIP, preserving Render environment variables.
+3. Commit and push to GitHub.
+4. Trigger or wait for the Render deployment.
+5. Check /api/health. The version must be:
+   hostable_v65_generic_entity_lock_pdf_layout_fix
+6. Run new scans for at least two unrelated companies, preferably by exact URL and by bare company name.
+7. Confirm that:
+   - the resolved domain belongs to the requested company;
+   - internal claims come only from official reviewed domains;
+   - external signals directly identify the requested company;
+   - company-owned sources are excluded from external signals;
+   - the risk labels in both PDF pages remain inside the claim cards.

@@ -1,0 +1,18 @@
+Durably v65 regression results
+==============================
+
+PASS - Python syntax compilation for app.py and report_pdf.py.
+PASS - Existing v62 readable-report and data-reliability regression tests.
+PASS - Existing v63 external-signal recall/precision tests.
+PASS - Existing v64 SHEIN/H&M entity-lock and internal-claims tests.
+PASS - Generic bare-name resolution selects Acme Fashion instead of an unrelated competitor.
+PASS - Generic company inference remains locked to the exact input/domain when competitor names appear in page text.
+PASS - Generic competitor-primary article with an incidental target mention is rejected.
+PASS - Generic regulator article without the company in the title/URL is accepted only when the company is prominent, repeated and directly linked to the controversy.
+PASS - Exact official domain is classified as company-owned.
+PASS - Watchdog domain containing the brand name is not classified as company-owned.
+PASS - Generic related official sustainability/group-site discovery excludes media results.
+PASS - Generated PDF contains exactly two A4 pages.
+PASS - `High` and `Very high` labels remain inside claim-card boundaries.
+PASS - PDF word-coordinate preflight found no text beyond the page width.
+PASS - Visual render inspection of both preview pages found no clipping or overlap.
