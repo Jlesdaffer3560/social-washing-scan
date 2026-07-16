@@ -1,3 +1,7 @@
+# Start here — V64
+
+Read `V64_CHANGELOG.md` and `DEPLOY_V64.txt`. This package contains the complete repository, not only a patch.
+
 # Start here — Durably Sustainability Scan v62
 
 This is the complete GitHub/Render repository. It replaces the existing application files; it is not a separate report plug-in.

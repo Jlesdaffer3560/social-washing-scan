@@ -1,3 +1,7 @@
+# Durably Sustainability Scan — V64
+
+V64 fixes cross-company entity contamination and restores official-site claim coverage. Read `V64_CHANGELOG.md`, `DEPLOY_V64.txt` and `TEST_RESULTS_V64.txt` first.
+
 # Durably Sustainability Scan — v62
 
 Current version: `hostable_v62_professional_claim_signals_readable_pdf`

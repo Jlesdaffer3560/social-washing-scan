@@ -16,7 +16,7 @@ def load(name, path):
 app = load("app_v62", ROOT / "app.py")
 report = load("report_v62", ROOT / "report_pdf.py")
 
-assert app.APP_VERSION == "hostable_v63_external_signal_recall_diagnostics"
+assert app.APP_VERSION == "hostable_v64_entity_lock_internal_claims_fix"
 
 positive = {
     "title": "Company achieves carbon-neutral operations",
@@ -50,4 +50,4 @@ assert len(reader.pages) == 2
 text = "\n".join(page.extract_text() or "" for page in reader.pages)
 assert "DATA RELIABILITY" in text
 assert "A low risk score from this scan may reflect limited access" in text
-print("V62 report regression tests passed under V63")
+print("V62 report regression tests passed under V64")

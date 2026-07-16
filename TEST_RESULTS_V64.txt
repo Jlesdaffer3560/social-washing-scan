@@ -1,0 +1,20 @@
+V64 OFFLINE REGRESSION TEST RESULTS
+
+PASS — Python syntax compilation for app.py, report_pdf.py and methodology_pdf.py
+PASS — Existing V62 readable two-page PDF and data-reliability regression suite
+PASS — Existing V63 external-signal recall and polarity suite
+PASS — Bare-name SHEIN resolution remains tied to shein.com
+PASS — Generic official-domain resolver rejects competitor-first results
+PASS — Host-locked company inference cannot be replaced by competitor names in page text
+PASS — H&M-primary article with an incidental SHEIN mention is rejected
+PASS — Direct SHEIN regulator signal is retained as a green external signal
+PASS — Direct SHEIN NGO working-conditions signal is retained as a social external signal
+PASS — sheingroup.com remains company-owned evidence and is excluded from external signals
+PASS — SHEIN official corporate wording produces internal green claim findings
+PASS — SHEIN official corporate wording produces internal social claim findings
+PASS — Related corporate-site crawler appends sheingroup.com content after a storefront crawl
+PASS — End-to-end synthetic SHEIN scan keeps internal claims and excludes H&M external results
+PASS — Frontend JavaScript syntax validation
+PASS — Health/version identifier: hostable_v64_entity_lock_internal_claims_fix
+
+NOTE — Live Tavily/Google provider calls cannot be reproduced offline without the Render environment credentials. The package includes per-scan diagnostics, including competitor-primary exclusions, so live filtering can be audited after deployment.

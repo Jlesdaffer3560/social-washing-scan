@@ -1,0 +1,444 @@
+--- Durably_v63_External_Signal_Recall_Fix/app.py	2026-07-16 11:22:43.286910484 +0000
++++ Durably_v64_Entity_Lock_and_Internal_Claims_Fix/app.py	2026-07-16 11:45:50.038185907 +0000
+@@ -47,7 +47,7 @@
+ _pypdf_module = None
+ _pypdf_import_error = None
+ 
+-APP_VERSION="hostable_v63_external_signal_recall_diagnostics"
++APP_VERSION="hostable_v64_entity_lock_internal_claims_fix"
+ # v56: standard browser User-Agent instead of a self-identifying scanner UA. A UA string
+ # that announces itself as an assessment/scanner tool is the easiest possible fingerprint
+ # for corporate bot-protection (Akamai/PerimeterX/Cloudflare-style WAFs) to block on,
+@@ -2546,8 +2546,8 @@
+     social_fs=assign_sources_to_findings(social_fs,page_segments,documents_checked)
+     # Website scans should include external public-source signals. Uploaded internal
+     # documents remain separate and do not run external search in analyse_uploaded_document().
+-    social_ext=external(comp['company'], social_fs)
+-    green_ext=external_green(comp['company'], green_fs)
++    social_ext=external(comp['company'], social_fs, pages)
++    green_ext=external_green(comp['company'], green_fs, pages)
+     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
+     sec=infer_sector(comp,txt+'\n'+exttext)
+     ctx=infer_context(comp,txt,social_ext)
+@@ -4107,6 +4107,420 @@
+     return _v63_external_response(company,findings,'green')
+ 
+ 
++
++# ---------------------------------------------------------------------------
++# V64 ENTITY LOCK + INTERNAL CLAIM RECOVERY
++# ---------------------------------------------------------------------------
++# V64 fixes a coupled regression: a bare company name could be resolved to the
++# first merely plausible search-result domain, and external results were accepted
++# when the target company appeared only incidentally in a snippet. Once the wrong
++# entity entered the pipeline, the crawler could review the wrong/blocked site and
++# external signals could be about a competitor. The functions below keep one
++# canonical entity and its official roots throughout resolution, crawling, claim
++# detection and external-source filtering.
++
++V64_CANONICAL_COMPANY_SITES={
++    'shein':'https://www.shein.com',
++    'shein group':'https://www.shein.com',
++    'h&m':'https://www2.hm.com',
++    'h & m':'https://www2.hm.com',
++    'hm':'https://www2.hm.com',
++    'zara':'https://www.zara.com',
++    'inditex':'https://www.inditex.com',
++}
++V64_COMPANY_DOMAIN_ALIASES={
++    'shein':{'shein.com','sheingroup.com'},
++    'h&m':{'hm.com','hmgroup.com'},
++    'zara':{'zara.com','inditex.com'},
++    'inditex':{'inditex.com','zara.com'},
++}
++# Group/corporate sites often contain the substantive sustainability claims while
++# the retail storefront is JavaScript-heavy or access-protected.
++KNOWN_GROUP_DOMAINS.update({
++    'shein':['https://www.sheingroup.com'],
++    'sheingroup':['https://www.shein.com'],
++    'hm.com':['https://hmgroup.com'],
++    'www2.hm.com':['https://hmgroup.com'],
++    'hmgroup':['https://www2.hm.com'],
++})
++
++V64_OTHER_BRANDS={
++    'h&m','h & m','hm','zara','inditex','temu','primark','uniqlo','asos','boohoo',
++    'nike','adidas','mango','gap','amazon','walmart','alibaba','forever 21','patagonia',
++    'lidl','aldi','delhaize','tesco','carrefour','shein'
++}
++V64_GENERIC_HOST_LABELS={'www','www2','m','mobile','shop','store','group','global','corporate','official','eu','eur','us','uk'}
++
++
++def _v64_norm(value):
++    return re.sub(r'[^a-z0-9]+',' ',str(value or '').lower()).strip()
++
++
++def _v64_compact(value):
++    return re.sub(r'[^a-z0-9]+','',str(value or '').lower())
++
++
++def _v64_brand_aliases(company_name):
++    raw=_v64_norm(company_name)
++    tokens=[t for t in raw.split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
++    aliases=[]
++    if raw: aliases.append(raw)
++    if tokens:
++        aliases.append(' '.join(tokens))
++        aliases.append(tokens[0])
++        if len(tokens)>=2: aliases.append(' '.join(tokens[:2]))
++    # Normalise common display/group names.
++    if 'shein' in tokens: aliases.extend(['shein','shein group'])
++    if ('h' in tokens and 'm' in tokens) or raw in {'hm','h m','h and m'}: aliases.extend(['h&m','h & m','hm','h m'])
++    out=[]
++    for a in aliases:
++        n=_v64_norm(a)
++        if len(n)>=2 and n not in out: out.append(n)
++    return out
++
++
++def _v64_alias_occurrences(text, aliases):
++    n=_v64_norm(text)
++    total=0
++    hits=[]
++    for alias in aliases:
++        p=r'(?<![a-z0-9])'+re.escape(alias).replace(r'\ ',r'\s+')+r'(?![a-z0-9])'
++        c=len(re.findall(p,n,flags=re.I))
++        if c: hits.append(alias); total+=c
++    return total,hits
++
++
++def _v64_root_label(host):
++    host=(host or '').lower().removeprefix('www.')
++    parts=host.split('.')
++    if len(parts)<2: return parts[0] if parts else ''
++    # For country/locale subdomains, use the registrable brand label.
++    return parts[-2]
++
++
++def _v64_known_site(name):
++    key=_v64_norm(name)
++    if key in V64_CANONICAL_COMPANY_SITES:
++        return V64_CANONICAL_COMPANY_SITES[key]
++    compact=_v64_compact(key)
++    for k,v in V64_CANONICAL_COMPANY_SITES.items():
++        if _v64_compact(k)==compact:
++            return v
++    return None
++
++
++def _v64_official_candidate_score(result, company_name):
++    url=result.get('url','') or ''
++    host=(urlparse(url).hostname or '').lower().removeprefix('www.')
++    root=_root_domain(host)
++    title=result.get('title','') or ''
++    content=result.get('content','') or ''
++    aliases=_v64_brand_aliases(company_name)
++    company_compacts={_v64_compact(a) for a in aliases if len(_v64_compact(a))>=3}
++    host_compact=_v64_compact(host)
++    root_label=_v64_compact(_v64_root_label(host))
++    score=0
++    if not host or any(root==d or root.endswith('.'+d) for d in NON_OFFICIAL_SITE_DOMAINS):
++        return -999
++    known=_v64_known_site(company_name)
++    known_root=_root_domain((urlparse(known).hostname or '')) if known else ''
++    if known_root and root==known_root: score+=120
++    if any(c and (root_label==c or c in host_compact) for c in company_compacts): score+=75
++    title_count,_=_v64_alias_occurrences(title,aliases)
++    content_count,_=_v64_alias_occurrences(content,aliases)
++    if title_count: score+=35
++    if content_count: score+=min(15,content_count*5)
++    if 'official' in _v64_norm(title+' '+content): score+=10
++    # A result dominated by another retail brand cannot be selected as the official site.
++    title_norm=_v64_norm(title)
++    target_in_title=title_count>0
++    for brand in V64_OTHER_BRANDS:
++        if _v64_norm(brand) in title_norm and _v64_norm(brand) not in aliases and not target_in_title:
++            score-=100
++    return score
++
++
++def resolve_company_website(name):
++    """Resolve a bare name only to a domain that is demonstrably tied to that name.
++
++    V63 accepted the first non-news/non-directory domain. V64 requires a strong
++    brand-domain/title match and uses a small verified-domain map for common ambiguous
++    brands. It never substitutes a competitor's website simply because it appeared in
++    the search results.
++    """
++    known=_v64_known_site(name)
++    if known:
++        host=urlparse(known).hostname or known
++        return known, f'Company name "{name}" was resolved to the verified official domain {host}. The scan also checks any configured corporate/group sustainability site.'
++    query=f'"{name}" official company website'
++    results=[]
++    try:
++        a=tavily_search(query,max_results=6) or []
++        for r in a: r.setdefault('provider','Tavily')
++        results.extend(a)
++    except Exception: pass
++    try:
++        b=google_search(query,max_results=6) or []
++        for r in b: r.setdefault('provider','Google Custom Search')
++        seen={_v60_canonical_url(r.get('url','')) for r in results}
++        results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
++    except Exception: pass
++    ranked=sorted((( _v64_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
++    if ranked and ranked[0][0]>=70:
++        host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
++        return f'https://{host}', f'Company name "{name}" was resolved to {host} after a verified brand/domain match. Verify the entity before relying on the result.'
++    guess=f'https://www.{slugify_company_name(name)}.com'
++    return guess, f'Company name "{name}" could not be confidently matched to an official search result. The scan used the best-guess domain {guess}; verify it or re-run with the exact official URL.'
++
++
++def infer_company(url,text,company_name_hint=''):
++    """Bind the company primarily to the reviewed host, never to a competitor mention.
++
++    The previous implementation searched the first 5,000 page characters for every
++    known profile. A competitor named in banners, comparisons or marketplace content
++    could therefore replace the actual scanned company. Host identity now has priority.
++    """
++    if company_name_hint and str(company_name_hint).strip():
++        hint=str(company_name_hint).strip()
++        key=_v64_norm(hint)
++        for k,p in PROFILES.items():
++            if _v64_norm(k)==key or _v64_norm(k) in key:
++                return {'company':p[0],'sector':p[1],'sector_risk':p[2],'context':p[3]}
++        if 'shein' in key:
++            return {'company':'SHEIN','sector':'Fast fashion and apparel retail','sector_risk':'High','context':'Fast-fashion supply chains are exposed to labour-rights, subcontracting, wages, traceability, environmental-impact and claims-substantiation risks.'}
++        return {'company':hint,'sector':'Sector not explicitly identified','sector_risk':'','context':'Company name provided by the user; context is based on document/website and external search signals.'}
++    host=(urlparse(url).hostname or '').lower()
++    host_compact=_v64_compact(host)
++    if host:
++        if 'shein' in host_compact:
++            return {'company':'SHEIN','sector':'Fast fashion and apparel retail','sector_risk':'High','context':'Fast-fashion supply chains are exposed to labour-rights, subcontracting, wages, traceability, environmental-impact and claims-substantiation risks.'}
++        for k,p in PROFILES.items():
++            if _v64_compact(k) and _v64_compact(k) in host_compact:
++                return {'company':p[0],'sector':p[1],'sector_risk':p[2],'context':p[3]}
++        label=_v64_root_label(host)
++        display={'hm':'H&M','sheingroup':'SHEIN'}.get(label,label.replace('-',' ').title())
++        return {'company':display or 'Company reviewed','sector':'Sector not explicitly identified','sector_risk':'','context':'Company identity is anchored to the reviewed website domain; page mentions of other companies do not change the assessed entity.'}
++    guessed=_guess_company_from_text(text)
++    if guessed:
++        return {'company':guessed,'sector':'Sector not explicitly identified','sector_risk':'','context':'Company name inferred from uploaded document text.'}
++    return {'company':'Company reviewed','sector':'Sector not explicitly identified','sector_risk':'','context':'No company domain or reliable document name was available.'}
++
++
++def _v64_negative_near_target(text,aliases,window=220):
++    low=_v64_norm(text)
++    negative_terms=list(_V63_SOCIAL_EXPLICIT)+list(_V63_SOCIAL_NEGATIVE)+list(_V63_GREEN_EXPLICIT)+list(_V63_GREEN_NEGATIVE)+list(_V60_ENFORCEMENT_TERMS)
++    for alias in aliases:
++        for m in re.finditer(r'(?<![a-z0-9])'+re.escape(alias).replace(r'\ ',r'\s+')+r'(?![a-z0-9])',low):
++            segment=low[max(0,m.start()-window):m.end()+window]
++            if any(_v62_term_present(segment,t) for t in negative_terms):
++                return True
++    return False
++
++
++def _v64_primary_competitors_in_title(title,target_aliases):
++    norm=_v64_norm(title)
++    hits=[]
++    for b in V64_OTHER_BRANDS:
++        bn=_v64_norm(b)
++        if not bn or bn in target_aliases: continue
++        if re.search(r'(?<![a-z0-9])'+re.escape(bn).replace(r'\ ',r'\s+')+r'(?![a-z0-9])',norm):
++            hits.append(b)
++    return hits
++
++
++def entity_match_details(result,company_name,reviewed_pages=None):
++    """Return a conservative direct-entity match assessment.
++
++    A target mentioned once in an H&M/Zara/other-company article is not sufficient.
++    Accepted results must identify the target in the title/URL, or repeatedly in the
++    content with controversy language close to the target and no competitor-dominated
++    title.
++    """
++    aliases=_v64_brand_aliases(company_name)
++    title=result.get('title','') or ''
++    content=result.get('content','') or ''
++    url=result.get('url','') or ''
++    title_count,_=_v64_alias_occurrences(title,aliases)
++    content_count,_=_v64_alias_occurrences(content,aliases)
++    url_count,_=_v64_alias_occurrences(url.replace('-',' ').replace('_',' '),aliases)
++    competitors=_v64_primary_competitors_in_title(title,set(aliases))
++    near_negative=_v64_negative_near_target(title+' '+content,aliases)
++    if competitors and title_count==0:
++        return {'matched':False,'score':0,'label':'Rejected — competitor-primary','reason':'The title is about another company; the target appears only incidentally.'}
++    score=0; reasons=[]
++    if title_count:
++        score+=7; reasons.append('target in title')
++    if url_count:
++        score+=5; reasons.append('target in URL')
++    if content_count>=2:
++        score+=4; reasons.append('target repeated in source summary')
++    elif content_count==1:
++        score+=1
++    if near_negative:
++        score+=2; reasons.append('controversy linked near target')
++    if competitors and title_count:
++        score-=2; reasons.append('comparative/multi-company title')
++    matched=(title_count>0 or url_count>0 or (content_count>=2 and near_negative and not competitors)) and score>=5
++    label='Direct — '+(', '.join(reasons[:2]) if matched else 'insufficient entity evidence')
++    return {'matched':matched,'score':score,'label':label,'reason':'; '.join(reasons)}
++
++
++def source_mentions_company(result,company_name,reviewed_pages=None):
++    return entity_match_details(result,company_name,reviewed_pages).get('matched',False)
++
++
++def _v60_rank_dedupe(results,company_name,dimension='social',limit=20,reviewed_pages=None):
++    candidates=[]; seen=set()
++    for r in results or []:
++        match=entity_match_details(r,company_name,reviewed_pages)
++        if not match['matched']:
++            continue
++        if is_company_owned_source(r,company_name,reviewed_pages):
++            continue
++        key=_v60_canonical_url(r.get('url',''))
++        if not key or key in seen:
++            continue
++        score=_v60_signal_score(r,company_name,dimension)
++        if score<0:
++            continue
++        item=dict(r); item['_signal_score']=score+match['score']; item['source_kind']=_v60_source_kind(item)
++        item['entity_match']=match['label']; item['entity_match_reason']=match['reason']
++        candidates.append(item); seen.add(key)
++    candidates.sort(key=lambda x:(x.get('_signal_score',0),x.get('published_date','')),reverse=True)
++    return _dedupe_similar_sources(candidates)[:limit]
++
++
++def compact_sources(results,limit=6,dimension=None):
++    out=[]
++    for r in _dedupe_similar_sources(results or [])[:limit]:
++        txt=_external_signal_text(r); kind=r.get('source_kind') or _v60_source_kind(r)
++        manual=bool(r.get('manual_verified') or r.get('verified'))
++        dim=dimension or r.get('dimension') or ('green' if is_green_negative_source(r) else 'social')
++        url=r.get('url','') or ''; host=(urlparse(url).hostname or '').removeprefix('www.')
++        score=r.get('_signal_score',0) or 0
++        try: relevance='High' if float(score)>=70 else 'Medium'
++        except Exception: relevance='Medium'
++        out.append({'title':(r.get('title','') or '')[:170],'url':url,'source_name':host or kind,
++            'content':_v62_clean_external_content(r.get('content',''))[:320],
++            'category':kind,'source_kind':kind,'credibility':source_credibility(r),'provider':r.get('provider',''),
++            'published_date':r.get('published_date','') or 'Date not available','status':_source_status(txt),
++            'severity':_source_severity(txt),'review_status':'Verified' if manual else 'Retained — manual verification required',
++            'entity_match':r.get('entity_match','Direct — target in source'),'entity_match_reason':r.get('entity_match_reason',''),
++            'dimension':dim,'relevance':relevance,
++            'related_claim_area':'Environmental claims' if dim=='green' else 'Social / labour claims',
++            'related_articles_count':r.get('related_articles_count',1)})
++    return out
++
++
++def targeted_negative_sources(results,company_name,limit=5,reviewed_pages=None,negative_fn=None):
++    dimension='green' if negative_fn is is_green_negative_source else 'social'
++    eligible=[]
++    for r in results or []:
++        if is_company_owned_source(r,company_name,reviewed_pages): continue
++        if not entity_match_details(r,company_name,reviewed_pages)['matched']: continue
++        if not (negative_fn or is_negative_external_source)(r): continue
++        eligible.append(r)
++    ranked=_v60_rank_dedupe(eligible,company_name,dimension,max(limit*3,limit),reviewed_pages)
++    return compact_sources(ranked,limit,dimension)
++
++
++def _v64_search_dimension(company_name,findings,dimension,reviewed_pages=None):
++    first_queries=_v63_primary_queries(company_name,dimension,findings)
++    allr,attempts,providers,run_queries=_v60_run_queries(first_queries)
++    ranked=_v60_rank_dedupe(allr,company_name,dimension,30,reviewed_pages)
++    fallback_used=False
++    if len(ranked)<2:
++        fallback_used=True
++        more,atts,provs,qs=_v60_run_queries(_v63_fallback_queries(company_name,dimension))
++        attempts.extend(atts); providers.update(provs); run_queries.extend(qs)
++        seen={_v60_canonical_url(r.get('url','')) for r in allr}
++        for r in more:
++            key=_v60_canonical_url(r.get('url',''))
++            if key and key not in seen: allr.append(r); seen.add(key)
++        ranked=_v60_rank_dedupe(allr,company_name,dimension,30,reviewed_pages)
++    matched=[r for r in allr if entity_match_details(r,company_name,reviewed_pages)['matched']]
++    negative=[r for r in matched if (is_green_negative_source(r) if dimension=='green' else is_negative_external_source(r))]
++    rejected_competitor=sum(1 for r in allr if entity_match_details(r,company_name,reviewed_pages)['label'].startswith('Rejected — competitor'))
++    diagnostics={'raw_result_count':len(allr),'company_matched_count':len(matched),
++        'negative_candidate_count':len(negative),'retained_count':len(ranked),'fallback_used':fallback_used,
++        'competitor_primary_rejected_count':rejected_competitor,
++        'providers_used':sorted(providers),'queries_run':list(dict.fromkeys(run_queries))}
++    return ranked,allr,attempts,providers,run_queries,diagnostics
++
++
++def _v64_external_response(company,findings,dimension,reviewed_pages=None):
++    configured=bool(TAVILY_API_KEY or (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX))
++    themes=(green_query_themes(findings or []) if dimension=='green' else query_themes_from_findings(findings or []))
++    empty_diag={'raw_result_count':0,'company_matched_count':0,'negative_candidate_count':0,'retained_count':0,
++                'fallback_used':False,'competitor_primary_rejected_count':0,'providers_used':[],'queries_run':[]}
++    if not configured:
++        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':[],'query_themes':themes,'queries_run':[],'raw_result_count':0,'search_diagnostics':empty_diag}
++    ranked,allr,attempts,providers,run_queries,diagnostics=_v64_search_dimension(company,findings,dimension,reviewed_pages)
++    if ranked:
++        summary=(summarise_green_ext(ranked) if dimension=='green' else summarise_ext(ranked))
++    elif diagnostics['raw_result_count']:
++        summary=f"External search returned {diagnostics['raw_result_count']} result(s), but none passed the direct-entity, external-ownership, negative-polarity and {dimension}-relevance checks."
++    else:
++        summary='No external public-source result was returned by the configured providers.'
++    if diagnostics.get('competitor_primary_rejected_count'):
++        summary+=f" {diagnostics['competitor_primary_rejected_count']} competitor-primary result(s) were excluded."
++    if providers: summary+=' Search provider(s) used: '+', '.join(sorted(providers))+'.'
++    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),
++        'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,
++        'queries_run':list(dict.fromkeys(run_queries)),'raw_result_count':len(allr),'search_diagnostics':diagnostics}
++
++
++def external(company,findings=None,reviewed_pages=None):
++    return _v64_external_response(company,findings,'social',reviewed_pages)
++
++
++def external_green(company,findings=None,reviewed_pages=None):
++    return _v64_external_response(company,findings,'green',reviewed_pages)
++
++
++def crawl_with_related_sites(original_url,overall_deadline=None):
++    """Reserve crawl time for a verified corporate/group domain.
++
++    Retail storefronts are often blocked or almost entirely JavaScript. Earlier code
++    could spend the whole budget there and never reach the corporate sustainability
++    site. V64 reserves part of the budget for configured group domains and combines
++    both sources without replacing the requested entity.
++    """
++    if overall_deadline is None: overall_deadline=time.time()+CRAWL_BUDGET_SECONDS
++    crawl_log=[]; source_notes=[]; all_text=[]; all_pages=[]; primary_error=None
++    host=(urlparse(original_url).hostname or '').lower()
++    known=[]
++    for brand,domains in KNOWN_GROUP_DOMAINS.items():
++        if brand in host:
++            known.extend(domains)
++    known=list(dict.fromkeys(known))
++    reserve=8 if known else 0
++    primary_deadline=max(time.time()+6,overall_deadline-reserve) if reserve else overall_deadline
++    try:
++        txt,pages=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,deadline=primary_deadline,log=crawl_log)
++        if txt.strip(): all_text.append(txt); all_pages.extend(pages)
++    except Exception as e:
++        primary_error=e
++    candidates=list(known)
++    if len(all_pages)<3:
++        for c in related_company_sites(original_url,max_sites=1):
++            if c not in candidates: candidates.append(c)
++    for candidate in candidates:
++        if time.time()>=overall_deadline-2: break
++        try:
++            remaining_slots=max(2,min(4,CRAWL_TARGET_EXTRA_PAGES-max(0,len(all_pages)-1)))
++            rt,rpages=crawl(candidate,max_extra_pages=remaining_slots,deadline=overall_deadline,log=crawl_log,candidate_source='related_domain')
++            if len(rt)>300:
++                all_text.append('\n\nRELATED OFFICIAL COMPANY SITE: '+candidate+'\n'+rt)
++                all_pages.extend([p for p in rpages if p not in all_pages])
++                source_notes.append(f'Official corporate/group site also checked: {candidate}')
++        except Exception:
++            pass
++    if not all_text:
++        raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
++    return '\n\n'.join(all_text)[:180000],all_pages[:16],source_notes,crawl_log
++
++
+ def main():
+     print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); HTTPServer((HOST,PORT),Handler).serve_forever()
+ if __name__=="__main__": main()
+\ No newline at end of file

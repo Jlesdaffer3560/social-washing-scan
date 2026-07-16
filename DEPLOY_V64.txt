@@ -1,0 +1,5 @@
+1. Replace the current GitHub repository with the contents of this package.
+2. Push to GitHub and redeploy in Render.
+3. Confirm /api/health shows hostable_v64_entity_lock_internal_claims_fix.
+4. Run a new scan using SHEIN or https://www.shein.com.
+5. Confirm internal claim signals are present and external sources are directly about SHEIN, not H&M or another competitor.
