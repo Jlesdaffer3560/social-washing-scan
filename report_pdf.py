@@ -512,13 +512,24 @@ def claim_card(cluster, excerpt_chars=220, material=False):
         ("BOTTOMPADDING", (1, 0), (1, 0), 0),
     ]))
     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
+    legal_basis=str(claim.get('legal_basis') or '').strip()
+    basis_line=None
+    if legal_basis:
+        basis_color='#AF3D43' if 'prohibited' in legal_basis.lower() else '#A87311'
+        basis_reason=bounded_text(str(claim.get('legal_basis_reason') or ''), 150)
+        basis_line=Paragraph(f'<font color="{basis_color}"><b>Legal basis: {esc(legal_basis)}</b></font>'
+                              f'{" — " + esc(basis_reason) if basis_reason else ""}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
     why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
     gap = Paragraph(f'<b>EVIDENCE GAP</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
     grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
     grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
-    inner = Table([[head], [source], [quote], [grid], [rec]], colWidths=[inner_width])
+    rows=[[head], [source]]
+    if basis_line is not None:
+        rows.append([basis_line])
+    rows += [[quote], [grid], [rec]]
+    inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
     card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREEN_SOFT if material else GREY_100), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))

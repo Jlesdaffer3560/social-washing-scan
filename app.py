@@ -1195,7 +1195,7 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[])} for f in findings]
+    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"legal_basis":f.get("legal_basis",""),"legal_basis_reason":f.get("legal_basis_reason",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[])} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -2214,7 +2214,7 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'legal_basis':f.get('legal_basis',''),'legal_basis_reason':f.get('legal_basis_reason',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -3629,6 +3629,55 @@ def enrich_social_finding(f, trigger=''):
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no ') else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
+def classify_legal_basis(claim_type, excerpt, dimension):
+    """Classify a claim on EmpCo's own Prohibited/Misleading distinction:
+    - Prohibited: a per se EmpCo Annex I blacklist breach (UCPD amended by Directive (EU)
+      2024/825), banned in all cases from 27 September 2026 and NOT cured by adding evidence.
+    - Misleading: a case-by-case risk under UCPD Articles 6-7 (already enforceable today via
+      national transpositions) and, for corporate climate-neutral wording, the German BGH
+      "klimaneutral" line -- fixable with proper scoping and evidence.
+    Conflating the two understates the urgency of an absolute, un-curable ban and overstates it
+    for a gap that proper substantiation can fix. Climate-neutrality/offsetting is the one type
+    whose basis depends on the LEVEL of the claim (product vs. company), so it gets its own
+    product/company-language check rather than a fixed mapping."""
+    t=(claim_type or '').lower()
+    c=(excerpt or '').lower()
+
+    if 'climate-neutrality' in t or 'offsetting' in t:
+        product_markers=['packaging','this product','this bag','this bottle','this item','our bottle',
+            'our bag','our box','our packaging','the packaging','the product','this item','per unit']
+        company_markers=['our operations','our company','our business','our organisation',
+            'our organization','as a company','as a business','scope 1 and 2','scope 1 and scope 2',
+            'group-wide','across our operations','our facilities','company-wide','corporate']
+        has_product=any(m in c for m in product_markers)
+        has_company=any(m in c for m in company_markers)
+        if has_product and not has_company:
+            return 'Prohibited','EmpCo Annex I / UCPD point 4c \u2014 product-level offset-based neutrality is banned outright and cannot be cured by evidence.'
+        if has_company and not has_product:
+            return 'Misleading','UCPD Art. 6\u20137 and the German BGH \u201cklimaneutral\u201d line \u2014 company/operations-level neutrality is not on the EmpCo blacklist, but is high misleadingness risk unless the claim makes clear whether it rests on reduction or offsetting.'
+        return 'Prohibited \u2014 scope unclear, verify','Could not confirm from this passage whether the claim is product-level (Prohibited, Annex I) or company-level (Misleading, UCPD Art. 6\u20137). Treated as the higher-risk basis until the scope is confirmed.'
+
+    if 'legal requirement' in t:
+        return 'Prohibited','EmpCo Annex I point 10a \u2014 presenting a legal requirement as a distinctive environmental benefit is banned outright.'
+    if 'generic environmental' in t:
+        return 'Prohibited','EmpCo Annex I point 4a \u2014 generic claims are banned unless the trader can demonstrate recognised excellent environmental performance (EU Ecolabel, an ISO 14024 Type I ecolabel, or top-class regulatory performance).'
+    if 'sustainability label' in t or 'certification' in t:
+        return 'Prohibited','EmpCo Annex I point 2a \u2014 a sustainability label/badge is banned unless based on a certification scheme or established by a public authority and independently verified.'
+    if 'visual green-claim' in t:
+        return 'Prohibited','EmpCo Annex I point 2a \u2014 a visual (leaf, globe, green colour) implying a certification the product does not hold is treated as a label claim.'
+    if 'future environmental' in t:
+        return 'Prohibited','EmpCo Annex I point 5 \u2014 a forward-looking claim with no time-bound, verifiable implementation plan and interim milestones is banned.'
+    if 'comparative environmental' in t:
+        return 'Misleading','UCPD Art. 6\u20137 \u2014 a comparative claim without a stated baseline, comparator and methodology is a fair-comparison gap, not an Annex I ban.'
+    if 'absolute or purity' in t or 'recycled' in t or 'recyclable' in t:
+        return 'Misleading','UCPD Art. 6\u20137 and ISO 14021 \u2014 an unqualified absolute or end-of-life claim is a substantiation/completeness gap, fixable with evidence and correct scoping, not a per se ban.'
+
+    # Social claim types: EmpCo's own basis for social characteristics rests on the general
+    # misleading-action clause (Art. 6(1)(b)), not a dedicated Annex I blacklist item the way
+    # several environmental practices have -- so these are Misleading by default, case-by-case.
+    return 'Misleading','EmpCo Art. 6(1)(b) treats social characteristics as a misleading-action risk assessed case-by-case; there is no dedicated Annex I blacklist item for this claim type the way there is for several environmental practices.'
+
+
 def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score):
     excerpt=_v55_sentence_list(text, trig)
     # v57n: "VISUAL CLAIM CUE: " is an internal marker prepended during HTML parsing to feed
@@ -3649,16 +3698,17 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
     # generic category description in `issue`. Reviewers should never have to guess which
     # words in a longer excerpt caused the flag.
     why_flagged=f'This passage was flagged because it contains the wording "{trig}", matching the "{typ}" pattern.'
+    legal_basis,legal_basis_reason=classify_legal_basis(typ,excerpt,dimension)
     if dimension == 'green':
         f={'dimension':'green','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
-           'matched_phrase':trig,'why_flagged':why_flagged,
+           'matched_phrase':trig,'why_flagged':why_flagged,'legal_basis':legal_basis,'legal_basis_reason':legal_basis_reason,
            'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
            'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
            'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
         fs.append(enrich_green_finding(f,trig))
     else:
         f={'dimension':'social','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
-           'matched_phrase':trig,'why_flagged':why_flagged,
+           'matched_phrase':trig,'why_flagged':why_flagged,'legal_basis':legal_basis,'legal_basis_reason':legal_basis_reason,
            'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
            'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
         fs.append(enrich_social_finding(f,trig))
