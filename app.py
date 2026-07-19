@@ -221,22 +221,6 @@ def _dedupe_similar_sources(items):
         out.append(primary)
     return out
 
-def compact_sources(results,limit=6):
-    results=_dedupe_similar_sources(results)
-    out=[]
-    for r in results[:limit]:
-        txt=(r.get("title","")+" "+r.get("url","")+" "+r.get("content","")).lower()
-        cat="Public web"
-        if any(v in txt for v in ["ngo","amnesty","oxfam","human rights watch","clean clothes"]): cat="NGO / civil society"
-        elif any(v in txt for v in ["gov","europa","regulator","authority","commission","oecd","ncp"]): cat="Government / regulator"
-        elif any(v in txt for v in ["lawsuit","court","legal","complaint"]): cat="Legal / complaint"
-        elif any(v in txt for v in ["reuters","ft.com","bbc","guardian","press"]): cat="Press"
-        out.append({"title":r.get("title","")[:150],"url":r.get("url",""),"content":r.get("content","")[:220],"category":cat,
-                     "credibility":source_credibility(r),"provider":r.get("provider",""),
-                     "published_date":r.get("published_date","") or "Not available from source",
-                     "status":_source_status(txt),"severity":_source_severity(txt),
-                     "related_articles_count":r.get("related_articles_count",1)})
-    return out
 
 class Parser(HTMLParser):
     def __init__(self):
@@ -297,26 +281,6 @@ def slugify_company_name(name):
     s=re.sub(r'[^a-z0-9]+','',(name or '').lower())
     return s or 'company'
 
-def resolve_company_website(name):
-    """Best-effort resolution of a bare company name (e.g. 'Inditex') to an official
-    website URL. Tries web search first (Tavily, then Google CSE, when configured) and
-    filters out social/news/directory domains; falls back to a best-guess domain when
-    no search is configured or nothing usable was found."""
-    query=f'{name} official website'
-    results=[]
-    try: results=tavily_search(query,max_results=5) or []
-    except Exception: results=[]
-    if not results:
-        try: results=google_search(query,max_results=5) or []
-        except Exception: results=[]
-    for r in results:
-        host=(urlparse(r.get('url','')).hostname or '').lower()
-        bare=host[4:] if host.startswith('www.') else host
-        if not bare: continue
-        if any(bare==d or bare.endswith('.'+d) for d in NON_OFFICIAL_SITE_DOMAINS): continue
-        return f'https://{host}', f'Company name "{name}" was resolved to {host} via web search. Verify this is the correct entity before relying on the result.'
-    guess=f'https://www.{slugify_company_name(name)}.com'
-    return guess, f'Company name "{name}" could not be verified via web search (no search provider configured or no confident match); the scan used a best-guess domain ({guess}). Please verify this is the correct company website and re-run with the exact URL if not.'
 
 def resolve_scan_input(raw):
     """Accepts a bare company name, a bare domain, or a full URL/page and returns
@@ -480,55 +444,6 @@ def fetch_reader_text(url,timeout=9):
     if len(text)<120:
         raise ValueError('Reader fallback returned insufficient usable text.')
     return text[:180000]
-
-
-def crawl_with_related_sites(original_url,overall_deadline=None):
-    """Crawl the requested URL and, only when primary coverage remains limited, a
-    conservative related/group-domain fallback.
-
-    v59 keeps trying additional candidate pages after individual 403/404/time-out failures.
-    Earlier versions stopped after the first three candidates, so three blocked guesses could
-    leave the scan with only the homepage even when valid pages existed later in the queue.
-    """
-    if overall_deadline is None:
-        overall_deadline=time.time()+CRAWL_BUDGET_SECONDS
-    crawl_log=[]; source_notes=[]; all_text=[]; all_pages=[]; primary_error=None
-    try:
-        txt,pages=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,
-                        deadline=overall_deadline,log=crawl_log)
-        all_text.append(txt); all_pages.extend(pages)
-    except Exception as e:
-        primary_error=e
-
-    # Try known parent/group domains whenever configured. Speculative same-brand TLD variants
-    # are used only when the primary crawl produced fewer than three usable pages.
-    host=(urlparse(original_url).hostname or '').lower()
-    known=[]
-    for brand,domains in KNOWN_GROUP_DOMAINS.items():
-        if brand in host:
-            known.extend(domains)
-    candidates=list(dict.fromkeys(known))
-    if len(all_pages)<3:
-        for c in related_company_sites(original_url,max_sites=1):
-            if c not in candidates: candidates.append(c)
-
-    if time.time()<overall_deadline-3:
-        for candidate in candidates:
-            if time.time()>=overall_deadline-2: break
-            try:
-                remaining_slots=max(1,min(3,CRAWL_TARGET_EXTRA_PAGES-(len(all_pages)-1)))
-                rt,rpages=crawl(candidate,max_extra_pages=remaining_slots,
-                                deadline=overall_deadline,log=crawl_log,
-                                candidate_source='related_domain')
-                if len(rt)>500:
-                    all_text.append('\n\nRELATED COMPANY SITE: '+candidate+'\n'+rt)
-                    all_pages.extend([p for p in rpages if p not in all_pages])
-                    source_notes.append(f'Related company site also checked: {candidate}')
-            except Exception:
-                pass
-    if not all_text:
-        raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
-    return '\n\n'.join(all_text)[:180000], all_pages[:16], source_notes, crawl_log
 
 
 def replace_tld_with_be(url):
@@ -821,22 +736,6 @@ def _guess_company_from_text(text):
             return name
     return ''
 
-def infer_company(url,text,company_name_hint=''):
-    if company_name_hint and company_name_hint.strip():
-        hint=company_name_hint.strip()
-        combo=hint.lower()
-        for k,p in PROFILES.items():
-            if k in combo: return {"company":p[0],"sector":p[1],"sector_risk":p[2],"context":p[3]}
-        return {"company":hint,"sector":"Sector not explicitly identified","sector_risk":"","context":"Company name provided by the user; context is based on document/website and external search signals."}
-    combo=(url+" "+text[:5000]).lower()
-    for k,p in PROFILES.items():
-        if k in combo: return {"company":p[0],"sector":p[1],"sector_risk":p[2],"context":p[3]}
-    host=urlparse(url).hostname or ""; name=host.replace("www.","").split(".")[0].title()
-    if not name or not host:
-        guessed=_guess_company_from_text(text)
-        if guessed:
-            return {"company":guessed,"sector":"Sector not explicitly identified","sector_risk":"","context":"Company name inferred from the uploaded document text; context is based on document content."}
-    return {"company":name or "Company reviewed","sector":"Sector not explicitly identified","sector_risk":"","context":"No recognised company profile matched; context is based on website and external search signals."}
 def infer_sector(company,text):
     if company.get("sector_risk"):
         level=company["sector_risk"]; basis="recognised company/sector profile"
@@ -868,29 +767,6 @@ def google_search(query, max_results=5):
         out.append({"title":item.get("title",""),"url":item.get("link",""),"content":item.get("snippet",""),"score":0,"provider":"Google Custom Search"})
     return out
 
-def search_public_sources(query,max_results=4):
-    """Provider cascade: Tavily primary, Google Custom Search fallback."""
-    attempts=[]
-    if TAVILY_API_KEY:
-        try:
-            res=tavily_search(query,max_results)
-            for r in res: r["provider"]="Tavily"
-            attempts.append({"provider":"Tavily","status":"ok","results":len(res)})
-            if res: return res,attempts
-        except Exception as e:
-            attempts.append({"provider":"Tavily","status":"failed","error":str(e)[:180]})
-    else:
-        attempts.append({"provider":"Tavily","status":"not_configured"})
-    if GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX:
-        try:
-            res=google_search(query,max_results)
-            attempts.append({"provider":"Google Custom Search","status":"ok","results":len(res)})
-            if res: return res,attempts
-        except Exception as e:
-            attempts.append({"provider":"Google Custom Search","status":"failed","error":str(e)[:180]})
-    else:
-        attempts.append({"provider":"Google Custom Search","status":"not_configured"})
-    return [],attempts
 
 def query_themes_from_findings(findings):
     themes=set()
@@ -906,27 +782,6 @@ def query_themes_from_findings(findings):
         themes.update(["social responsibility criticism", "human rights labour controversy", "workers supplier complaint"])
     return list(themes)[:8]
 
-def external(company, findings=None):
-    # V25: claim-specific external search. Queries are derived from the detected claim areas
-    # so the public-source layer is less generic and better suited to contradiction testing.
-    themes=query_themes_from_findings(findings or [])
-    qs=[f'{company} {theme}' for theme in themes]
-    qs.append(f'{company} social washing greenwashing misleading social claims')
-    allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:3]:
-        res,attempts=search_public_sources(q,4)
-        provider_attempts.extend([dict(a,query=q) for a in attempts])
-        for r in res:
-            u=r.get("url","")
-            if u and u not in seen:
-                r["query"]=q; r["credibility"]=source_credibility(r); allr.append(r); seen.add(u)
-                if r.get("provider"): providers.add(r.get("provider"))
-    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
-        return {"enabled":False,"summary":"External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.","results":[],"compact_sources":[],"providers_used":[],"provider_attempts":provider_attempts,"query_themes":themes}
-    summary=summarise_ext(allr)
-    if providers: summary += " Search provider(s) used: "+", ".join(sorted(providers))+"."
-    else: summary += " No usable external results were returned by the configured providers."
-    return {"enabled":True,"summary":summary,"results":allr[:20],"compact_sources":negative_compact_sources(allr,5),"providers_used":sorted(providers),"provider_attempts":provider_attempts,"query_themes":themes}
 
 def summarise_ext(results):
     if not results: return "No external public-source results were returned."
@@ -1176,12 +1031,6 @@ def build_report(company,sector,context,findings,score,pages):
     rationale=f"Claim focus: the rating gives most weight to website wording that could create an unsupported impression of social performance. Sector context: {sector['risks']} Basis: {sector['basis']}. Public-source context: {context['note']} External signals are considered more strongly when they are relevant to the concrete company and align with detected claim themes such as workers, suppliers, human rights, inclusion, customer protection or communities."
     return {"summary":summary,"rationale":rationale,"rewrite_guidance":guidance(findings,sector),"pages_reviewed":pages,"standards_overview":STANDARDS,"scoring_note":""}
 
-def source_credibility(result):
-    text=(result.get("title","")+" "+result.get("url","")+" "+result.get("content","")).lower()
-    if any(x in text for x in ["oecd","europa.eu",".gov","ilo.org","ohchr.org","un.org","regulator","authority","commission","court"]): return "High"
-    if any(x in text for x in ["reuters","bbc","ft.com","guardian","bloomberg","amnesty","human rights watch","oxfam","clean clothes","ngo"]): return "Medium-high"
-    if any(x in text for x in ["blog","forum","opinion"]): return "Low"
-    return "Medium"
 
 def evidence_checklist(f):
     t=(f.get("type","")+" "+f.get("issue","")).lower()
@@ -1473,21 +1322,6 @@ def company_terms_for_filter(company_name):
         parts.append(raw)
     return list(dict.fromkeys(parts))
 
-def source_mentions_company(result, company_name):
-    text = (result.get("title","") + " " + result.get("content","") + " " + result.get("url","")).lower()
-    terms = company_terms_for_filter(company_name)
-    alias_map={
-        'zara':['zara','inditex'], 'inditex':['inditex','zara','itx'],
-        'delhaize':['delhaize','ahold delhaize','aholddelhaize'], 'lidl':['lidl','schwarz'],
-        'aldi':['aldi'], 'kbc':['kbc'], 'proximus':['proximus'], 'fluxys':['fluxys']
-    }
-    expanded=[]
-    for t in terms:
-        expanded.append(t)
-        for part in t.replace('/',' ').replace('-',' ').split():
-            expanded.extend(alias_map.get(part,[]))
-    expanded=list(dict.fromkeys([x for x in expanded if len(x)>=3]))
-    return bool(expanded) and any(t in text for t in expanded)
 
 def _root_domain(url_or_host):
     host=(urlparse(url_or_host).hostname or url_or_host or '').lower().replace('www.','').strip()
@@ -1507,84 +1341,6 @@ def company_owned_roots(reviewed_pages=None):
             roots.add(root)
     return roots
 
-def is_company_owned_source(result, company_name, reviewed_pages=None):
-    """Exclude company-owned websites/documents from external public-source signals.
-    Company sustainability reports, policies, supplier codes and own human-rights documents may be evidence,
-    but they are not external stakeholder signals.
-    """
-    url=result.get('url','') or ''
-    host=(urlparse(url).hostname or '').lower().replace('www.','')
-    if not host: return False
-    root=_root_domain(host)
-    if root and root in company_owned_roots(reviewed_pages):
-        return True
-    terms=company_terms_for_filter(company_name)
-    cleaned=[]
-    for t in terms:
-        t=t.lower().replace(' / ',' ').replace('/',' ').replace('-',' ').replace('&',' ')
-        cleaned.extend([x for x in t.split() if len(x)>=3 and x not in {'group','company','holding','holdings','corporate'}])
-    cleaned=list(dict.fromkeys(cleaned))
-    host_labels=set(host.split('.'))
-    host_compact=host.replace('-','').replace('_','').replace('.','')
-    # Treat brand or parent-company domains as company-owned even when the brand is embedded
-    # inside a larger host name (e.g. aholddelhaize.com, corporate.lidl.com).
-    if any(t in host_labels for t in cleaned) or any(t.replace(' ','') in host_compact for t in cleaned):
-        return True
-    brand_aliases={
-        'delhaize':['aholddelhaize','ahold','delhaize'],
-        'lidl':['lidl','schwarz'],
-        'aldi':['aldi'],
-        'zara':['zara','inditex'],
-        'inditex':['inditex','zara'],
-        'kbc':['kbc'],
-        'proximus':['proximus'],
-        'fluxys':['fluxys']
-    }
-    alias_terms=[]
-    for term in cleaned:
-        alias_terms.extend(brand_aliases.get(term,[]))
-    if any(a and a in host_compact for a in alias_terms):
-        return True
-    # Also exclude obvious company-hosted policy/report pages even where the host uses a country/corporate subdomain.
-    text=(result.get('title','')+' '+result.get('content','')+' '+url).lower()
-    own_doc_terms=['sustainability page','sustainability report','sustainability statement','annual report','annualreview','integrated report','esg report','non-financial report','csrd','esrs','human rights in the supply chain','human rights policy','human-rights policy','human rights statement','supplier code','supplier policy','supplier standards','code of conduct','modern slavery statement','due diligence statement','policy','policies','our responsibility','our sustainability','our human rights','supplier responsibility','corporate responsibility report','responsibility report','impact report','press release','news release','corporate news','annual results','quarterly results','rapport annuel','jaarverslag','duurzaamheidsverslag','rapport de durabilité']
-    # External-stakeholder section must not include company-owned policies, reports,
-    # own supplier codes, own sustainability pages or document repositories. These may
-    # support evidence assessment elsewhere, but are not external public-source signals.
-    company_source_markers=['official site','official website','corporate site','company website','corporate website','annualreports','reports.','cdn','assets','static','download','media','investor','investors','sustainability','responsibility','about-us','about us']
-    if any(t in text for t in own_doc_terms) and (any(t in text for t in cleaned) or any(a in text for a in alias_terms)):
-        return True
-    if any(t in text for t in own_doc_terms) and any(m in host for m in company_source_markers):
-        return True
-    if any(a and a in host_compact for a in alias_terms+cleaned) and any(t in text for t in ['our ', 'we ', 'policy', 'report', 'statement', 'code', 'suppliers', 'sustainability']):
-        return True
-    # Search providers often return company PDFs from document/CDN hosts. Exclude them when title/snippet clearly indicates the source is the company itself.
-    company_possessive=[f'{t} ' for t in cleaned]+[f'{a} ' for a in alias_terms]
-    if any(t in text for t in own_doc_terms) and any(t.strip() in text for t in cleaned+alias_terms):
-        return True
-    return False
-
-def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=None, negative_fn=None):
-    kept = []
-    negative_fn = negative_fn or is_negative_external_source
-    positive_markers = POSITIVE_NOISE_TERMS + ['annual report','sustainability report','esg report','policy','supplier code','code of conduct','our sustainability','our responsibility','press release','corporate news','investor relations','annual results','quarterly results','case study','best practice','ranked','awarded']
-    hard_negative = ['greenwashing','misleading','complaint','lawsuit','court','investigation','probe','fine','penalty','sanction','regulator','authority','watchdog','accused','alleged','allegation','criticism','concern','concerns','criticised','criticized','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','strike','union','protest','boycott','violation','breach','controversy','backlash','scandal']
-    for r in results:
-        text=(r.get('title','')+' '+r.get('content','')+' '+r.get('url','')).lower()
-        if is_company_owned_source(r, company_name, reviewed_pages):
-            continue
-        if not source_mentions_company(r, company_name):
-            continue
-        # Only keep negative stakeholder perceptions. Positive corporate news, company documents and neutral announcements are excluded.
-        if not any(n in text for n in hard_negative):
-            continue
-        if any(p in text for p in positive_markers) and not any(n in text for n in ['accused','alleged','allegation','criticism','criticised','criticized','complaint','lawsuit','court','regulator','fine','penalty','greenwashing','misleading','forced labour','forced labor','child labour','child labor','investigation','probe']):
-            continue
-        if negative_fn(r):
-            kept.append(r)
-    if "compact_sources" in globals():
-        return compact_sources(kept, limit)
-    return kept[:limit]
 
 def reader_friendly_summary(company, sector, findings, external_research, score, score_components=None):
     name = company.get("company", "The company")
@@ -1611,15 +1367,12 @@ def reader_friendly_summary(company, sector, findings, external_research, score,
     )
 
 
-
-
 # -----------------------------
 # V27 GREEN + SOCIAL CLAIMS EXTENSION
 # -----------------------------
 # Green-claims module based on Directive (EU) 2024/825 (EmpCo), which amends the UCPD.
 # The directive is primarily a B2C/commercial-communication consumer-protection framework.
 # This scanner therefore distinguishes consumer-facing pages from investor/internal reports.
-
 
 
 EMPCO_LENS=[
@@ -2129,24 +1882,6 @@ def green_query_themes(findings):
     if not themes: themes=['greenwashing misleading environmental claims complaint']
     return list(dict.fromkeys(themes))[:8]
 
-def external_green(company, findings=None):
-    themes=green_query_themes(findings or [])
-    qs=[f'{company} {theme}' for theme in themes]
-    allr=[]; seen=set(); provider_attempts=[]; providers=set()
-    for q in qs[:3]:
-        res,attempts=search_public_sources(q,4)
-        provider_attempts.extend([dict(a,query=q) for a in attempts])
-        for r in res:
-            u=r.get('url','')
-            if u and u not in seen:
-                r['query']=q; r['credibility']=source_credibility(r); allr.append(r); seen.add(u)
-                if r.get('provider'): providers.add(r.get('provider'))
-    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
-        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':provider_attempts,'query_themes':themes}
-    summary=summarise_green_ext(allr)
-    if providers: summary += ' Search provider(s) used: '+', '.join(sorted(providers))+'.'
-    else: summary += ' No usable external results were returned by the configured providers.'
-    return {'enabled':True,'summary':summary,'results':allr[:20],'compact_sources':green_negative_compact_sources(allr,5),'providers_used':sorted(providers),'provider_attempts':provider_attempts,'query_themes':themes}
 
 def summarise_green_ext(results):
     if not results: return 'No external public-source results were returned.'
@@ -2201,9 +1936,6 @@ def sector_environment_score(sector):
     if sector.get('level')=='High': return 55
     if sector.get('level')=='Medium': return 35
     return 15
-
-
-
 
 
 def combine_green_social(green_score, social_score, audience):
@@ -2285,7 +2017,6 @@ def build_green_social_actions(green_findings, social_findings, audience, compan
         actions.append({'priority':'Priority 4','title':'Verify labels and certifications','action':f"Name the scheme owner, criteria, certification scope, verification body and validity period for any green/social label or certification {who} references."})
     actions.append({'priority':'Priority 5','title':'Align reporting and marketing language','action':f"Use {who}'s reports as supporting evidence, but only reuse wording in consumer-facing communication when it is specific, current, substantiated and appropriate for that audience."})
     return actions[:6]
-
 
 
 def discover_investor_internal_documents(company, reviewed_pages=None, limit=5):
@@ -2647,8 +2378,9 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
              "evidence available to support it. This is an initial screening result, not a legal finding.")
+    _score_drivers = score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)
     return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':_score_drivers['green']['summary'],'social':_score_drivers['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':_score_drivers,'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
     """Turns a raw fetch exception into a clear, non-technical explanation."""
@@ -2776,6 +2508,7 @@ def analyse_url_v27(raw):
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
+    _score_drivers = score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)
     return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
@@ -2794,17 +2527,16 @@ def analyse_url_v27(raw):
         'green_external_context_assessment':green_external_context,'social_external_context_assessment':social_external_context,
         'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},
         'why_score':{'global':f'Global score is {overall}/100. It is a weighted combination of the green score ({green_score}/100) and social score ({social_score}/100), calibrated so that one dimension does not automatically dominate the global score. Direct EmpCo or Forced Labour Regulation risk signals can raise the relevant dimension score, while broader OECD/UNGC/UNGP expectations are weighted less strongly.',
-                     'green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],
-                     'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],
+                     'green':_score_drivers['green']['summary'],
+                     'social':_score_drivers['social']['summary'],
                      'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications. The score methodology uses continuous weighting so results vary by claim type, evidence gap, communication channel, sector sensitivity and retained external stakeholder context.'},
-        'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience),
+        'score_driver_details':_score_drivers,
         'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext_scoring,sec,ctx),
         'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),
         'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext)+['Which green claims are consumer-facing, and what objective evidence file supports each claim under EmpCo-style controls?','For products or supply chains, what forced-labour risk assessment, traceability evidence, remediation process and withdrawal/customs response procedure support the claim under Regulation (EU) 2024/3015?'],
         'confidence':confidence_result,'external_verification_status':external_verification_status,'entity_context_indicator':entity_context_indicator,'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use. External search results are review signals that require manual verification.',
         'analysed_text_excerpt':txt[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Classify each claim by audience: consumer-facing marketing vs investor reporting.','For forced-labour and modern-slavery claims, link wording to product/supplier traceability, risk assessment, remediation and Regulation (EU) 2024/3015 readiness.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.','Check public-source context for contradiction signals and keep company-owned evidence separate from external stakeholder sources.'],
         'ai_used':False,'ai_note':''}
-
 
 
 # -----------------------------
@@ -2847,7 +2579,6 @@ def _has_real_claim_context(excerpt, typ, trig):
     if 'future' in t:
         return any(x in c for x in ['net zero','carbon neutral','climate positive','by 2030','by 2040','by 2050','implementation plan','transition plan','climate roadmap'])
     return True
-
 
 
 def has_regulatory_green_signal(findings, audience):
@@ -2926,22 +2657,9 @@ def recalibrate_dimension_score(raw_score, components, findings, targeted_source
     return base, comps
 
 
-
 # Stricter negative-stakeholder source filters: company-owned documents, positive news,
 # awards, partnerships and neutral corporate announcements are never retained.
-def is_negative_external_source(result):
-    text=_external_signal_text(result)
-    hard_negative=['forced labour','forced labor','child labour','child labor','modern slavery','lawsuit','court','complaint','controversy','strike','union','regulator','regulatory','discrimination','human rights abuse','labour rights abuse','labor rights abuse','investigation','probe','fine','sanction','breach','violation','misconduct','unsafe','audit failure','accused','alleged','allegation','criticism','criticised','criticized','backlash','boycott','protest']
-    stakeholder_context=['ngo','union','court','regulator','authority','watchdog','complaint','lawsuit','investigation','press','media','reuters','bbc','guardian','ft.com','oecd','ncp','amnesty','human rights watch','clean clothes']
-    positive_or_owned=any(t in text for t in OWNED_OR_NEUTRAL_DOC_TERMS+POSITIVE_NOISE_TERMS+['press release','corporate news','award','recognised','recognized','partnership','launches','sustainability report','annual report','policy','supplier code','code of conduct'])
-    return any(t in text for t in hard_negative) and any(t in text for t in stakeholder_context) and not positive_or_owned
 
-def is_green_negative_source(result):
-    text=_external_signal_text(result)
-    hard=['greenwashing','misleading environmental','misleading green','complaint','lawsuit','court','regulator','authority','advertising standards','ban','prohibited','investigation','fine','penalty','sanction','watchdog','accused','allegation','criticised','criticized','consumer authority','settlement','asa','jep']
-    stakeholder=['regulator','authority','watchdog','court','complaint','lawsuit','investigation','media','press','ngo','consumer authority','asa','jep','reuters','guardian','bbc','ft.com']
-    positive_or_owned=any(t in text for t in OWNED_OR_NEUTRAL_DOC_TERMS+POSITIVE_NOISE_TERMS+['press release','corporate news','award','recognised','recognized','partnership','launches','sustainability report','annual report','policy'])
-    return any(t in text for t in hard) and any(t in text for t in stakeholder) and not positive_or_owned
 
 def green_negative_compact_sources(results, limit=5):
     return compact_sources([r for r in results if is_green_negative_source(r)], limit)
@@ -3070,9 +2788,6 @@ CLAIMS=[
  (['all employees included','fully inclusive workplace','100% inclusive','guaranteed equal opportunities','no pay gap','zero pay gap'],'Diversity, equality and inclusion claim','Medium','Absolute inclusion, equality or pay-gap wording may overstate outcomes unless backed by data, scope, baseline and progress evidence.','Add workforce data, baseline, scope, limitations, methodology and progress indicators.'),
  (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Research on fashion-sector sustainability communication (KU Leuven/HIVA, 2026) identified this pattern as a recurring social-washing risk: vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. This scan does not treat that research as proof that the pattern is always the dominant driver.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
 ]
-
-
-
 
 
 def calc_green_score(findings, sector, ext, page_text, audience):
@@ -3867,49 +3582,6 @@ def _v60_company_terms(company_name):
     return phrase,tokens,compact
 
 
-def source_mentions_company(result, company_name):
-    text=_external_signal_text(result)
-    phrase,tokens,compact=_v60_company_terms(company_name)
-    if phrase and re.search(r'(?<![a-z0-9])'+re.escape(phrase)+r'(?![a-z0-9])', text):
-        return True
-    host=_v60_host(result).replace('-','').replace('_','').replace('.','')
-    if compact and len(compact)>=4 and compact in host:
-        return True
-    # For multi-word names, require either the compact brand or at least two material tokens.
-    hits=sum(1 for t in tokens if re.search(r'(?<![a-z0-9])'+re.escape(t)+r'(?![a-z0-9])',text))
-    if len(tokens)>=2:
-        return hits>=2
-    return hits>=1
-
-
-def is_company_owned_source(result, company_name, reviewed_pages=None):
-    """Domain-led ownership test.
-
-    Do not classify an external article as company-owned merely because its title or
-    snippet discusses the company's sustainability report, policy or supplier code.
-    """
-    host=_v60_host(result)
-    if not host:
-        return False
-    root=_root_domain(host)
-    if root and root in company_owned_roots(reviewed_pages):
-        return True
-    phrase,tokens,compact=_v60_company_terms(company_name)
-    host_compact=host.replace('-','').replace('_','').replace('.','')
-    if compact and len(compact)>=4 and compact in host_compact:
-        return True
-    # Retain the established parent-brand aliases, but apply them to the hostname only.
-    aliases={
-        'delhaize':['aholddelhaize','ahold','delhaize'], 'lidl':['lidl','schwarz'],
-        'aldi':['aldi'], 'zara':['zara','inditex'], 'inditex':['inditex','zara'],
-        'kbc':['kbc'], 'proximus':['proximus'], 'fluxys':['fluxys'], 'shein':['shein']
-    }
-    for token in tokens:
-        if any(a in host_compact for a in aliases.get(token,[])):
-            return True
-    return False
-
-
 def _v62_term_present(text, term):
     """Match controversy terms as complete words/phrases, not substrings."""
     term=(term or '').strip().lower()
@@ -3928,33 +3600,6 @@ def _v62_clean_external_content(value):
     parts=[p.strip() for p in re.split(r'(?<=[.!?])\s+',text) if p.strip()]
     kept=[p for p in parts if not any(n in p.lower() for n in noise)]
     return ' '.join(kept or parts)[:420]
-
-
-def _v60_negative_strength(result, dimension='social'):
-    text=_external_signal_text(result)
-    terms=_V60_GREEN_NEGATIVE if dimension=='green' else _V60_SOCIAL_NEGATIVE
-    anchors=_V60_GREEN_ANCHORS if dimension=='green' else _V60_SOCIAL_ANCHORS
-    hits=[t for t in terms if _v62_term_present(text,t)]
-    anchor_hits=[t for t in anchors if _v62_term_present(text,t)]
-    enforcement=[t for t in _V60_ENFORCEMENT_TERMS if _v62_term_present(text,t)]
-    kind=_v60_source_kind(result)
-    recognised=kind!='Other public source'
-    if dimension=='green':
-        explicit=any(_v62_term_present(text,x) for x in ('greenwashing','misleading environmental','misleading green','deceptive environmental','unsubstantiated environmental','false environmental','environmental claim complaint','environmental claims investigation'))
-        negative_polarity=explicit or bool(enforcement) or any(_v62_term_present(text,x) for x in ('accused','alleged','allegation','criticism','criticised','criticized','complaint','watchdog','regulator','penalty','sanction','prohibited'))
-    else:
-        explicit=any(_v62_term_present(text,x) for x in ('social washing','forced labour','forced labor','child labour','child labor','modern slavery','human rights abuse','labour rights','labor rights','worker rights','workers rights'))
-        negative_polarity=explicit or bool(enforcement) or any(_v62_term_present(text,x) for x in ('exploitation','unsafe working','wage theft','union busting','discrimination','harassment','accused','alleged','allegation','criticism','criticised','criticized','complaint','protest'))
-    accepted=bool(anchor_hits) and bool(negative_polarity) and (explicit or bool(enforcement) or len(hits)>=2 or (recognised and len(hits)>=1))
-    return len(hits)+len(anchor_hits),len(enforcement),kind,accepted
-
-
-def is_negative_external_source(result):
-    return _v60_negative_strength(result,'social')[3]
-
-
-def is_green_negative_source(result):
-    return _v60_negative_strength(result,'green')[3]
 
 
 def source_credibility(result):
@@ -3990,61 +3635,6 @@ def _v60_canonical_url(url):
     host=(p.hostname or '').lower().removeprefix('www.')
     path=re.sub(r'/+$','',p.path or '/')
     return host+path
-
-
-def _v60_rank_dedupe(results, company_name, dimension='social', limit=20):
-    candidates=[]; seen=set()
-    for r in results or []:
-        if not source_mentions_company(r,company_name):
-            continue
-        key=_v60_canonical_url(r.get('url',''))
-        if not key or key in seen:
-            continue
-        score=_v60_signal_score(r,company_name,dimension)
-        if score<0:
-            continue
-        item=dict(r); item['_signal_score']=score; item['source_kind']=_v60_source_kind(item)
-        candidates.append(item); seen.add(key)
-    candidates.sort(key=lambda x:(x.get('_signal_score',0),x.get('published_date','')),reverse=True)
-    return _dedupe_similar_sources(candidates)[:limit]
-
-
-def compact_sources(results,limit=6,dimension=None):
-    out=[]
-    for r in _dedupe_similar_sources(results or [])[:limit]:
-        txt=_external_signal_text(r)
-        kind=r.get('source_kind') or _v60_source_kind(r)
-        manual=bool(r.get('manual_verified') or r.get('verified'))
-        dim=dimension or r.get('dimension') or ('green' if is_green_negative_source(r) else 'social')
-        url=r.get('url','') or ''
-        host=(urlparse(url).hostname or '').removeprefix('www.')
-        score=r.get('_signal_score',0) or 0
-        try: relevance='High' if float(score)>=70 else 'Medium'
-        except Exception: relevance='Medium'
-        out.append({'title':(r.get('title','') or '')[:170],'url':url,'source_name':host or kind,
-            'content':_v62_clean_external_content(r.get('content',''))[:320],
-            'category':kind,'source_kind':kind,'credibility':source_credibility(r),'provider':r.get('provider',''),
-            'published_date':r.get('published_date','') or 'Date not available','status':_source_status(txt),
-            'severity':_source_severity(txt),'review_status':'Verified' if manual else 'Retained — manual verification required',
-            'entity_match':'Direct','dimension':dim,'relevance':relevance,
-            'related_claim_area':'Environmental claims' if dim=='green' else 'Social / labour claims',
-            'related_articles_count':r.get('related_articles_count',1)})
-    return out
-
-
-def targeted_negative_sources(results, company_name, limit=5, reviewed_pages=None, negative_fn=None):
-    dimension='green' if negative_fn is is_green_negative_source else 'social'
-    kept=[]
-    for r in results or []:
-        if is_company_owned_source(r,company_name,reviewed_pages):
-            continue
-        if not source_mentions_company(r,company_name):
-            continue
-        if not (negative_fn or is_negative_external_source)(r):
-            continue
-        kept.append(r)
-    ranked=_v60_rank_dedupe(kept,company_name,dimension,max(limit*3,limit))
-    return compact_sources(ranked,limit,dimension)
 
 
 def search_public_sources(query,max_results=6):
@@ -4131,31 +3721,6 @@ def _v60_green_queries(company,findings=None):
     for theme in green_query_themes(findings or []):
         base.append(f'{quoted} {theme}')
     return list(dict.fromkeys(base))
-
-
-def external(company, findings=None):
-    themes=query_themes_from_findings(findings or [])
-    queries=_v60_social_queries(company,findings)
-    allr,attempts,providers,run_queries=_v60_run_queries(queries)
-    ranked=_v60_rank_dedupe(allr,company,'social',30)
-    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
-        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':0}
-    summary=summarise_ext(ranked)
-    summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
-    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,'social'),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
-
-
-def external_green(company, findings=None):
-    themes=green_query_themes(findings or [])
-    queries=_v60_green_queries(company,findings)
-    allr,attempts,providers,run_queries=_v60_run_queries(queries)
-    ranked=_v60_rank_dedupe(allr,company,'green',30)
-    if not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
-        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':0}
-    summary=summarise_green_ext(ranked)
-    summary+=(' Search provider(s) used: '+', '.join(sorted(providers))+'.') if providers else ' No usable external results were returned by the configured providers.'
-    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,'green'),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':run_queries,'raw_result_count':len(allr)}
-
 
 
 # -----------------------------
@@ -4256,42 +3821,6 @@ def _v60_negative_strength(result, dimension='social'):
     )
     strength=len(explicit)*3 + len(anchors) + len(negative) + len(enforcement)
     return strength,len(enforcement),kind,accepted
-
-
-def is_negative_external_source(result):
-    return _v60_negative_strength(result,'social')[3]
-
-
-def is_green_negative_source(result):
-    return _v60_negative_strength(result,'green')[3]
-
-
-def is_company_owned_source(result, company_name, reviewed_pages=None):
-    """V63 domain-led ownership test.
-
-    When the official site was crawled, only its registrable root(s) are treated as
-    company-owned. This avoids excluding independent domains such as brand-watch,
-    campaign or stakeholder sites merely because the company name occurs in the host.
-    """
-    host=_v60_host(result)
-    if not host:
-        return False
-    root=_root_domain(host)
-    official_roots=company_owned_roots(reviewed_pages)
-    if official_roots:
-        return bool(root and root in official_roots)
-    # Fallback for calls without reviewed pages: use exact domain-label matching, never a
-    # broad substring match. Company-specific aliases remain deliberately conservative.
-    phrase,tokens,compact=_v60_company_terms(company_name)
-    root_label=(root.split('.')[0] if root else '')
-    if compact and len(compact)>=4 and root_label.replace('-','')==compact:
-        return True
-    aliases={
-        'delhaize':{'aholddelhaize','delhaize'}, 'lidl':{'lidl','schwarz'},
-        'aldi':{'aldi'}, 'zara':{'zara','inditex'}, 'inditex':{'inditex','zara'},
-        'kbc':{'kbc'}, 'proximus':{'proximus'}, 'fluxys':{'fluxys'}, 'shein':{'shein','sheingroup'}
-    }
-    return any(root_label.replace('-','') in aliases.get(t,set()) for t in tokens)
 
 
 def _v63_company_query_names(company_name):
@@ -4400,15 +3929,6 @@ def _v63_external_response(company, findings, dimension):
     if providers:
         summary+=' Search provider(s) used: '+', '.join(sorted(providers))+'.'
     return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,'queries_run':list(dict.fromkeys(run_queries)),'raw_result_count':len(allr),'search_diagnostics':diagnostics}
-
-
-def external(company, findings=None):
-    return _v63_external_response(company,findings,'social')
-
-
-def external_green(company, findings=None):
-    return _v63_external_response(company,findings,'green')
-
 
 
 # ---------------------------------------------------------------------------
@@ -4543,72 +4063,6 @@ def _v64_official_candidate_score(result, company_name):
     return score
 
 
-def resolve_company_website(name):
-    """Resolve a bare name only to a domain that is demonstrably tied to that name.
-
-    V63 accepted the first non-news/non-directory domain. V64 requires a strong
-    brand-domain/title match and uses a small verified-domain map for common ambiguous
-    brands. It never substitutes a competitor's website simply because it appeared in
-    the search results.
-    """
-    known=_v64_known_site(name)
-    if known:
-        host=urlparse(known).hostname or known
-        return known, f'Company name "{name}" was resolved to the verified official domain {host}. The scan also checks any configured corporate/group sustainability site.'
-    query=f'"{name}" official company website'
-    results=[]
-    try:
-        a=tavily_search(query,max_results=6) or []
-        for r in a: r.setdefault('provider','Tavily')
-        results.extend(a)
-    except Exception: pass
-    try:
-        b=google_search(query,max_results=6) or []
-        for r in b: r.setdefault('provider','Google Custom Search')
-        seen={_v60_canonical_url(r.get('url','')) for r in results}
-        results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
-    except Exception: pass
-    ranked=sorted((( _v64_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
-    if ranked and ranked[0][0]>=70:
-        host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
-        return f'https://{host}', f'Company name "{name}" was resolved to {host} after a verified brand/domain match. Verify the entity before relying on the result.'
-    guess=f'https://www.{slugify_company_name(name)}.com'
-    return guess, f'Company name "{name}" could not be confidently matched to an official search result. The scan used the best-guess domain {guess}; verify it or re-run with the exact official URL.'
-
-
-def infer_company(url,text,company_name_hint=''):
-    """Bind the company primarily to the reviewed host, never to a competitor mention.
-
-    The previous implementation searched the first 5,000 page characters for every
-    known profile. A competitor named in banners, comparisons or marketplace content
-    could therefore replace the actual scanned company. Host identity now has priority.
-    """
-    if company_name_hint and str(company_name_hint).strip():
-        hint=str(company_name_hint).strip()
-        key=_v64_norm(hint)
-        for k,p in PROFILES.items():
-            if _v64_norm(k)==key or _v64_norm(k) in key:
-                return {'company':p[0],'sector':p[1],'sector_risk':p[2],'context':p[3]}
-        if 'shein' in key:
-            return {'company':'SHEIN','sector':'Fast fashion and apparel retail','sector_risk':'High','context':'Fast-fashion supply chains are exposed to labour-rights, subcontracting, wages, traceability, environmental-impact and claims-substantiation risks.'}
-        return {'company':hint,'sector':'Sector not explicitly identified','sector_risk':'','context':'Company name provided by the user; context is based on document/website and external search signals.'}
-    host=(urlparse(url).hostname or '').lower()
-    host_compact=_v64_compact(host)
-    if host:
-        if 'shein' in host_compact:
-            return {'company':'SHEIN','sector':'Fast fashion and apparel retail','sector_risk':'High','context':'Fast-fashion supply chains are exposed to labour-rights, subcontracting, wages, traceability, environmental-impact and claims-substantiation risks.'}
-        for k,p in PROFILES.items():
-            if _v64_compact(k) and _v64_compact(k) in host_compact:
-                return {'company':p[0],'sector':p[1],'sector_risk':p[2],'context':p[3]}
-        label=_v64_root_label(host)
-        display={'hm':'H&M','sheingroup':'SHEIN'}.get(label,label.replace('-',' ').title())
-        return {'company':display or 'Company reviewed','sector':'Sector not explicitly identified','sector_risk':'','context':'Company identity is anchored to the reviewed website domain; page mentions of other companies do not change the assessed entity.'}
-    guessed=_guess_company_from_text(text)
-    if guessed:
-        return {'company':guessed,'sector':'Sector not explicitly identified','sector_risk':'','context':'Company name inferred from uploaded document text.'}
-    return {'company':'Company reviewed','sector':'Sector not explicitly identified','sector_risk':'','context':'No company domain or reliable document name was available.'}
-
-
 def _v64_negative_near_target(text,aliases,window=220):
     low=_v64_norm(text)
     negative_terms=list(_V63_SOCIAL_EXPLICIT)+list(_V63_SOCIAL_NEGATIVE)+list(_V63_GREEN_EXPLICIT)+list(_V63_GREEN_NEGATIVE)+list(_V60_ENFORCEMENT_TERMS)
@@ -4629,68 +4083,6 @@ def _v64_primary_competitors_in_title(title,target_aliases):
         if re.search(r'(?<![a-z0-9])'+re.escape(bn).replace(r'\ ',r'\s+')+r'(?![a-z0-9])',norm):
             hits.append(b)
     return hits
-
-
-def entity_match_details(result,company_name,reviewed_pages=None):
-    """Return a conservative direct-entity match assessment.
-
-    A target mentioned once in an H&M/Zara/other-company article is not sufficient.
-    Accepted results must identify the target in the title/URL, or repeatedly in the
-    content with controversy language close to the target and no competitor-dominated
-    title.
-    """
-    aliases=_v64_brand_aliases(company_name)
-    title=result.get('title','') or ''
-    content=result.get('content','') or ''
-    url=result.get('url','') or ''
-    title_count,_=_v64_alias_occurrences(title,aliases)
-    content_count,_=_v64_alias_occurrences(content,aliases)
-    url_count,_=_v64_alias_occurrences(url.replace('-',' ').replace('_',' '),aliases)
-    competitors=_v64_primary_competitors_in_title(title,set(aliases))
-    near_negative=_v64_negative_near_target(title+' '+content,aliases)
-    if competitors and title_count==0:
-        return {'matched':False,'score':0,'label':'Rejected — competitor-primary','reason':'The title is about another company; the target appears only incidentally.'}
-    score=0; reasons=[]
-    if title_count:
-        score+=7; reasons.append('target in title')
-    if url_count:
-        score+=5; reasons.append('target in URL')
-    if content_count>=2:
-        score+=4; reasons.append('target repeated in source summary')
-    elif content_count==1:
-        score+=1
-    if near_negative:
-        score+=2; reasons.append('controversy linked near target')
-    if competitors and title_count:
-        score-=2; reasons.append('comparative/multi-company title')
-    matched=(title_count>0 or url_count>0 or (content_count>=2 and near_negative and not competitors)) and score>=5
-    label='Direct — '+(', '.join(reasons[:2]) if matched else 'insufficient entity evidence')
-    return {'matched':matched,'score':score,'label':label,'reason':'; '.join(reasons)}
-
-
-def source_mentions_company(result,company_name,reviewed_pages=None):
-    return entity_match_details(result,company_name,reviewed_pages).get('matched',False)
-
-
-def _v60_rank_dedupe(results,company_name,dimension='social',limit=20,reviewed_pages=None):
-    candidates=[]; seen=set()
-    for r in results or []:
-        match=entity_match_details(r,company_name,reviewed_pages)
-        if not match['matched']:
-            continue
-        if is_company_owned_source(r,company_name,reviewed_pages):
-            continue
-        key=_v60_canonical_url(r.get('url',''))
-        if not key or key in seen:
-            continue
-        score=_v60_signal_score(r,company_name,dimension)
-        if score<0:
-            continue
-        item=dict(r); item['_signal_score']=score+match['score']; item['source_kind']=_v60_source_kind(item)
-        item['entity_match']=match['label']; item['entity_match_reason']=match['reason']
-        candidates.append(item); seen.add(key)
-    candidates.sort(key=lambda x:(x.get('_signal_score',0),x.get('published_date','')),reverse=True)
-    return _dedupe_similar_sources(candidates)[:limit]
 
 
 def compact_sources(results,limit=6,dimension=None):
@@ -4780,50 +4172,6 @@ def external(company,findings=None,reviewed_pages=None):
 
 def external_green(company,findings=None,reviewed_pages=None):
     return _v64_external_response(company,findings,'green',reviewed_pages)
-
-
-def crawl_with_related_sites(original_url,overall_deadline=None):
-    """Reserve crawl time for a verified corporate/group domain.
-
-    Retail storefronts are often blocked or almost entirely JavaScript. Earlier code
-    could spend the whole budget there and never reach the corporate sustainability
-    site. V64 reserves part of the budget for configured group domains and combines
-    both sources without replacing the requested entity.
-    """
-    if overall_deadline is None: overall_deadline=time.time()+CRAWL_BUDGET_SECONDS
-    crawl_log=[]; source_notes=[]; all_text=[]; all_pages=[]; primary_error=None
-    host=(urlparse(original_url).hostname or '').lower()
-    known=[]
-    for brand,domains in KNOWN_GROUP_DOMAINS.items():
-        if brand in host:
-            known.extend(domains)
-    known=list(dict.fromkeys(known))
-    reserve=8 if known else 0
-    primary_deadline=max(time.time()+6,overall_deadline-reserve) if reserve else overall_deadline
-    try:
-        txt,pages=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,deadline=primary_deadline,log=crawl_log)
-        if txt.strip(): all_text.append(txt); all_pages.extend(pages)
-    except Exception as e:
-        primary_error=e
-    candidates=list(known)
-    if len(all_pages)<3:
-        for c in related_company_sites(original_url,max_sites=1):
-            if c not in candidates: candidates.append(c)
-    for candidate in candidates:
-        if time.time()>=overall_deadline-2: break
-        try:
-            remaining_slots=max(2,min(4,CRAWL_TARGET_EXTRA_PAGES-max(0,len(all_pages)-1)))
-            rt,rpages=crawl(candidate,max_extra_pages=remaining_slots,deadline=overall_deadline,log=crawl_log,candidate_source='related_domain')
-            if len(rt)>300:
-                all_text.append('\n\nRELATED OFFICIAL COMPANY SITE: '+candidate+'\n'+rt)
-                all_pages.extend([p for p in rpages if p not in all_pages])
-                source_notes.append(f'Official corporate/group site also checked: {candidate}')
-        except Exception:
-            pass
-    if not all_text:
-        raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
-    return '\n\n'.join(all_text)[:180000],all_pages[:16],source_notes,crawl_log
-
 
 
 # ---------------------------------------------------------------------------
@@ -5166,7 +4514,6 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
     return '\n\n'.join(all_text)[:180000],all_pages[:16],source_notes,crawl_log
 
 
-
 # -----------------------------
 # V69 strict negative external-source gate
 # -----------------------------
@@ -5218,8 +4565,12 @@ _V69_STRONG_ACTION_PATTERNS=(
     r'\b(fined|penalised|penalized|sanctioned|banned|prohibited|convicted|found liable)\b',
     r'\b(regulator|authority|watchdog|court|prosecutor)\b.{0,80}\b(investigat|accus|fine|penalt|sanction|rule|complaint)',
     r'\b(lawsuit|legal action|formal complaint|criminal investigation|regulatory investigation)\b',
-    r'\b(found|documented|reported)\b.{0,80}\b(forced labour|forced labor|child labour|child labor|illegal working hours|wage theft|unsafe working conditions)\b',
+    r'\b(found|documented|reported)\b.{0,80}\b(forced labour|forced labor|child labour|child labor|modern slavery|illegal working hours|wage theft|unsafe working conditions)\b',
 )
+# Self-descriptive compliance-document titles (e.g. a UK Modern Slavery Act statement)
+# reuse the same explicit vocabulary as genuine reporting without describing an event.
+# These must stay excluded even when evaluated outside the domain-ownership filter.
+_V70_POLICY_TITLE_MARKERS=('policy','statement','code of conduct','due diligence','our commitment','framework','guideline')
 
 
 def _v69_term_hits(text,terms):
@@ -5267,8 +4618,17 @@ def _v69_external_polarity(result,dimension='social'):
     else:
         # Social-risk vocabulary in a company policy or responsible-sourcing page is not
         # negative external evidence by itself. Require an allegation, criticism, formal
-        # action or multiple adverse markers linked to the issue.
-        accepted=bool(generic_title) or strong_action or (bool(explicit) and bool(generic_body)) or len(set(generic_body))>=2
+        # action or multiple adverse markers linked to the issue -- unless the explicit
+        # adverse term is stated in the headline itself and the headline does not read as
+        # a policy/compliance-document title (e.g. "Modern Slavery and Human Trafficking
+        # Policy"), in which case the headline alone is a sufficiently strong signal.
+        title_is_policy_document=any(marker in title for marker in _V70_POLICY_TITLE_MARKERS)
+        accepted=(
+            bool(generic_title) or strong_action
+            or (bool(explicit_title) and not title_is_policy_document)
+            or (bool(explicit_body) and bool(generic_body))
+            or len(set(generic_body))>=2
+        )
     if not accepted:
         return False,'No sufficiently explicit adverse event or criticism'
     reason=[]

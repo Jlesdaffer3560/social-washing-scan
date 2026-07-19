@@ -59,6 +59,37 @@ def test_genuine_independent_adverse_source_is_retained():
     assert retained[0]["polarity"] == "negative"
 
 
+def test_explicit_adverse_headline_is_not_rejected_for_lacking_legal_vocabulary():
+    # An unambiguous, event-framed headline must be enough on its own -- it should not
+    # need a *second*, separate legal/enforcement word to be treated as negative. This
+    # mirrors how a green headline like "Greenwashing in X's marketing" is already
+    # accepted on the explicit term alone.
+    genuine_reports = [
+        {
+            "title": "Modern slavery uncovered in Acme Textiles' supply chain",
+            "content": "Workers described being trapped in debt bondage, with wages withheld for months.",
+            "url": "https://www.independentnewsoutlet.example/modern-slavery-acme",
+        },
+        {
+            "title": "Child labour found at Acme Textiles supplier factory",
+            "content": "Interviews with former employees describe children working night shifts.",
+            "url": "https://www.independentnewsoutlet.example/child-labour-acme",
+        },
+    ]
+    for source in genuine_reports:
+        assert app.is_negative_external_source(source), source["title"]
+
+    # But a self-descriptive compliance-document title using the same vocabulary must
+    # still be rejected, even when evaluated outside the domain-ownership filter -- this
+    # is the exact false positive V70 was built to remove.
+    policy_document = {
+        "title": "Modern Slavery and Human Trafficking Policy",
+        "url": "https://www.puratos.co.uk/en/about-puratos/modern-slavery-policy",
+        "content": "Puratos is committed to preventing modern slavery and forced labour.",
+    }
+    assert not app.is_negative_external_source(policy_document)
+
+
 def test_actions_keep_green_and_social_claim_areas_separate():
     green = [{"risk": "High", "type": "Generic environmental claim", "problematic_terms": ["sustainable"]}]
     social = [{"risk": "High", "type": "Human-rights or labour-rights claim", "problematic_terms": ["responsible"]}]

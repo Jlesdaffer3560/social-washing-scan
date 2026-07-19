@@ -2,6 +2,28 @@
 
 Release date: 19 July 2026
 
+## Post-release fixes (reviewed 19 July 2026)
+
+- **Fixed:** `is_negative_external_source` rejected unambiguous, event-framed adverse
+  headlines (e.g. "Modern slavery uncovered in ...", "Child labour found at ...") unless
+  a *second*, separate legal/enforcement word also appeared -- unlike the green branch,
+  where an explicit headline term was already sufficient on its own. An explicit adverse
+  term in the headline is now accepted by itself, unless the headline reads as a
+  self-descriptive policy/compliance-document title (e.g. "Modern Slavery and Human
+  Trafficking Policy"), which remains excluded. Covered by a new regression test.
+- **Fixed:** `score_driver_details(...)` was being computed three times with identical
+  arguments in both `analyse_uploaded_document` and `analyse_url_v27`, instead of being
+  computed once and reused. No behaviour change; removes redundant work on every scan.
+- **Cleaned up:** 15 function names (`is_negative_external_source`,
+  `is_company_owned_source`, `targeted_negative_sources`, `resolve_company_website`,
+  `infer_company`, `crawl_with_related_sites`, and others) had 2-4 full duplicate
+  definitions accumulated across earlier version increments. Python always runs the
+  *last* definition in the file, so the earlier copies were silently dead code -- a real
+  risk, since a future patch could edit a shadowed copy and have zero effect. Removed all
+  34 dead definitions (~655 lines) and confirmed zero behaviour change: full test suite
+  (pytest + all standalone v62-v68 regression scripts) passes identically before and
+  after, and no default-argument or module-level binding depended on an earlier copy.
+
 ## Reader-facing report
 
 - Removed the internal build label and external-search configuration status.
