@@ -1832,6 +1832,30 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
         return 'High-risk comparison indicator where comparison method, comparator, source data and update process are missing.'
     return 'No direct blacklisted-practice indicator identified, but claim-specific substantiation is still required.'
 
+def green_legal_classification(claim_type, blacklisted):
+    """Reader-facing EmpCo classification: 'Prohibited' claims sit on the UCPD Annex I
+    blacklist and are unfair in all circumstances, with no case-by-case test. Everything
+    else is assessed individually as a potentially misleading action/omission under UCPD
+    Art. 6/7 (as amended by EmpCo) -- e.g. absolute/purity wording such as "fully
+    recyclable", comparative claims, and future/aspirational claims without a public
+    implementation plan. This label does not itself establish that a claim is unlawful;
+    it states which legal test would apply on review."""
+    t=(claim_type or '').lower()
+    if not blacklisted:
+        return {'label':'Misleading (case-by-case)','basis':'Assessed individually under UCPD Art. 6/7 (as amended by EmpCo): whether the claim is likely to deceive the average consumer and affect a transactional decision.'}
+    if 'climate-neutrality' in t or 'offset' in t:
+        basis='Annex I point 4c UCPD: claiming a neutral, reduced or positive climate impact based on greenhouse-gas offsetting is prohibited outright, without a case-by-case test.'
+    elif 'label' in t or 'certification' in t:
+        basis='Annex I point 2a UCPD: a sustainability label not based on a certification scheme or established by public authorities is prohibited outright.'
+    elif 'generic environmental' in t:
+        basis='Annex I point 4a UCPD: a generic environmental claim for which recognised excellent environmental performance cannot be demonstrated is prohibited outright.'
+    elif 'legal requirement' in t:
+        basis='Annex I UCPD: presenting a requirement imposed by law as a distinctive voluntary benefit is prohibited outright.'
+    else:
+        basis='UCPD Annex I blacklist practice: prohibited outright, without a case-by-case test.'
+    return {'label':'Prohibited (per se)','basis':basis}
+
+
 def green_specification_check(claim_type, claim_text):
     c=(claim_text or '').lower(); t=(claim_type or '').lower()
     specificity_terms=['%', 'scope', 'baseline', 'compared with', 'compared to', 'made from', 'verified', 'certified', 'according to', 'methodology', 'life cycle', 'lca', 'for this product', 'packaging', 'valid until', 'standard', 'iso']
@@ -1865,6 +1889,7 @@ def enrich_green_finding(f, trigger=''):
     f['module']=green_claim_module(f.get('type',''))
     f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
     sig=f['regulatory_signal'].lower(); f['blacklisted_practice_indicator']=(('blacklisted-practice indicator' in sig) and not sig.startswith('no direct'))
+    f['legal_classification']=green_legal_classification(f.get('type',''), f['blacklisted_practice_indicator'])
     f['specification_check']=green_specification_check(f.get('type',''), f.get('claim',''))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no major') else 'Can normally proceed only after standard evidence and wording review.'
@@ -1965,7 +1990,7 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_classification':f.get('legal_classification',{}),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):

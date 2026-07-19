@@ -2,6 +2,19 @@
 
 Release date: 19 July 2026
 
+- **Added:** green claims now carry a reader-facing EmpCo legal classification —
+  **"Prohibited (per se)"** for UCPD Annex I blacklist practices (generic unsubstantiated
+  claims, offset-based neutrality claims such as "carbon neutral", self-declared
+  sustainability labels, and legal requirements presented as a voluntary benefit), versus
+  **"Misleading (case-by-case)"** for claims assessed individually under the amended UCPD
+  Art. 6/7 (absolute/purity wording such as "fully recyclable", comparative claims, and
+  future/aspirational claims without a public implementation plan). The underlying
+  per-claim signal already existed (`blacklisted_practice_indicator`) but was never shown
+  to the reader; it now appears as a labelled line on each claim card in the PDF report
+  and as a colour-coded badge with an expandable legal basis in the web report. Verified
+  against the EU Commission's EmpCo FAQ and Annex I point numbering (4a/4b/4c/2a). Covered
+  by new regression tests, including a PDF text-overflow check.
+
 ## Post-release fixes (reviewed 19 July 2026)
 
 - **Fixed:** `is_negative_external_source` rejected unambiguous, event-framed adverse

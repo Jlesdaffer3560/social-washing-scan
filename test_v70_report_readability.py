@@ -90,6 +90,70 @@ def test_explicit_adverse_headline_is_not_rejected_for_lacking_legal_vocabulary(
     assert not app.is_negative_external_source(policy_document)
 
 
+def _blacklisted(claim_type):
+    # Mirrors enrich_green_finding()'s derivation exactly, so the test can't drift from
+    # the real behaviour.
+    sig = app.green_blacklisted_indicator(claim_type, "", "").lower()
+    return ("blacklisted-practice indicator" in sig) and not sig.startswith("no direct")
+
+
+def test_empco_prohibited_vs_misleading_legal_classification():
+    # Per se prohibited: Annex I UCPD blacklist practices, no case-by-case test.
+    prohibited_types = [
+        "Generic environmental claim",           # Annex I point 4a
+        "Climate-neutrality or offsetting claim", # Annex I point 4c -- the product-level offset example
+        "Sustainability label / certification claim", # Annex I point 2a
+        "Legal requirement presented as green benefit",
+    ]
+    for claim_type in prohibited_types:
+        result = app.green_legal_classification(claim_type, _blacklisted(claim_type))
+        assert result["label"] == "Prohibited (per se)", claim_type
+        assert "Annex I" in result["basis"] or "UCPD" in result["basis"]
+
+    # Misleading, case-by-case: assessed individually under the amended UCPD Art. 6/7 --
+    # including "fully recyclable" / absolute wording, which is the exact counter-example.
+    case_by_case_types = [
+        "Absolute or purity environmental wording",  # covers "fully recyclable"
+        "Comparative environmental claim",
+        "Future environmental-performance claim",
+        "Visual green-claim indicator",
+    ]
+    for claim_type in case_by_case_types:
+        result = app.green_legal_classification(claim_type, _blacklisted(claim_type))
+        assert result["label"] == "Misleading (case-by-case)", claim_type
+        assert "individually" in result["basis"].lower()
+
+
+def test_legal_classification_flows_into_claim_inventory_and_pdf():
+    result = app.analyse_uploaded_document(
+        "policy.txt",
+        "This product is 100% carbon neutral thanks to our offset program. "
+        "It is also fully recyclable and eco-friendly.",
+        "Acme Corp",
+    )
+    green_claims = {c["claim_type"]: c for c in result["claim_inventory"] if c["dimension"] == "Green"}
+    assert green_claims["Climate-neutrality or offsetting claim"]["legal_classification"]["label"] == "Prohibited (per se)"
+    assert green_claims["Absolute or purity environmental wording"]["legal_classification"]["label"] == "Misleading (case-by-case)"
+
+    import report_pdf
+    pdf_bytes = report_pdf.build_company_report_pdf(result)
+    assert pdf_bytes[:4] == b"%PDF"
+
+    # No PDF text block may extend past the page width -- the exact failure mode a past
+    # release had to fix for the risk badge (see the layout comment in claim_card()).
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    saw_classification_text = False
+    for page in doc:
+        if "EMPCO CLASSIFICATION" in page.get_text().upper():
+            saw_classification_text = True
+        for block in page.get_text("dict")["blocks"]:
+            if "lines" not in block:
+                continue
+            assert block["bbox"][2] <= page.rect.width + 0.5, f"text overflow: {block['bbox']}"
+    assert saw_classification_text
+
+
 def test_actions_keep_green_and_social_claim_areas_separate():
     green = [{"risk": "High", "type": "Generic environmental claim", "problematic_terms": ["sustainable"]}]
     social = [{"risk": "High", "type": "Human-rights or labour-rights claim", "problematic_terms": ["responsible"]}]
