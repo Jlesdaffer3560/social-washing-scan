@@ -1,0 +1,12 @@
+Durably Sustainability Scan v70 deployment
+
+1. Upload or commit the full v70 package to the repository used by Render.
+2. Keep the existing Render environment variables and secret values unchanged.
+3. Deploy using render.yaml; the start command remains: python app.py
+4. Verify:
+   GET /api/health
+   Expected release: v70
+   Expected version: hostable_v70_report_readability_external_source_precision
+5. Run one Puratos website scan and one company-report PDF download.
+
+Rollback: redeploy the previously working v69 commit or package. No data migration is required.

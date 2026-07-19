@@ -1,0 +1,24 @@
+Durably Sustainability Scan v70 package
+
+Runtime:
+- app.py
+- frontend.html
+- report_pdf.py
+- methodology_pdf.py
+- methodology.pdf
+- render.yaml
+- requirements.txt
+- requirements-dev.txt
+
+Release documentation:
+- README.md
+- START_HERE_V70.md
+- V70_CHANGELOG.md
+- DEPLOY_V70.txt
+- TEST_RESULTS_V70.txt
+- PACKAGE_CONTENTS_V70.txt
+
+Regression tests:
+- test_v62.py through test_v70_report_readability.py
+
+Historical v68/v69 release notes and preview artifacts are retained for traceability.

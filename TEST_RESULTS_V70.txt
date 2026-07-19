@@ -1,0 +1,16 @@
+Durably Sustainability Scan v70 — verification record
+Date: 2026-07-19
+
+PASS  Python syntax compilation: app.py, report_pdf.py, methodology_pdf.py
+PASS  Frontend JavaScript syntax validation
+PASS  Local HTTP smoke test: / and /api/health
+PASS  V62–V68 offline regression scripts
+PASS  V68–V70 zero-fixture test functions (15)
+PASS  V68 resolver fixture-style test
+PASS  Puratos company-policy exclusion: puratos.co.uk
+PASS  Puratos brand-microsite exclusion: puratosgrandplace.com
+PASS  Independent adverse authority-source positive control
+PASS  Removed internal build/search status and source-register CSV copy
+PASS  Minimum reader-facing text-size regression checks
+
+The environment did not include the optional pytest command-line package. The same zero-fixture test functions and the one fixture-style resolver test were executed directly with Python, alongside all standalone regression scripts.

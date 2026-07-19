@@ -70,7 +70,8 @@ for page in doc:
 
 frontend=Path('frontend.html').read_text(encoding='utf-8')
 assert 'Scan coverage and reviewed sources' in frontend
-assert 'downloadSourceRegisterCsv' in frontend
+assert 'downloadSourceRegisterCsv' not in frontend
+assert 'The register distinguishes retrieval from actual analysis' not in frontend
 assert 'renderCoverage(d)' in frontend
 
 out=Path('PREVIEW_V67')

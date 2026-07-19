@@ -6,8 +6,8 @@ from pypdf import PdfReader
 import app
 import report_pdf
 
-assert app.APP_VERSION == 'hostable_v69_report_token_strict_negative_external_signals'
-assert app.APP_RELEASE_LABEL == 'v69'
+assert app.APP_VERSION == 'hostable_v70_report_readability_external_source_precision'
+assert app.APP_RELEASE_LABEL == 'v70'
 
 # Score bands and UI transparency must match backend bands.
 frontend=Path('frontend.html').read_text(encoding='utf-8')
@@ -16,9 +16,10 @@ assert "if(n>=75)return 'High" in frontend
 assert "if(n>=45)return 'Medium" in frontend
 assert 'Document privacy:' in frontend
 assert 'Analysis status' in frontend
-assert 'Characters analysed' in frontend
+assert 'characters analysed' in frontend.lower()
 assert 'role="status" aria-live="polite"' in frontend
-assert 'Build {{APP_RELEASE_LABEL}}' in frontend
+assert 'Build {{APP_RELEASE_LABEL}}' not in frontend
+assert 'id="version"' not in frontend
 
 # Bare-name resolution must not invent www.<name>.com when unverified.
 old_tavily,old_google=app.tavily_search,app.google_search

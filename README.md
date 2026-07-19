@@ -1,22 +1,23 @@
-# Durably Sustainability Scan - v69
+# Durably Sustainability Scan - v70
 
-V69 corrects the PDF-download signature regression and makes the negative-news restriction for external public-source signals enforceable throughout the complete output pipeline.
+V70 makes the web report shorter, clearer and more reader-friendly, while strengthening the distinction between company-owned material and genuinely independent adverse public sources.
 
 Expected health version:
 
-`hostable_v69_report_token_strict_negative_external_signals`
+`hostable_v70_report_readability_external_source_precision`
 
-Read `START_HERE_V69.md`, `V69_CHANGELOG.md`, `DEPLOY_V69.txt` and `TEST_RESULTS_V69.txt` before deployment.
+Read `START_HERE_V70.md`, `V70_CHANGELOG.md`, `DEPLOY_V70.txt` and `TEST_RESULTS_V70.txt` before deployment.
 
-## Main v69 changes
+## Main v70 changes
 
-- Opaque, compressed and signed report token for reliable two-page PDF downloads.
-- Report token survives browser JSON parsing and number normalisation.
-- Deterministic fallback key prevents restart-related failures when no production secret is configured.
-- Negative-polarity filtering before external results are ranked or retained.
-- Positive achievements, partnerships, awards, certifications, launches and neutral coverage are excluded.
-- Exoneration and dismissed-allegation articles are excluded.
-- Negative-only enforcement in backend, frontend and PDF report.
-- All previous crawler, entity-lock, claim-signal, source-register, methodology and layout improvements are retained.
+- Removed internal build and external-search configuration text from the public interface.
+- Replaced the long rating-style summary with a concise explanation of coverage, claim risk and review priorities.
+- Shortened and clarified score drivers, red flags and recommended actions.
+- Added restrained emphasis to the most important terms in recommended actions.
+- Removed the source-register explanation and CSV download that did not add reader value.
+- Increased small text sizes across navigation, labels, badges, claim details and source tables.
+- Company-owned policy pages and brand microsites are excluded from external public-source signals.
+- Social-risk vocabulary alone no longer qualifies a source as adverse; a concrete allegation, criticism or formal action is required.
+- Existing signed PDF, entity-lock, crawler, privacy and methodology protections are retained.
 
 The scan is an indicative first-pass assessment. It is not legal advice and does not establish a breach of EmpCo, the Forced Labour Regulation or any other law.
