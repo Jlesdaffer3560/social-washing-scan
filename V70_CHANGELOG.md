@@ -15,6 +15,22 @@ Release date: 19 July 2026
   against the EU Commission's EmpCo FAQ and Annex I point numbering (4a/4b/4c/2a). Covered
   by new regression tests, including a PDF text-overflow check.
 
+- **Changed:** simplified the classification badge/label from "Prohibited (per se)" to
+  just **"Prohibited"** everywhere (dashboard, PDF, underlying data) — the per-se /
+  no-case-by-case nuance is kept in the full explanation text, not the short label.
+- **Changed:** the full "Prohibited" / "Misleading (case-by-case)" explanation is now
+  shown directly in the always-visible claim summary on the dashboard (no click to expand
+  the card, no hover-only tooltip required), colour-tinted to match the badge.
+- **Fixed:** the dashboard's Red Flags section combined three independent flag
+  generators and post-filtered them with regexes, which produced near-duplicate flags
+  (e.g. two differently-worded Forced Labour Regulation flags reaching the reader at
+  once) while silently dropping others (sector/context sensitivity) that matched neither
+  filter. Replaced with a single `build_dashboard_red_flags()` builder that generates
+  each flag exactly once and tags it `core` when it stems from a "Prohibited" claim or a
+  High-risk forced-labour/modern-slavery finding; the dashboard now colour-highlights
+  core flags (reusing an existing, previously unused `.redflag li.urgent` style) with a
+  safe fallback to the legacy rendering for any older API response shape.
+
 ## Post-release fixes (reviewed 19 July 2026)
 
 - **Fixed:** `is_negative_external_source` rejected unambiguous, event-framed adverse

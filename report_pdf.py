@@ -218,10 +218,11 @@ def rewrite_text(claim, max_chars=180):
 
 
 def classification_line(claim, max_chars=175):
-    """Green claims only: distinguishes an Annex I UCPD 'per se' blacklist practice
-    (unfair in all circumstances, no case-by-case test) from a claim that is assessed
-    individually as a potentially misleading action under UCPD Art. 6/7. Returns "" for
-    claims without this classification (e.g. social/forced-labour claims)."""
+    """Green claims only: distinguishes an Annex I UCPD blacklist practice (unfair in
+    all circumstances, no case-by-case test -- 'Prohibited') from a claim that is
+    assessed individually as a potentially misleading action under UCPD Art. 6/7
+    ('Misleading, case-by-case'). Returns "" for claims without this classification
+    (e.g. social/forced-labour claims)."""
     lc = claim.get("legal_classification") or {}
     label = clean_text(lc.get("label") or "")
     if not label:

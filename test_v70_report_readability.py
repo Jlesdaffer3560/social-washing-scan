@@ -1,4 +1,5 @@
 """Regression coverage for the v70 reader-facing report and source precision."""
+import re
 from pathlib import Path
 
 import app
@@ -107,7 +108,7 @@ def test_empco_prohibited_vs_misleading_legal_classification():
     ]
     for claim_type in prohibited_types:
         result = app.green_legal_classification(claim_type, _blacklisted(claim_type))
-        assert result["label"] == "Prohibited (per se)", claim_type
+        assert result["label"] == "Prohibited", claim_type
         assert "Annex I" in result["basis"] or "UCPD" in result["basis"]
 
     # Misleading, case-by-case: assessed individually under the amended UCPD Art. 6/7 --
@@ -132,7 +133,7 @@ def test_legal_classification_flows_into_claim_inventory_and_pdf():
         "Acme Corp",
     )
     green_claims = {c["claim_type"]: c for c in result["claim_inventory"] if c["dimension"] == "Green"}
-    assert green_claims["Climate-neutrality or offsetting claim"]["legal_classification"]["label"] == "Prohibited (per se)"
+    assert green_claims["Climate-neutrality or offsetting claim"]["legal_classification"]["label"] == "Prohibited"
     assert green_claims["Absolute or purity environmental wording"]["legal_classification"]["label"] == "Misleading (case-by-case)"
 
     import report_pdf
@@ -161,3 +162,75 @@ def test_actions_keep_green_and_social_claim_areas_separate():
     assert "Generic environmental claim" in actions[0]["action"]
     assert "Human-rights or labour-rights claim" not in actions[0]["action"]
     assert len(actions[0]["action"]) < 430
+
+
+def test_prohibited_label_has_no_per_se_suffix_anywhere():
+    # The badge/label itself must read just "Prohibited"; the per-se / no-case-by-case
+    # nuance still lives in the longer basis text, not in the short label shown at a glance.
+    result = app.green_legal_classification("Climate-neutrality or offsetting claim", True)
+    assert result["label"] == "Prohibited"
+    assert "per se" not in result["label"].lower()
+
+    frontend = Path("frontend.html").read_text(encoding="utf-8")
+    assert "Prohibited (per se)" not in frontend
+    assert "'Prohibited (per se)'" not in frontend
+
+    scan = app.analyse_uploaded_document(
+        "policy.txt", "This product is 100% carbon neutral thanks to our offset program.", "Acme Corp",
+    )
+    import report_pdf
+    pdf_bytes = report_pdf.build_company_report_pdf(scan)
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    full_text = "".join(page.get_text() for page in doc)
+    assert "Prohibited (per se)" not in full_text
+    assert "Prohibited" in full_text
+
+
+def test_classification_is_always_visible_without_expanding_the_card():
+    # The explanation must sit inside <summary> (rendered before any click/expand), not
+    # only in a hover title="" tooltip or inside the collapsed <details> body.
+    script = re.search(r"<script[^>]*>(.*?)</script>", Path("frontend.html").read_text(encoding="utf-8"), re.S).group(1)
+    fn_start = script.index("function clusterCard(")
+    depth = 0; i = script.index("{", fn_start); start = fn_start; j = i
+    while True:
+        if script[j] == "{":
+            depth += 1
+        elif script[j] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    fn_src = script[start:j + 1]
+    summary_end = fn_src.index("</summary>")
+    summary_part = fn_src[:summary_end]
+    assert "lcLine" in summary_part, "classification line must be built inside the always-visible <summary> part"
+    assert 'title="${esc(lc.basis' not in fn_src, "must not rely on a hover-only tooltip for the explanation"
+
+
+def test_dashboard_red_flags_deduplicated_and_core_tagged():
+    green = [{
+        "type": "Climate-neutrality or offsetting claim", "risk": "High",
+        "problematic_terms": ["carbon neutral"], "source_label": "policy.txt",
+        "legal_classification": {"label": "Prohibited", "basis": "Annex I point 4c UCPD..."},
+    }]
+    social = [{
+        "type": "Forced-labour product or supply-chain claim", "risk": "High",
+        "source_label": "policy.txt",
+    }]
+    result = app.build_dashboard_red_flags(green, social, {}, {}, {"level": "High"}, {"level": "Very high"}, {})
+
+    # Exactly one Forced Labour Regulation flag -- not the old two differently-worded ones.
+    reg_texts = [f["text"] for f in result["regulatory"]]
+    forced_labour_flags = [t for t in reg_texts if "Forced Labour Regulation" in t]
+    assert len(forced_labour_flags) == 1, forced_labour_flags
+
+    # The Prohibited claim and the forced-labour claim are tagged core; sector/context
+    # sensitivity flags (previously silently dropped) are present but not core.
+    assert result["green"][0]["core"] is True
+    assert result["social"][0]["core"] is True
+    empco_flag = next(t for t in reg_texts if "EmpCo readiness" in t)
+    assert "Annex I blacklist pattern" in empco_flag
+    non_core_context = [f for f in result["regulatory"] if not f["core"]]
+    assert any("sector" in f["text"].lower() for f in non_core_context)
+    assert any("context sensitivity" in f["text"].lower() for f in non_core_context)
