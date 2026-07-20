@@ -6,8 +6,8 @@ from pypdf import PdfReader
 import app
 import report_pdf
 
-assert app.APP_VERSION == 'hostable_v70_report_readability_external_source_precision'
-assert app.APP_RELEASE_LABEL == 'v70'
+assert app.APP_VERSION == 'hostable_v71_external_signal_recall_precision'
+assert app.APP_RELEASE_LABEL == 'v71'
 
 # Score bands and UI transparency must match backend bands.
 frontend=Path('frontend.html').read_text(encoding='utf-8')

@@ -1,0 +1,12 @@
+Durably Sustainability Scan v71 deployment
+
+1. Upload or commit the complete v71 package to the repository connected to Render.
+2. Keep all existing environment variables, especially TAVILY_API_KEY and any Google Custom Search credentials.
+3. Deploy with render.yaml. The start command remains: python app.py
+4. Verify GET /api/health:
+   release: v71
+   version: hostable_v71_external_signal_recall_precision
+5. Run a fresh SHEIN scan and inspect External public-source signals.
+6. Confirm that qualifying independent sources appear and company-owned/company-authored sources do not.
+
+Rollback: redeploy v70. No migration or data change is required.

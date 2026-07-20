@@ -1,0 +1,24 @@
+Durably Sustainability Scan v71 package
+
+Runtime:
+- app.py
+- frontend.html
+- report_pdf.py
+- methodology_pdf.py
+- methodology.pdf
+- render.yaml
+- requirements.txt
+- requirements-dev.txt
+
+Release documentation:
+- README.md
+- START_HERE_V71.md
+- V71_CHANGELOG.md
+- DEPLOY_V71.txt
+- TEST_RESULTS_V71.txt
+- PACKAGE_CONTENTS_V71.txt
+
+Regression tests:
+- test_v62.py through test_v71_external_signal_recall.py
+
+Historical v68–v70 notes and previews are retained for traceability and rollback context.

@@ -1,0 +1,19 @@
+Durably Sustainability Scan v71 — verification record
+Date: 2026-07-20
+
+PASS  Python syntax compilation: app.py, report_pdf.py, methodology_pdf.py
+PASS  Frontend JavaScript syntax validation
+PASS  Local HTTP smoke test: / and /api/health (v71)
+PASS  V62–V68 standalone regression scripts
+PASS  V68 pytest-style checks (4)
+PASS  V69–V71 regression functions (21)
+PASS  SHEIN green examples retained: European Commission and Reuters
+PASS  SHEIN social examples retained: Public Eye and Business & Human Rights Resource Centre
+PASS  Company modern-slavery statement on public register excluded
+PASS  Positive worker-wellbeing announcement excluded
+PASS  Competitor-primary article excluded
+PASS  Generic non-SHEIN discovery pipeline
+PASS  Tavily news/include-domain/exclude-domain payload controls
+PASS  Balanced online display of green and social external signals (maximum eight)
+
+The optional pytest command-line package was not installed in the environment. Standalone scripts and test functions were executed directly with Python, including the fixture-style resolver check.
