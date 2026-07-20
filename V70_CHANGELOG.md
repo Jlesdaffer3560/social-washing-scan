@@ -31,6 +31,23 @@ Release date: 19 July 2026
   core flags (reusing an existing, previously unused `.redflag li.urgent` style) with a
   safe fallback to the legacy rendering for any older API response shape.
 
+- **Fixed:** external social/green signals could be a false positive when a headline
+  named the adverse term only as the object of a positive "company is fighting this
+  problem" verb -- reported example: "Puratos tackles child labor by increasing cocoa
+  farmers' income" was retained as a negative signal, even though the article is
+  positive. Root cause: the V70 fix that made an explicit adverse term in the headline
+  sufficient on its own (to correctly catch headlines like "Modern slavery uncovered in
+  ...") did not distinguish that case from "X tackles/fights/ends/reduces/cuts
+  [adverse term]" framings. Added a generic, company- and term-agnostic detector for this
+  verb-object pattern (tackles, fights, combats, ends, eliminates, eradicates, prevents,
+  reduces, cuts, curbs, stops, stamps out, cracks down on, and related forms) that
+  overrides an explicit-title-only match unless an independent genuinely adverse signal
+  (an accusation/enforcement word in the title, a strong formal-action pattern, or 2+
+  distinct adverse markers in the body) is also present. Verified against the reported
+  case, five generalised variants across different companies/industries/dimensions, and
+  edge cases designed to check the fix isn't over-broad (e.g. "despite the company's
+  prevention program, forced labour persists" still correctly retained as negative).
+
 ## Post-release fixes (reviewed 19 July 2026)
 
 - **Fixed:** `is_negative_external_source` rejected unambiguous, event-framed adverse

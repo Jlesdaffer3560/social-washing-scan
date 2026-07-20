@@ -4670,6 +4670,36 @@ _V69_STRONG_ACTION_PATTERNS=(
 # reuse the same explicit vocabulary as genuine reporting without describing an event.
 # These must stay excluded even when evaluated outside the domain-ownership filter.
 _V70_POLICY_TITLE_MARKERS=('policy','statement','code of conduct','due diligence','our commitment','framework','guideline')
+# A headline where an adverse term is the object of a positive "company is
+# fighting/ending/reducing this problem" verb (e.g. "Puratos tackles child labor by
+# increasing cocoa farmers' income", "Retailer cuts greenwashing risk with new labels")
+# describes the company acting against the issue, not committing it. This list is
+# generic across company names and specific adverse terms -- it looks at verb-object
+# proximity within the headline, not a fixed list of companies or articles.
+_V70_COMBAT_VERBS=(
+    'tackle','tackles','tackling','combat','combats','combating','combatting',
+    'fight','fights','fighting','battle','battles','battling',
+    'address','addresses','addressing','end','ends','ending',
+    'eliminate','eliminates','eliminating','eradicate','eradicates','eradicating',
+    'prevent','prevents','preventing','reduce','reduces','reducing','cut','cuts','cutting',
+    'curb','curbs','curbing','stop','stops','stopping',
+    'stamp out','stamps out','stamping out','crack down on','cracks down on','cracking down on',
+    'campaign against','drive to end','push to end','steps up fight against',
+    'helps end','helping end','works to end','working to end','free from',
+)
+
+
+def _v70_combat_framing(title,adverse_terms):
+    """True when the title reads as the company acting against one of adverse_terms
+    (a positive/combat verb immediately governing the adverse term), rather than a
+    report that the issue occurred. Company-agnostic and term-agnostic by design."""
+    for term in adverse_terms:
+        if not _v62_term_present(title,term):
+            continue
+        for verb in _V70_COMBAT_VERBS:
+            if re.search(r'\b'+re.escape(verb)+r'\b.{0,60}\b'+re.escape(term)+r'\b',title,flags=re.I):
+                return True
+    return False
 
 
 def _v69_term_hits(text,terms):
@@ -4708,6 +4738,14 @@ def _v69_external_polarity(result,dimension='social'):
     # event or the opening summary contains a strong formal action linked to the issue.
     if positive_title and not (explicit_title or generic_title or strong_action):
         return False,'Positive/promotional headline without an explicit adverse event'
+    # A headline where the adverse term is the object of a positive combat/reduction verb
+    # (e.g. "tackles child labor", "cuts greenwashing risk") describes the company acting
+    # against the issue, not committing it. This overrides an explicit-title-only match
+    # (see below) unless an independent, genuinely adverse signal is also present.
+    combat_terms=_V69_GREEN_ADVERSE if dimension=='green' else _V69_SOCIAL_ADVERSE
+    combat_framing_title=_v70_combat_framing(title,combat_terms)
+    if combat_framing_title and not (generic_title or strong_action or len(set(generic_body))>=2):
+        return False,'Headline describes the company acting against the issue, not committing it'
     # A negative word buried in a long positive article is insufficient. Require either
     # explicit adverse issue language, a negative headline, or a strong formal action in
     # the opening summary. Generic criticism in body text alone must have at least two
