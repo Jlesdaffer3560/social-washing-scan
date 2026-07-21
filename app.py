@@ -4252,7 +4252,9 @@ _V63_SOCIAL_NEGATIVE = (
     'accused','alleged','allegation','allegations','criticism','criticised','criticized',
     'concern','concerns','violation','violations','breach','breaches','illegal','exploitative',
     'exploitation','abuse','abuses','underpaid','unsafe','risk','risks','complaint','complaints',
-    'lawsuit','court','fine','fined','penalty','sanction','strike','protest','boycott'
+    'lawsuit','court','fine','fined','penalty','sanction','strike','protest','boycott',
+    'overstate','overstates','overstated','overclaim','overclaims','overclaimed',
+    'exaggerate','exaggerates','exaggerated','downplay','downplays','downplayed'
 )
 _V63_GREEN_EXPLICIT = (
     'greenwashing','misleading environmental claim','misleading environmental claims',
@@ -4264,15 +4266,17 @@ _V63_GREEN_EXPLICIT = (
     'sustainability claim investigation','sustainability claims investigation'
 )
 _V63_GREEN_ANCHORS = (
-    'environmental','green','climate','carbon','emission','emissions',
+    'environmental','green','climate','carbon','emission','emissions','sustainability','sustainable',
     'net zero','net-zero','climate neutral','carbon neutral','recyclable','recycled','recycling',
-    'circular','eco','ecological','evolushein'
+    'circular','eco','ecological','evolushein','fossil fuel','fossil-fuel'
 )
 _V63_GREEN_NEGATIVE = (
     'misleading','deceptive','vague','generic','omissive','unsubstantiated','false',
     'investigation','investigating','probe','inquiry','complaint','watchdog','regulator','authority',
     'fine','fined','penalty','sanction','prohibited','ban','accused','alleged','allegation',
-    'criticism','criticised','criticized','contradicted','contradiction','violation','violations'
+    'criticism','criticised','criticized','contradicted','contradiction','violation','violations',
+    'overstate','overstates','overstated','overclaim','overclaims','overclaimed',
+    'exaggerate','exaggerates','exaggerated','downplay','downplays','downplayed'
 )
 _V63_STAKEHOLDER_SITE_QUERIES = {
     'green': (
@@ -5326,7 +5330,15 @@ _V69_GREEN_ADVERSE=(
 _V69_GREEN_ANCHORS_STRICT=(
     'greenwashing','environmental claim','environmental claims','sustainability claim',
     'sustainability claims','green claim','green claims','climate claim','carbon claim','carbon neutral','climate neutral',
-    'net zero','emissions claim','recyclable','recycled content','eco claim','green claim'
+    'net zero','emissions claim','recyclable','recycled content','eco claim','green claim',
+    # Broadened to plain topical words, not just narrow multi-word claim phrases -- a report
+    # can be squarely about greenwashing (e.g. "overstates the sustainability of its
+    # collection while relying on fossil-fuel-based fabrics") without ever using one of the
+    # phrases above, and this anchor check runs before any other acceptance path, so a
+    # too-narrow list here silently drops the whole result regardless of how explicit the
+    # rest of the text is.
+    'environmental','environment','sustainability','sustainable','climate','carbon','emission','emissions',
+    'recyclable','recycled','recycling','circular','ecological','eco-friendly','fossil fuel','fossil-fuel'
 )
 _V69_SOCIAL_ADVERSE=(
     'forced labour','forced labor','child labour','child labor','modern slavery','wage theft',
@@ -5462,6 +5474,13 @@ _V71_ADVERSE_EVENT_TERMS=(
     'lawsuit','sued','court','ruling','breach','breaches','violation','violations',
     'exposed','exposes','reveals','revealed','report finds','report found','found',
     'fails','failed','failure','refutes','contradicts','contradicted','illegal','risk','risks',
+    # NGO/investigative reporting on greenwashing and social washing very often criticises a
+    # company in plain descriptive language ("overstates", "downplays", "exaggerates") rather
+    # than using an explicit legal/regulatory word -- without these, a substantive critical
+    # report could fail every acceptance path below and be silently dropped.
+    'overstate','overstates','overstated','overstating','overclaim','overclaims','overclaimed',
+    'exaggerate','exaggerates','exaggerated','exaggerating','downplay','downplays','downplayed',
+    'inflated claim','inflated claims','unsubstantiated',
     'misleidend','misleidende','onderzoek','boete','overtreding','beschuldigd',
     'trompeur','trompeuse','enquête','amende','violation','accusé'
 )
@@ -5531,7 +5550,13 @@ def _v69_external_polarity(result,dimension='social'):
     if positive_title and not (explicit_title or adverse_title or strong_action):
         return False,'Positive/promotional headline without an explicit adverse event'
     if dimension=='green':
-        accepted=bool(explicit_title) or strong_action or (bool(explicit_body) and (bool(adverse_title) or bool(adverse_body) or recognised)) or (bool(anchors) and len(set(adverse_body))>=2)
+        # A recognised independent source (NGO, regulator, investigative press) describing a
+        # concrete green-topic criticism in plain language ("overstates its sustainability")
+        # is credible adverse evidence even with only one adverse marker -- requiring two, as
+        # the last fallback below still does for unrecognised sources, was silently dropping
+        # legitimate NGO/investigative reporting that never happens to repeat itself twice in
+        # a short search snippet.
+        accepted=bool(explicit_title) or strong_action or (bool(explicit_body) and (bool(adverse_title) or bool(adverse_body) or recognised)) or (bool(anchors) and recognised and bool(adverse_body)) or (bool(anchors) and len(set(adverse_body))>=2)
     else:
         accepted=strong_action or bool(adverse_title) or (bool(explicit_title) and recognised) or (bool(explicit_body) and (bool(adverse_body) or recognised)) or (bool(anchors) and recognised and len(set(adverse_body))>=2)
     if not accepted:
