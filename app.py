@@ -47,9 +47,9 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v71_external_signal_recall_precision"
-APP_RELEASE_LABEL="v71"
-APP_RELEASE_DATE="2026-07-20"
+APP_VERSION="hostable_v72_legal_basis_classification"
+APP_RELEASE_LABEL="v72"
+APP_RELEASE_DATE="2026-07-21"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -2079,6 +2079,50 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
         return 'High-risk comparison indicator where comparison method, comparator, source data and update process are missing.'
     return 'No direct blacklisted-practice indicator identified, but claim-specific substantiation is still required.'
 
+def classify_legal_basis(f):
+    """
+    Splits every retained claim into exactly one of two legal-basis categories.
+    This is a distinct axis from claim risk (High/Medium/Low) and from claim
+    subject matter (green/social/forced-labour): it answers the question
+    "is this wording automatically unfair, or does it depend on a case-by-case test?"
+
+    - 'prohibited': the claim wording matches one of the fixed, per-se-unfair
+      practices listed in EmpCo Annex I (self-declared sustainability labels
+      without independent certification -- point 2a; unspecified generic
+      environmental claims -- point 4a; aggregate/whole-product benefit claims
+      based on only one aspect -- point 4b; product-level climate-neutral/
+      reduced/positive claims based on offsetting -- point 4c; legal
+      compliance presented as a distinctive feature -- point 10a). Once EmpCo
+      applies (27 September 2026), these practices are automatically unfair if
+      the described conditions are met -- no individual balancing test is
+      needed, only whether the wording fits the listed practice.
+
+    - 'problematic': the claim is not on that fixed list, but can still be
+      found misleading after an individual, case-by-case assessment under the
+      general UCPD provisions (Article 6 misleading actions, Article 7
+      misleading omissions, or Article 6(2)(d) specifically for forward-looking
+      claims). This covers social/human-rights/labour claims, forced-labour
+      readiness wording, absolute and comparative overstatements, and future
+      environmental-performance claims -- the outcome always depends on
+      context, evidence and consumer impact, not on a fixed rule.
+    """
+    if bool(f.get('blacklisted_practice_indicator')):
+        return {
+            'legal_basis_category': 'prohibited',
+            'legal_basis_label': 'Prohibited if unsubstantiated (EmpCo Annex I)',
+            'legal_basis_short': ('On the fixed EmpCo Annex I list: automatically treated as unfair once EmpCo '
+                                   'applies (27 September 2026) if the described conditions are met. No case-by-case '
+                                   'balancing test is needed -- only whether the wording fits the listed practice.'),
+        }
+    return {
+        'legal_basis_category': 'problematic',
+        'legal_basis_label': 'Problematic, not automatically prohibited (case-by-case)',
+        'legal_basis_short': ('Not on the fixed Annex I list. It can still be found misleading after an individual '
+                               'assessment under general UCPD rules (Art. 6 misleading actions, Art. 7 omissions, or '
+                               'Art. 6(2)(d) for future claims) -- the outcome depends on context, evidence and '
+                               'consumer impact, not on a fixed rule.'),
+    }
+
 def green_specification_check(claim_type, claim_text):
     c=(claim_text or '').lower(); t=(claim_type or '').lower()
     specificity_terms=['%', 'scope', 'baseline', 'compared with', 'compared to', 'made from', 'verified', 'certified', 'according to', 'methodology', 'life cycle', 'lca', 'for this product', 'packaging', 'valid until', 'standard', 'iso']
@@ -2112,6 +2156,7 @@ def enrich_green_finding(f, trigger=''):
     f['module']=green_claim_module(f.get('type',''))
     f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
     sig=f['regulatory_signal'].lower(); f['blacklisted_practice_indicator']=(('blacklisted-practice indicator' in sig) and not sig.startswith('no direct'))
+    f.update(classify_legal_basis(f))
     f['specification_check']=green_specification_check(f.get('type',''), f.get('claim',''))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no major') else 'Can normally proceed only after standard evidence and wording review.'
@@ -2575,6 +2620,9 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
     green_flags=[f for f in green_findings or [] if f.get('blacklisted_practice_indicator')]
     social_flags=[f for f in social_findings or [] if has_forced_labour_regulatory_signal([f])]
     aud=(audience or {}).get('audience','Mixed or unclear')
+    material=_material_findings(green_findings)+_material_findings(social_findings)
+    prohibited=[f for f in material if f.get('legal_basis_category')=='prohibited']
+    problematic=[f for f in material if f.get('legal_basis_category')=='problematic']
     return {
         'audience':aud,
         'empco_blacklisted_indicator_count':len(green_flags),
@@ -2582,6 +2630,20 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
         'highest_priority':'EmpCo blacklisted-practice review' if green_flags else ('Forced Labour Regulation / social-claims review' if social_flags else 'Standard substantiation review'),
         'empco_indicators':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim',''), 'signal':f.get('regulatory_signal','')} for f in green_flags[:8]],
         'forced_labour_or_social_indicators':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim',''), 'signal':'Check product/supplier traceability, forced-labour risk assessment, remediation and response readiness.'} for f in social_flags[:8]],
+        'legal_basis_breakdown':{
+            'prohibited_count':len(prohibited),
+            'problematic_count':len(problematic),
+            'prohibited_label':'Prohibited if unsubstantiated (EmpCo Annex I)',
+            'problematic_label':'Problematic, not automatically prohibited (case-by-case)',
+            'explanation':('Two different legal tests apply to sustainability claims. "Prohibited" claims match a fixed list in '
+                            'EmpCo Annex I (self-declared labels, generic claims, offset-based neutrality claims, legal compliance '
+                            'presented as a benefit) and become automatically unfair once EmpCo applies on 27 September 2026, with '
+                            'no case-by-case balancing test. "Problematic" claims are not on that fixed list but can still be found '
+                            'misleading after an individual assessment under general UCPD rules (Art. 6/7, or Art. 6(2)(d) for future '
+                            'claims) -- the outcome depends on context, evidence and consumer impact.'),
+            'prohibited_examples':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim','')} for f in prohibited[:5]],
+            'problematic_examples':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim','')} for f in problematic[:5]],
+        },
         'note':'This is a screening signal. It does not establish a legal breach, but it identifies claims that should be reviewed before publication or reuse.'
     }
 
@@ -3623,6 +3685,11 @@ def social_blacklisted_indicator(claim_type, trigger, claim_text):
 
 def enrich_social_finding(f, trigger=''):
     f['regulatory_signal']=social_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
+    # Social/human-rights characteristics are not covered by a fixed EmpCo Annex I blacklist entry
+    # (unlike the specific environmental practices in points 2a/4a/4b/4c/10a) -- they are always
+    # assessed case-by-case under general UCPD rules, so this is explicitly False here.
+    f['blacklisted_practice_indicator']=False
+    f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), f.get('claim',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no ') else 'Can normally proceed only after standard evidence and wording review.'
     return f

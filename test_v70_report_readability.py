@@ -5,8 +5,8 @@ import app
 
 
 def test_v70_release_and_internal_markers_removed():
-    assert app.APP_VERSION == "hostable_v71_external_signal_recall_precision"
-    assert app.APP_RELEASE_LABEL == "v71"
+    assert app.APP_VERSION == "hostable_v72_legal_basis_classification"
+    assert app.APP_RELEASE_LABEL == "v72"
     frontend = Path("frontend.html").read_text(encoding="utf-8")
     assert "Build {{APP_RELEASE_LABEL}}" not in frontend
     assert 'id="version"' not in frontend

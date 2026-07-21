@@ -3,7 +3,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v71_external_signal_recall_precision'
+    assert app.APP_VERSION == 'hostable_v72_legal_basis_classification'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
