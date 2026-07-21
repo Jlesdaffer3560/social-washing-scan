@@ -36,10 +36,54 @@ def test_known_domain_guess_is_verified_via_live_content(monkeypatch):
                'sectors. Our headquarters are located in Belgium, where the company was founded in 1919. '
                'We serve artisans, retailers, industrial producers and food service operators in over '
                '100 countries around the world.</p></body></html>')
-    monkeypatch.setattr(app,'fetch_html',lambda url,timeout=6: fake_html)
+    def fake_open(url,timeout=8,accept=None,max_bytes=None):
+        if 'puratos.com' in url:
+            return fake_html.encode(),'text/html',url
+        raise Exception('not found')
+    monkeypatch.setattr(app,'_open_public_url',fake_open)
     url,note=app.resolve_company_website('Puratos')
     assert url=='https://www.puratos.com'
     assert 'verify the entity' in note.lower()
+    assert 'unverified' not in note.lower()
+
+
+def test_flagship_domain_preferred_over_country_domain(monkeypatch):
+    """V72.1: when a company's regional/country domain (e.g. .be) and its flagship
+    global domain (.com) both validate, resolution must prefer the flagship domain --
+    otherwise a bare-name scan can land on a thinner regional storefront instead of the
+    main corporate site, where the fuller sustainability/ESG content usually lives."""
+    monkeypatch.setattr(app,'tavily_search',lambda *a,**k: [])
+    monkeypatch.setattr(app,'google_search',lambda *a,**k: [])
+    com_html=('<html><head><title>Bakery Solutions | Puratos</title></head><body>'
+              '<h1>Puratos</h1><p>Puratos is an international group offering bakery, patisserie and '
+              'chocolate ingredients worldwide, serving customers in over 100 countries. Global '
+              'headquarters located in Belgium since 1919. News, sustainability report, careers.</p>'
+              '</body></html>')
+    be_html=('<html><head><title>Puratos Belux</title></head><body>'
+             '<h1>Puratos Belgium</h1><p>Puratos Belux is the local Belgian office of the '
+             'international Puratos group, offering the full range of products and solutions for '
+             'the bakery, patisserie and chocolate sector. Contact our local team for more '
+             'information about our products and services in Belgium.</p></body></html>')
+    def fake_open(url,timeout=8,accept=None,max_bytes=None):
+        if 'puratos.com' in url:
+            return com_html.encode(),'text/html',url
+        if 'puratos.be' in url:
+            return be_html.encode(),'text/html',url
+        raise Exception('not found')
+    monkeypatch.setattr(app,'_open_public_url',fake_open)
+    url,note=app.resolve_company_website('Puratos')
+    assert url=='https://www.puratos.com'
+    # If .com happens to be unreachable, .be must still be used rather than blocking or
+    # falling back to an unverified guess.
+    def fake_open_only_be(url,timeout=8,accept=None,max_bytes=None):
+        if 'puratos.com' in url:
+            raise Exception('blocked')
+        if 'puratos.be' in url:
+            return be_html.encode(),'text/html',url
+        raise Exception('not found')
+    monkeypatch.setattr(app,'_open_public_url',fake_open_only_be)
+    url,note=app.resolve_company_website('Puratos')
+    assert url=='https://www.puratos.be'
     assert 'unverified' not in note.lower()
 
 

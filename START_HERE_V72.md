@@ -45,6 +45,13 @@ deployment at all — worth adding TAVILY_API_KEY or GOOGLE_SEARCH_API_KEY +
 GOOGLE_SEARCH_CX in Render's environment variables so bare-name resolution can use
 verified search matches too, in addition to the new fallback.
 
+## Test 3 — flagship domain over regional domain
+
+Check the "resolved to..." note at the top of the Puratos scan result: it should say
+`www.puratos.com`, not `www.puratos.be`. If it still says `.be`, re-run the scan once
+more — a transient timeout on `.com` during that specific run can still happen; the
+important part is it should no longer be a fixed 100%-of-the-time outcome.
+
 No environment variables or credentials changed by this release. No data migration
 needed.
 

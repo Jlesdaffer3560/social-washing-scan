@@ -4966,7 +4966,12 @@ def _v72_extract_title(html):
     m=re.search(r'<title[^>]*>(.*?)</title>', html or '', re.I|re.S)
     return re.sub(r'\s+',' ', m.group(1)).strip() if m else ''
 
-_V72_DOMAIN_GUESS_TLDS=('.com','.eu','.be','.net','.org','.co')
+# Ordered from most to least preferred when several guessed domains all validate. Generic/
+# flagship TLDs come first because multinational companies conventionally host their main
+# global corporate site (with the richest sustainability/ESG content) there; country-code
+# domains (.be, .nl, ...) are more often a thinner regional storefront for that one market.
+_V72_DOMAIN_GUESS_TLDS=('.com','.eu','.net','.org','.co','.be')
+_V72_TLD_PREFERENCE={tld:i for i,tld in enumerate(_V72_DOMAIN_GUESS_TLDS)}
 
 def _v72_guess_domain_bases(name):
     """Plausible bare-domain name bases for a company, derived from the name alone --
@@ -4990,22 +4995,29 @@ def _v72_guess_domain_candidates(name):
     for base in bases:
         for tld in _V72_DOMAIN_GUESS_TLDS:
             out.append(f'https://www.{base}{tld}')
-    return out[:12]
+    return out[:14]
 
 def _v72_validate_guessed_domain(url, name):
-    """Fetch a guessed domain (reusing the existing SSRF-safe fetch_html) and confirm the
-    company name actually appears on it, in the title or the page body. Returns the URL when
-    validated, otherwise None. This lets bare-name resolution work for any company with a
+    """Fetch a guessed domain and confirm the company name actually appears on it, in the
+    title or the page body. Uses _open_public_url directly (not the thinner fetch_html
+    wrapper) so it can validate against the *final* URL after any redirect -- a guessed
+    domain that redirects elsewhere must still name-match at its actual landing page, not
+    just at the URL we guessed. Returns (final_url, content_length) when validated,
+    otherwise None. This lets bare-name resolution work for any company with a
     conventional domain, without depending on a paid search API being configured."""
     try:
-        html=fetch_html(url,timeout=6)
+        data,ctype,final_url=_open_public_url(url,timeout=8,
+            accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',max_bytes=2500000)
     except Exception:
         return None
+    if 'html' not in ctype:
+        return None
+    html=data.decode('utf-8',errors='ignore')
     if not html or len(html)<200:
         return None
     aliases=_v64_brand_aliases(name)
     compacts={_v64_compact(a) for a in aliases if len(_v64_compact(a))>=3}
-    host=(urlparse(url).hostname or '').lower().removeprefix('www.')
+    host=(urlparse(final_url or url).hostname or '').lower().removeprefix('www.')
     root_label=_v64_compact(_v64_root_label(host))
     if root_label not in compacts:
         return None
@@ -5013,7 +5025,7 @@ def _v72_validate_guessed_domain(url, name):
     title_count,_=_v64_alias_occurrences(title,aliases)
     body_count,_=_v64_alias_occurrences(html[:6000],aliases)
     if title_count or body_count:
-        return url
+        return (final_url or url), len(html)
     return None
 
 def resolve_company_website(name):
@@ -5028,6 +5040,13 @@ def resolve_company_website(name):
     V64 behaviour) and strengthens it with a credential-free domain-guess-and-validate step, so
     a bare company name resolves to *something* for any company, always with a clear confidence
     note attached rather than a hard failure.
+
+    V72.1: the domain-guess step now evaluates every plausible candidate instead of stopping at
+    the first one that validates, and prefers the flagship .com/.eu/.net/.org/.co domain over a
+    country-code one (e.g. .be) when several validate -- otherwise a company whose regional site
+    happens to answer faster/more reliably than its global site gets scanned on the thinner
+    regional site instead of the main corporate one, which is exactly where the fuller
+    sustainability/ESG content usually lives.
     """
     known=_v64_known_site(name)
     if known:
@@ -5051,16 +5070,28 @@ def resolve_company_website(name):
         host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
         return f'https://{host}', f'Company name "{name}" was resolved to {host} after a strong brand/domain and title-content match. Verify the entity before relying on the result.'
 
-    # No search provider configured, or no confidently-matched result: try plausible domain
-    # guesses directly and accept one only if its live page content actually names the
+    # No search provider configured, or no confidently-matched result: try every plausible
+    # domain guess directly and accept only ones whose live page content actually names the
     # company. This keeps resolution working for companies with thin search coverage, or when
     # no Tavily/Google credentials are configured on this deployment, without silently
-    # substituting the wrong company.
+    # substituting the wrong company. When several validate, prefer the flagship gTLD over a
+    # country-code domain, then the richer page (more content usually means the main corporate
+    # site rather than a thin regional one).
+    validated=[]
     for candidate_url in _v72_guess_domain_candidates(name):
-        validated=_v72_validate_guessed_domain(candidate_url,name)
-        if validated:
-            host=(urlparse(validated).hostname or '').lower()
-            return f'https://{host}', f'Company name "{name}" was resolved to {host} by matching a guessed domain against its live page content (no confident search-provider match was available). Verify the entity before relying on the result.'
+        result=_v72_validate_guessed_domain(candidate_url,name)
+        if result:
+            final_url,content_length=result
+            tld='.'+urlparse(final_url).hostname.rsplit('.',1)[-1].lower()
+            pref=_V72_TLD_PREFERENCE.get(tld,len(_V72_TLD_PREFERENCE))
+            validated.append((pref,-content_length,final_url))
+    if validated:
+        validated.sort()
+        best_url=validated[0][2]
+        host=(urlparse(best_url).hostname or '').lower()
+        extra=f' ({len(validated)} domain(s) matched; the flagship/highest-content one was preferred.)' if len(validated)>1 else ''
+        return f'https://{host}', (f'Company name "{name}" was resolved to {host} by matching a guessed domain against its live '
+                                     f'page content (no confident search-provider match was available).{extra} Verify the entity before relying on the result.')
 
     # Last resort: an unverified best-guess domain. The scan still proceeds -- a clearly
     # flagged low-confidence guess is more useful than blocking the scan outright -- but the

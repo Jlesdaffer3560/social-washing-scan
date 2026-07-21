@@ -109,6 +109,38 @@ deployed file (`render.yaml` runs `app.py`) so they are not the cause of this bu
 but they're the same kind of duplicate-code debt and are worth cleaning up
 separately.
 
+## Follow-up: flagship domain preferred over a country-code domain
+
+Live testing surfaced a second issue in the same code path: "Puratos" was resolving
+to `www.puratos.be` (a thinner regional storefront) instead of `www.puratos.com` (the
+main global corporate site, where the fuller sustainability/ESG content actually
+lives -- news section, GRI sustainability report, etc.). This produced far fewer
+claim signals than expected, which looked like a detection regression but wasn't --
+feeding the actual puratos.com content through `detect_green_claims`/`detect_claims`
+directly still finds the same claims as before (confirmed manually, including a
+"carbon neutral ... offsetting" claim correctly classified as `prohibited`).
+
+Root cause: the domain-guess step stopped at the *first* candidate that validated,
+trying `.com` first -- but `.com` apparently failed to answer (or answer in time)
+during that particular scan, so it fell through to `.be`, which did.
+
+Fixed:
+
+- `_v72_validate_guessed_domain` now uses `_open_public_url` directly (instead of the
+  thinner `fetch_html` wrapper) so it validates against the *final* URL after any
+  redirect, with a longer timeout (8s, up from 6s).
+- The resolution loop now evaluates **every** plausible domain guess instead of
+  stopping at the first hit, then picks the best one: flagship gTLDs (`.com`, `.eu`,
+  `.net`, `.org`, `.co`) are preferred over country-code domains (e.g. `.be`), and
+  within the same tier, the richer page (more HTML content) wins as a tie-breaker.
+  If only a country-code domain answers, it's still used -- never blocks.
+- Added `test_flagship_domain_preferred_over_country_domain` covering both cases
+  (both domains reachable -> prefer `.com`; only the country domain reachable -> use
+  it, still verified, not downgraded to "unverified guess").
+- Updated `test_known_domain_guess_is_verified_via_live_content` and the bare-name
+  fallback test in `test_v68_stability.py` to mock `_open_public_url` instead of the
+  now-unused `fetch_html` call in this path.
+
 ## Rollback
 
 Redeploy v71. No migration or data change is required — `legal_basis_category` is

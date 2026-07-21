@@ -24,16 +24,16 @@ assert 'id="version"' not in frontend
 # V72: bare-name resolution must never hard-block the scan. When search is unavailable and
 # no guessed domain can be validated, it falls back to a clearly-flagged, unverified guess
 # domain instead of raising -- the scan proceeds and the person running it sees the warning.
-old_tavily,old_google,old_fetch=app.tavily_search,app.google_search,app.fetch_html
+old_tavily,old_google,old_open=app.tavily_search,app.google_search,app._open_public_url
 app.tavily_search=lambda *a,**k: []
 app.google_search=lambda *a,**k: []
-app.fetch_html=lambda *a,**k: (_ for _ in ()).throw(Exception('no such domain'))
+app._open_public_url=lambda *a,**k: (_ for _ in ()).throw(Exception('no such domain'))
 try:
     url,note=app.resolve_company_website('Fictional Unverified Holdings 8675309')
     assert url=='https://www.fictionalunverifiedholdings8675309.com'
     assert 'unverified' in note.lower() or 'could not be confidently verified' in note.lower()
 finally:
-    app.tavily_search,app.google_search,app.fetch_html=old_tavily,old_google,old_fetch
+    app.tavily_search,app.google_search,app._open_public_url=old_tavily,old_google,old_open
 
 # Signed PDF payloads reject tampering.
 payload={'company':{'company':'Example Group'},'global_score':55,'analysis_date':'2026-07-16T12:00:00+00:00'}
