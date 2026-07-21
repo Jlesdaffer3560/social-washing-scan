@@ -743,16 +743,22 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     pages=[url]; chunks=[text]
 
     candidates=[]; seen={_canonical_url(url)}
-    def add_candidate(candidate,source):
+    def add_candidate(candidate,source,allow_cross_domain=False):
         candidate=_canonical_url(candidate.split('#')[0])
         if not candidate or candidate in seen: return
-        if not same_domain(candidate,host): return
+        if not allow_cross_domain and not same_domain(candidate,host): return
         seen.add(candidate); candidates.append((candidate,source))
 
     for href in links:
         full=urljoin(url,href)
-        if relevant(full) or full.lower().split('?')[0].endswith('.pdf'):
-            add_candidate(full,'linked')
+        is_pdf=full.lower().split('?')[0].endswith('.pdf')
+        # A report PDF is very often hosted off the company's own domain -- on a CMS/asset
+        # CDN (e.g. cdn.sanity.io, Cloudinary, an S3/CloudFront bucket) rather than the site
+        # itself. It is fetched read-only for text extraction, not crawled further (a PDF
+        # never yields further link candidates), so trusting a PDF link placed on the
+        # company's own page carries the same risk as any other page content review.
+        if relevant(full) or is_pdf:
+            add_candidate(full,'linked',allow_cross_domain=is_pdf)
 
     if time.time()<deadline-2:
         try:
@@ -795,9 +801,10 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                             pages.append(link); successful+=1
                         for href in page_links:
                             full=urljoin(link,href)
-                            if relevant(full) or full.lower().split('?')[0].endswith('.pdf'):
+                            is_pdf=full.lower().split('?')[0].endswith('.pdf')
+                            if relevant(full) or is_pdf:
                                 cand=_canonical_url(full.split('#')[0])
-                                if cand and cand not in seen and same_domain(cand,host):
+                                if cand and cand not in seen and (is_pdf or same_domain(cand,host)):
                                     seen.add(cand); discovered.append((cand,'linked_2nd'))
                     else:
                         _log_fetch_failure(log,link,ValueError('The page returned insufficient usable text.'),source=source)
@@ -1254,8 +1261,10 @@ def build_confidence(pages,ext,findings,crawl_log=None):
     pts=0; reasons=[]
     if len(pages)>=3: pts+=2; reasons.append("several company pages were reviewed")
     elif len(pages)>=1: pts+=1; reasons.append("at least the main company page was reviewed")
+    ext_search_failed=bool(ext.get("search_failed"))
     if ext.get("enabled") and len(ext.get("results",[]))>=5: pts+=2; reasons.append("external public-source search returned several results")
-    elif ext.get("enabled"): pts+=1; reasons.append("external public-source search was active")
+    elif ext.get("enabled") and not ext_search_failed: pts+=1; reasons.append("external public-source search was active")
+    elif ext_search_failed: reasons.append("external public-source search failed to run (provider error/quota, not a clean result)")
     else: reasons.append("external public-source search was not active")
     no_findings=not findings or findings[0].get("type","").lower().startswith("no major")
     if not no_findings: pts+=1; reasons.append("claim-level signals were detected")
@@ -1290,6 +1299,12 @@ def build_confidence(pages,ext,findings,crawl_log=None):
             reliability_warning=(f"Only {len(pages)} relevant company page(s) could be reviewed. "
                                   "A low risk score from this scan may reflect limited access to the site's content, "
                                   "not necessarily a genuine absence of risky claims.")
+    if ext_search_failed:
+        pts=max(0,pts-1)
+        reliability_warning=("External public-source search failed to run (every provider request errored, e.g. a rate "
+                              "limit or usage quota) rather than returning zero results. Any 'no external negative "
+                              "signal' conclusion in this scan is not confirmation of a clean external record -- the "
+                              "search simply did not execute. " + (reliability_warning or ""))
     if no_findings and (blocked or thin):
         reliability_warning=reliability_warning or ("No claims were detected, and part of the crawl did not return usable content. "
                                                       "This scan result should be treated as inconclusive rather than 'low risk'.")
@@ -4774,8 +4789,22 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
     if not configured:
         return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':[],'query_themes':themes,'queries_run':[],'raw_result_count':0,'search_diagnostics':empty_diag}
     ranked,allr,attempts,providers,run_queries,diagnostics=_v64_search_dimension(company,findings,dimension,reviewed_pages)
+    # An attempt can fail outright (provider error/timeout/quota) rather than simply return
+    # zero results. Those are very different situations: a quota-exhausted or rate-limited
+    # provider means the search never actually ran, which is not evidence of a clean record
+    # and must not be reported the same way as "we searched and found nothing". Silently
+    # treating the two identically was making the tool report a false clean bill of health
+    # whenever the configured API keys hit a rate limit or usage cap.
+    search_failed=bool(attempts) and not any(a.get('status')=='ok' for a in attempts) and any(a.get('status')=='failed' for a in attempts)
     if ranked:
         summary=(summarise_green_ext(ranked) if dimension=='green' else summarise_ext(ranked))
+    elif search_failed:
+        error_examples=sorted({str(a.get('error') or '').strip() for a in attempts if a.get('status')=='failed' and a.get('error')})[:2]
+        detail=(' Example error(s): '+'; '.join(error_examples)+'.') if error_examples else ''
+        summary=('External public-source search could NOT be completed -- every provider request failed '
+                  '(e.g. rate limit or usage quota reached), so this is not confirmation of a clean external '
+                  f'record, only that the search did not run.{detail} Re-run the scan later or check the '
+                  'configured API key/quota.')
     elif diagnostics['raw_result_count']:
         summary=f"External search returned {diagnostics['raw_result_count']} result(s), but none passed the direct-entity, external-ownership, negative-polarity and {dimension}-relevance checks."
     else:
@@ -4783,7 +4812,7 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
     if diagnostics.get('competitor_primary_rejected_count'):
         summary+=f" {diagnostics['competitor_primary_rejected_count']} competitor-primary result(s) were excluded."
     if providers: summary+=' Search provider(s) used: '+', '.join(sorted(providers))+'.'
-    return {'enabled':True,'summary':summary,'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),
+    return {'enabled':True,'summary':summary,'search_failed':search_failed,'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),
         'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,
         'queries_run':list(dict.fromkeys(run_queries)),'raw_result_count':len(allr),'search_diagnostics':diagnostics}
 
