@@ -5599,6 +5599,16 @@ def _v69_external_polarity(result,dimension='social'):
     return True,', '.join(dict.fromkeys(reasons)) or 'clear adverse external context'
 
 
+# A single manual request against the Tavily Playground succeeds instantly on the same key
+# that fails here -- confirming the account/credits are fine and the failures are caused by
+# this app firing several Tavily requests at once (one scan fans out up to 4 query-level
+# threads, each of which can also call Tavily and Google in parallel). Free/dev-tier Tavily
+# keys appear to reject that burst with an HTTP 429/432 well below the monthly credit cap.
+# Serialising Tavily calls process-wide -- and giving a request one short retry after a brief
+# pause if it still gets rate-limited -- avoids tripping that burst limit without needing a
+# different key or plan.
+_TAVILY_RATE_LOCK=threading.Semaphore(1)
+
 def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
     """Tavily search with optional news/source controls for the external-signal layer."""
     if not TAVILY_API_KEY:
@@ -5611,8 +5621,17 @@ def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_d
         payload['exclude_domains']=list(dict.fromkeys(exclude_domains))[:150]
     req=Request('https://api.tavily.com/search',data=json.dumps(payload).encode(),
                 headers={'Content-Type':'application/json','Authorization':'Bearer '+TAVILY_API_KEY},method='POST')
-    with urlopen(req,timeout=10) as r:
-        data=json.loads(r.read().decode('utf-8',errors='ignore'))
+    with _TAVILY_RATE_LOCK:
+        for attempt in range(2):
+            try:
+                with urlopen(req,timeout=10) as r:
+                    data=json.loads(r.read().decode('utf-8',errors='ignore'))
+                break
+            except HTTPError as e:
+                if e.code in (429,432) and attempt==0:
+                    time.sleep(2.0)
+                    continue
+                raise
     return [{'title':i.get('title',''),'url':i.get('url',''),'content':i.get('content',''),
              'score':i.get('score',0),'published_date':i.get('published_date','')} for i in data.get('results',[])]
 
