@@ -542,22 +542,29 @@ def fetch_html(url,timeout=7):
 
 def fetch_page_content(url,timeout=7):
     """Retrieve an HTML/PDF page, with an optional Reader fallback for blocked or
-    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method)."""
+    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method, links).
+
+    ``links`` carries the hrefs found on a directly-fetched HTML page (empty for PDFs and
+    for Reader-fallback text, which has no reliable link list) so the caller can discover
+    pages one hop beyond the initial candidate set -- e.g. a PDF sustainability report that
+    is only linked from a "Sustainability" hub page, not from the homepage or the sitemap."""
     direct_error=None
+    direct_short_links=[]
     try:
         data,ctype,_=_open_public_url(url,timeout=timeout,max_bytes=5000000)
         if 'pdf' in ctype or url.lower().split('?')[0].endswith('.pdf'):
             text=extract_pdf_text_best_effort(data)
             if len(text)>=80:
-                return text,'pdf','direct'
+                return text,'pdf','direct',[]
             direct_error=ValueError('PDF text extraction returned insufficient content.')
         elif 'html' in ctype:
             raw=data.decode('utf-8',errors='ignore')
-            text,_=parse_html(raw)
+            text,page_links=parse_html(raw)
             if len(text)>=THIN_CONTENT_CHARS:
-                return text,'html','direct'
+                return text,'html','direct',page_links
             # Keep usable short text, but first try to enrich a likely JS shell via Reader.
             direct_short=text
+            direct_short_links=page_links
             direct_error=ValueError('Direct HTML retrieval returned a thin page shell.')
         else:
             direct_error=ValueError('URL does not return an HTML or PDF document.')
@@ -566,11 +573,11 @@ def fetch_page_content(url,timeout=7):
         direct_short=''
     if ENABLE_READER_FALLBACK and not url.lower().split('?')[0].endswith(('.xml','.txt')):
         try:
-            return fetch_reader_text(url,timeout=max(5,min(10,timeout+2))), 'reader', 'reader_fallback'
+            return fetch_reader_text(url,timeout=max(5,min(10,timeout+2))), 'reader', 'reader_fallback', []
         except Exception:
             pass
     if 'direct_short' in locals() and len(direct_short)>=120:
-        return direct_short,'html','direct_thin'
+        return direct_short,'html','direct_thin',direct_short_links
     raise direct_error or ValueError('The page could not be retrieved.')
 
 
@@ -762,17 +769,23 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     candidates=candidates[:CRAWL_MAX_PAGE_ATTEMPTS]
     successful=0
     cursor=0
+    attempts=0
+    # Modest headroom beyond the level-1 budget for pages discovered one hop deeper (see below)
+    # -- reports are frequently linked only from a Sustainability/CSR hub page, not the homepage
+    # or the sitemap, so without this a valid PDF found there would otherwise go unfetched.
+    max_attempts=CRAWL_MAX_PAGE_ATTEMPTS+8
     # Small parallel batches prevent two slow/blocked pages from exhausting the entire crawl
     # budget while keeping request concurrency modest for the target site.
-    while cursor<len(candidates) and successful<max_extra_pages and time.time()<deadline-2:
-        batch=candidates[cursor:cursor+CRAWL_FETCH_WORKERS]; cursor+=len(batch)
+    while cursor<len(candidates) and successful<max_extra_pages and attempts<max_attempts and time.time()<deadline-2:
+        batch=candidates[cursor:cursor+CRAWL_FETCH_WORKERS]; cursor+=len(batch); attempts+=len(batch)
         per_timeout=min(8,max(3,remaining()-1))
+        discovered=[]
         with ThreadPoolExecutor(max_workers=min(CRAWL_FETCH_WORKERS,len(batch))) as executor:
             futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
             for future in as_completed(futures):
                 link,source=futures[future]
                 try:
-                    t,kind,method=future.result()
+                    t,kind,method,page_links=future.result()
                     min_chars=80 if kind=='pdf' else 120
                     if len(t)>min_chars:
                         _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
@@ -780,10 +793,19 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                             label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
                             chunks.append('\n\n'+label+link+'\n'+t)
                             pages.append(link); successful+=1
+                        for href in page_links:
+                            full=urljoin(link,href)
+                            if relevant(full) or full.lower().split('?')[0].endswith('.pdf'):
+                                cand=_canonical_url(full.split('#')[0])
+                                if cand and cand not in seen and same_domain(cand,host):
+                                    seen.add(cand); discovered.append((cand,'linked_2nd'))
                     else:
                         _log_fetch_failure(log,link,ValueError('The page returned insufficient usable text.'),source=source)
                 except Exception as e:
                     _log_fetch_failure(log,link,e,source=source)
+        if discovered:
+            discovered.sort(key=_candidate_score)
+            candidates[cursor:cursor]=discovered[:max(0,max_attempts-attempts)]
     return '\n\n'.join(chunks)[:150000], pages
 
 COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
