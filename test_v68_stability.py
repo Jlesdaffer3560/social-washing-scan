@@ -6,8 +6,8 @@ from pypdf import PdfReader
 import app
 import report_pdf
 
-assert app.APP_VERSION == 'hostable_v71_external_signal_recall_precision'
-assert app.APP_RELEASE_LABEL == 'v71'
+assert app.APP_VERSION == 'hostable_v72_legal_basis_classification'
+assert app.APP_RELEASE_LABEL == 'v72'
 
 # Score bands and UI transparency must match backend bands.
 frontend=Path('frontend.html').read_text(encoding='utf-8')
@@ -21,18 +21,19 @@ assert 'role="status" aria-live="polite"' in frontend
 assert 'Build {{APP_RELEASE_LABEL}}' not in frontend
 assert 'id="version"' not in frontend
 
-# Bare-name resolution must not invent www.<name>.com when unverified.
-old_tavily,old_google=app.tavily_search,app.google_search
+# V72: bare-name resolution must never hard-block the scan. When search is unavailable and
+# no guessed domain can be validated, it falls back to a clearly-flagged, unverified guess
+# domain instead of raising -- the scan proceeds and the person running it sees the warning.
+old_tavily,old_google,old_fetch=app.tavily_search,app.google_search,app.fetch_html
 app.tavily_search=lambda *a,**k: []
 app.google_search=lambda *a,**k: []
+app.fetch_html=lambda *a,**k: (_ for _ in ()).throw(Exception('no such domain'))
 try:
-    try:
-        app.resolve_company_website('Fictional Unverified Holdings 8675309')
-        raise AssertionError('Unverified company names must require an exact URL')
-    except ValueError as exc:
-        assert 'exact official website URL' in str(exc)
+    url,note=app.resolve_company_website('Fictional Unverified Holdings 8675309')
+    assert url=='https://www.fictionalunverifiedholdings8675309.com'
+    assert 'unverified' in note.lower() or 'could not be confidently verified' in note.lower()
 finally:
-    app.tavily_search,app.google_search=old_tavily,old_google
+    app.tavily_search,app.google_search,app.fetch_html=old_tavily,old_google,old_fetch
 
 # Signed PDF payloads reject tampering.
 payload={'company':{'company':'Example Group'},'global_score':55,'analysis_date':'2026-07-16T12:00:00+00:00'}

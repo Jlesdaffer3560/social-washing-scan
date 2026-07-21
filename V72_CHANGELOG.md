@@ -65,7 +65,53 @@ subject matter (EmpCo environmental / social characteristics / forced labour):
 - Manually rendered the updated dashboard HTML/CSS to confirm the new badges and
   summary block display correctly.
 
+## Bare-name company resolution no longer hard-blocks the scan
+
+`resolve_company_website` turned out to be defined **three times** in `app.py`
+(Python only ever runs the last definition in a module, so the earlier two were dead
+code that silently never ran). At some point the active copy was tightened from "fall
+back to a flagged best-guess domain" (the original V63/V64 behaviour) to raising a
+hard `ValueError` whenever search confidence was below 70 — which blocked the scan
+outright for any company outside the small `V64_CANONICAL_COMPANY_SITES` whitelist
+(Shein, H&M, Zara, Inditex) whenever Tavily/Google Custom Search were not configured
+or returned no confident match. This is what caused "Scan failed: Official domain for
+X could not be verified with sufficient confidence" for Puratos and any other
+non-whitelisted company.
+
+Fixed:
+
+- Removed the two dead, shadowed duplicate definitions (and an orphaned scoring
+  helper only they used).
+- The single remaining `resolve_company_website` now degrades gracefully instead of
+  raising:
+  1. Known-site whitelist (unchanged).
+  2. Live search (Tavily -> Google), accepted only above the existing strict
+     confidence threshold (unchanged, prevents substituting a competitor's domain).
+  3. **New:** a credential-free domain-guess step. Generates plausible domains from
+     the company name (`.com`, `.eu`, `.be`, `.net`, `.org`, `.co`) and validates each
+     by actually fetching it (reusing the existing SSRF-safe `fetch_html`) and
+     confirming the company name appears in the title or body. Works with zero
+     search-API credentials configured.
+  4. Last resort: an unverified best-guess domain, clearly flagged as such in the
+     `fallback_note` that the dashboard already displays — the scan proceeds instead
+     of blocking.
+- `/api/health` already exposes `tavily_configured` / `google_search_configured` —
+  worth checking this on the live deployment, since search credentials appear to not
+  be configured there at all, which is the deeper reason bare-name resolution was
+  relying entirely on the (now fixed) fallback path.
+- Updated three tests that had encoded the old hard-block as the expected behaviour
+  (`test_v68_pytest.py`, `test_v68_stability.py`) to instead assert the new graceful
+  fallback and the new domain-guess verification path.
+
+Not in scope for this release: `agent.py` and `durably_sustainability_scan.py`
+contain their own older copies of `resolve_company_website`. They are not the
+deployed file (`render.yaml` runs `app.py`) so they are not the cause of this bug,
+but they're the same kind of duplicate-code debt and are worth cleaning up
+separately.
+
 ## Rollback
 
 Redeploy v71. No migration or data change is required — `legal_basis_category` is
-computed at scan time from existing fields, nothing is persisted.
+computed at scan time from existing fields, nothing is persisted. The bare-name
+resolution fix is also fully reversible by redeploying v71, though that reintroduces
+the hard-block bug.

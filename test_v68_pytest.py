@@ -11,15 +11,36 @@ def test_release_and_security_signature():
     assert not app.verify_report_signature(payload)
 
 
-def test_unverified_company_requires_exact_url(monkeypatch):
+def test_unverified_company_falls_back_to_flagged_guess(monkeypatch):
+    """V72: a company with no known-site entry, no confident search match, and no
+    reachable guessed domain must still resolve to *something* -- never raise -- so the
+    scan can proceed. The returned note must clearly flag it as an unverified guess."""
     monkeypatch.setattr(app,'tavily_search',lambda *a,**k: [])
     monkeypatch.setattr(app,'google_search',lambda *a,**k: [])
-    try:
-        app.resolve_company_website('Fictional Unverified Holdings 8675309')
-    except ValueError as exc:
-        assert 'exact official website URL' in str(exc)
-    else:
-        raise AssertionError('Unverified bare company names must not create an invented domain')
+    monkeypatch.setattr(app,'fetch_html',lambda *a,**k: (_ for _ in ()).throw(Exception('no such domain')))
+    url,note=app.resolve_company_website('Fictional Unverified Holdings 8675309')
+    assert url.startswith('https://www.')
+    assert 'unverified' in note.lower() or 'could not be confidently verified' in note.lower()
+
+
+def test_known_domain_guess_is_verified_via_live_content(monkeypatch):
+    """V72: when a guessed domain is actually reachable and its content names the
+    company, resolution must upgrade from an unverified guess to a verified match --
+    this is what keeps bare-name scans working for companies without search-API
+    coverage or without any search provider configured at all."""
+    monkeypatch.setattr(app,'tavily_search',lambda *a,**k: [])
+    monkeypatch.setattr(app,'google_search',lambda *a,**k: [])
+    fake_html=('<html><head><title>Bakery Solutions | Puratos</title></head><body>'
+               '<h1>Puratos</h1><p>Puratos is an international group which offers a full range of '
+               'innovative food ingredients and services for the bakery, patisserie and chocolate '
+               'sectors. Our headquarters are located in Belgium, where the company was founded in 1919. '
+               'We serve artisans, retailers, industrial producers and food service operators in over '
+               '100 countries around the world.</p></body></html>')
+    monkeypatch.setattr(app,'fetch_html',lambda url,timeout=6: fake_html)
+    url,note=app.resolve_company_website('Puratos')
+    assert url=='https://www.puratos.com'
+    assert 'verify the entity' in note.lower()
+    assert 'unverified' not in note.lower()
 
 
 def test_frontend_score_bands_and_privacy():

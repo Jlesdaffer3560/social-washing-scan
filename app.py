@@ -297,27 +297,6 @@ def slugify_company_name(name):
     s=re.sub(r'[^a-z0-9]+','',(name or '').lower())
     return s or 'company'
 
-def resolve_company_website(name):
-    """Best-effort resolution of a bare company name (e.g. 'Inditex') to an official
-    website URL. Tries web search first (Tavily, then Google CSE, when configured) and
-    filters out social/news/directory domains; falls back to a best-guess domain when
-    no search is configured or nothing usable was found."""
-    query=f'{name} official website'
-    results=[]
-    try: results=tavily_search(query,max_results=5) or []
-    except Exception: results=[]
-    if not results:
-        try: results=google_search(query,max_results=5) or []
-        except Exception: results=[]
-    for r in results:
-        host=(urlparse(r.get('url','')).hostname or '').lower()
-        bare=host[4:] if host.startswith('www.') else host
-        if not bare: continue
-        if any(bare==d or bare.endswith('.'+d) for d in NON_OFFICIAL_SITE_DOMAINS): continue
-        return f'https://{host}', f'Company name "{name}" was resolved to {host} via web search. Verify this is the correct entity before relying on the result.'
-    guess=f'https://www.{slugify_company_name(name)}.com'
-    return guess, f'Company name "{name}" could not be verified via web search (no search provider configured or no confident match); the scan used a best-guess domain ({guess}). Please verify this is the correct company website and re-run with the exact URL if not.'
-
 def resolve_scan_input(raw):
     """Accepts a bare company name, a bare domain, or a full URL/page and returns
     (url, resolution_note). resolution_note is None when the input was already a
@@ -4579,68 +4558,10 @@ def _v64_known_site(name):
     return None
 
 
-def _v64_official_candidate_score(result, company_name):
-    url=result.get('url','') or ''
-    host=(urlparse(url).hostname or '').lower().removeprefix('www.')
-    root=_root_domain(host)
-    title=result.get('title','') or ''
-    content=result.get('content','') or ''
-    aliases=_v64_brand_aliases(company_name)
-    company_compacts={_v64_compact(a) for a in aliases if len(_v64_compact(a))>=3}
-    host_compact=_v64_compact(host)
-    root_label=_v64_compact(_v64_root_label(host))
-    score=0
-    if not host or any(root==d or root.endswith('.'+d) for d in NON_OFFICIAL_SITE_DOMAINS):
-        return -999
-    known=_v64_known_site(company_name)
-    known_root=_root_domain((urlparse(known).hostname or '')) if known else ''
-    if known_root and root==known_root: score+=120
-    if any(c and (root_label==c or c in host_compact) for c in company_compacts): score+=75
-    title_count,_=_v64_alias_occurrences(title,aliases)
-    content_count,_=_v64_alias_occurrences(content,aliases)
-    if title_count: score+=35
-    if content_count: score+=min(15,content_count*5)
-    if 'official' in _v64_norm(title+' '+content): score+=10
-    # A result dominated by another retail brand cannot be selected as the official site.
-    title_norm=_v64_norm(title)
-    target_in_title=title_count>0
-    for brand in V64_OTHER_BRANDS:
-        if _v64_norm(brand) in title_norm and _v64_norm(brand) not in aliases and not target_in_title:
-            score-=100
-    return score
-
-
-def resolve_company_website(name):
-    """Resolve a bare name only to a domain that is demonstrably tied to that name.
-
-    V63 accepted the first non-news/non-directory domain. V64 requires a strong
-    brand-domain/title match and uses a small verified-domain map for common ambiguous
-    brands. It never substitutes a competitor's website simply because it appeared in
-    the search results.
-    """
-    known=_v64_known_site(name)
-    if known:
-        host=urlparse(known).hostname or known
-        return known, f'Company name "{name}" was resolved to the verified official domain {host}. The scan also checks any configured corporate/group sustainability site.'
-    query=f'"{name}" official company website'
-    results=[]
-    try:
-        a=tavily_search(query,max_results=6) or []
-        for r in a: r.setdefault('provider','Tavily')
-        results.extend(a)
-    except Exception: pass
-    try:
-        b=google_search(query,max_results=6) or []
-        for r in b: r.setdefault('provider','Google Custom Search')
-        seen={_v60_canonical_url(r.get('url','')) for r in results}
-        results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
-    except Exception: pass
-    ranked=sorted((( _v64_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
-    if ranked and ranked[0][0]>=70:
-        host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
-        return f'https://{host}', f'Company name "{name}" was resolved to {host} after a verified brand/domain match. Verify the entity before relying on the result.'
-    guess=f'https://www.{slugify_company_name(name)}.com'
-    return guess, f'Company name "{name}" could not be confidently matched to an official search result. The scan used the best-guess domain {guess}; verify it or re-run with the exact official URL.'
+# V72: removed a duplicate, unreachable `_v64_official_candidate_score` + `resolve_company_website`
+# pair that used to live here. Python keeps only the last definition of a function in a module, so
+# this copy was silently shadowed by the one further below (now the single source of truth) and
+# never actually ran. See V72_CHANGELOG.md.
 
 
 def infer_company(url,text,company_name_hint=''):
@@ -5041,8 +4962,73 @@ def _v65_official_candidate_score(result, company_name):
     return score
 
 
+def _v72_extract_title(html):
+    m=re.search(r'<title[^>]*>(.*?)</title>', html or '', re.I|re.S)
+    return re.sub(r'\s+',' ', m.group(1)).strip() if m else ''
+
+_V72_DOMAIN_GUESS_TLDS=('.com','.eu','.be','.net','.org','.co')
+
+def _v72_guess_domain_bases(name):
+    """Plausible bare-domain name bases for a company, derived from the name alone --
+    no external search API involved."""
+    tokens=[t for t in _v64_norm(name).split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
+    bases=[]
+    compact=_v64_compact(name)
+    if compact and len(compact)>=3:
+        bases.append(compact)
+    if tokens:
+        joined=''.join(tokens)
+        if joined and joined not in bases:
+            bases.append(joined)
+        if len(tokens[0])>=4 and tokens[0] not in bases:
+            bases.append(tokens[0])
+    return bases[:3]
+
+def _v72_guess_domain_candidates(name):
+    bases=_v72_guess_domain_bases(name)
+    out=[]
+    for base in bases:
+        for tld in _V72_DOMAIN_GUESS_TLDS:
+            out.append(f'https://www.{base}{tld}')
+    return out[:12]
+
+def _v72_validate_guessed_domain(url, name):
+    """Fetch a guessed domain (reusing the existing SSRF-safe fetch_html) and confirm the
+    company name actually appears on it, in the title or the page body. Returns the URL when
+    validated, otherwise None. This lets bare-name resolution work for any company with a
+    conventional domain, without depending on a paid search API being configured."""
+    try:
+        html=fetch_html(url,timeout=6)
+    except Exception:
+        return None
+    if not html or len(html)<200:
+        return None
+    aliases=_v64_brand_aliases(name)
+    compacts={_v64_compact(a) for a in aliases if len(_v64_compact(a))>=3}
+    host=(urlparse(url).hostname or '').lower().removeprefix('www.')
+    root_label=_v64_compact(_v64_root_label(host))
+    if root_label not in compacts:
+        return None
+    title=_v72_extract_title(html)
+    title_count,_=_v64_alias_occurrences(title,aliases)
+    body_count,_=_v64_alias_occurrences(html[:6000],aliases)
+    if title_count or body_count:
+        return url
+    return None
+
 def resolve_company_website(name):
-    """Resolve a bare company name only when the official domain is sufficiently verified."""
+    """Resolve a bare company name to a website URL.
+
+    V72: this used to be one of three duplicate definitions of this function in the file
+    (Python only ever runs the last one -- see the V72_CHANGELOG for the cleanup). The active
+    copy also used to raise a hard error whenever search confidence was below 70, which blocked
+    the scan outright for any company outside the small known-site list whenever no confident
+    search match was found -- including when no search provider was configured at all. This
+    version restores the earlier, intentionally graceful degrade path (matching the tool's V63/
+    V64 behaviour) and strengthens it with a credential-free domain-guess-and-validate step, so
+    a bare company name resolves to *something* for any company, always with a clear confidence
+    note attached rather than a hard failure.
+    """
     known=_v64_known_site(name)
     if known:
         host=urlparse(known).hostname or known
@@ -5064,9 +5050,29 @@ def resolve_company_website(name):
     if ranked and ranked[0][0]>=70:
         host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
         return f'https://{host}', f'Company name "{name}" was resolved to {host} after a strong brand/domain and title-content match. Verify the entity before relying on the result.'
-    candidate=(urlparse(ranked[0][1].get('url','')).hostname or '').lower() if ranked and ranked[0][0]>0 else ''
-    detail=f' Candidate found: {candidate}.' if candidate else ''
-    raise ValueError(f'Official domain for "{name}" could not be verified with sufficient confidence.{detail} Enter the exact official website URL before starting the scan.')
+
+    # No search provider configured, or no confidently-matched result: try plausible domain
+    # guesses directly and accept one only if its live page content actually names the
+    # company. This keeps resolution working for companies with thin search coverage, or when
+    # no Tavily/Google credentials are configured on this deployment, without silently
+    # substituting the wrong company.
+    for candidate_url in _v72_guess_domain_candidates(name):
+        validated=_v72_validate_guessed_domain(candidate_url,name)
+        if validated:
+            host=(urlparse(validated).hostname or '').lower()
+            return f'https://{host}', f'Company name "{name}" was resolved to {host} by matching a guessed domain against its live page content (no confident search-provider match was available). Verify the entity before relying on the result.'
+
+    # Last resort: an unverified best-guess domain. The scan still proceeds -- a clearly
+    # flagged low-confidence guess is more useful than blocking the scan outright -- but the
+    # note makes plain that this was not independently confirmed.
+    guess=f'https://www.{slugify_company_name(name)}.com'
+    no_provider=not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)
+    provider_note=(' No external search provider is configured on this deployment (TAVILY_API_KEY / '
+                    'GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX), so only the known-site list and direct '
+                    'domain guesses could be tried.') if no_provider else ''
+    return guess, (f'Company name "{name}" could not be confidently verified via search or a direct domain match.{provider_note} '
+                    f'The scan used the unverified best-guess domain {guess} -- please confirm this is the correct company '
+                    f'website; re-run with the exact URL if not.')
 
 
 def infer_company(url,text,company_name_hint=''):

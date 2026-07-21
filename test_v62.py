@@ -16,7 +16,7 @@ def load(name, path):
 app = load("app_v62", ROOT / "app.py")
 report = load("report_v62", ROOT / "report_pdf.py")
 
-assert app.APP_VERSION == "hostable_v71_external_signal_recall_precision"
+assert app.APP_VERSION == "hostable_v72_legal_basis_classification"
 
 positive = {
     "title": "Company achieves carbon-neutral operations",
