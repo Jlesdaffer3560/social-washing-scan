@@ -5599,14 +5599,14 @@ def _v69_external_polarity(result,dimension='social'):
     return True,', '.join(dict.fromkeys(reasons)) or 'clear adverse external context'
 
 
-# A single manual request against the Tavily Playground succeeds instantly on the same key
-# that fails here -- confirming the account/credits are fine and the failures are caused by
-# this app firing several Tavily requests at once (one scan fans out up to 4 query-level
-# threads, each of which can also call Tavily and Google in parallel). Free/dev-tier Tavily
-# keys appear to reject that burst with an HTTP 429/432 well below the monthly credit cap.
-# Serialising Tavily calls process-wide -- and giving a request one short retry after a brief
-# pause if it still gets rate-limited -- avoids tripping that burst limit without needing a
-# different key or plan.
+# Serialising Tavily calls process-wide, in case the deployment's key/plan is sensitive to
+# concurrent requests, plus one short retry after a brief pause on 429/432. This did NOT
+# resolve repeated live 432s even though a single manual request via Tavily's own Playground
+# succeeds on the same key -- so concurrency is not (or not the only) cause. Python's HTTPError
+# only exposes the status line by default; the code below now reads and surfaces Tavily's own
+# JSON error body (e.g. a specific "invalid parameter"/plan-restriction message) instead of the
+# bare "HTTP Error 432: " we were logging before, so the real reason is visible in the report's
+# provider_attempts instead of having to keep guessing.
 _TAVILY_RATE_LOCK=threading.Semaphore(1)
 
 def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
@@ -5628,10 +5628,12 @@ def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_d
                     data=json.loads(r.read().decode('utf-8',errors='ignore'))
                 break
             except HTTPError as e:
+                try: body=e.read().decode('utf-8',errors='ignore')[:300].strip()
+                except Exception: body=''
                 if e.code in (429,432) and attempt==0:
                     time.sleep(2.0)
                     continue
-                raise
+                raise ValueError(f'HTTP Error {e.code}: {body or e.reason or "(no error body)"}') from e
     return [{'title':i.get('title',''),'url':i.get('url',''),'content':i.get('content',''),
              'score':i.get('score',0),'published_date':i.get('published_date','')} for i in data.get('results',[])]
 
