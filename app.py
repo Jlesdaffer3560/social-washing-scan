@@ -103,6 +103,7 @@ TAVILY_API_KEY=os.environ.get("TAVILY_API_KEY","").strip()
 OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY","").strip()
 GOOGLE_SEARCH_API_KEY=os.environ.get("GOOGLE_SEARCH_API_KEY","").strip()
 GOOGLE_SEARCH_CX=os.environ.get("GOOGLE_SEARCH_CX","").strip()
+SERPER_API_KEY=os.environ.get("SERPER_API_KEY","").strip()
 
 PROFILES={
  "kbc":("KBC","Banking and financial services","Medium","Responsible-finance, customer-protection, accessibility and financial-inclusion claims can be sensitive because financing decisions may create indirect social impacts."),
@@ -5638,6 +5639,23 @@ def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_d
              'score':i.get('score',0),'published_date':i.get('published_date','')} for i in data.get('results',[])]
 
 
+def serper_search(q,max_results=5,include_domains=None,exclude_domains=None):
+    """Serper.dev Google-SERP wrapper -- cheap fallback/alternative to Tavily."""
+    if not SERPER_API_KEY:
+        return []
+    query=_v71_google_query(q,include_domains,exclude_domains)
+    req=Request('https://google.serper.dev/search',
+                data=json.dumps({'q':query,'num':max(1,min(max_results,20))}).encode(),
+                headers={'X-API-KEY':SERPER_API_KEY,'Content-Type':'application/json'},method='POST')
+    with urlopen(req,timeout=10) as r:
+        data=json.loads(r.read().decode('utf-8',errors='ignore'))
+    out=[]
+    for i in data.get('organic',[]):
+        out.append({'title':i.get('title',''),'url':i.get('link',''),'content':i.get('snippet',''),
+                     'score':1.0/max(1,i.get('position',1)),'published_date':i.get('date','')})
+    return out
+
+
 def _v71_google_query(query,include_domains=None,exclude_domains=None):
     value=query
     if include_domains:
@@ -5652,6 +5670,15 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
     """Combine configured providers while preserving source and company-domain controls."""
     attempts=[]; gathered=[]
     def _run(provider):
+        if provider=='Serper':
+            if not SERPER_API_KEY:
+                return [],{'provider':provider,'status':'not_configured'}
+            try:
+                res=serper_search(query,max_results,include_domains=include_domains,exclude_domains=exclude_domains)
+                for item in res: item['provider']=provider
+                return res,{'provider':provider,'status':'ok','results':len(res)}
+            except Exception as exc:
+                return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
         if provider=='Tavily':
             if not TAVILY_API_KEY:
                 return [],{'provider':provider,'status':'not_configured'}
@@ -5669,7 +5696,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
             return res,{'provider':provider,'status':'ok','results':len(res)}
         except Exception as exc:
             return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
-    providers=['Tavily','Google Custom Search']
+    providers=['Serper','Tavily','Google Custom Search']
     if EXTERNAL_SEARCH_ALL_PROVIDERS:
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures=[pool.submit(_run,provider) for provider in providers]
