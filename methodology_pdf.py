@@ -63,15 +63,27 @@ def section_table(rows, col_widths, header_bg=NAVY):
     ]))
     return t
 
+def draw_footer(canvas, doc):
+    canvas.saveState()
+    canvas.setStrokeColor(LINE)
+    canvas.setLineWidth(.5)
+    canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
+    canvas.setFont('Helvetica-Oblique', 6.5)
+    canvas.setFillColor(MUTED)
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Scan — Methodology summary · v72')
+    canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
+    canvas.restoreState()
+
+
 def build_methodology_pdf():
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
-                             topMargin=MARGIN, bottomMargin=MARGIN)
+                             topMargin=MARGIN, bottomMargin=MARGIN + 4 * mm)
     W = PAGE_W - 2 * MARGIN
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v68 &middot; 16 July 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v72 &middot; 22 July 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '
@@ -118,7 +130,31 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(lens_rows, [W * 0.34, W * 0.66]))
 
-    flow.append(Paragraph('2. What is retained as a claim signal', STY['h2']))
+    flow.append(Paragraph('2. Prohibited vs. problematic claims (EmpCo legal basis)', STY['h2']))
+    flow.append(Paragraph(
+        'Every retained green or social claim is also classified by its EmpCo legal basis, shown in the report as a '
+        '<b>Prohibited (Annex I)</b> or <b>Problematic (case-by-case)</b> label. This is a screening indicator, not a '
+        'legal finding.', STY['body']))
+    flow.append(Spacer(1, 5))
+    legal_basis_rows = [
+        ('Classification', 'Meaning'),
+        (Paragraph('<b>Prohibited (Annex I)</b>', ParagraphStyle('lb1', parent=STY['td_b'], textColor=DANGER)),
+         Paragraph('Falls within the fixed list of practices Annex I of Directive (EU) 2024/825 adds to the UCPD '
+                   'blacklist &mdash; self-declared sustainability labels not based on a certification scheme or public-authority '
+                   'approval, generic environmental claims without recognised excellent environmental performance, '
+                   'offset-based claims of climate neutral/reduced/positive environmental impact, and presenting a '
+                   'legal requirement as a distinguishing sustainability feature. Once EmpCo applies (27 September 2026), '
+                   'these practices are automatically unfair if the described conditions are met &mdash; no separate '
+                   'case-by-case materiality or consumer-impact test is required.', STY['td'])),
+        (Paragraph('<b>Problematic (case-by-case)</b>', ParagraphStyle('lb2', parent=STY['td_b'], textColor=AMBER)),
+         Paragraph('Not on the Annex I list, but wording that may still be found misleading after an individual '
+                   'assessment under general UCPD unfair-commercial-practice rules (Art. 6/7, or Art. 6(2)(d) for '
+                   'future environmental-performance claims). Whether it is actually misleading depends on context, '
+                   'substantiation and likely consumer impact, and is not determined by this scan.', STY['td'])),
+    ]
+    flow.append(section_table(legal_basis_rows, [W * 0.26, W * 0.74]))
+
+    flow.append(Paragraph('3. What is retained as a claim signal', STY['h2']))
     flow.append(Paragraph(
         'The scan does not operate as a simple keyword search. A word is retained only when the surrounding wording '
         'appears to make, imply or visually suggest an environmental or social performance claim. Neutral references '
@@ -151,7 +187,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(signal_rows, [W * 0.24, W * 0.36, W * 0.40]))
 
-    flow.append(Paragraph('3. Claim source and detected wording', STY['h2']))
+    flow.append(Paragraph('4. Claim source and detected wording', STY['h2']))
     flow.append(Spacer(1, 3))
     field_rows = [
         ('Field in report', 'Meaning'),
@@ -163,7 +199,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(field_rows, [W * 0.28, W * 0.72]))
 
-    flow.append(Paragraph('4. Score calculation', STY['h2']))
+    flow.append(Paragraph('5. Score calculation', STY['h2']))
     flow.append(Paragraph(
         'The scan produces three scores: <b>Green score</b>, <b>Social score</b> and <b>Global score</b>. Scores are '
         '<b>risk scores, not performance scores</b>. Higher scores indicate higher claim-risk exposure or stronger need '
@@ -201,7 +237,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(band_rows, [W * 0.28, W * 0.72]))
 
-    flow.append(Paragraph('5. External stakeholder signals', STY['h2']))
+    flow.append(Paragraph('6. External stakeholder signals', STY['h2']))
     flow.append(Spacer(1, 3))
     ext_rows = [
         ('Status', 'Meaning and score treatment'),
@@ -212,7 +248,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(ext_rows, [W * 0.22, W * 0.78]))
 
-    flow.append(Paragraph('6. Coverage, confidence and source status', STY['h2']))
+    flow.append(Paragraph('7. Coverage, confidence and source status', STY['h2']))
     coverage_rows=[
         ('Source status','Meaning'),
         (Paragraph('Retrieved and analysed',STY['td_b']),Paragraph('Usable text from the source entered the claim analysis.',STY['td'])),
@@ -225,7 +261,7 @@ def build_methodology_pdf():
     flow.append(Spacer(1,5))
     flow.append(Paragraph('Confidence reflects source coverage, extraction quality, access failures, fallback use, claim-level signals and whether external search was performed. It is reported separately from claim risk. A low detected risk with limited coverage must not be read as proof that risky claims are absent.',STY['body']))
 
-    flow.append(Paragraph('7. Illustrative score example', STY['h2']))
+    flow.append(Paragraph('8. Illustrative score example', STY['h2']))
     example_rows=[
         ('Illustrative input','Risk contribution'),
         (Paragraph('Generic consumer-facing environmental claim',STY['td_b']),Paragraph('Raises claim-wording severity; exact contribution depends on the retained pattern and channel.',STY['td'])),
@@ -236,7 +272,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(example_rows,[W*.38,W*.62]))
 
-    flow.append(Paragraph('8. Limits of the scan', STY['h2']))
+    flow.append(Paragraph('9. Limits of the scan', STY['h2']))
     flow.append(Paragraph(
         'The scan is a structured screening and prioritisation tool. It does not determine whether greenwashing or '
         'social washing legally occurred. Final assessment requires human review of the complete communication, '
@@ -258,7 +294,7 @@ def build_methodology_pdf():
         '&copy; Durably - proprietary Sustainability Scan methodology. Indicative first-pass assessment only; results '
         'require legal, compliance and subject-matter review before external use.', STY['foot']))
 
-    doc.build(flow)
+    doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
 
 

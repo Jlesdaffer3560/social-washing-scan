@@ -139,6 +139,12 @@ def claim_risk(claim):
     return clean_text(claim.get("risk_level") or claim.get("risk") or "Review")
 
 
+def legal_basis_label(claim):
+    if str(claim.get("legal_basis_category") or "").lower() == "prohibited":
+        return "Prohibited (Annex I)", RED
+    return "Problematic (case-by-case)", AMBER
+
+
 def claim_source(claim):
     source = clean_text(claim.get("source_label") or claim.get("source_url") or "Reviewed material")
     if source.startswith("http"):
@@ -494,8 +500,10 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     title_width = inner_width - risk_width
     risk_value = claim_risk(claim)
     risk_badge = Paragraph(esc(risk_value), ST["claim_risk_badge"])
+    lb_text, lb_color = legal_basis_label(claim)
+    title_html = f'{esc(title)} <font size="7" color="{lb_color.hexval()}"><b>&nbsp;&nbsp;{esc(lb_text)}</b></font>'
     head = Table(
-        [[risk_badge, Paragraph(esc(title), ST["claim_title"])]],
+        [[risk_badge, Paragraph(title_html, ST["claim_title"])]],
         colWidths=[risk_width, title_width],
         hAlign="LEFT",
     )
