@@ -1204,7 +1204,7 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[])} for f in findings]
+    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label","")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -2295,7 +2295,7 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -3656,6 +3656,17 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if dimension == 'social':
         neutral=['backing british suppliers','supporting local suppliers','working with suppliers','become a supplier','supplier portal','list of suppliers']
         if any(n in c for n in neutral) and not any(x in c for x in ['responsible','ethical','audited','certified','traceable','due diligence','human rights','forced labour','forced labor','modern slavery','comply','compliance','standard','code']):
+            return False
+        # v73: bare negation phrasing ("there is no forced labour", "no child labour is used") is
+        # the standard ILO/ETI Base Code "Employment is freely chosen" / "child labour shall not
+        # be used" principle, used near-verbatim in the vast majority of supplier codes of conduct
+        # as a policy definition -- not a marketing or product assurance claim. Flagging it as the
+        # scan's top social-risk finding (its default High/74 score) buried genuine claims and made
+        # the report look unreliable. Require explicit product/brand assurance language before
+        # treating the bare negation as a claim; affirmative forms ("forced labour free", "free
+        # from forced labour") are a different, unaffected trigger and remain flagged as before.
+        if trig in ['no forced labour', 'no forced labor', 'no child labour', 'no child labor'] and not any(
+                x in c for x in ['our product', 'our products', 'this product', 'these products', 'guarantee', 'certified', 'certificat']):
             return False
         # v57f/v57g: sentences that describe what a charter, code of conduct or set of principles
         # SAYS, "sets out" or is "underpinned by" are meta-descriptions of a governance document's
