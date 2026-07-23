@@ -141,11 +141,13 @@ def build_methodology_pdf():
         (Paragraph('<b>Prohibited (Annex I)</b>', ParagraphStyle('lb1', parent=STY['td_b'], textColor=DANGER)),
          Paragraph('Falls within the fixed list of practices Annex I of Directive (EU) 2024/825 adds to the UCPD '
                    'blacklist &mdash; self-declared sustainability labels not based on a certification scheme or public-authority '
-                   'approval, generic environmental claims without recognised excellent environmental performance, '
-                   'offset-based claims of climate neutral/reduced/positive environmental impact, and presenting a '
-                   'legal requirement as a distinguishing sustainability feature. Once EmpCo applies (27 September 2026), '
-                   'these practices are automatically unfair if the described conditions are met &mdash; no separate '
-                   'case-by-case materiality or consumer-impact test is required.', STY['td'])),
+                   'approval, generic environmental claims that lack same-medium specification and recognised excellent '
+                   'environmental performance, offset-based claims that a specific <b>product</b> has a climate neutral/reduced/'
+                   'positive impact, and presenting a legal requirement as a distinguishing sustainability feature. Once EmpCo '
+                   'applies (27 September 2026), these practices are automatically unfair if the described conditions are met '
+                   '&mdash; no separate case-by-case materiality or consumer-impact test is required. A company- or '
+                   'operations-wide neutrality claim, or a generic claim that already carries same-medium specification, falls '
+                   'outside this fixed list and is assessed case-by-case instead.', STY['td'])),
         (Paragraph('<b>Problematic (case-by-case)</b>', ParagraphStyle('lb2', parent=STY['td_b'], textColor=AMBER)),
          Paragraph('Not on the Annex I list, but wording that may still be found misleading after an individual '
                    'assessment under general UCPD unfair-commercial-practice rules (Art. 6/7, or Art. 6(2)(d) for '
@@ -180,10 +182,10 @@ def build_methodology_pdf():
          Paragraph('May imply supply-chain control, audit quality or compliance that must be evidenced with scope, coverage, methodology and remediation.', STY['td'])),
         (Paragraph('Forced-labour assurance', STY['td_b']),
          Paragraph('forced-labour free, modern-slavery free, no forced labour, product traceability', STY['td']),
-         Paragraph('Require robust traceability, risk assessment, mitigation, remediation and response procedures under Regulation (EU) 2024/3015.', STY['td'])),
+         Paragraph('Creates substantiation exposure now under general UCPD rules; traceability, risk-assessment, mitigation and remediation evidence may become relevant to enforcement under Regulation (EU) 2024/3015, which does not itself create a standalone due-diligence obligation (Art. 1(3)).', STY['td'])),
         (Paragraph('Aspirational / future social-performance wording', STY['td_b']),
          Paragraph('working towards a foundation for living wages, wish to build a world where human rights are respected, our ambition is...', STY['td']),
-         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Research on fast-fashion sustainability communication (KU Leuven/HIVA, 2026) identified aspirational wording as a recurring social-washing risk pattern. The scan does not treat that research as proof that it is always the dominant driver.', STY['td'])),
+         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Treated as a relevant social-washing risk indicator on that basis alone -- not as evidence of a specific academic finding about how common or dominant this pattern is in any sector.', STY['td'])),
     ]
     flow.append(section_table(signal_rows, [W * 0.24, W * 0.36, W * 0.40]))
 

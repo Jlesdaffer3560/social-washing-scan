@@ -1204,7 +1204,7 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label","")} for f in findings]
+    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite","")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -2160,7 +2160,7 @@ def green_claim_evidence_questions(claim_type):
     if 'generic' in t:
         return common+['Is the generic wording specified clearly and prominently on the same medium?','Is there recognised excellent environmental performance relevant to the claim as a whole?']
     if 'label' in t or 'visual' in t:
-        return common+['Is the label/badge independent or self-declared?','What scheme owner, criteria, audit process and validity period apply?','Could the visual presentation imply a broader benefit than the evidence supports?']
+        return common+['Who owns the scheme, and are its criteria publicly available?','Is the scheme open to any operator meeting the criteria on fair, reasonable and non-discriminatory terms?','Is compliance verified and monitored by a party independent of the trader making the claim?','Is this a public-authority-established label (e.g. EU Ecolabel), or a private scheme -- and is that distinction clear to the audience?','Could the visual presentation imply a broader benefit than the evidence supports?']
     if 'future' in t:
         return common+['Is there a public implementation plan with milestones, resources and governance?','Is progress independently verified and reported?']
     if 'comparative' in t:
@@ -2169,13 +2169,81 @@ def green_claim_evidence_questions(claim_type):
         return common+['Is the statement merely legal compliance?','Is it presented separately from voluntary sustainability performance?']
     return common
 
+def green_ready_to_use_rewrite(claim_type):
+    """A literal, fill-in-the-blank example rewrite -- not abstract guidance on what to
+    disclose, but an actual sentence structure the company can copy and complete with its own
+    facts. Nothing inside [brackets] is invented or assumed true; it marks exactly what still
+    needs to be supplied before the wording can be reused."""
+    t=(claim_type or '').lower()
+    if t.startswith('no major'):
+        return ''
+    if 'climate' in t or 'offset' in t:
+        return ('"We have reduced our [Scope 1 and 2 / Scope 1, 2 and 3] emissions by [X%] since [baseline year], measured '
+                 'according to [methodology, e.g. the GHG Protocol]. Remaining emissions are addressed through [name of '
+                 'specific removal/offset programme]; details at [link]." Avoid "carbon neutral", "climate neutral" or '
+                 '"net zero" for a single product unless every figure above is substantiated on the same page.')
+    if 'label' in t or 'certification' in t:
+        return ('"Certified [exact scheme name, e.g. GOTS / Fairtrade / EU Ecolabel] by [certifying body], certificate '
+                 'number [X], valid until [date], covering [product/site scope]. Verify at [certifier registry link]." '
+                 'If the scheme is self-created rather than independently audited, remove the certification-style wording entirely.')
+    if 'recycl' in t or 'circular' in t:
+        return ('"Contains [X%] recycled [material] ([post-consumer/post-industrial]), verified per [standard, e.g. GRS], '
+                 'covering [product/packaging scope]. Recyclable in [specific regions/facilities], subject to [conditions]."')
+    if 'generic' in t:
+        return ('"[Product/product line] uses [specific verified attribute, e.g. \'70% recycled cotton\'], based on '
+                 '[methodology/standard], covering [this product only / this collection], as of [date]. Full methodology: '
+                 '[link]." Replace "sustainable", "eco-friendly" or "green" with the specific attribute being claimed.')
+    if 'legal requirement' in t:
+        return ('"[Feature] complies with [specific law/regulation, e.g. EU REACH]." Present this as a compliance fact, '
+                 'not a sustainability differentiator -- if there is a genuinely voluntary action beyond the legal '
+                 'minimum, describe that separately and specifically.')
+    if 'absolute' in t or 'purity' in t:
+        return ('"[X%] of [specific scope, e.g. this product\'s packaging] is [specific attribute, e.g. recyclable '
+                 'through standard municipal collection] in [region/market], based on [test standard/method]. [State any '
+                 'exclusions or conditions]." Replace "100%", "zero" or "chemical free" with the qualified, testable version.')
+    if 'comparative' in t:
+        return ('"[Product] has [X%] lower [specific impact metric, e.g. CO2e per unit] than [named comparator or '
+                 'previous version], based on [methodology/study, date], covering [scope of comparison]. Full data: [link]."')
+    if 'future' in t:
+        return ('"We aim to reach [specific target, e.g. net zero Scope 1 and 2] by [year], with an implementation plan '
+                 'covering [key milestones], published at [link] and reviewed [annually / by whom]." State this as a '
+                 'target, not a current achievement.')
+    if 'visual' in t:
+        return ('"[Icon/badge name] represents [specific certification scheme] awarded by [certifying body]; see [link] '
+                 'for scope and criteria." If the icon was designed in-house rather than awarded by a scheme, remove it '
+                 'or label it clearly as a non-certification design element.')
+    return ('"[Specific, verifiable statement], based on [methodology/standard/date], covering [exact scope]. Full '
+            'evidence: [link]." Replace any broad, absolute or unqualified wording with the precise scope and source.')
+
+_CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
+    'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
+    'enterprise-wide','our whole business','the company','entire business','our business','operations',
+    ' sites',' site ','our facilities','our factories','our sites','scope 1 and 2','scope 1, 2']
+
+def _is_corporate_level_claim(claim_text):
+    return any(m in (claim_text or '').lower() for m in _CORPORATE_LEVEL_MARKERS)
+
 def enrich_green_finding(f, trigger=''):
     f['module']=green_claim_module(f.get('type',''))
+    f['specification_check']=green_specification_check(f.get('type',''), f.get('claim',''))
     f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
     sig=f['regulatory_signal'].lower(); f['blacklisted_practice_indicator']=(('blacklisted-practice indicator' in sig) and not sig.startswith('no direct'))
+    t_low=f.get('type','').lower()
+    # EmpCo Annex I point 4a only blacklists a GENERIC claim that lacks same-medium
+    # specification; once specification is actually present in the retained passage the claim
+    # is no longer "generic" in the Annex I sense and moves to the general, case-by-case UCPD
+    # test instead (still potentially misleading, but not an automatic Annex I match).
+    if f['blacklisted_practice_indicator'] and 'generic' in t_low and f['specification_check'].get('status')=='Partly specified':
+        f['blacklisted_practice_indicator']=False
+    # EmpCo Annex I point 4c specifically targets claiming that a PRODUCT has a neutral,
+    # reduced or positive climate impact based on offsetting -- a company- or operations-wide
+    # neutrality claim (e.g. "our direct operations reached carbon neutrality") is not on that
+    # fixed list and remains a case-by-case UCPD assessment instead.
+    if f['blacklisted_practice_indicator'] and ('climate' in t_low or 'offset' in t_low) and _is_corporate_level_claim(f.get('claim','')):
+        f['blacklisted_practice_indicator']=False
     f.update(classify_legal_basis(f))
-    f['specification_check']=green_specification_check(f.get('type',''), f.get('claim',''))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
+    f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no major') else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -2295,7 +2363,7 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -3147,7 +3215,7 @@ CLAIMS=[
  (['human rights compliant','respect human rights across our value chain','protect human rights across our value chain','respect human rights in our supply chain','living wage across our supply chain','decent work guaranteed','guaranteed labour rights','guaranteed labor rights','fair wages across our supply chain','no discrimination','zero discrimination','equal pay guaranteed'],'Human-rights or labour-rights claim','High','The claim refers to sensitive rights topics and may overstate outcomes or control without due diligence, grievance channels, tracking and remedy.','State the due-diligence process, salient risks, coverage, grievance channels, tracking, limits and remediation process.'),
  (['safe workplace guaranteed','zero accidents','zero harm','injury free','guaranteed safe workplace','no workplace injuries'],'Health, safety or worker-welfare claim','High','Absolute safety or welfare wording creates a high evidence burden and can overstate outcomes, particularly where contractors or suppliers are involved.','Use scoped wording linked to incident data, controls, coverage, training and corrective actions.'),
  (['all employees included','fully inclusive workplace','100% inclusive','guaranteed equal opportunities','no pay gap','zero pay gap'],'Diversity, equality and inclusion claim','Medium','Absolute inclusion, equality or pay-gap wording may overstate outcomes unless backed by data, scope, baseline and progress evidence.','Add workforce data, baseline, scope, limitations, methodology and progress indicators.'),
- (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Research on fashion-sector sustainability communication (KU Leuven/HIVA, 2026) identified this pattern as a recurring social-washing risk: vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. This scan does not treat that research as proof that the pattern is always the dominant driver.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
+ (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Aspirational, forward-looking commitments on wages, human rights or working conditions are treated as a relevant social-washing risk indicator whenever no baseline, timeline or achieved result is given -- not as evidence of a specific academic finding about how common or dominant this pattern is in any sector.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
 ]
 
 
@@ -3702,14 +3770,51 @@ def social_specification_check(claim_type, claim_text):
 def social_blacklisted_indicator(claim_type, trigger, claim_text):
     t=(claim_type or '').lower(); trig=(trigger or '').lower()
     if 'forced' in t or 'modern slavery' in t:
-        return ('Forced Labour Regulation readiness & substantiation flag (Regulation (EU) 2024/3015; core provisions apply from 14 December 2027): wording implying products, suppliers or the '
-                'supply chain are free from forced labour requires traceability, risk assessment, mitigation and remediation evidence ahead of that date; it cannot rest on a policy statement '
-                'alone. This is a readiness/substantiation signal, not a finding that the Regulation has been breached.')
+        return ('Forced-labour product/supply-chain exposure and substantiation flag: wording implying products, suppliers or the supply chain are free from forced labour creates '
+                'substantiation exposure under general UCPD misleading-claims rules today, and evidence of traceability, risk assessment, mitigation and remediation may become relevant to '
+                'enforcement under Regulation (EU) 2024/3015 once its core provisions apply (14 December 2027). Article 1(3) of that Regulation confirms it does not itself create a standalone '
+                'due-diligence obligation -- it is a product-market-access and customs-enforcement regime, not a claims law. This is a readiness/substantiation signal, not a finding that the '
+                'Regulation has been breached.')
     if 'supply' in t or 'supplier' in t:
         return 'Potential red flag if supplier-coverage or audit wording (e.g. "all suppliers", "audited", "certified") is not backed by disclosed tier coverage, audit methodology and corrective-action closure rates.'
     if 'human rights' in t or 'labour' in t or 'labor' in t:
         return 'Potentially misleading social claim if human-rights/labour wording is not backed by a disclosed due-diligence process, grievance mechanism and remedy evidence. Social characteristics fall under EmpCo Art. 6(1)(b) but, unlike specific environmental Annex I practices, are assessed case-by-case rather than via a fixed blacklist.'
     return 'No direct regulatory-blacklist indicator identified, but claim-specific substantiation is still required.'
+
+def social_ready_to_use_rewrite(claim_type):
+    """Literal, fill-in-the-blank example rewrite for social/forced-labour claim types --
+    see green_ready_to_use_rewrite() for the rationale. Bracketed placeholders mark facts only
+    the company can supply; nothing inside them is invented or assumed true."""
+    t=(claim_type or '').lower()
+    if t.startswith('no ') or t.startswith('no material'):
+        return ''
+    if 'forced' in t or 'modern slavery' in t:
+        return ('"Our forced-labour risk-management approach for [product/supply chain] includes [specific traceability '
+                 'mechanism], [named risk-assessment methodology] and a documented remediation process, most recently '
+                 'reviewed on [date]. Full policy: [link]." Do not state products are "guaranteed" or simply "free from" '
+                 'forced labour without this evidence attached in the same place.')
+    if 'supply' in t or 'supplier' in t or 'sourcing' in t:
+        return ('"[X%] of [named tier, e.g. Tier 1] suppliers, covering [X%] of [product category] sourcing, were '
+                 'audited against [named standard, e.g. amfori BSCI] in [year], with [X] corrective actions closed. Full '
+                 'data: [link]."')
+    if 'human' in t or 'labour' in t or 'labor' in t:
+        return ('"Our human-rights due-diligence process for [scope] includes [salient-risk assessment method], a '
+                 'grievance channel at [link/contact], and remedy commitments reviewed [frequency]. Latest review: [date]."')
+    if 'safety' in t or 'welfare' in t or 'health' in t:
+        return ('"[Facility/operation] recorded [X] incidents per [X hours worked] in [year], tracked via [named '
+                 'safety-management system], audited by [auditor/method]. [State any exclusions]."')
+    if 'diversity' in t or 'inclusion' in t or 'equality' in t:
+        return ('"[X%] of [role level, e.g. leadership positions] are held by [group], as of [date], measured via '
+                 '[methodology]. Full breakdown: [link]."')
+    if 'aspirational' in t or 'future' in t:
+        return ('"Since [baseline year], we have achieved [specific measured outcome], and are working towards '
+                 '[specific target] by [year], tracked via [named KPI/report]." State this as progress to date, not a '
+                 'completed outcome.')
+    if 'community' in t or 'social-impact' in t or 'social impact' in t:
+        return ('"In [year], our [named programme] reached [X specific beneficiaries/communities] in [named location], '
+                 'measured by [named indicator/methodology]. Full report: [link]."')
+    return ('"[Specific, verifiable statement], based on [methodology/standard/date], covering [exact scope]. Full '
+            'evidence: [link]." Replace any broad, absolute or unqualified wording with the precise scope and source.')
 
 def enrich_social_finding(f, trigger=''):
     f['regulatory_signal']=social_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
@@ -3719,6 +3824,7 @@ def enrich_social_finding(f, trigger=''):
     f['blacklisted_practice_indicator']=False
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), f.get('claim',''))
+    f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no ') else 'Can normally proceed only after standard evidence and wording review.'
     return f
 

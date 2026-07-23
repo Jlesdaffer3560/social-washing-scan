@@ -223,6 +223,11 @@ def rewrite_text(claim, max_chars=180):
     return bounded_text("Use precise wording and disclose scope, method, evidence, reporting period and limitations.", max_chars)
 
 
+def ready_to_use_rewrite_text(claim, max_chars=220):
+    raw = clean_text(claim.get("ready_to_use_rewrite") or "")
+    return bounded_text(raw, max_chars) if raw else ""
+
+
 def cluster_claims(data):
     rows = list(data.get("claim_inventory") or data.get("findings") or [])
     if not rows:
@@ -526,7 +531,11 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
     grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
-    inner = Table([[head], [source], [quote], [grid], [rec]], colWidths=[inner_width])
+    rows = [[head], [source], [quote], [grid], [rec]]
+    ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
+    if ready_rewrite:
+        rows.append([Paragraph(f'<b>READY-TO-USE REWRITE</b><br/><font face="Courier">{esc(ready_rewrite)}</font>', ST["small_dark"])])
+    inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
     card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREEN_SOFT if material else GREY_100), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
@@ -640,14 +649,17 @@ def draw_footer(canvas, doc):
     canvas.setFillColor(GREY_500)
     disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
     canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
-    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · Page {page} of 2")
+    total = getattr(doc, 'total_pages_hint', None)
+    page_label = f"Page {page} of {total}" if total else f"Page {page}"
+    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · {page_label}")
     canvas.restoreState()
 
 
-def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5):
+def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5, total_pages=None):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
     doc.report_data = data
+    doc.total_pages_hint = total_pages
     clusters = cluster_claims(data)
     material = clusters[0] if clusters else {"representative":{"claim_type":"No material claim signal retained","risk":"Low","claim_text":"No material sustainability claim was retained in the reviewed material.","why_flagged":"No material wording issue was retained in this first-pass screening.","evidence_needed":["Maintain claim-specific evidence and approval records"],"suggested_rewrite":"Continue using precise wording supported by current evidence."},"occurrences":[]}
     additional = clusters[1:1+additional_limit]
@@ -684,24 +696,31 @@ def _page_count(pdf_bytes):
 
 
 def build_company_report_pdf(data: dict) -> bytes:
-    """Build an exactly two-page PDF without reducing font sizes.
+    """Build a two- or three-page PDF without reducing font sizes.
 
-    If content would spill to a third page, the generator progressively limits the
-    number of additional findings/external signals and shortens excerpts. Detailed
-    content remains available in the online scan.
+    Three pages is now an accepted outcome (the ready-to-use rewrite text needs the room), not
+    just a two-page target. If content would still spill past three pages, the generator
+    progressively limits the number of additional findings/external signals and shortens
+    excerpts. Detailed content remains available in the online scan. Once a variant fits, the
+    PDF is rebuilt once more with the known final page count so the footer can read "Page X of
+    N" correctly instead of the two-page assumption baked into earlier drafts.
     """
     variants = [
         dict(additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=6),
-        dict(additional_limit=1, external_limit=2, excerpt_chars=200, source_limit=5),
-        dict(additional_limit=1, external_limit=1, excerpt_chars=180, source_limit=4),
-        dict(additional_limit=0, external_limit=1, excerpt_chars=165, source_limit=3),
+        dict(additional_limit=2, external_limit=2, excerpt_chars=200, source_limit=5),
+        dict(additional_limit=1, external_limit=2, excerpt_chars=180, source_limit=4),
+        dict(additional_limit=1, external_limit=1, excerpt_chars=165, source_limit=3),
+        dict(additional_limit=0, external_limit=1, excerpt_chars=150, source_limit=3),
     ]
     last = b""
     for variant in variants:
-        last = _build_once(deepcopy(data), **variant)
-        count = _page_count(last)
-        if count == 2 or count is None:
-            return last
+        probe = _build_once(deepcopy(data), **variant)
+        count = _page_count(probe)
+        if count is None:
+            return probe
+        if count <= 3:
+            return _build_once(deepcopy(data), total_pages=count, **variant)
+        last = probe
     return last
 
 
