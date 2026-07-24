@@ -274,7 +274,7 @@ const EMPCO_SOCIAL_TYPES=new Set(['aspirational or future social-performance cla
 const FORCED_LABOUR_TYPES=new Set(['forced-labour product or supply-chain claim']);
 function claimRegulatoryBucket(claimType,dimension){
   let t=String(claimType||'').toLowerCase().trim(),dim=String(dimension||'').toLowerCase();
-  if(FORCED_LABOUR_TYPES.has(t)||t.includes('forced-labour')||t.includes('forced labor')||t.includes('modern slavery'))return 'forced_labour';
+  if(FORCED_LABOUR_TYPES.has(t)||t.includes('forced-labour')||t.includes('forced labor')||t.includes('modern slavery')||t.includes('supplier')||t.includes('supply-chain')||t.includes('sourcing')||t.includes('traceab'))return 'forced_labour';
   if(dim.includes('green'))return 'empco_environmental';
   if(EMPCO_SOCIAL_TYPES.has(t)||t.includes('human-right')||t.includes('labour-right')||t.includes('labor-right')||t.includes('worker-welfare')||t.includes('diversity')||t.includes('inclusion'))return 'social_characteristics';
   return 'other';

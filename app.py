@@ -2223,6 +2223,17 @@ _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our
 def _is_corporate_level_claim(claim_text):
     return any(m in (claim_text or '').lower() for m in _CORPORATE_LEVEL_MARKERS)
 
+# Deliberately a narrower, stronger list than green_specification_check()'s general
+# specificity_terms (which also counts a bare '%' or 'made from' -- fine for the informational
+# "specification check" shown in the report, but too weak to safely downgrade a claim off the
+# EmpCo Annex I 4a blacklist: "100% eco-friendly, made from sustainable materials" contains both
+# a '%' and "made from" without actually specifying a verifiable attribute, methodology or scope).
+_STRONG_SAME_MEDIUM_SPECIFICATION_TERMS=['according to','methodology','life cycle','lca','verified','certified',
+    'compared with','compared to','baseline','valid until','iso ',' standard','third-party','independently verified']
+
+def _has_strong_same_medium_specification(claim_text):
+    return any(x in (claim_text or '').lower() for x in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS)
+
 def enrich_green_finding(f, trigger=''):
     f['module']=green_claim_module(f.get('type',''))
     f['specification_check']=green_specification_check(f.get('type',''), f.get('claim',''))
@@ -2230,10 +2241,10 @@ def enrich_green_finding(f, trigger=''):
     sig=f['regulatory_signal'].lower(); f['blacklisted_practice_indicator']=(('blacklisted-practice indicator' in sig) and not sig.startswith('no direct'))
     t_low=f.get('type','').lower()
     # EmpCo Annex I point 4a only blacklists a GENERIC claim that lacks same-medium
-    # specification; once specification is actually present in the retained passage the claim
-    # is no longer "generic" in the Annex I sense and moves to the general, case-by-case UCPD
-    # test instead (still potentially misleading, but not an automatic Annex I match).
-    if f['blacklisted_practice_indicator'] and 'generic' in t_low and f['specification_check'].get('status')=='Partly specified':
+    # specification; once genuine specification is present the claim is no longer "generic" in
+    # the Annex I sense and moves to the general, case-by-case UCPD test instead (still
+    # potentially misleading, but not an automatic Annex I match).
+    if f['blacklisted_practice_indicator'] and 'generic' in t_low and _has_strong_same_medium_specification(f.get('claim','')):
         f['blacklisted_practice_indicator']=False
     # EmpCo Annex I point 4c specifically targets claiming that a PRODUCT has a neutral,
     # reduced or positive climate impact based on offsetting -- a company- or operations-wide
@@ -3184,9 +3195,20 @@ def _social_claim_context(excerpt, typ, trigger):
         strong=['audited','certified','compliant','comply','traceable','ethical sourcing','responsible sourcing','forced labour','forced labor','human rights','due diligence','modern slavery']
         if not any(s in c for s in strong):
             return False
-    if 'supplier' in t or 'supply-chain' in t:
+    if 'supplier' in t or 'supply-chain' in t or 'sourcing' in t:
+        # "We ASK all our suppliers to sign our code / share theirs" is a modest governance
+        # request, not an assurance that suppliers actually comply -- distinguish it from
+        # "all suppliers ARE audited/certified/compliant" style completed-state wording, which
+        # is what actually creates a misleading-coverage risk. A bare "all suppliers" substring
+        # match caught both equally before this check.
+        request_language=['ask all our suppliers','ask our suppliers','we ask suppliers','request suppliers','encourage suppliers','invite suppliers','suppliers to sign','suppliers to share','share theirs with us']
+        if any(r in c for r in request_language):
+            completion_signals=['audited','certified','compliant','comply','compliance rate','% of suppliers','verified','signed by','have signed']
+            return any(s in c for s in completion_signals)
         strong=['all suppliers','100% of suppliers','audited','certified','compliant','comply','meet our standards','traceable','ethical sourcing','responsible sourcing','due diligence','human rights','forced labour','forced labor','modern slavery','supplier code compliance','tier 1','tier 2']
         return any(s in c for s in strong)
+    if 'aspirational' in t or ('future' in t and 'social' in t):
+        return _looks_like_aspirational_social_claim(c)
     if 'forced' in t:
         return any(s in c for s in ['forced labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','product traceability','supplier traceability'])
     if 'human-rights' in t or 'labour-rights' in t or 'labor-rights' in t:
@@ -3735,6 +3757,16 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # from forced labour") are a different, unaffected trigger and remain flagged as before.
         if trig in ['no forced labour', 'no forced labor', 'no child labour', 'no child labor'] and not any(
                 x in c for x in ['our product', 'our products', 'this product', 'these products', 'guarantee', 'certified', 'certificat']):
+            return False
+        # "We ASK all our suppliers to sign our code / share theirs with us" is a modest
+        # governance request, not an assurance that suppliers actually comply -- it must not be
+        # treated the same as "all suppliers ARE audited/certified/compliant". The word "code"
+        # alone is too generic a safety-net (it also appears in "Supplier Code of Conduct" as a
+        # document name), so this needs its own check independent of the broader neutral-phrase
+        # gate above.
+        supplier_request=['ask all our suppliers','ask our suppliers','we ask suppliers','request suppliers to','encourage suppliers to','invite suppliers to','suppliers to sign','suppliers to share','share theirs with us']
+        if any(r in c for r in supplier_request) and not any(
+                x in c for x in ['audited','certified','compliant','comply','compliance rate','% of suppliers','verified','signed by','have signed']):
             return False
         # v57f/v57g: sentences that describe what a charter, code of conduct or set of principles
         # SAYS, "sets out" or is "underpinned by" are meta-descriptions of a governance document's
