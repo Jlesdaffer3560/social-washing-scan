@@ -5,7 +5,8 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, smtplib
+from email.message import EmailMessage
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _get_build_company_report_pdf():
@@ -104,6 +105,10 @@ OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY","").strip()
 GOOGLE_SEARCH_API_KEY=os.environ.get("GOOGLE_SEARCH_API_KEY","").strip()
 GOOGLE_SEARCH_CX=os.environ.get("GOOGLE_SEARCH_CX","").strip()
 SERPER_API_KEY=os.environ.get("SERPER_API_KEY","").strip()
+SMTP_HOST=os.environ.get("SMTP_HOST","smtp.gmail.com").strip()
+SMTP_PORT=int(os.environ.get("SMTP_PORT","465") or "465")
+SMTP_USER=os.environ.get("SMTP_USER","").strip()
+SMTP_APP_PASSWORD=os.environ.get("SMTP_APP_PASSWORD","").strip()
 
 PROFILES={
  "kbc":("KBC","Banking and financial services","Medium","Responsible-finance, customer-protection, accessibility and financial-inclusion claims can be sensitive because financing decisions may create indirect social impacts."),
@@ -3319,6 +3324,40 @@ def _unsigned_report_payload(payload):
         '_report_signature','_report_signature_version','_report_token','_report_token_version'
     }}
 
+_EMAIL_RE=re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+def is_valid_email(value):
+    return bool(_EMAIL_RE.match((value or '').strip())) and len(value or '')<=254
+
+def send_report_pdf_email(to_email,pdf_bytes,company_name,stamp):
+    """Email the generated company-report PDF as an attachment via SMTP.
+
+    Uses the same SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_APP_PASSWORD convention as the Durably
+    Signal Agent, so a Gmail app password already configured for that pilot works here too.
+    Raises RuntimeError with a user-facing message on any failure; never logs the recipient
+    address or the message body.
+    """
+    if not (SMTP_USER and SMTP_APP_PASSWORD):
+        raise RuntimeError('Email delivery is not configured on this deployment (SMTP_USER / SMTP_APP_PASSWORD missing).')
+    who=(company_name or 'Company').strip() or 'Company'
+    message=EmailMessage()
+    message['Subject']=f'Durably Sustainability Scan report - {who} - {stamp}'
+    message['From']=SMTP_USER
+    message['To']=to_email
+    message.set_content(
+        f'Attached: the Durably Sustainability Scan claim-risk report for {who}, generated {stamp}.\n\n'
+        'Indicative first-pass assessment only; results require legal, compliance and subject-matter '
+        'review before external use.\n\nDurably - Sustainability Scan'
+    )
+    fname=f'durably_company_report_{stamp}.pdf'
+    message.add_attachment(pdf_bytes,maintype='application',subtype='pdf',filename=fname)
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST,SMTP_PORT,context=ssl.create_default_context(),timeout=20) as smtp:
+            smtp.login(SMTP_USER,SMTP_APP_PASSWORD)
+            smtp.send_message(message)
+    except Exception as exc:
+        raise RuntimeError('Could not send the report email. Please try downloading the PDF instead.') from exc
+
 
 def _report_signature(payload):
     """Legacy whole-payload signature retained for backward compatibility.
@@ -3430,6 +3469,18 @@ class Handler(BaseHTTPRequestHandler):
         try: return json.loads(self.rfile.read(n).decode('utf-8') or '{}')
         except Exception as exc: raise ValueError('Request body is not valid JSON.') from exc
 
+    def _resolve_report_payload(self,data):
+        """Returns (payload, error_response); error_response is None on success."""
+        if not data: return None,self._json({'error':'No report token or scan result provided'},400)
+        token=data.get('report_token') or data.get('_report_token')
+        if token:
+            try: return decode_report_token(token),None
+            except ValueError as exc: return None,self._json({'error':str(exc)},403)
+        # Backward-compatible path for a v68 result that has not passed through JavaScript
+        # numeric normalisation. New v69 scans use report_token.
+        if verify_report_signature(data): return data,None
+        return None,self._json({'error':'The report download token is missing or invalid. Run a new scan before downloading the report.'},403)
+
     def _respond_pdf(self,scan_result):
         build_fn=_get_build_company_report_pdf()
         if build_fn is None: return self._json({'error':'PDF report generation is unavailable: '+(_report_pdf_import_error or 'unknown import error')},500)
@@ -3481,16 +3532,24 @@ class Handler(BaseHTTPRequestHandler):
                 finally: _SCAN_SEMAPHORE.release()
             if self.path=='/api/report/pdf':
                 if not _rate_limit_allowed(client,'report',RATE_LIMIT_REPORTS): return self._json({'error':'Report download rate limit reached. Try again later.'},429)
-                if not data: return self._json({'error':'No report token or scan result provided'},400)
-                token=data.get('report_token') or data.get('_report_token')
-                if token:
-                    try: report_payload=decode_report_token(token)
-                    except ValueError as exc: return self._json({'error':str(exc)},403)
-                    return self._respond_pdf(report_payload)
-                # Backward-compatible path for a v68 result that has not passed through
-                # JavaScript numeric normalisation. New v69 scans use report_token.
-                if verify_report_signature(data): return self._respond_pdf(data)
-                return self._json({'error':'The report download token is missing or invalid. Run a new scan before downloading the report.'},403)
+                payload,err=self._resolve_report_payload(data)
+                if err is not None: return err
+                return self._respond_pdf(payload)
+            if self.path=='/api/report/email':
+                if not _rate_limit_allowed(client,'report',RATE_LIMIT_REPORTS): return self._json({'error':'Report email rate limit reached. Try again later.'},429)
+                email=(data.get('email') or '').strip()
+                if not is_valid_email(email): return self._json({'error':'Please enter a valid email address.'},400)
+                payload,err=self._resolve_report_payload(data)
+                if err is not None: return err
+                build_fn=_get_build_company_report_pdf()
+                if build_fn is None: return self._json({'error':'PDF report generation is unavailable: '+(_report_pdf_import_error or 'unknown import error')},500)
+                try: pdf_bytes=build_fn(_unsigned_report_payload(payload))
+                except Exception as e: return self._json({'error':'Could not generate PDF report: '+str(e)},500)
+                stamp=re.sub(r'[^0-9-]','',(payload.get('analysis_date') or datetime.date.today().isoformat())[:10]) or datetime.date.today().isoformat()
+                comp=payload.get('company'); company_name=comp.get('company','') if isinstance(comp,dict) else ''
+                try: send_report_pdf_email(email,pdf_bytes,company_name,stamp)
+                except RuntimeError as exc: return self._json({'error':str(exc)},500)
+                return self._json({'ok':True,'message':f'Report sent to {email}.'})
             return self._json({'error':'Unknown endpoint'},404)
         except OverflowError as e: return self._json({'error':str(e)},413)
         except ValueError as e: return self._json({'error':str(e)},400)
@@ -3643,6 +3702,17 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         return False
     if _looks_like_bare_document_title(c):
         return False
+    # v74: PDF text extraction often glues a page header/footer -- company address, VAT/IBAN/
+    # SWIFT registration details, phone/fax numbers -- directly onto the document title and
+    # opening line with no line break, so a trigger like "supplier code" matches purely because
+    # it is the document's own title, wrapped in letterhead boilerplate that survived
+    # _looks_like_bare_document_title's short/clean-title check. Company registration/banking
+    # details can never themselves be a sustainability claim, so reject on sight when at least
+    # two such markers are present, regardless of excerpt length.
+    letterhead_markers=['iban','swift','vat/tva','btw/tva','rpr/rpm','registered office',
+        'company registration number','trade register','kvk','handelsregister']
+    if sum(1 for m in letterhead_markers if m in c) >= 2:
+        return False
     # Exclude headings that have no claim object.
     if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
         return False
@@ -3749,16 +3819,28 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         neutral=['backing british suppliers','supporting local suppliers','working with suppliers','become a supplier','supplier portal','list of suppliers']
         if any(n in c for n in neutral) and not any(x in c for x in ['responsible','ethical','audited','certified','traceable','due diligence','human rights','forced labour','forced labor','modern slavery','comply','compliance','standard','code']):
             return False
-        # v73: bare negation phrasing ("there is no forced labour", "no child labour is used") is
-        # the standard ILO/ETI Base Code "Employment is freely chosen" / "child labour shall not
-        # be used" principle, used near-verbatim in the vast majority of supplier codes of conduct
-        # as a policy definition -- not a marketing or product assurance claim. Flagging it as the
-        # scan's top social-risk finding (its default High/74 score) buried genuine claims and made
-        # the report look unreliable. Require explicit product/brand assurance language before
-        # treating the bare negation as a claim; affirmative forms ("forced labour free", "free
-        # from forced labour") are a different, unaffected trigger and remain flagged as before.
-        if trig in ['no forced labour', 'no forced labor', 'no child labour', 'no child labor'] and not any(
+        # v73/v74: bare negation phrasing ("there is no forced labour", "no discrimination is
+        # practised") is standard ILO/ETI Base Code policy-definition wording -- the Base Code's
+        # nine clauses (freely-chosen employment, no child labour, safe working conditions, no
+        # discrimination, no harsh/inhumane treatment, etc.) are reproduced near-verbatim in the
+        # vast majority of supplier codes of conduct, and are policy statements, not marketing or
+        # product assurance claims. Applies to every bare "no X"/"zero X" trigger across the
+        # social claim lists, not just the forced/child-labour ones originally found -- the same
+        # pattern showed up for "no discrimination" in a real scan. Require explicit
+        # product/brand assurance language before treating the bare negation as a claim;
+        # affirmative forms ("forced labour free", "free from forced labour") are a different,
+        # unaffected trigger and remain flagged as before.
+        bare_negation_triggers=['no forced labour', 'no forced labor', 'no child labour', 'no child labor',
+            'no discrimination', 'zero discrimination', 'no workplace injuries', 'no pay gap', 'zero pay gap']
+        if trig in bare_negation_triggers and not any(
                 x in c for x in ['our product', 'our products', 'this product', 'these products', 'guarantee', 'certified', 'certificat']):
+            return False
+        # A supplier self-assessment questionnaire item ("[ ] your company has an external
+        # responsible sourcing audit...") is a checkbox criterion the SUPPLIER must confirm about
+        # ITSELF, addressed in the second person -- not a first-person claim by the scanned
+        # company. Reject when the excerpt is clearly addressed to "your company"/"your
+        # organisation" and lacks a first-person claim anchor.
+        if re.search(r'\byour (company|organisation|organization|business|facility|factory)\b', c) and not re.search(r'\b(we|our|us)\b', c):
             return False
         # "We ASK all our suppliers to sign our code / share theirs with us" is a modest
         # governance request, not an assurance that suppliers actually comply -- it must not be
@@ -3769,6 +3851,17 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         supplier_request=['ask all our suppliers','ask our suppliers','we ask suppliers','request suppliers to','encourage suppliers to','invite suppliers to','suppliers to sign','suppliers to share','share theirs with us']
         if any(r in c for r in supplier_request) and not any(
                 x in c for x in ['audited','certified','compliant','comply','compliance rate','% of suppliers','verified','signed by','have signed']):
+            return False
+        # The bare trigger "supplier code" matches purely because it is the document's own title
+        # (e.g. "The Puratos Supplier Code of Conduct. In everything we do, we aim to be close to
+        # people... to our suppliers...") -- a generic mission-statement preamble glued to a
+        # title by PDF extraction, not an assurance claim about supplier coverage. Require a real
+        # coverage/audit signal before accepting a bare "supplier code" mention as a claim; a
+        # qualified form like "supplier code compliance" or "certified against our supplier code"
+        # already implies more and is left untouched.
+        if trig in ('supplier code', 'supplier code of conduct', 'supplier standards') and not any(
+                x in c for x in ['all suppliers','100% of suppliers','audited','certified','compliant','comply',
+                                  'compliance','due diligence','tier 1','tier 2','corrective action']):
             return False
         # v57f/v57g: sentences that describe what a charter, code of conduct or set of principles
         # SAYS, "sets out" or is "underpinned by" are meta-descriptions of a governance document's
