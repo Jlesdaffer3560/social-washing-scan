@@ -449,8 +449,20 @@ def fetch_reader_text(url,timeout=9):
     if JINA_API_KEY:
         headers['Authorization']='Bearer '+JINA_API_KEY
     req=Request(_reader_url(url),headers=headers)
-    with urlopen(req,timeout=max(3,timeout),context=ssl.create_default_context()) as r:
-        raw=r.read(2500000).decode('utf-8',errors='ignore')
+    try:
+        with urlopen(req,timeout=max(3,timeout),context=ssl.create_default_context()) as r:
+            raw=r.read(2500000).decode('utf-8',errors='ignore')
+    except HTTPError as e:
+        # Without JINA_API_KEY the Reader proxy runs on its shared anonymous tier, which can
+        # briefly Cloudflare-challenge a request (403) or rate-limit it (429) under load and
+        # then serve the same URL fine moments later. One short-delay retry recovers most of
+        # these transient hits without materially eating into the overall crawl budget.
+        if e.code in (403,429):
+            time.sleep(1.2)
+            with urlopen(req,timeout=max(3,timeout),context=ssl.create_default_context()) as r:
+                raw=r.read(2500000).decode('utf-8',errors='ignore')
+        else:
+            raise
     # Remove common Reader metadata lines but retain headings and substantive text.
     lines=[]
     for line in raw.splitlines():
@@ -1278,10 +1290,18 @@ def build_confidence(pages,ext,findings,crawl_log=None):
     # v56: fold crawl reliability into confidence instead of leaving it as a silent side-channel.
     # A scan that mostly failed or returned thin/blocked pages should not read the same as a
     # scan that genuinely reached the site and found little to flag.
-    blocked=[e for e in (crawl_log or []) if not e.get("ok")]
-    thin=[e for e in (crawl_log or []) if e.get("ok") and e.get("thin")]
-    fallback_pages=[e for e in (crawl_log or []) if e.get("ok") and e.get("method")=='reader_fallback']
-    attempted=len(crawl_log or [])
+    # A plain 404 on a speculative COMMON_PUBLIC_PATHS guess (e.g. trying /esg, /planet,
+    # /responsible-sourcing on every candidate domain) just confirms that guessed path does
+    # not exist on this particular site -- that is the expected outcome for most of those
+    # guesses on most sites, not evidence of blocking or unreachability. Counting it the same
+    # as a genuine 403/timeout inflates the failure ratio and triggers a misleading "blocked"
+    # warning even on scans that reached the site fine via its real, linked pages.
+    reliability_log=[e for e in (crawl_log or [])
+                      if not (e.get("source")=='common_path' and not e.get("ok") and e.get("http_status")==404)]
+    blocked=[e for e in reliability_log if not e.get("ok")]
+    thin=[e for e in reliability_log if e.get("ok") and e.get("thin")]
+    fallback_pages=[e for e in reliability_log if e.get("ok") and e.get("method")=='reader_fallback']
+    attempted=len(reliability_log)
     reliability_warning=None
     if attempted:
         failure_ratio=len(blocked)/attempted
@@ -1322,7 +1342,7 @@ def build_confidence(pages,ext,findings,crawl_log=None):
         level_str="Insufficient coverage"
     else:
         level_str="High" if pts>=5 else "Medium" if pts>=3 else "Low"
-    result={"level":level_str,"reasons":reasons}
+    result={"level":level_str,"reasons":reasons,"attempted":attempted,"blocked":len(blocked)}
     if reliability_warning:
         result["reliability_warning"]=reliability_warning
     return result
@@ -2925,7 +2945,11 @@ def analyse_url_v27(raw):
     methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log)
     reliability_warning=confidence_result.get('reliability_warning')
-    crawl_pages_attempted=len(crawl_log); crawl_pages_failed=len([e for e in crawl_log if not e.get('ok')])
+    # Use the same expected-guess-filtered counts the warning text itself is based on (see
+    # build_confidence), so the "(X/Y pages failed)" prefix never disagrees with the warning
+    # sentence next to it.
+    crawl_pages_attempted=confidence_result.get('attempted',len(crawl_log))
+    crawl_pages_failed=confidence_result.get('blocked',len([e for e in crawl_log if not e.get('ok')]))
     crawl_pages_thin=len([e for e in crawl_log if e.get('ok') and e.get('thin')])
     domains_covered=len({(urlparse(p).hostname or '') for p in pages if p})
     summary=(f"The scan reviewed {len(pages)} public page(s) across {max(1,domains_covered)} domain(s) for {comp['company']} and identified "
