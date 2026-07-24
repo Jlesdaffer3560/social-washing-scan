@@ -611,13 +611,32 @@ def same_domain(u,base):
     return bool(h and base) and (h==base or h.endswith('.'+base) or base.endswith('.'+h))
 
 
+_RELEVANT_SEGMENT_TERMS=('green','planet')
+_RELEVANT_SUBSTRING_TERMS=('sustain','responsib','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','environment','climate','circular','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','decarbon','net-zero','net_zero')
+# Retail/grocery sitemaps commonly list product and category-listing URLs, and a product
+# name like "Planet Oat Oatmilk" or "Green Beans" trivially matches the sustainability
+# keyword list above. Those catalogue pages are structurally distinctive: the final path
+# segment is a short catalogue/SKU code (a letter or two followed by digits), unlike a
+# genuine content-page slug. Excluding that pattern keeps grocery products out of the
+# candidate queue without having to special-case any one retailer's URL scheme.
+_CATALOG_ID_SEGMENT_RE=re.compile(r'^[a-z]{1,3}\d{4,}$')
+
 def relevant(h):
     h=h.lower()
-    return any(k in h for k in ['sustain','responsib','people','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','environment','climate','circular','green','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','planet','decarbon','net-zero','net_zero'])
+    path=urlparse(h).path if '://' in h else h
+    last_segment=path.rstrip('/').rsplit('/',1)[-1]
+    if _CATALOG_ID_SEGMENT_RE.match(last_segment):
+        return False
+    if any(k in h for k in _RELEVANT_SUBSTRING_TERMS):
+        return True
+    # 'green' and 'planet' collide with ordinary grocery/retail product names (e.g.
+    # "evergreen", "planetarium") when matched as a raw substring. Require them to appear
+    # as a delimited path segment/token instead.
+    return any(re.search(r'(?:^|[/_.-])'+term+r'(?:$|[/_.-])',h) for term in _RELEVANT_SEGMENT_TERMS)
 
 
 COMMON_PUBLIC_PATHS=['/sustainability','/sustainability-report','/csr','/esg','/responsibility',
-    '/corporate-responsibility','/human-rights','/supply-chain','/policies','/investors',
+    '/corporate-responsibility','/corporate-social-responsibility','/human-rights','/supply-chain','/policies','/investors',
     '/investor-relations','/about/sustainability','/about-us/sustainability','/en/sustainability',
     '/our-impact','/planet','/people','/climate','/responsible-sourcing','/news','/press','/newsroom']
 
