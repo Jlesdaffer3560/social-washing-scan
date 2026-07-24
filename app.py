@@ -3399,7 +3399,11 @@ def send_report_pdf_email(to_email,pdf_bytes,company_name,stamp):
             smtp.login(SMTP_USER,SMTP_APP_PASSWORD)
             smtp.send_message(message)
     except Exception as exc:
-        raise RuntimeError('Could not send the report email. Please try downloading the PDF instead.') from exc
+        # SMTP failure reasons (bad app password, connection refused, TLS handshake failure)
+        # are safe to surface -- they never contain the recipient address or report content --
+        # and are the only way to tell a misconfigured SMTP_USER/SMTP_APP_PASSWORD apart from
+        # a network-level block without server log access.
+        raise RuntimeError(f'Could not send the report email ({exc}). Please try downloading the PDF instead.') from exc
 
 
 def _report_signature(payload):
@@ -3550,7 +3554,8 @@ class Handler(BaseHTTPRequestHandler):
                                'tavily_configured':bool(TAVILY_API_KEY),'google_search_configured':bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),
                                'google_api_key_configured':bool(GOOGLE_SEARCH_API_KEY),'google_cx_configured':bool(GOOGLE_SEARCH_CX),
                                'report_pdf_available':(_report_pdf_fn is not None or _report_pdf_import_error is None),
-                               'report_token_enabled':True,'report_signing_key_configured':_REPORT_SIGNING_KEY_CONFIGURED})
+                               'report_token_enabled':True,'report_signing_key_configured':_REPORT_SIGNING_KEY_CONFIGURED,
+                               'smtp_configured':bool(SMTP_USER and SMTP_APP_PASSWORD),'smtp_host':SMTP_HOST,'smtp_port':SMTP_PORT,'smtp_user_set':bool(SMTP_USER)})
         return self._json({'error':'Not found'},404)
 
     def do_POST(self):
