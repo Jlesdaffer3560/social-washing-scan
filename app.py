@@ -1688,7 +1688,7 @@ EMPCO_LENS=[
  {'name':'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive)','use':'Amends the Unfair Commercial Practices Directive (2005/29/EC) and the Consumer Rights Directive (2011/83/EU). Member States must transpose by 27 March 2026; the rules apply from 27 September 2026. Covers both green AND social claims: Article 6(1)(b), as amended, brings "environmental or social characteristics" of a product or trader within the general misleading-claims test (Recital 3 names wages, safety, human rights, equal treatment, gender equality, inclusion and diversity as social characteristics in scope) -- this lens is therefore not limited to green claims.'},
  {'name':'EU Forced Labour Regulation / Regulation (EU) 2024/3015 (core provisions apply from 14 December 2027)','use':'Main forced-labour and supply-chain assurance lens for forced-labour/traceability wording. Flags wording that may imply products, suppliers or value chains are free from forced labour, or that traceability, due diligence or import/export controls provide assurance beyond what is evidenced. It is a market-prohibition and customs-enforcement regime, not a claims law, and Art. 1(3) confirms it creates no new due-diligence obligation of its own -- readiness matters ahead of 2027, not an existing statutory breach today.'},
  {'name':'UCPD environmental-claim definition','use':'Checks whether text, images, symbols, labels, brand names, trade names or presentation imply positive, zero, reduced, comparative or improved environmental impact of a product, brand or trader.'},
- {'name':'Blacklisted-practices lens (Annex I)','use':'Flags high-sensitivity indicators that Annex I treats as unfair in all circumstances: generic environmental claims without recognised excellent environmental performance (4a), claiming an entire product/business benefit when only one aspect or activity is meant (4b), product-level claims of neutral/reduced/positive climate impact based on offsetting (4c), self-declared sustainability labels not based on a certification scheme or public authority (2a), and presenting a legal requirement as a distinctive feature (10a).'},
+ {'name':'Blacklisted-practices lens (Annex I)','use':'Flags high-sensitivity indicators that Annex I treats as unfair in all circumstances: generic environmental claims without recognised excellent environmental performance (4a), claiming an entire product/business benefit when only one aspect or activity is meant (4b), product-level claims of neutral/reduced/positive climate impact based on offsetting (4c), sustainability labels not based on a qualifying certification scheme or not established by public authorities (2a), and presenting a legal requirement as a distinctive feature (10a).'},
  {'name':'Same-medium specification check','use':'Checks whether broad wording is specified clearly and prominently on the same page, advertisement, packaging text or product interface.'},
  {'name':'Climate / offsetting claims','use':'Separates actual emission reductions from offsetting or compensation and treats product-level neutrality wording based on offsets as a high-priority risk area (Annex I, point 4c).'},
  {'name':'Sustainability labels and visual claims','use':'Checks icons, badges, symbols and labels against independent certification, public-authority schemes, transparent criteria and validity (Annex I, point 2a).'},
@@ -2130,7 +2130,7 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
     if 'climate-neutrality' in t or 'offset' in t:
         return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting.'+date_note
     if 'label' in t or 'certification' in t:
-        return 'Potential EmpCo blacklisted-practice indicator if the label/badge is self-declared and not based on an independent certification scheme or public authority.'+date_note
+        return 'Potential EmpCo blacklisted-practice indicator if the label/badge is not based on a qualifying certification scheme or not established by public authorities.'+date_note
     if 'generic environmental' in t:
         return 'Potential EmpCo blacklisted-practice indicator if the generic claim is not clearly specified on the same medium and not backed by recognised excellent environmental performance.'+date_note
     if 'legal requirement' in t:
@@ -2205,9 +2205,9 @@ def green_claim_evidence_questions(claim_type):
     if 'generic' in t:
         return common+['Is the generic wording specified clearly and prominently on the same medium?','Is there recognised excellent environmental performance relevant to the claim as a whole?']
     if 'label' in t or 'visual' in t:
-        return common+['Who owns the scheme, and are its criteria publicly available?','Is the scheme open to any operator meeting the criteria on fair, reasonable and non-discriminatory terms?','Is compliance verified and monitored by a party independent of the trader making the claim?','Is this a public-authority-established label (e.g. EU Ecolabel), or a private scheme -- and is that distinction clear to the audience?','Could the visual presentation imply a broader benefit than the evidence supports?']
+        return common+['Who owns the scheme, and are its criteria transparent and publicly available?','Is the scheme open to any operator meeting the criteria on fair, reasonable and non-discriminatory terms?','Is compliance verified by an independent third party, with ongoing monitoring and a procedure for non-compliance?','Is this a public-authority-established label (e.g. EU Ecolabel), or a private scheme -- and is that distinction clear to the audience?','Could the visual presentation imply a broader benefit than the evidence supports?']
     if 'future' in t:
-        return common+['Is there a public implementation plan with milestones, resources and governance?','Is progress independently verified and reported?']
+        return common+['Is the commitment clear, objective and publicly available (not just an internal ambition)?','Are the targets measurable and time-bound?','Is there a detailed, realistic implementation plan, including the resources allocated to deliver it?','Are there interim milestones to track progress against the target?','Is progress independently verified on a regular basis?','Are the verification findings publicly available?']
     if 'comparative' in t:
         return common+['What comparator is used?','Are products/suppliers compared on an equivalent basis?','How is the comparison kept up to date?']
     if 'legal requirement' in t:
@@ -2764,6 +2764,18 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
     material=_material_findings(green_findings)+_material_findings(social_findings)
     prohibited=[f for f in material if f.get('legal_basis_category')=='prohibited']
     problematic=[f for f in material if f.get('legal_basis_category')=='problematic']
+    # EmpCo amends the UCPD, which applies to business-to-consumer commercial practices --
+    # not every passage in an annual report, investor presentation or internal policy document
+    # automatically falls within that scope. When the reviewed material is mainly investor
+    # reporting or internal/governance material (not mixed with client-facing content), make
+    # that channel limitation explicit rather than implying direct EmpCo applicability.
+    channel_caveat=''
+    if str((audience or {}).get('empco_relevance','')).lower().startswith('indirect'):
+        channel_caveat=(' The material reviewed in this scan is mainly ' + aud.lower() + ', not client-facing '
+                         'commercial communication. EmpCo/UCPD applies most directly to consumer-facing claims, so '
+                         'for this material the classifications below reflect wording-pattern screening and '
+                         'substantiation risk rather than confirmed direct EmpCo applicability -- treat them as '
+                         'general substantiation and reputational risk unless the same wording is reused externally.')
     return {
         'audience':aud,
         'empco_blacklisted_indicator_count':len(green_flags),
@@ -2783,7 +2795,7 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
                             '2026, with no case-by-case balancing test -- but this flags the wording pattern only, not a confirmed '
                             'finding. "Problematic" claims are not on that fixed list but can still be found misleading after an '
                             'individual assessment under general UCPD rules (Art. 6/7, or Art. 6(2)(d) for future claims) -- the '
-                            'outcome depends on context, evidence and consumer impact.'),
+                            'outcome depends on context, evidence and consumer impact.' + channel_caveat),
             'prohibited_examples':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim','')} for f in prohibited[:5]],
             'problematic_examples':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim','')} for f in problematic[:5]],
         },

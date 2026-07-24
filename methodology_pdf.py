@@ -140,8 +140,8 @@ def build_methodology_pdf():
         ('Classification', 'Meaning'),
         (Paragraph('<b>Potentially Prohibited (Annex I)</b>', ParagraphStyle('lb1', parent=STY['td_b'], textColor=DANGER)),
          Paragraph('Falls within the fixed list of practices Annex I of Directive (EU) 2024/825 adds to the UCPD '
-                   'blacklist &mdash; self-declared sustainability labels not based on a certification scheme or public-authority '
-                   'approval, generic environmental claims that lack same-medium specification and recognised excellent '
+                   'blacklist &mdash; sustainability labels not based on a qualifying certification scheme or not established by '
+                   'public authorities, generic environmental claims that lack same-medium specification and recognised excellent '
                    'environmental performance, offset-based claims that a specific <b>product</b> has a climate neutral/reduced/'
                    'positive impact, and presenting a legal requirement as a distinguishing sustainability feature. Once EmpCo '
                    'applies (27 September 2026), these practices are automatically unfair if the described conditions are met '
@@ -176,7 +176,7 @@ def build_methodology_pdf():
          Paragraph('Product-level neutrality or reduced-impact claims based on offsetting are high-priority EmpCo risk indicators.', STY['td'])),
         (Paragraph('Labels, badges, icons', STY['td_b']),
          Paragraph('eco label, green badge, certified sustainable, leaf/planet/recycled icons used as trust marks', STY['td']),
-         Paragraph('Self-declared labels and visual trust marks can mislead if not based on independent or public-authority schemes.', STY['td'])),
+         Paragraph('A sustainability label not based on a qualifying certification scheme or not established by public authorities can mislead.', STY['td'])),
         (Paragraph('Supplier / sourcing assurance', STY['td_b']),
          Paragraph('responsible sourcing, ethical sourcing, audited suppliers, traceable supply chain, all suppliers comply', STY['td']),
          Paragraph('May imply supply-chain control, audit quality or compliance that must be evidenced with scope, coverage, methodology and remediation.', STY['td'])),
@@ -273,6 +273,14 @@ def build_methodology_pdf():
         (Paragraph('Result',STY['td_b']),Paragraph('The weighted components are capped at 100 and mapped to the published Low / Medium / High / Very high bands. The example is illustrative, not a fixed point schedule for every claim.',STY['td'])),
     ]
     flow.append(section_table(example_rows,[W*.38,W*.62]))
+    flow.append(Spacer(1,5))
+    flow.append(Paragraph(
+        'Worked example (fully fictional, for illustration only): a claim scores 65/100 on claim-wording severity, '
+        '70/100 on evidence-gap risk, 30/100 on external context and 40/100 on the sector/channel modifier. Applying '
+        'the published weights above: 65&times;42% + 70&times;24% + 30&times;22% + 40&times;12% = 27.3 + 16.8 + 6.6 + '
+        '4.8 = <b>56/100</b> (Medium risk band). This shows how the four weighted components combine into the final '
+        'score; it does not disclose the full internal point schedule used to score any individual claim, which '
+        'varies by claim type, channel and retained evidence.', STY['body']))
 
     flow.append(Paragraph('9. Limits of the scan', STY['h2']))
     flow.append(Paragraph(
