@@ -70,7 +70,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Scan — Methodology summary · v72')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v72')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -82,7 +82,7 @@ def build_methodology_pdf():
     W = PAGE_W - 2 * MARGIN
     flow = []
 
-    flow.append(Paragraph('Durably Sustainability Scan', STY['title']))
+    flow.append(Paragraph('Durably Sustainability Claims Risk Scan', STY['title']))
     flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v72 &middot; 22 July 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
@@ -293,7 +293,7 @@ def build_methodology_pdf():
         'evidenced, reformulated or escalated.', STY['body']))
     flow.append(Spacer(1, 8))
     flow.append(Paragraph(
-        '&copy; Durably - proprietary Sustainability Scan methodology. Indicative first-pass assessment only; results '
+        '&copy; Durably - proprietary Sustainability Claims Risk Scan methodology. Indicative first-pass assessment only; results '
         'require legal, compliance and subject-matter review before external use.', STY['foot']))
 
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)

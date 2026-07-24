@@ -2787,7 +2787,7 @@ def build_claim_modules_summary(green_findings, social_findings):
 
 def federation_pilot_output(green_findings, social_findings, overall, green_score, social_score):
     return {
-        'member_scan_positioning':'Sustainability Scan',
+        'member_scan_positioning':'Sustainability Claims Risk Scan',
         'member_value':'Identifies risky, vague or insufficiently substantiated claims before they are used in websites, campaigns, packaging, brochures or sustainability communication.',
         'benchmark_fields':['overall_score','green_score','social_score','number_of_empco_indicators','number_of_forced_labour_or_social_indicators','top_claim_modules','priority_actions'],
         'aggregatable_for_federations':True,
@@ -2827,7 +2827,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
-    methodology='Sustainability Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
+    methodology='Sustainability Claims Risk Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
     summary=(f"The scan reviewed the uploaded document for {comp['company']} and identified a {level(overall).lower()} "
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
@@ -2942,7 +2942,7 @@ def analyse_url_v27(raw):
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
-    methodology='Sustainability Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
+    methodology='Sustainability Claims Risk Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
     confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log)
     reliability_warning=confidence_result.get('reliability_warning')
     # Use the same expected-guess-filtered counts the warning text itself is based on (see
@@ -3365,13 +3365,13 @@ def send_report_pdf_email(to_email,pdf_bytes,company_name,stamp):
         raise RuntimeError('Email delivery is not configured on this deployment (SMTP_USER / SMTP_APP_PASSWORD missing).')
     who=(company_name or 'Company').strip() or 'Company'
     message=EmailMessage()
-    message['Subject']=f'Durably Sustainability Scan report - {who} - {stamp}'
+    message['Subject']=f'Durably Sustainability Claims Risk Scan report - {who} - {stamp}'
     message['From']=SMTP_USER
     message['To']=to_email
     message.set_content(
-        f'Attached: the Durably Sustainability Scan claim-risk report for {who}, generated {stamp}.\n\n'
+        f'Attached: the Durably Sustainability Claims Risk Scan claim-risk report for {who}, generated {stamp}.\n\n'
         'Indicative first-pass assessment only; results require legal, compliance and subject-matter '
-        'review before external use.\n\nDurably - Sustainability Scan'
+        'review before external use.\n\nDurably - Sustainability Claims Risk Scan'
     )
     fname=f'durably_company_report_{stamp}.pdf'
     message.add_attachment(pdf_bytes,maintype='application',subtype='pdf',filename=fname)
@@ -6080,5 +6080,5 @@ def _v60_rank_dedupe(results,company_name,dimension='social',limit=20,reviewed_p
     return _dedupe_similar_sources(candidates)[:limit]
 
 def main():
-    print(f"Sustainability Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
+    print(f"Sustainability Claims Risk Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
