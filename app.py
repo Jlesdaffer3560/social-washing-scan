@@ -5,8 +5,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, smtplib
-from email.message import EmailMessage
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _get_build_company_report_pdf():
@@ -105,10 +104,12 @@ OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY","").strip()
 GOOGLE_SEARCH_API_KEY=os.environ.get("GOOGLE_SEARCH_API_KEY","").strip()
 GOOGLE_SEARCH_CX=os.environ.get("GOOGLE_SEARCH_CX","").strip()
 SERPER_API_KEY=os.environ.get("SERPER_API_KEY","").strip()
-SMTP_HOST=os.environ.get("SMTP_HOST","smtp.gmail.com").strip()
-SMTP_PORT=int(os.environ.get("SMTP_PORT","465") or "465")
-SMTP_USER=os.environ.get("SMTP_USER","").strip()
-SMTP_APP_PASSWORD=os.environ.get("SMTP_APP_PASSWORD","").strip()
+# Report-email delivery uses Brevo's HTTPS transactional-email API rather than raw SMTP:
+# Render blocks outbound traffic on SMTP ports (25/465/587) for free web services, so an
+# smtplib connection to any SMTP host fails there with "Network is unreachable" regardless
+# of credentials. HTTPS (443) is not affected.
+BREVO_API_KEY=os.environ.get("BREVO_API_KEY","").strip()
+BREVO_SENDER_EMAIL=os.environ.get("BREVO_SENDER_EMAIL","").strip()
 
 PROFILES={
  "kbc":("KBC","Banking and financial services","Medium","Responsible-finance, customer-protection, accessibility and financial-inclusion claims can be sensitive because financing decisions may create indirect social impacts."),
@@ -3373,36 +3374,40 @@ def is_valid_email(value):
     return bool(_EMAIL_RE.match((value or '').strip())) and len(value or '')<=254
 
 def send_report_pdf_email(to_email,pdf_bytes,company_name,stamp):
-    """Email the generated company-report PDF as an attachment via SMTP.
+    """Email the generated company-report PDF as an attachment via Brevo's transactional-email API.
 
-    Uses the same SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_APP_PASSWORD convention as the Durably
-    Signal Agent, so a Gmail app password already configured for that pilot works here too.
-    Raises RuntimeError with a user-facing message on any failure; never logs the recipient
-    address or the message body.
+    Uses HTTPS (Render blocks outbound SMTP ports 25/465/587 on free web services, so raw
+    smtplib fails there with "Network is unreachable" regardless of credentials -- HTTPS is
+    not affected). Raises RuntimeError with a user-facing message on any failure; never logs
+    the recipient address or the message body.
     """
-    if not (SMTP_USER and SMTP_APP_PASSWORD):
-        raise RuntimeError('Email delivery is not configured on this deployment (SMTP_USER / SMTP_APP_PASSWORD missing).')
+    if not (BREVO_API_KEY and BREVO_SENDER_EMAIL):
+        raise RuntimeError('Email delivery is not configured on this deployment (BREVO_API_KEY / BREVO_SENDER_EMAIL missing).')
     who=(company_name or 'Company').strip() or 'Company'
-    message=EmailMessage()
-    message['Subject']=f'Durably Sustainability Claims Risk Scan report - {who} - {stamp}'
-    message['From']=SMTP_USER
-    message['To']=to_email
-    message.set_content(
-        f'Attached: the Durably Sustainability Claims Risk Scan claim-risk report for {who}, generated {stamp}.\n\n'
-        'Indicative first-pass assessment only; results require legal, compliance and subject-matter '
-        'review before external use.\n\nDurably - Sustainability Claims Risk Scan'
-    )
     fname=f'durably_company_report_{stamp}.pdf'
-    message.add_attachment(pdf_bytes,maintype='application',subtype='pdf',filename=fname)
+    payload={
+        'sender':{'email':BREVO_SENDER_EMAIL,'name':'Durably Sustainability Claims Risk Scan'},
+        'to':[{'email':to_email}],
+        'subject':f'Durably Sustainability Claims Risk Scan report - {who} - {stamp}',
+        'textContent':(
+            f'Attached: the Durably Sustainability Claims Risk Scan claim-risk report for {who}, generated {stamp}.\n\n'
+            'Indicative first-pass assessment only; results require legal, compliance and subject-matter '
+            'review before external use.\n\nDurably - Sustainability Claims Risk Scan'
+        ),
+        'attachment':[{'content':base64.b64encode(pdf_bytes).decode('ascii'),'name':fname}],
+    }
+    req=Request('https://api.brevo.com/v3/smtp/email',data=json.dumps(payload).encode(),method='POST',
+                headers={'Content-Type':'application/json','Accept':'application/json','api-key':BREVO_API_KEY})
     try:
-        with smtplib.SMTP_SSL(SMTP_HOST,SMTP_PORT,context=ssl.create_default_context(),timeout=20) as smtp:
-            smtp.login(SMTP_USER,SMTP_APP_PASSWORD)
-            smtp.send_message(message)
+        with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
+            r.read()
+    except HTTPError as e:
+        # Brevo's error body (e.g. unverified sender, invalid API key) is safe to surface --
+        # it never contains the recipient address or report content.
+        try: detail=e.read().decode('utf-8',errors='ignore')[:300]
+        except Exception: detail=str(e)
+        raise RuntimeError(f'Could not send the report email ({detail}). Please try downloading the PDF instead.') from e
     except Exception as exc:
-        # SMTP failure reasons (bad app password, connection refused, TLS handshake failure)
-        # are safe to surface -- they never contain the recipient address or report content --
-        # and are the only way to tell a misconfigured SMTP_USER/SMTP_APP_PASSWORD apart from
-        # a network-level block without server log access.
         raise RuntimeError(f'Could not send the report email ({exc}). Please try downloading the PDF instead.') from exc
 
 
@@ -3555,7 +3560,7 @@ class Handler(BaseHTTPRequestHandler):
                                'google_api_key_configured':bool(GOOGLE_SEARCH_API_KEY),'google_cx_configured':bool(GOOGLE_SEARCH_CX),
                                'report_pdf_available':(_report_pdf_fn is not None or _report_pdf_import_error is None),
                                'report_token_enabled':True,'report_signing_key_configured':_REPORT_SIGNING_KEY_CONFIGURED,
-                               'smtp_configured':bool(SMTP_USER and SMTP_APP_PASSWORD),'smtp_host':SMTP_HOST,'smtp_port':SMTP_PORT,'smtp_user_set':bool(SMTP_USER)})
+                               'email_delivery_configured':bool(BREVO_API_KEY and BREVO_SENDER_EMAIL),'email_sender_set':bool(BREVO_SENDER_EMAIL)})
         return self._json({'error':'Not found'},404)
 
     def do_POST(self):
