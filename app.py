@@ -2126,7 +2126,7 @@ def classify_legal_basis(f):
     if bool(f.get('blacklisted_practice_indicator')):
         return {
             'legal_basis_category': 'prohibited',
-            'legal_basis_label': 'Prohibited if unsubstantiated (EmpCo Annex I)',
+            'legal_basis_label': 'Potentially Prohibited (EmpCo Annex I)',
             'legal_basis_short': ('On the fixed EmpCo Annex I list: automatically treated as unfair once EmpCo '
                                    'applies (27 September 2026) if the described conditions are met. No case-by-case '
                                    'balancing test is needed -- only whether the wording fits the listed practice.'),
@@ -2729,14 +2729,16 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
         'legal_basis_breakdown':{
             'prohibited_count':len(prohibited),
             'problematic_count':len(problematic),
-            'prohibited_label':'Prohibited if unsubstantiated (EmpCo Annex I)',
+            'prohibited_label':'Potentially Prohibited (EmpCo Annex I)',
             'problematic_label':'Problematic, not automatically prohibited (case-by-case)',
-            'explanation':('Two different legal tests apply to sustainability claims. "Prohibited" claims match a fixed list in '
-                            'EmpCo Annex I (self-declared labels, generic claims, offset-based neutrality claims, legal compliance '
-                            'presented as a benefit) and become automatically unfair once EmpCo applies on 27 September 2026, with '
-                            'no case-by-case balancing test. "Problematic" claims are not on that fixed list but can still be found '
-                            'misleading after an individual assessment under general UCPD rules (Art. 6/7, or Art. 6(2)(d) for future '
-                            'claims) -- the outcome depends on context, evidence and consumer impact.'),
+            'explanation':('Two different legal tests apply to sustainability claims. "Potentially Prohibited" claims match the '
+                            'wording of a fixed list in EmpCo Annex I (self-declared labels, generic claims, offset-based neutrality '
+                            'claims, legal compliance presented as a benefit) as detected by this automated screening; practices that '
+                            'actually meet the described conditions become automatically unfair once EmpCo applies on 27 September '
+                            '2026, with no case-by-case balancing test -- but this flags the wording pattern only, not a confirmed '
+                            'finding. "Problematic" claims are not on that fixed list but can still be found misleading after an '
+                            'individual assessment under general UCPD rules (Art. 6/7, or Art. 6(2)(d) for future claims) -- the '
+                            'outcome depends on context, evidence and consumer impact.'),
             'prohibited_examples':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim','')} for f in prohibited[:5]],
             'problematic_examples':[{'claim_type':f.get('type',''), 'claim_excerpt':f.get('claim','')} for f in problematic[:5]],
         },

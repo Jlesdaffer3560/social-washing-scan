@@ -130,15 +130,15 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(lens_rows, [W * 0.34, W * 0.66]))
 
-    flow.append(Paragraph('2. Prohibited vs. problematic claims (EmpCo legal basis)', STY['h2']))
+    flow.append(Paragraph('2. Potentially prohibited vs. problematic claims (EmpCo legal basis)', STY['h2']))
     flow.append(Paragraph(
         'Every retained green or social claim is also classified by its EmpCo legal basis, shown in the report as a '
-        '<b>Prohibited (Annex I)</b> or <b>Problematic (case-by-case)</b> label. This is a screening indicator, not a '
+        '<b>Potentially Prohibited (Annex I)</b> or <b>Problematic (case-by-case)</b> label. This is a screening indicator, not a '
         'legal finding.', STY['body']))
     flow.append(Spacer(1, 5))
     legal_basis_rows = [
         ('Classification', 'Meaning'),
-        (Paragraph('<b>Prohibited (Annex I)</b>', ParagraphStyle('lb1', parent=STY['td_b'], textColor=DANGER)),
+        (Paragraph('<b>Potentially Prohibited (Annex I)</b>', ParagraphStyle('lb1', parent=STY['td_b'], textColor=DANGER)),
          Paragraph('Falls within the fixed list of practices Annex I of Directive (EU) 2024/825 adds to the UCPD '
                    'blacklist &mdash; self-declared sustainability labels not based on a certification scheme or public-authority '
                    'approval, generic environmental claims that lack same-medium specification and recognised excellent '

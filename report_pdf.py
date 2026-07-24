@@ -141,7 +141,7 @@ def claim_risk(claim):
 
 def legal_basis_label(claim):
     if str(claim.get("legal_basis_category") or "").lower() == "prohibited":
-        return "Prohibited (Annex I)", RED
+        return "Potentially Prohibited (Annex I)", RED
     return "Problematic (case-by-case)", AMBER
 
 
