@@ -398,7 +398,7 @@ def inventory_source_label(item, max_chars=72):
 
 def header_block(data, subtitle):
     meta = metadata(data)
-    left = [Paragraph("DURABLY SUSTAINABILITY SCAN", ST["brand"]), Spacer(1, 1 * mm), Paragraph(esc(company_name(data)), ST["title"]), Paragraph(esc(subtitle), ST["subtitle"])]
+    left = [Paragraph("DURABLY SUSTAINABILITY CLAIMS RISK SCAN", ST["brand"]), Spacer(1, 1 * mm), Paragraph(esc(company_name(data)), ST["title"]), Paragraph(esc(subtitle), ST["subtitle"])]
     right = [Paragraph("REVIEWED SOURCE", ST["meta_b"]), Paragraph(esc(bounded_text(meta["source"], 70)), ST["meta"]), Paragraph(f'{esc(meta["date"])} · {esc(meta["assessment"])}', ST["meta"]), Paragraph(esc(meta["coverage"]), ST["meta"]), Paragraph(f'Confidence: <b>{esc(meta["confidence"])}</b>', ST["meta"])]
     t = Table([[left, right]], colWidths=[CONTENT_W * .64, CONTENT_W * .36])
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, -1), 1.2, NAVY), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
@@ -483,7 +483,7 @@ def risk_driver_table(clusters):
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
     t = Table(rows, colWidths=[9*mm, 67*mm, 47*mm, CONTENT_W-123*mm], repeatRows=1)
-    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE), ("BOX", (0, 0), (-1, -1), .55, GREY_300), ("INNERGRID", (0, 0), (-1, -1), .4, GREY_300), ("BACKGROUND", (0, 2), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE), ("BOX", (0, 0), (-1, -1), .55, GREY_300), ("INNERGRID", (0, 0), (-1, -1), .4, GREY_300), ("BACKGROUND", (0, 1), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     return t
 
 
@@ -618,14 +618,19 @@ def assessment_basis(data):
     return t
 
 
+def _int_or(summary, key, default):
+    value = summary.get(key)
+    return int(value) if value is not None else default
+
+
 def coverage_sources_methodology(data, limit=5):
     pages,documents,summary=scan_inventory_items(data)
     combined=pages+documents
     shown=combined[:max(1,limit)]
     total=len(combined)
-    count_line=(f'{int(summary.get("website_pages_reviewed",len(pages)))} website page(s) · '
-                f'{int(summary.get("documents_reviewed",len(documents)))} document(s) / PDF(s) · '
-                f'{int(summary.get("domains_reviewed",0))} domain(s)')
+    count_line=(f'{_int_or(summary,"website_pages_reviewed",len(pages))} website page(s) · '
+                f'{_int_or(summary,"documents_reviewed",len(documents))} document(s) / PDF(s) · '
+                f'{_int_or(summary,"domains_reviewed",0)} domain(s)')
     source_lines=[inventory_source_label(x) for x in shown]
     if total>len(shown):
         source_lines.append(f'+ {total-len(shown)} additional reviewed source(s) listed in the online scan')

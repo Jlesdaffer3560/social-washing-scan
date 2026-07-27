@@ -1,10 +1,11 @@
 """Generates methodology.pdf: the static methodology summary document.
 Rebuilt to reflect the scan's actual scope (EmpCo + EU Forced Labour Regulation only)
 and to match the score bands the live scan actually produces.
-Visual style matches report_pdf.py (same palette/typography), consistent with the
-original methodology.pdf.
+Visual style follows the same navy/teal/green/amber/red palette family as
+report_pdf.py, consistent with the original methodology.pdf.
 """
 import io
+from html import escape as _escape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
@@ -45,7 +46,7 @@ STY = {
 }
 
 def esc(s):
-    return str(s)
+    return _escape(str(s), quote=False)
 
 def section_table(rows, col_widths, header_bg=NAVY):
     """rows[0] is the header row (plain strings), rest are (Paragraph, Paragraph, ...)."""
@@ -185,7 +186,7 @@ def build_methodology_pdf():
          Paragraph('Creates substantiation exposure now under general UCPD rules; traceability, risk-assessment, mitigation and remediation evidence may become relevant to enforcement under Regulation (EU) 2024/3015, which does not itself create a standalone due-diligence obligation (Art. 1(3)).', STY['td'])),
         (Paragraph('Aspirational / future social-performance wording', STY['td_b']),
          Paragraph('working towards a foundation for living wages, wish to build a world where human rights are respected, our ambition is...', STY['td']),
-         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Treated as a relevant social-washing risk indicator on that basis alone -- not as evidence of a specific academic finding about how common or dominant this pattern is in any sector.', STY['td'])),
+         Paragraph('Vague, forward-looking commitments on wages, human rights or working conditions with no baseline, timeline or achieved result. Treated as a relevant social-washing risk indicator on that basis alone &mdash; not as evidence of a specific academic finding about how common or dominant this pattern is in any sector.', STY['td'])),
     ]
     flow.append(section_table(signal_rows, [W * 0.24, W * 0.36, W * 0.40]))
 
@@ -278,7 +279,7 @@ def build_methodology_pdf():
         'Worked example (fully fictional, for illustration only): a claim scores 65/100 on claim-wording severity, '
         '70/100 on evidence-gap risk, 30/100 on external context and 40/100 on the sector/channel modifier. Applying '
         'the published weights above: 65&times;42% + 70&times;24% + 30&times;22% + 40&times;12% = 27.3 + 16.8 + 6.6 + '
-        '4.8 = <b>56/100</b> (Medium risk band). This shows how the four weighted components combine into the final '
+        '4.8 = 55.5, rounded to <b>56/100</b> (Medium risk band). This shows how the four weighted components combine into the final '
         'score; it does not disclose the full internal point schedule used to score any individual claim, which '
         'varies by claim type, channel and retained evidence.', STY['body']))
 
