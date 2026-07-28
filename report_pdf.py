@@ -263,21 +263,31 @@ def company_name(data):
     return name if name and name.lower() != "company reviewed" else "Company"
 
 
+def _is_internal_document_scan(data):
+    return str(data.get("assessment_type") or "").lower() == "internal_document" or bool(data.get("document_type"))
+
+
 def metadata(data):
-    pages = list((data.get("report") or {}).get("pages_reviewed") or [])
-    domains = {urlparse(str(p)).netloc.replace("www.", "") for p in pages if urlparse(str(p)).netloc}
+    pages_list, documents_list, inv_summary = scan_inventory_items(data)
+    is_internal_doc = _is_internal_document_scan(data)
     confidence = data.get("confidence") or {}
     context = data.get("entity_context_indicator") or {}
-    assessment = "Internal document scan" if data.get("document_type") or "document" in str(data.get("assessment_type", "")).lower() else "Website scan"
+    assessment = "Internal document scan" if is_internal_doc else "Website scan"
     reasons = confidence.get("reasons") or []
     reason_text = ". ".join(clean_text(x).rstrip(".") for x in reasons if clean_text(x))
     if reason_text:
         reason_text += "."
+    if is_internal_doc:
+        coverage = f"{len(documents_list)} document(s) reviewed" if documents_list else "Coverage not available"
+    else:
+        domains = int(inv_summary.get("domains_reviewed") or 0)
+        total = len(pages_list) + len(documents_list)
+        coverage = f"{total} page(s)/document(s) across {domains} domain(s)" if total else "Coverage not available"
     return {
         "source": clean_text(data.get("source_label") or data.get("original_url") or "Reviewed material"),
         "date": clean_text(data.get("analysis_date") or "")[:10],
         "assessment": assessment,
-        "coverage": f"{len(pages)} page(s) across {len(domains)} domain(s)" if pages else "Coverage not available",
+        "coverage": coverage,
         "confidence": clean_text(confidence.get("level") or "Not assessed"),
         "confidence_reason": bounded_text(reason_text or "Confidence reflects source access, coverage and external-search availability.", 210),
         "entity_level": clean_text(context.get("level") or "Not assessed"),
@@ -289,12 +299,16 @@ def reliability_warning(data):
     warning = clean_text(data.get("data_reliability_warning") or (data.get("confidence") or {}).get("reliability_warning"))
     if warning:
         return warning
+    if _is_internal_document_scan(data):
+        # No website crawl/fetch diagnostics apply to a standalone internal-document scan.
+        return ""
     diag = data.get("crawl_diagnostics") or {}
     attempted = int(diag.get("pages_attempted") or 0)
     failed = int(diag.get("pages_failed") or 0)
     thin = int(diag.get("pages_thin") or 0)
     fallback = int(diag.get("pages_retrieved_via_fallback") or 0)
-    pages = len((data.get("report") or {}).get("pages_reviewed") or [])
+    pages_list, documents_list, _ = scan_inventory_items(data)
+    pages = len(pages_list) + len(documents_list)
     caution = "A low risk score from this scan may reflect limited access to the site's content, not necessarily a genuine absence of risky claims."
     if attempted and failed / max(1, attempted) > .25:
         return f"{failed} of {attempted} page fetches failed. {caution}"
@@ -594,7 +608,10 @@ def external_panel(data, limit):
     signals = external_signals(data, limit)
     note = Paragraph("Negative external stakeholder signals only. Positive, neutral and company-owned sources are excluded. Automated retained signals require manual verification of status, entity link and claim relevance.", ST["source"])
     if not signals:
-        cards = Table([[Paragraph("No negative external public-source signal was retained. If external search was unavailable, this does not confirm an absence of relevant criticism or enforcement.", ST["small"])]], colWidths=[CONTENT_W])
+        empty_text = ("External-source screening was not performed for this internal-document scan."
+                      if _is_internal_document_scan(data) else
+                      "No negative external public-source signal was retained. If external search was unavailable, this does not confirm an absence of relevant criticism or enforcement.")
+        cards = Table([[Paragraph(empty_text, ST["small"])]], colWidths=[CONTENT_W])
         cards.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     elif len(signals) == 1:
         cards = external_signal_card(signals[0], CONTENT_W)

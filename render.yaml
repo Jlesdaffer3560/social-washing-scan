@@ -3,7 +3,7 @@ services:
     name: social-washing-scan-python
     env: python
     plan: free
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: "pip install -r requirements.txt && python methodology_pdf.py"
     startCommand: "python app.py"
     healthCheckPath: /api/health
     envVars:

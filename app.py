@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, urljoin, quote
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, HTTPRedirectHandler, build_opener, install_opener
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from pathlib import Path
@@ -58,12 +58,17 @@ MAX_CONCURRENT_SCANS=max(1, min(4, int(os.environ.get("MAX_CONCURRENT_SCANS", "2
 ALLOWED_ORIGINS={x.strip().rstrip('/') for x in os.environ.get("DURABLY_ALLOWED_ORIGINS", "").split(',') if x.strip()}
 _REPORT_SIGNING_KEY_TEXT=os.environ.get("DURABLY_REPORT_SIGNING_KEY", "").strip()
 _REPORT_SIGNING_KEY_CONFIGURED=bool(_REPORT_SIGNING_KEY_TEXT)
-# A configured secret remains strongly recommended. The deterministic fallback prevents
-# report downloads from breaking after a Render worker restart when the optional secret
-# has not yet been configured. It provides integrity against accidental modification, not
-# strong secrecy for a publicly distributed source package.
+# v73: the previous fallback derived the key deterministically from a public string plus
+# APP_VERSION -- both visible in this open source file and even echoed back by /api/health's
+# "version" field, so anyone with the source could compute it and forge valid report tokens
+# for arbitrary report/email requests. A random per-process key closes that hole: it cannot be
+# derived from the source, and signing/verification still works correctly for the lifetime of
+# one running process (the only cost is that in-flight tokens are invalidated by a restart,
+# same as before for the deterministic fallback's underlying tradeoff). Configuring
+# DURABLY_REPORT_SIGNING_KEY in production is still strongly recommended so tokens survive a
+# Render worker restart.
 _REPORT_SIGNING_KEY=(_REPORT_SIGNING_KEY_TEXT.encode("utf-8") if _REPORT_SIGNING_KEY_CONFIGURED
-                     else hashlib.sha256(("durably-report-token-fallback|"+APP_VERSION).encode("utf-8")).digest())
+                     else secrets.token_bytes(32))
 REPORT_TOKEN_MAX_AGE_SECONDS=max(900,min(86400,int(os.environ.get("REPORT_TOKEN_MAX_AGE_SECONDS","21600"))))
 _RATE_LOCK=threading.Lock()
 _RATE_EVENTS={}
@@ -104,6 +109,12 @@ OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY","").strip()
 GOOGLE_SEARCH_API_KEY=os.environ.get("GOOGLE_SEARCH_API_KEY","").strip()
 GOOGLE_SEARCH_CX=os.environ.get("GOOGLE_SEARCH_CX","").strip()
 SERPER_API_KEY=os.environ.get("SERPER_API_KEY","").strip()
+
+def external_search_configured():
+    """v73: single source of truth for whether external public-source search is available.
+    Previously several checks tested only TAVILY_API_KEY / Google, so a deployment configured
+    with only SERPER_API_KEY was incorrectly reported as having no external search available."""
+    return bool(TAVILY_API_KEY or SERPER_API_KEY or (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX))
 # Report-email delivery uses Brevo's HTTPS transactional-email API rather than raw SMTP:
 # Render blocks outbound traffic on SMTP ports (25/465/587) for free web services, so an
 # smtplib connection to any SMTP host fails there with "Network is unreachable" regardless
@@ -487,6 +498,25 @@ def is_private(host):
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved: return True
     except Exception: return False
     return False
+
+
+class _SSRFSafeRedirectHandler(HTTPRedirectHandler):
+    """v73: urlopen() follows HTTP redirects automatically, but the app only ever validated the
+    ORIGINAL requested hostname against is_private() -- a scanned site that 302-redirects to a
+    private/link-local/loopback address (e.g. the cloud metadata endpoint 169.254.169.254, or an
+    internal service) would be followed with no re-check, defeating the SSRF guard entirely.
+    This handler re-validates every redirect target before it is followed, and is installed as
+    the process-wide default opener so it applies to every urlopen() call in the app."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed=urlparse(newurl)
+        if parsed.scheme not in ('http','https') or not parsed.hostname:
+            raise HTTPError(newurl, code, 'Redirect target is not a valid http(s) URL; blocked.', headers, fp)
+        if is_private(parsed.hostname):
+            raise HTTPError(newurl, code, 'Redirect target resolves to a private/local address; blocked.', headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+install_opener(build_opener(_SSRFSafeRedirectHandler()))
 
 
 def fetch_html(url,timeout=7):
@@ -1574,18 +1604,18 @@ def classify_document_audience(url, text, pages=None):
     for c in classifications:
         counts[c['group']]=counts.get(c['group'],0)+1
     if counts.get('client_facing',0)>0 and counts.get('investor',0)==0 and counts.get('internal',0)==0:
-        aud='Client-facing / consumer-facing communication'; emp='Direct / high'
+        aud='Client-facing / consumer-facing communication'; emp='Direct / high'; group='client_facing'
         note='The reviewed material is mainly market-facing. Green claims should be assessed with stronger EmpCo-style consumer-communication controls.'
     elif counts.get('investor',0)>0 and counts.get('client_facing',0)==0:
-        aud='Investor reporting'; emp='Indirect / evidence source'
+        aud='Investor reporting'; emp='Indirect / evidence source'; group='investor'
         note='The reviewed material is mainly annual reports, sustainability reports, ESG reports or investor reporting. Treat it primarily as evidence or context, not as consumer advertising, unless the same claims are reused externally.'
     elif counts.get('internal',0)>0 and counts.get('client_facing',0)==0:
-        aud='Policy / internal governance material'; emp='Indirect / governance evidence'
+        aud='Policy / internal governance material'; emp='Indirect / governance evidence'; group='internal'
         note='The reviewed material appears to be policy or governance material. It is useful as substantiation evidence, but wording risk is lower than in consumer-facing material.'
     else:
-        aud='Mixed channel set'; emp='Mixed'
+        aud='Mixed channel set'; emp='Mixed'; group='mixed'
         note='The scan includes more than one communication channel. The analysis separates client-facing communication from investor reporting and policy/internal governance material.'
-    return {'audience':aud,'empco_relevance':emp,'note':note,'channel_counts':counts}
+    return {'audience':aud,'empco_relevance':emp,'note':note,'channel_counts':counts,'group':group}
 
 
 def page_name_from_url(u):
@@ -1654,7 +1684,10 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
         extracted=max(0,int(extracted or 0)); analysed=max(0,int(analysed or 0))
         if extracted and analysed==0:
             return 'Retrieved but not analysed due to budget','The source was retrieved, but its text did not enter the final analysis text.'
-        if str(method or '').lower()=='direct_thin' or extracted<500 or analysed<350:
+        # v73: a short source that was fully read (analysed ~= extracted) is not "limited" --
+        # only genuinely thin sources (very little text found at all) or sources where most of
+        # the extracted text was cut before analysis should be flagged this way.
+        if str(method or '').lower()=='direct_thin' or extracted<150:
             return 'Limited text extracted','Only a limited amount of usable text was available; findings may be incomplete.'
         if extracted>1200 and analysed < max(500,int(extracted*0.55)):
             return 'Retrieved and partially analysed','Only part of the extracted text entered the bounded analysis text.'
@@ -1901,7 +1934,16 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
     # rules may already be relevant today, independent of EmpCo's own applicability date.
     date_note=' (EmpCo readiness indicator, Directive (EU) 2024/825 applies from 27 September 2026)'
     if 'climate-neutrality' in t or 'offset' in t:
-        return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting.'+date_note
+        # Annex I point 4c specifically targets a PRODUCT-level neutral/reduced/positive climate
+        # claim that is BASED ON OFFSETTING -- a bare "climate/carbon neutral" claim with no
+        # offset basis established in the retained wording is not automatically that practice;
+        # it is still a case-by-case UCPD question until offsetting is confirmed as the basis.
+        offset_established=any(x in c for x in ['offset','compensat','carbon credit','carbon-credit'])
+        if offset_established:
+            return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting.'+date_note
+        return ('Potential Annex I relevance -- offset basis not established from the retained wording alone. EmpCo Annex I point 4c '
+                'specifically targets product-level neutral/reduced/positive climate-impact claims based on greenhouse-gas offsetting; '
+                'this passage should be reviewed case-by-case under the general UCPD misleading-claims test unless an offset basis is confirmed.')
     if 'label' in t or 'certification' in t:
         return 'Potential EmpCo blacklisted-practice indicator if the label/badge is not based on a qualifying certification scheme or not established by public authorities.'+date_note
     if 'generic environmental' in t:
@@ -2036,7 +2078,10 @@ def green_ready_to_use_rewrite(claim_type):
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
     'enterprise-wide','our whole business','the company','entire business','our business','operations',
-    ' sites',' site ','our facilities','our factories','our sites','scope 1 and 2','scope 1, 2']
+    ' sites',' site ','our facilities','our factories','our sites','scope 1 and 2','scope 1, 2',
+    'we are a climate neutral company','we are a carbon neutral company','our company is climate neutral',
+    'our company is carbon neutral','is a climate neutral company','is a carbon neutral company',
+    'we are climate neutral','we are carbon neutral','as an organisation','as an organization']
 
 def _is_corporate_level_claim(claim_text):
     return any(m in (claim_text or '').lower() for m in _CORPORATE_LEVEL_MARKERS)
@@ -2342,12 +2387,44 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
     }
 
 
+_DOCX_MAX_ENTRY_BYTES=20_000_000   # decompressed-size cap per zip entry
+_DOCX_MAX_TOTAL_BYTES=40_000_000   # decompressed-size cap across all entries read
+
+def _safe_zip_entry_read(zf, name, max_bytes):
+    """Read a zip entry with a hard cap enforced during decompression, not just on the
+    (attacker-controlled) declared size in the zip's central directory -- guards against a
+    small compressed entry ('zip bomb') expanding to an enormous size in memory."""
+    with zf.open(name) as f:
+        chunks=[]; total=0
+        while True:
+            chunk=f.read(65536)
+            if not chunk:
+                break
+            total+=len(chunk)
+            if total>max_bytes:
+                raise ValueError(f'"{name}" exceeds the maximum allowed decompressed size.')
+            chunks.append(chunk)
+        return b''.join(chunks)
+
 def extract_docx_text(data):
+    # v73: a DOCX is a zip archive, and reading an entry with ZipFile.read() decompresses it
+    # fully into memory with no size cap -- a small, deliberately crafted compressed entry can
+    # expand to a very large size ("decompression bomb"). Bound entry count, per-entry
+    # decompressed size (checked both from declared metadata and enforced live during
+    # streaming), and total decompressed bytes read across the whole document.
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        parts=[]
-        for name in ['word/document.xml']+[n for n in z.namelist() if n.startswith('word/header') or n.startswith('word/footer')]:
+        parts=[]; total_bytes=0
+        extra=[n for n in z.namelist() if n.startswith('word/header') or n.startswith('word/footer')][:20]
+        for name in ['word/document.xml']+extra:
             try:
-                xml=z.read(name).decode('utf-8',errors='ignore')
+                info=z.getinfo(name)
+                if info.file_size>_DOCX_MAX_ENTRY_BYTES:
+                    continue
+                raw=_safe_zip_entry_read(z,name,_DOCX_MAX_ENTRY_BYTES)
+                total_bytes+=len(raw)
+                if total_bytes>_DOCX_MAX_TOTAL_BYTES:
+                    break
+                xml=raw.decode('utf-8',errors='ignore')
                 xml=re.sub(r'<w:tab\s*/>', ' ', xml)
                 xml=re.sub(r'</w:p>', '\n', xml)
                 txt=re.sub(r'<[^>]+>', ' ', xml)
@@ -2619,7 +2696,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
              "evidence available to support it. This is an initial screening result, not a legal finding.")
-    return {'version':APP_VERSION,'source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
+    return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
@@ -3025,6 +3102,10 @@ def _social_claim_context(excerpt, typ, trigger):
         return any(s in c for s in ['100% inclusive','fully inclusive','guaranteed equal','no pay gap','zero pay gap','no discrimination','zero discrimination'])
     return True
 
+# v73: matches "made with 50% recycled plastic", "contains 30% recycled content", "70% recycled"
+# etc. -- an arbitrary percentage can never be listed as a fixed trigger phrase.
+_PERCENT_RECYCLED_RE=re.compile(r'\b\d{1,3}\s?%\s+recycled(?:\s+\w+)?\b', re.I)
+
 # Better-balanced green claim taxonomy: includes plural/common variants while retaining only claim-like contexts.
 GREEN_CLAIMS=[
  (['eco-friendly','environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','ecological','climate friendly','climate-friendly','green product','green products','green choice','eco choice','eco product','eco products','sustainable product','sustainable products','sustainable choice','sustainable collection','sustainable range','sustainable materials','100% sustainable','fully sustainable','natural product','natural products','biobased product','bio-based product'],'Generic environmental claim','High','EmpCo risk: generic environmental claims can be prohibited in consumer-facing communication where the claim is not clearly and prominently specified on the same medium or backed by recognised excellent environmental performance relevant to the claim as a whole.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
@@ -3104,8 +3185,17 @@ def _near_sentence(text, trigger, max_len=620):
     return out[:max_len]+('...' if len(out)>max_len else '')
 
 def _client_ip(handler):
-    forwarded=(handler.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
-    return forwarded or (handler.client_address[0] if handler.client_address else 'unknown')
+    # v73: use the LAST hop in X-Forwarded-For, not the first. On a single-proxy platform
+    # (Render), the last entry is the one the platform's own edge proxy appended and is not
+    # attacker-controlled; a client can freely forge earlier entries in its own request headers,
+    # which previously let a client bypass rate limiting by sending a different fake first IP on
+    # every request.
+    forwarded=(handler.headers.get('X-Forwarded-For') or '').strip()
+    if forwarded:
+        parts=[p.strip() for p in forwarded.split(',') if p.strip()]
+        if parts:
+            return parts[-1]
+    return handler.client_address[0] if handler.client_address else 'unknown'
 
 
 def _rate_limit_allowed(client,bucket,maximum):
@@ -3115,6 +3205,11 @@ def _rate_limit_allowed(client,bucket,maximum):
         if len(recent)>=maximum:
             _RATE_EVENTS[key]=recent; return False
         recent.append(now); _RATE_EVENTS[key]=recent
+        # v73: sweep fully-expired keys once the table grows large, so long-running processes
+        # with many distinct visitors don't accumulate unbounded empty/stale dict entries.
+        if len(_RATE_EVENTS) > 5000:
+            for stale_key in [k for k,v in _RATE_EVENTS.items() if not v or now-v[-1]>=RATE_LIMIT_WINDOW_SECONDS]:
+                del _RATE_EVENTS[stale_key]
     return True
 
 
@@ -3246,7 +3341,7 @@ def verify_report_signature(payload):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='DurablyScan/69'
+    server_version=f'DurablyScan/{APP_RELEASE_LABEL}'
 
     def _allowed_origin(self):
         origin=(self.headers.get('Origin') or '').rstrip('/')
@@ -3297,7 +3392,16 @@ class Handler(BaseHTTPRequestHandler):
         fname=f'durably_company_report_{stamp or datetime.date.today().isoformat()}.pdf'
         return self._send(pdf_bytes,'application/pdf',200,{'Content-Disposition':f'attachment; filename="{fname}"'})
 
-    def do_HEAD(self): self._send(b'',status=200)
+    def do_HEAD(self):
+        # v73: mirror do_GET's actual route set instead of unconditionally returning 200,
+        # so monitoring/uptime checks against a nonexistent path get a real 404.
+        if self.path=='/' or self.path.startswith('/?'):
+            return self._send(b'',status=200)
+        if self.path=='/methodology.pdf':
+            return self._send(b'',status=200 if (APP_DIR/'methodology.pdf').exists() else 404)
+        if self.path=='/api/health':
+            return self._send(b'',status=200)
+        return self._send(b'',status=404)
     def do_OPTIONS(self):
         if self.headers.get('Origin') and not self._allowed_origin(): return self._json({'error':'Origin is not allowed.'},403)
         return self._json({'ok':True})
@@ -3310,10 +3414,33 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/methodology.pdf':
             pdf=APP_DIR/'methodology.pdf'; return self._send(pdf.read_bytes(),'application/pdf') if pdf.exists() else self._json({'error':'Methodology PDF not found'},404)
         if self.path=='/api/health':
-            return self._json({'status':'ok','version':APP_VERSION,'release':APP_RELEASE_LABEL,'release_date':APP_RELEASE_DATE,
-                               'tavily_configured':bool(TAVILY_API_KEY),'google_search_configured':bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),
+            # v73: report_pdf_available previously defaulted to True before the lazy PDF import
+            # had ever actually been attempted (report_pdf_fn and report_pdf_import_error both
+            # start as None). Force the import here so the flag reflects a real, current test
+            # rather than an optimistic assumption. Each component below is now checked
+            # independently, so "status: ok" cannot mask a broken PDF/methodology/report-signing
+            # component.
+            report_pdf_ok=_get_build_company_report_pdf() is not None
+            methodology_pdf_ok=(APP_DIR/'methodology.pdf').exists()
+            components={
+                'scan_engine':True,
+                'report_pdf':report_pdf_ok,
+                'methodology_pdf':methodology_pdf_ok,
+                'external_search':external_search_configured(),
+                'email_service':bool(BREVO_API_KEY and BREVO_SENDER_EMAIL),
+                'report_signing_key':_REPORT_SIGNING_KEY_CONFIGURED,
+            }
+            # Only components that should always work regardless of deployment/config choices
+            # (scan engine, PDF generation) gate the overall status; external_search, email and
+            # the report-signing key are optional/deployment-specific and are surfaced as their
+            # own fields rather than flipping the whole service to "degraded".
+            core_ok=all(components[k] for k in ('scan_engine','report_pdf','methodology_pdf'))
+            return self._json({'status':'ok' if core_ok else 'degraded','version':APP_VERSION,'release':APP_RELEASE_LABEL,'release_date':APP_RELEASE_DATE,
+                               'components':components,
+                               'tavily_configured':bool(TAVILY_API_KEY),'serper_configured':bool(SERPER_API_KEY),'google_search_configured':bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),
                                'google_api_key_configured':bool(GOOGLE_SEARCH_API_KEY),'google_cx_configured':bool(GOOGLE_SEARCH_CX),
-                               'report_pdf_available':(_report_pdf_fn is not None or _report_pdf_import_error is None),
+                               'external_search_configured':components['external_search'],
+                               'report_pdf_available':report_pdf_ok,'methodology_pdf_available':methodology_pdf_ok,
                                'report_token_enabled':True,'report_signing_key_configured':_REPORT_SIGNING_KEY_CONFIGURED,
                                'email_delivery_configured':bool(BREVO_API_KEY and BREVO_SENDER_EMAIL),'email_sender_set':bool(BREVO_SENDER_EMAIL)})
         return self._json({'error':'Not found'},404)
@@ -3371,7 +3498,7 @@ V55_GREEN_EXTRA_PATTERNS = [
     ('Generic environmental claim', 'High', ['more sustainable','sustainable fashion','sustainable clothing','sustainable garment','sustainable garments','sustainable product','sustainable products','sustainable collection','sustainable range','sustainable choice','sustainable materials','sustainable cotton','sustainable viscose','sustainable fibres','sustainable fibers','sustainably sourced','responsibly sourced material','responsible materials','lower-impact material','low-impact material','eco-design','eco design','conscious collection','join life','preferred materials'],
      'EmpCo risk: broad environmental wording such as sustainable, eco, conscious, preferred or lower-impact can be misleading where the exact environmental attribute, scope and evidence are not clear on the same medium.',
      'Specify the exact attribute, product/material scope, baseline, method, evidence, reporting period and limitations.'),
-    ('Recycled / recyclable material claim', 'Medium', ['recycled polyester','recycled cotton','recycled material','recycled materials','made from recycled','made with recycled','recyclable packaging','recycled packaging','recyclable materials','circular material','circular materials'],
+    ('Recycled / recyclable material claim', 'Medium', ['recycled polyester','recycled cotton','recycled material','recycled materials','made from recycled','made with recycled','recyclable packaging','recycled packaging','recyclable materials','circular material','circular materials','is recyclable','are recyclable','fully recyclable','widely recyclable','easily recyclable','recyclable bottle','recyclable container'],
      'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
      'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.'),
     ('Generic environmental claim', 'High', ['environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','eco-friendly','climate friendly','green choice','eco choice','green product','eco product'],
@@ -3496,7 +3623,12 @@ def _looks_like_toc_or_index(excerpt):
 
 def _v55_claim_context_ok(excerpt, trigger, dimension):
     c=(excerpt or '').lower(); trig=(trigger or '').lower()
-    if len(c.strip()) < 25:
+    # v73: a blanket 25-character minimum previously rejected short-but-material claims
+    # (badges, headings, slogans -- e.g. "We respect human rights." at 24 chars). The more
+    # targeted checks below (nav-context exclusion, bare-title detection, and the <=5-word
+    # claim-object-word check) already distinguish navigation/heading text from genuine short
+    # claims, so the absolute-length floor is dropped in favour of that grammar/context logic.
+    if not c.strip():
         return False
     if _looks_like_toc_or_index(excerpt):
         return False
@@ -3820,6 +3952,17 @@ def detect_green_claims(text):
                 _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', score)
                 hits += 1
                 if hits >= 3: break
+    # 3) v73: percentage-based recycled-content claims ("made with 50% recycled plastic",
+    # "contains 30% recycled content") use an arbitrary number, so a fixed trigger phrase can
+    # never match them -- a small regex catches the pattern regardless of the exact percentage.
+    hits=0
+    for m in _PERCENT_RECYCLED_RE.finditer(text or ''):
+        if hits >= 3: break
+        _v55_add_finding(fs, seen, text, m.group(0), 'Recycled / recyclable material claim', 'Medium',
+                          'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
+                          'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.',
+                          'green', 62)
+        hits += 1
     fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:12]
     if not fs:
         fs.append(enrich_green_finding({'dimension':'green','type':'No material problematic green claim retained','risk':'Low','claim':'No exact problematic green claim was retained from the reviewed material.','issue':'The scan did not retain a direct EmpCo blacklisted-practice indicator or high-sensitivity environmental claim. General sustainability context is not scored as a problematic claim unless it contains specific claim wording.','rewrite':'No rewrite is needed unless the company wants to make a specific environmental claim.','claim_score':8,'standards':['General green-claim quality review'],'action':'Keep environmental claims specific, scoped and evidence-backed.','problematic_terms':[]},''))
@@ -4524,12 +4667,12 @@ def targeted_negative_sources(results,company_name,limit=5,reviewed_pages=None,n
 
 
 def _v64_external_response(company,findings,dimension,reviewed_pages=None):
-    configured=bool(TAVILY_API_KEY or (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX))
+    configured=external_search_configured()
     themes=(green_query_themes(findings or []) if dimension=='green' else query_themes_from_findings(findings or []))
     empty_diag={'raw_result_count':0,'company_matched_count':0,'negative_candidate_count':0,'retained_count':0,
                 'fallback_used':False,'competitor_primary_rejected_count':0,'providers_used':[],'queries_run':[]}
     if not configured:
-        return {'enabled':False,'summary':'External public-source search is not enabled because neither TAVILY_API_KEY nor Google Custom Search credentials are configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':[],'query_themes':themes,'queries_run':[],'raw_result_count':0,'search_diagnostics':empty_diag}
+        return {'enabled':False,'summary':'External public-source search is not enabled because no search provider (TAVILY_API_KEY, SERPER_API_KEY, or GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX) is configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':[],'query_themes':themes,'queries_run':[],'raw_result_count':0,'search_diagnostics':empty_diag}
     ranked,allr,attempts,providers,run_queries,diagnostics=_v64_search_dimension(company,findings,dimension,reviewed_pages)
     # An attempt can fail outright (provider error/timeout/quota) rather than simply return
     # zero results. Those are very different situations: a quota-exhausted or rate-limited
@@ -4853,9 +4996,9 @@ def resolve_company_website(name):
     # flagged low-confidence guess is more useful than blocking the scan outright -- but the
     # note makes plain that this was not independently confirmed.
     guess=f'https://www.{slugify_company_name(name)}.com'
-    no_provider=not TAVILY_API_KEY and not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)
+    no_provider=not external_search_configured()
     provider_note=(' No external search provider is configured on this deployment (TAVILY_API_KEY / '
-                    'GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX), so only the known-site list and direct '
+                    'SERPER_API_KEY / GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX), so only the known-site list and direct '
                     'domain guesses could be tried.') if no_provider else ''
     return guess, (f'Company name "{name}" could not be confidently verified via search or a direct domain match.{provider_note} '
                     f'The scan used the unverified best-guess domain {guess} -- please confirm this is the correct company '
@@ -4949,7 +5092,7 @@ def _v65_discover_related_official_sites(company_name,primary_url,limit=2):
     different-domain candidate must prominently identify the company and contain an
     official/corporate/sustainability relationship signal.
     """
-    if not company_name or not (TAVILY_API_KEY or (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)):
+    if not company_name or not external_search_configured():
         return []
     queries=[f'"{company_name}" official sustainability site',f'"{company_name}" corporate annual sustainability report']
     results,_,_,_=_v60_run_queries(queries)
@@ -5464,5 +5607,5 @@ def _v60_rank_dedupe(results,company_name,dimension='social',limit=20,reviewed_p
     return _dedupe_similar_sources(candidates)[:limit]
 
 def main():
-    print(f"Sustainability Claims Risk Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
+    print(f"Sustainability Claims Risk Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Serper configured:",bool(SERPER_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("External search configured:",external_search_configured()); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
