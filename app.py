@@ -2040,40 +2040,34 @@ def green_ready_to_use_rewrite(claim_type):
     if 'climate' in t or 'offset' in t:
         return ('"We have reduced our [Scope 1 and 2 / Scope 1, 2 and 3] emissions by [X%] since [baseline year], measured '
                  'according to [methodology, e.g. the GHG Protocol]. Remaining emissions are addressed through [name of '
-                 'specific removal/offset programme]; details at [link]." Avoid "carbon neutral", "climate neutral" or '
-                 '"net zero" for a single product unless every figure above is substantiated on the same page.')
+                 'specific removal/offset programme]; details at [link]."')
     if 'label' in t or 'certification' in t:
         return ('"Certified [exact scheme name, e.g. GOTS / Fairtrade / EU Ecolabel] by [certifying body], certificate '
-                 'number [X], valid until [date], covering [product/site scope]. Verify at [certifier registry link]." '
-                 'If the scheme is self-created rather than independently audited, remove the certification-style wording entirely.')
+                 'number [X], valid until [date], covering [product/site scope]. Verify at [certifier registry link]."')
     if 'recycl' in t or 'circular' in t:
         return ('"Contains [X%] recycled [material] ([post-consumer/post-industrial]), verified per [standard, e.g. GRS], '
                  'covering [product/packaging scope]. Recyclable in [specific regions/facilities], subject to [conditions]."')
     if 'generic' in t:
         return ('"[Product/product line] uses [specific verified attribute, e.g. \'70% recycled cotton\'], based on '
                  '[methodology/standard], covering [this product only / this collection], as of [date]. Full methodology: '
-                 '[link]." Replace "sustainable", "eco-friendly" or "green" with the specific attribute being claimed.')
+                 '[link]."')
     if 'legal requirement' in t:
-        return ('"[Feature] complies with [specific law/regulation, e.g. EU REACH]." Present this as a compliance fact, '
-                 'not a sustainability differentiator -- if there is a genuinely voluntary action beyond the legal '
-                 'minimum, describe that separately and specifically.')
+        return '"[Feature] complies with [specific law/regulation, e.g. EU REACH]."'
     if 'absolute' in t or 'purity' in t:
         return ('"[X%] of [specific scope, e.g. this product\'s packaging] is [specific attribute, e.g. recyclable '
                  'through standard municipal collection] in [region/market], based on [test standard/method]. [State any '
-                 'exclusions or conditions]." Replace "100%", "zero" or "chemical free" with the qualified, testable version.')
+                 'exclusions or conditions]."')
     if 'comparative' in t:
         return ('"[Product] has [X%] lower [specific impact metric, e.g. CO2e per unit] than [named comparator or '
                  'previous version], based on [methodology/study, date], covering [scope of comparison]. Full data: [link]."')
     if 'future' in t:
         return ('"We aim to reach [specific target, e.g. net zero Scope 1 and 2] by [year], with an implementation plan '
-                 'covering [key milestones], published at [link] and reviewed [annually / by whom]." State this as a '
-                 'target, not a current achievement.')
+                 'covering [key milestones], published at [link] and reviewed [annually / by whom]."')
     if 'visual' in t:
         return ('"[Icon/badge name] represents [specific certification scheme] awarded by [certifying body]; see [link] '
-                 'for scope and criteria." If the icon was designed in-house rather than awarded by a scheme, remove it '
-                 'or label it clearly as a non-certification design element.')
+                 'for scope and criteria."')
     return ('"[Specific, verifiable statement], based on [methodology/standard/date], covering [exact scope]. Full '
-            'evidence: [link]." Replace any broad, absolute or unqualified wording with the precise scope and source.')
+            'evidence: [link]."')
 
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
@@ -3858,8 +3852,7 @@ def social_ready_to_use_rewrite(claim_type):
     if 'forced' in t or 'modern slavery' in t:
         return ('"Our forced-labour risk-management approach for [product/supply chain] includes [specific traceability '
                  'mechanism], [named risk-assessment methodology] and a documented remediation process, most recently '
-                 'reviewed on [date]. Full policy: [link]." Do not state products are "guaranteed" or simply "free from" '
-                 'forced labour without this evidence attached in the same place.')
+                 'reviewed on [date]. Full policy: [link]."')
     if 'supply' in t or 'supplier' in t or 'sourcing' in t:
         return ('"[X%] of [named tier, e.g. Tier 1] suppliers, covering [X%] of [product category] sourcing, were '
                  'audited against [named standard, e.g. amfori BSCI] in [year], with [X] corrective actions closed. Full '
@@ -3875,13 +3868,12 @@ def social_ready_to_use_rewrite(claim_type):
                  '[methodology]. Full breakdown: [link]."')
     if 'aspirational' in t or 'future' in t:
         return ('"Since [baseline year], we have achieved [specific measured outcome], and are working towards '
-                 '[specific target] by [year], tracked via [named KPI/report]." State this as progress to date, not a '
-                 'completed outcome.')
+                 '[specific target] by [year], tracked via [named KPI/report]."')
     if 'community' in t or 'social-impact' in t or 'social impact' in t:
         return ('"In [year], our [named programme] reached [X specific beneficiaries/communities] in [named location], '
                  'measured by [named indicator/methodology]. Full report: [link]."')
     return ('"[Specific, verifiable statement], based on [methodology/standard/date], covering [exact scope]. Full '
-            'evidence: [link]." Replace any broad, absolute or unqualified wording with the precise scope and source.')
+            'evidence: [link]."')
 
 def enrich_social_finding(f, trigger=''):
     f['regulatory_signal']=social_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
