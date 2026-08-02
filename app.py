@@ -2002,7 +2002,9 @@ def classify_legal_basis(f):
 
 def green_specification_check(claim_type, claim_text):
     c=(claim_text or '').lower(); t=(claim_type or '').lower()
-    specificity_terms=['%', 'scope', 'baseline', 'compared with', 'compared to', 'made from', 'verified', 'certified', 'according to', 'methodology', 'life cycle', 'lca', 'for this product', 'packaging', 'valid until', 'standard', 'iso']
+    specificity_terms=['%', 'scope', 'baseline', 'compared with', 'compared to', 'made from', 'verified', 'certified', 'according to', 'methodology', 'life cycle', 'lca', 'for this product', 'packaging', 'valid until', 'standard', 'iso',
+        'reikwijdte', 'nulmeting', 'referentiejaar', 'vergeleken met', 'gemaakt van', 'geverifieerd', 'gecertificeerd', 'volgens', 'methodologie', 'levenscyclus', 'voor dit product', 'verpakking', 'geldig tot', 'norm',
+        'périmètre', 'année de référence', 'par rapport à', 'fabriqué à partir de', 'vérifié', 'certifié', 'selon', 'méthodologie', 'cycle de vie', 'pour ce produit', 'emballage', "valable jusqu'au", 'norme']
     has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,4}(?:[.,]\d+)?\s?%\b', c))
     if t.startswith('no major'):
         return {'status':'Not applicable','comment':'No material green claim was detected.'}
@@ -2075,7 +2077,16 @@ _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our
     ' sites',' site ','our facilities','our factories','our sites','scope 1 and 2','scope 1, 2',
     'we are a climate neutral company','we are a carbon neutral company','our company is climate neutral',
     'our company is carbon neutral','is a climate neutral company','is a carbon neutral company',
-    'we are climate neutral','we are carbon neutral','as an organisation','as an organization']
+    'we are climate neutral','we are carbon neutral','as an organisation','as an organization',
+    'onze activiteiten','ons bedrijf','onze organisatie','als bedrijf','bedrijfsbreed','over ons hele bedrijf',
+    'onze directe activiteiten','onze waardeketen','op ondernemingsniveau','onze vestigingen','onze fabrieken',
+    'onze sites','wij zijn een klimaatneutraal bedrijf','wij zijn een koolstofneutraal bedrijf',
+    'ons bedrijf is klimaatneutraal','ons bedrijf is koolstofneutraal','wij zijn klimaatneutraal',
+    'wij zijn koolstofneutraal','als organisatie',
+    'nos activités','notre entreprise','notre organisation','en tant qu\'entreprise','à l\'échelle du groupe',
+    'dans toute notre entreprise','nos opérations directes','notre chaîne de valeur','au niveau de l\'entreprise',
+    'nos sites','nos usines','nous sommes une entreprise neutre en carbone','notre entreprise est neutre en carbone',
+    'nous sommes neutres en carbone','en tant qu\'organisation']
 
 def _is_corporate_level_claim(claim_text):
     return any(m in (claim_text or '').lower() for m in _CORPORATE_LEVEL_MARKERS)
@@ -2086,7 +2097,11 @@ def _is_corporate_level_claim(claim_text):
 # EmpCo Annex I 4a blacklist: "100% eco-friendly, made from sustainable materials" contains both
 # a '%' and "made from" without actually specifying a verifiable attribute, methodology or scope).
 _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS=['according to','methodology','life cycle','lca','verified','certified',
-    'compared with','compared to','baseline','valid until','iso ',' standard','third-party','independently verified']
+    'compared with','compared to','baseline','valid until','iso ',' standard','third-party','independently verified',
+    'volgens','methodologie','levenscyclus','geverifieerd','gecertificeerd','vergeleken met','nulmeting','geldig tot',
+    ' norm','onafhankelijk geverifieerd','door derden geverifieerd',
+    'selon','méthodologie','cycle de vie','vérifié','certifié','par rapport à','année de référence',
+    "valable jusqu'au",' norme','vérifié par un tiers','vérifié de manière indépendante']
 
 def _has_strong_same_medium_specification(claim_text):
     return any(x in (claim_text or '').lower() for x in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS)
@@ -3049,12 +3064,26 @@ _ASPIRATIONAL_SOCIAL_VERBS=['working towards','working to build','work towards',
     'strives to build','strive to create','strives to create','ambition to build','our ambition is',
     'committed to building','committed to build','building a foundation','building a basis',
     'envision a world','envisage a world','vision of a world','working towards a world','working towards a future',
-    'we believe in a world where','we dream of a world where','on a journey towards','on our journey towards']
+    'we believe in a world where','we dream of a world where','on a journey towards','on our journey towards',
+    'werken aan','werken naar','werken aan de opbouw van','willen bouwen aan','streven naar','we streven ernaar',
+    'onze ambitie is','toegewijd aan het opbouwen van','op weg naar','we geloven in een wereld waarin',
+    'we dromen van een wereld waarin','onderweg naar','op onze weg naar',
+    'nous travaillons vers','nous travaillons à construire','nous visons à construire','nous voulons construire',
+    'notre ambition est','engagés à construire','nous croyons en un monde où','nous rêvons d\'un monde où',
+    'en chemin vers','sur notre chemin vers','nous aspirons à']
 _SOCIAL_ASPIRATION_TOPICS=['living wage','living wages','human rights','fair wage','fair wages','decent work',
     'decent working conditions','good working conditions','safe working conditions','workers rights',"workers' rights",
     'worker rights','labour rights','labor rights','gender equality','equal opportunities','dignity',
     'respected','well-being of workers','wellbeing of workers','fair treatment','social justice','worker welfare',
-    'workers welfare']
+    'workers welfare',
+    'leefbaar loon','mensenrechten','eerlijk loon','waardig werk','goede arbeidsomstandigheden',
+    'veilige arbeidsomstandigheden','rechten van werknemers','arbeidsrechten','gendergelijkheid','gelijke kansen',
+    'waardigheid','gerespecteerd','welzijn van werknemers','eerlijke behandeling','sociale rechtvaardigheid',
+    'werknemerswelzijn',
+    'salaire vital','droits humains','salaire équitable','travail décent','bonnes conditions de travail',
+    'conditions de travail sûres','droits des travailleurs','droits du travail','égalité des genres',
+    'égalité des chances','dignité','respecté','bien-être des travailleurs','traitement équitable',
+    'justice sociale']
 
 def _looks_like_aspirational_social_claim(excerpt):
     c=(excerpt or '').lower()
@@ -3066,10 +3095,14 @@ def _social_claim_context(excerpt, typ, trigger):
     c=(excerpt or '').lower(); t=(typ or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 35:
         return False
-    neutral_supplier_phrases=['backing british suppliers','supporting local suppliers','working with suppliers','our suppliers include','supplier list','become a supplier','contact suppliers','supplier portal']
+    neutral_supplier_phrases=['backing british suppliers','supporting local suppliers','working with suppliers','our suppliers include','supplier list','become a supplier','contact suppliers','supplier portal',
+        'lokale leveranciers ondersteunen','samenwerken met leveranciers','onze leveranciers omvatten','leverancierslijst','leverancier worden','contacteer leveranciers','leveranciersportaal',
+        'soutenir les fournisseurs locaux','travailler avec des fournisseurs','nos fournisseurs comprennent','liste des fournisseurs','devenir fournisseur','contacter les fournisseurs','portail fournisseurs']
     if any(p in c for p in neutral_supplier_phrases):
         # Keep only if the same passage also contains a clear assurance/control signal.
-        strong=['audited','certified','compliant','comply','traceable','ethical sourcing','responsible sourcing','forced labour','forced labor','human rights','due diligence','modern slavery']
+        strong=['audited','certified','compliant','comply','traceable','ethical sourcing','responsible sourcing','forced labour','forced labor','human rights','due diligence','modern slavery',
+            'geauditeerd','gecertificeerd','conform','voldoen','traceerbaar','ethische inkoop','verantwoorde inkoop','dwangarbeid','mensenrechten','zorgvuldigheidsplicht','moderne slavernij',
+            'audité','certifié','conforme','se conformer','traçable','approvisionnement éthique','approvisionnement responsable','travail forcé','droits humains','devoir de vigilance','esclavage moderne']
         if not any(s in c for s in strong):
             return False
     if 'supplier' in t or 'supply-chain' in t or 'sourcing' in t:
@@ -3078,46 +3111,90 @@ def _social_claim_context(excerpt, typ, trigger):
         # "all suppliers ARE audited/certified/compliant" style completed-state wording, which
         # is what actually creates a misleading-coverage risk. A bare "all suppliers" substring
         # match caught both equally before this check.
-        request_language=['ask all our suppliers','ask our suppliers','we ask suppliers','request suppliers','encourage suppliers','invite suppliers','suppliers to sign','suppliers to share','share theirs with us']
+        request_language=['ask all our suppliers','ask our suppliers','we ask suppliers','request suppliers','encourage suppliers','invite suppliers','suppliers to sign','suppliers to share','share theirs with us',
+            'vragen al onze leveranciers','vragen onze leveranciers','wij vragen leveranciers','verzoeken leveranciers','moedigen leveranciers aan','nodigen leveranciers uit','leveranciers om te tekenen',
+            'demandons à tous nos fournisseurs','demandons à nos fournisseurs','nous demandons aux fournisseurs','encourageons les fournisseurs','invitons les fournisseurs','fournisseurs à signer']
         if any(r in c for r in request_language):
-            completion_signals=['audited','certified','compliant','comply','compliance rate','% of suppliers','verified','signed by','have signed']
+            completion_signals=['audited','certified','compliant','comply','compliance rate','% of suppliers','verified','signed by','have signed',
+                'geauditeerd','gecertificeerd','conform','conformiteitspercentage','geverifieerd','ondertekend door','hebben getekend',
+                'audité','certifié','conforme','taux de conformité','vérifié','signé par','ont signé']
             return any(s in c for s in completion_signals)
-        strong=['all suppliers','100% of suppliers','audited','certified','compliant','comply','meet our standards','traceable','ethical sourcing','responsible sourcing','due diligence','human rights','forced labour','forced labor','modern slavery','supplier code compliance','tier 1','tier 2']
+        strong=['all suppliers','100% of suppliers','audited','certified','compliant','comply','meet our standards','traceable','ethical sourcing','responsible sourcing','due diligence','human rights','forced labour','forced labor','modern slavery','supplier code compliance','tier 1','tier 2',
+            'alle leveranciers','100% van de leveranciers','geauditeerd','gecertificeerd','conform','voldoen aan onze normen','traceerbaar','ethische inkoop','verantwoorde inkoop','zorgvuldigheidsplicht','mensenrechten','dwangarbeid','moderne slavernij','naleving leverancierscode',
+            'tous les fournisseurs','100% des fournisseurs','audité','certifié','conforme','répond à nos normes','traçable','approvisionnement éthique','approvisionnement responsable','devoir de vigilance','droits humains','travail forcé','esclavage moderne','conformité au code fournisseur']
         return any(s in c for s in strong)
     if 'aspirational' in t or ('future' in t and 'social' in t):
         return _looks_like_aspirational_social_claim(c)
     if 'forced' in t:
-        return any(s in c for s in ['forced labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','product traceability','supplier traceability'])
+        return any(s in c for s in ['forced labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','product traceability','supplier traceability',
+            'dwangarbeid','moderne slavernij','kinderarbeid','traceerbaarheid','importcontroles','producttraceerbaarheid','traceerbaarheid van leveranciers',
+            'travail forcé','esclavage moderne',"travail des enfants",'traçabilité',"contrôles à l'importation",'traçabilité des produits','traçabilité des fournisseurs'])
     if 'human-rights' in t or 'labour-rights' in t or 'labor-rights' in t:
-        return any(s in c for s in ['human rights','labour rights','labor rights','living wage','decent work','fair wages','worker rights','no discrimination','zero discrimination','equal pay'])
+        return any(s in c for s in ['human rights','labour rights','labor rights','living wage','decent work','fair wages','worker rights','no discrimination','zero discrimination','equal pay',
+            'mensenrechten','arbeidsrechten','leefbaar loon','waardig werk','eerlijke lonen','rechten van werknemers','geen discriminatie','nul discriminatie','gelijke beloning',
+            'droits humains','droits du travail','salaire vital','travail décent','salaires équitables','droits des travailleurs','aucune discrimination','discrimination zéro','égalité salariale'])
     if 'safety' in t:
-        return any(s in c for s in ['zero harm','zero accidents','injury free','guaranteed safe','safe workplace guaranteed'])
+        return any(s in c for s in ['zero harm','zero accidents','injury free','guaranteed safe','safe workplace guaranteed',
+            'nul letsel','nul ongevallen','letselvrij','gegarandeerd veilig','gegarandeerd veilige werkplek',
+            'zéro dommage','zéro accident','sans blessure','sécurité garantie','lieu de travail sûr garanti'])
     if 'diversity' in t or 'inclusion' in t:
-        return any(s in c for s in ['100% inclusive','fully inclusive','guaranteed equal','no pay gap','zero pay gap','no discrimination','zero discrimination'])
+        return any(s in c for s in ['100% inclusive','fully inclusive','guaranteed equal','no pay gap','zero pay gap','no discrimination','zero discrimination',
+            '100% inclusief','volledig inclusief','gegarandeerd gelijk','geen loonkloof','nul loonkloof','geen discriminatie','nul discriminatie',
+            '100% inclusif','entièrement inclusif','égalité garantie','aucun écart salarial','écart salarial zéro','aucune discrimination','discrimination zéro'])
     return True
 
 # v73: matches "made with 50% recycled plastic", "contains 30% recycled content", "70% recycled"
 # etc. -- an arbitrary percentage can never be listed as a fixed trigger phrase.
 _PERCENT_RECYCLED_RE=re.compile(r'\b\d{1,3}\s?%\s+recycled(?:\s+\w+)?\b', re.I)
+# NL "gerecycleerd/gerecycled" and FR "recyclé(e)(s)" equivalents of the English pattern above --
+# same arbitrary-percentage problem, so a fixed trigger phrase can never cover these either.
+_PERCENT_RECYCLED_NL_RE=re.compile(r'\b\d{1,3}\s?%\s+gerecycle(?:e)?rd[e]?(?:\s+\w+)?\b', re.I)
+_PERCENT_RECYCLED_FR_RE=re.compile(r'\b\d{1,3}\s?%\s+recycl[ée]e?s?(?:\s+\w+)?\b', re.I)
 
 # Better-balanced green claim taxonomy: includes plural/common variants while retaining only claim-like contexts.
 GREEN_CLAIMS=[
- (['eco-friendly','environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','ecological','climate friendly','climate-friendly','green product','green products','green choice','eco choice','eco product','eco products','sustainable product','sustainable products','sustainable choice','sustainable collection','sustainable range','sustainable materials','100% sustainable','fully sustainable','natural product','natural products','biobased product','bio-based product'],'Generic environmental claim','High','EmpCo risk: generic environmental claims can be prohibited in consumer-facing communication where the claim is not clearly and prominently specified on the same medium or backed by recognised excellent environmental performance relevant to the claim as a whole.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
- (['carbon neutral','climate neutral','co2 neutral','co₂ neutral','net zero product','carbon negative','carbon positive','climate positive','carbon compensated','climate compensated','offset-based','offsetting','compensated emissions','reduced climate impact'],'Climate-neutrality or offsetting claim','High','EmpCo risk: product-level claims that state or imply neutral, reduced or positive climate impact based on greenhouse-gas offsetting are high-priority blacklisted-practice indicators.','Avoid product-level neutrality wording based on offsets. Separate actual emissions reductions from offsets and disclose scopes, baseline, methodology, residual emissions and progress.'),
- (['greener than','more sustainable than','more eco-friendly than','lower impact than','lowest emissions','best environmental','less harmful than','lower emissions than','reduced emissions compared','reduced impact compared','lower carbon than','less carbon than'],'Comparative environmental claim','High','EmpCo risk: environmental comparisons require information on the comparison method, comparator, products and suppliers compared, data sources and update process.','State the comparator, baseline, methodology, scope, data date and update mechanism; avoid vague superiority claims.'),
- (['eco label','ecolabel','sustainability label','self-declared sustainability label','green certified','eco certified','planet approved','responsible choice label','green badge','eco badge','sustainability badge','certified sustainable','sustainably certified'],'Sustainability label / certification claim','High','EmpCo risk: self-declared sustainability labels are blacklisted unless based on an independent, transparent certification scheme or public-authority label. Icons, symbols and trust marks may fall within this category.','Name the scheme owner, criteria, independence, audit basis, scope and validity period. Remove self-declared labels or clarify them as non-certification claims.'),
- (['we will be net zero','we aim to be net zero','we are working towards net zero','committed to net zero','net zero by 2030','net zero by 2040','net zero by 2050','climate positive by','carbon neutral by','climate neutral by','decarbonisation roadmap','decarbonization roadmap'],'Future environmental-performance claim','High','EmpCo risk: future environmental-performance claims require clear, objective, publicly available and verifiable commitments supported by a realistic implementation plan.','Add a public implementation plan, milestones, resources, governance, progress indicators, verification basis and scope limitations.'),
- (['all natural','100% natural','chemical free','zero impact','no impact','zero waste','waste free','pollution free','fully recyclable','100% recyclable','completely biodegradable','fully biodegradable','plastic free','100% recycled'],'Absolute or purity environmental wording','High','EmpCo risk: absolute environmental wording creates a high evidence burden and can mislead when scope, conditions or limitations are missing.','Qualify the claim and specify exact attribute, scope, conditions, test method, limitations and evidence.'),
- (['compliant with environmental law','meets legal requirements','according to legal standards','required by law','legal requirement','eu compliant','regulation compliant'],'Legal requirement presented as green benefit','High','EmpCo risk: presenting requirements imposed by law as a distinctive environmental feature is a blacklisted-practice indicator.','Do not present legal compliance as a differentiating sustainability benefit. Separate legal compliance from voluntary improvements.'),
- (['green leaf','leaf icon','tree icon','water drop','waterdrop','planet icon','earth icon','eco badge','green badge','environmental icon','recycled badge','sustainability badge'],'Visual green-claim indicator','Medium','EmpCo risk: pictorial, graphic or symbolic representations can imply environmental benefits and should be assessed like written claims.','Check whether the icon or badge implies a specific environmental benefit and connect it to clear, prominent and evidenced wording.'),
+ (['eco-friendly','environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','ecological','climate friendly','climate-friendly','green product','green products','green choice','eco choice','eco product','eco products','sustainable product','sustainable products','sustainable choice','sustainable collection','sustainable range','sustainable materials','100% sustainable','fully sustainable','natural product','natural products','biobased product','bio-based product',
+   'milieuvriendelijk','milieuvriendelijke','ecologisch','ecologische','klimaatvriendelijk','klimaatvriendelijke','beter voor het milieu','beter voor de planeet','goed voor het milieu','goed voor de planeet','groen product','groene producten','groene keuze','eco product','eco producten','duurzaam product','duurzame producten','duurzame keuze','duurzame collectie','duurzaam assortiment','duurzame materialen','100% duurzaam','volledig duurzaam','natuurlijk product','natuurlijke producten','biogebaseerd product',
+   "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé'],'Generic environmental claim','High','EmpCo risk: generic environmental claims can be prohibited in consumer-facing communication where the claim is not clearly and prominently specified on the same medium or backed by recognised excellent environmental performance relevant to the claim as a whole.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
+ (['carbon neutral','climate neutral','co2 neutral','co₂ neutral','net zero product','carbon negative','carbon positive','climate positive','carbon compensated','climate compensated','offset-based','offsetting','compensated emissions','reduced climate impact',
+   'klimaatneutraal','koolstofneutraal','co2-neutraal','co₂-neutraal','netto nul product','klimaatpositief','koolstofpositief','klimaatgecompenseerd','koolstofgecompenseerd','gecompenseerde emissies','gecompenseerde uitstoot','verminderde klimaatimpact','emissiecompensatie',
+   'neutre en carbone','carboneutre','neutralité carbone','co2 neutre','co₂ neutre','net zéro produit','climat positif','carbone positif','émissions compensées','compensation carbone','impact climatique réduit'],'Climate-neutrality or offsetting claim','High','EmpCo risk: product-level claims that state or imply neutral, reduced or positive climate impact based on greenhouse-gas offsetting are high-priority blacklisted-practice indicators.','Avoid product-level neutrality wording based on offsets. Separate actual emissions reductions from offsets and disclose scopes, baseline, methodology, residual emissions and progress.'),
+ (['greener than','more sustainable than','more eco-friendly than','lower impact than','lowest emissions','best environmental','less harmful than','lower emissions than','reduced emissions compared','reduced impact compared','lower carbon than','less carbon than',
+   'groener dan','duurzamer dan','milieuvriendelijker dan','lagere impact dan','laagste uitstoot','beste voor het milieu','minder schadelijk dan','lagere emissies dan','verminderde uitstoot vergeleken','lagere koolstofuitstoot dan','minder koolstof dan',
+   'plus vert que','plus durable que','plus écologique que','impact plus faible que','émissions les plus faibles','meilleur pour l\'environnement','moins nocif que','émissions inférieures à','impact réduit par rapport à','moins de carbone que'],'Comparative environmental claim','High','EmpCo risk: environmental comparisons require information on the comparison method, comparator, products and suppliers compared, data sources and update process.','State the comparator, baseline, methodology, scope, data date and update mechanism; avoid vague superiority claims.'),
+ (['eco label','ecolabel','sustainability label','self-declared sustainability label','green certified','eco certified','planet approved','responsible choice label','green badge','eco badge','sustainability badge','certified sustainable','sustainably certified',
+   'ecolabel','duurzaamheidslabel','zelfverklaard duurzaamheidslabel','groen gecertificeerd','eco-gecertificeerd','verantwoorde keuze label','groen keurmerk','eco-keurmerk','duurzaamheidskeurmerk','gecertificeerd duurzaam','duurzaam gecertificeerd',
+   'écolabel','label de durabilité','label autodéclaré','certifié vert','certifié écologique','label de choix responsable','badge vert','badge écologique','certifié durable'],'Sustainability label / certification claim','High','EmpCo risk: self-declared sustainability labels are blacklisted unless based on an independent, transparent certification scheme or public-authority label. Icons, symbols and trust marks may fall within this category.','Name the scheme owner, criteria, independence, audit basis, scope and validity period. Remove self-declared labels or clarify them as non-certification claims.'),
+ (['we will be net zero','we aim to be net zero','we are working towards net zero','committed to net zero','net zero by 2030','net zero by 2040','net zero by 2050','climate positive by','carbon neutral by','climate neutral by','decarbonisation roadmap','decarbonization roadmap',
+   'we zullen netto nul zijn','we willen netto nul bereiken','we werken aan netto nul','toegewijd aan netto nul','netto nul tegen 2030','netto nul tegen 2040','netto nul tegen 2050','klimaatpositief tegen','klimaatneutraal tegen','koolstofneutraal tegen','decarbonisatietraject','routekaart naar decarbonisatie',
+   'nous serons neutres en carbone','nous visons la neutralité carbone','nous travaillons vers le zéro net','engagés vers le zéro net','zéro net d\'ici 2030','zéro net d\'ici 2040','zéro net d\'ici 2050','climat positif d\'ici','neutre en carbone d\'ici','feuille de route de décarbonation'],'Future environmental-performance claim','High','EmpCo risk: future environmental-performance claims require clear, objective, publicly available and verifiable commitments supported by a realistic implementation plan.','Add a public implementation plan, milestones, resources, governance, progress indicators, verification basis and scope limitations.'),
+ (['all natural','100% natural','chemical free','zero impact','no impact','zero waste','waste free','pollution free','fully recyclable','100% recyclable','completely biodegradable','fully biodegradable','plastic free','100% recycled',
+   'volledig natuurlijk','100% natuurlijk','chemievrij','geen impact','nul impact','zero waste','afvalvrij','vervuilingsvrij','volledig recyclebaar','100% recyclebaar','volledig biologisch afbreekbaar','plasticvrij','100% gerecycleerd','100% gerecycled',
+   'tout naturel','100% naturel','sans produits chimiques','aucun impact','impact zéro','zéro déchet','sans déchets','sans pollution','entièrement recyclable','100% recyclable','entièrement biodégradable','sans plastique','100% recyclé'],'Absolute or purity environmental wording','High','EmpCo risk: absolute environmental wording creates a high evidence burden and can mislead when scope, conditions or limitations are missing.','Qualify the claim and specify exact attribute, scope, conditions, test method, limitations and evidence.'),
+ (['compliant with environmental law','meets legal requirements','according to legal standards','required by law','legal requirement','eu compliant','regulation compliant',
+   'conform milieuwetgeving','voldoet aan wettelijke vereisten','volgens wettelijke normen','wettelijk verplicht','wettelijke vereiste','eu-conform','conform de regelgeving',
+   'conforme à la législation environnementale','répond aux exigences légales','selon les normes légales','requis par la loi','exigence légale','conforme ue','conforme à la réglementation'],'Legal requirement presented as green benefit','High','EmpCo risk: presenting requirements imposed by law as a distinctive environmental feature is a blacklisted-practice indicator.','Do not present legal compliance as a differentiating sustainability benefit. Separate legal compliance from voluntary improvements.'),
+ (['green leaf','leaf icon','tree icon','water drop','waterdrop','planet icon','earth icon','eco badge','green badge','environmental icon','recycled badge','sustainability badge',
+   'groen blad','blad icoon','boom icoon','waterdruppel','planeet icoon','aarde icoon','milieu icoon','recyclagebadge','duurzaamheidsbadge',
+   'feuille verte',"icône feuille","icône arbre","goutte d'eau","icône planète","icône terre","icône environnement","badge recyclage","badge durabilité"],'Visual green-claim indicator','Medium','EmpCo risk: pictorial, graphic or symbolic representations can imply environmental benefits and should be assessed like written claims.','Check whether the icon or badge implies a specific environmental benefit and connect it to clear, prominent and evidenced wording.'),
 ]
 
 CLAIMS=[
- (['forced labour free','forced labor free','free from forced labour','free from forced labor','no forced labour','no forced labor','modern slavery free','child labour free','child labor free','no child labour','no child labor','forced labour due diligence','forced labor due diligence','product traceability','supplier traceability','import controls'],'Forced-labour product or supply-chain claim','High','Forced Labour Regulation risk: the wording may imply product, supplier or supply-chain assurance against forced labour. Such claims require strong traceability, risk assessment, mitigation, remediation and withdrawal/customs response readiness.','Scope the wording and disclose a risk-based due-diligence process, product/supplier traceability, escalation and remediation steps.'),
- (['all suppliers audited','all suppliers are audited','all suppliers certified','all suppliers are certified','all suppliers comply','all suppliers are compliant','all suppliers meet','100% of suppliers','fully traceable supply chain','fully audited supply chain','ethical sourcing','responsible sourcing','responsibly sourced','responsibly-sourced','ethically sourced','certified suppliers','audited suppliers','traceable suppliers','supplier code compliance','certified against our supplier code','comply with our supplier code'],'Supply-chain or supplier-responsibility claim','High','The wording may imply broad supplier control or responsible value-chain coverage. It is problematic where supplier tiers, audit quality, worker voice, findings and remediation are not clear.','Scope the claim to covered supplier tiers and disclose coverage, methodology, findings and corrective-action closure rates.'),
- (['human rights compliant','respect human rights across our value chain','protect human rights across our value chain','respect human rights in our supply chain','living wage across our supply chain','decent work guaranteed','guaranteed labour rights','guaranteed labor rights','fair wages across our supply chain','no discrimination','zero discrimination','equal pay guaranteed'],'Human-rights or labour-rights claim','High','The claim refers to sensitive rights topics and may overstate outcomes or control without due diligence, grievance channels, tracking and remedy.','State the due-diligence process, salient risks, coverage, grievance channels, tracking, limits and remediation process.'),
- (['safe workplace guaranteed','zero accidents','zero harm','injury free','guaranteed safe workplace','no workplace injuries'],'Health, safety or worker-welfare claim','High','Absolute safety or welfare wording creates a high evidence burden and can overstate outcomes, particularly where contractors or suppliers are involved.','Use scoped wording linked to incident data, controls, coverage, training and corrective actions.'),
- (['all employees included','fully inclusive workplace','100% inclusive','guaranteed equal opportunities','no pay gap','zero pay gap'],'Diversity, equality and inclusion claim','Medium','Absolute inclusion, equality or pay-gap wording may overstate outcomes unless backed by data, scope, baseline and progress evidence.','Add workforce data, baseline, scope, limitations, methodology and progress indicators.'),
+ (['forced labour free','forced labor free','free from forced labour','free from forced labor','no forced labour','no forced labor','modern slavery free','child labour free','child labor free','no child labour','no child labor','forced labour due diligence','forced labor due diligence','product traceability','supplier traceability','import controls',
+   'vrij van dwangarbeid','geen dwangarbeid','vrij van moderne slavernij','vrij van kinderarbeid','geen kinderarbeid','zorgvuldigheidsplicht dwangarbeid','producttraceerbaarheid','traceerbaarheid van leveranciers','importcontroles',
+   'sans travail forcé',"exempt de travail forcé",'aucun travail forcé','sans esclavage moderne','sans travail des enfants',"aucun travail des enfants",'devoir de vigilance travail forcé','traçabilité des produits','traçabilité des fournisseurs',"contrôles à l'importation"],'Forced-labour product or supply-chain claim','High','Forced Labour Regulation risk: the wording may imply product, supplier or supply-chain assurance against forced labour. Such claims require strong traceability, risk assessment, mitigation, remediation and withdrawal/customs response readiness.','Scope the wording and disclose a risk-based due-diligence process, product/supplier traceability, escalation and remediation steps.'),
+ (['all suppliers audited','all suppliers are audited','all suppliers certified','all suppliers are certified','all suppliers comply','all suppliers are compliant','all suppliers meet','100% of suppliers','fully traceable supply chain','fully audited supply chain','ethical sourcing','responsible sourcing','responsibly sourced','responsibly-sourced','ethically sourced','certified suppliers','audited suppliers','traceable suppliers','supplier code compliance','certified against our supplier code','comply with our supplier code',
+   'alle leveranciers geauditeerd','alle leveranciers zijn geauditeerd','alle leveranciers gecertificeerd','alle leveranciers zijn gecertificeerd','alle leveranciers voldoen','100% van de leveranciers','volledig traceerbare toeleveringsketen','volledig geauditeerde toeleveringsketen','ethische inkoop','verantwoorde inkoop','verantwoord ingekocht','ethisch ingekocht','gecertificeerde leveranciers','geauditeerde leveranciers','traceerbare leveranciers','naleving leverancierscode',
+   'tous les fournisseurs audités','tous nos fournisseurs sont audités','tous les fournisseurs certifiés','tous nos fournisseurs sont certifiés','tous les fournisseurs sont conformes','100% des fournisseurs','chaîne d\'approvisionnement entièrement traçable','chaîne d\'approvisionnement entièrement auditée','approvisionnement éthique','approvisionnement responsable','sourcing responsable','fournisseurs certifiés','fournisseurs audités','fournisseurs traçables','conformité au code fournisseur'],'Supply-chain or supplier-responsibility claim','High','The wording may imply broad supplier control or responsible value-chain coverage. It is problematic where supplier tiers, audit quality, worker voice, findings and remediation are not clear.','Scope the claim to covered supplier tiers and disclose coverage, methodology, findings and corrective-action closure rates.'),
+ (['human rights compliant','respect human rights across our value chain','protect human rights across our value chain','respect human rights in our supply chain','living wage across our supply chain','decent work guaranteed','guaranteed labour rights','guaranteed labor rights','fair wages across our supply chain','no discrimination','zero discrimination','equal pay guaranteed',
+   'conform mensenrechten','respecteren mensenrechten in onze waardeketen','beschermen mensenrechten in onze waardeketen','respecteren mensenrechten in onze toeleveringsketen','leefbaar loon in onze toeleveringsketen','gegarandeerd waardig werk','gegarandeerde arbeidsrechten','eerlijke lonen in onze toeleveringsketen','geen discriminatie','nul discriminatie','gegarandeerde gelijke beloning',
+   'conforme aux droits humains','respect des droits humains dans notre chaîne de valeur','protection des droits humains dans notre chaîne de valeur','respect des droits humains dans notre chaîne d\'approvisionnement','salaire vital dans notre chaîne d\'approvisionnement','travail décent garanti','droits du travail garantis','salaires équitables dans notre chaîne d\'approvisionnement','aucune discrimination','discrimination zéro','égalité salariale garantie'],'Human-rights or labour-rights claim','High','The claim refers to sensitive rights topics and may overstate outcomes or control without due diligence, grievance channels, tracking and remedy.','State the due-diligence process, salient risks, coverage, grievance channels, tracking, limits and remediation process.'),
+ (['safe workplace guaranteed','zero accidents','zero harm','injury free','guaranteed safe workplace','no workplace injuries',
+   'gegarandeerd veilige werkplek','nul ongevallen','geen letsel','letselvrij','geen arbeidsongevallen',
+   'lieu de travail sûr garanti','zéro accident','zéro blessure','sans blessure','aucun accident du travail'],'Health, safety or worker-welfare claim','High','Absolute safety or welfare wording creates a high evidence burden and can overstate outcomes, particularly where contractors or suppliers are involved.','Use scoped wording linked to incident data, controls, coverage, training and corrective actions.'),
+ (['all employees included','fully inclusive workplace','100% inclusive','guaranteed equal opportunities','no pay gap','zero pay gap',
+   'alle werknemers inbegrepen','volledig inclusieve werkplek','100% inclusief','gegarandeerde gelijke kansen','geen loonkloof','nul loonkloof',
+   'tous les employés inclus','lieu de travail entièrement inclusif','100% inclusif','égalité des chances garantie','aucun écart salarial','écart salarial zéro'],'Diversity, equality and inclusion claim','Medium','Absolute inclusion, equality or pay-gap wording may overstate outcomes unless backed by data, scope, baseline and progress evidence.','Add workforce data, baseline, scope, limitations, methodology and progress indicators.'),
  (_ASPIRATIONAL_SOCIAL_VERBS,'Aspirational or future social-performance claim','High','The wording describes an ambition or ongoing effort ("working towards", "wish to build a world where") rather than an achieved, current-state outcome. Aspirational, forward-looking commitments on wages, human rights or working conditions are treated as a relevant social-washing risk indicator whenever no baseline, timeline or achieved result is given -- not as evidence of a specific academic finding about how common or dominant this pattern is in any sector.','State what has actually been achieved to date and on what evidence basis, and give a specific timeline and measurable target for the remaining ambition. Do not present an ongoing effort as if it were a current outcome.'),
 ]
 
@@ -3489,28 +3566,42 @@ class Handler(BaseHTTPRequestHandler):
 # The scan should retain enough claim signals to be useful, but only where wording is a real
 # sustainability claim signal (not a neutral reference such as 'backing British suppliers').
 V55_GREEN_EXTRA_PATTERNS = [
-    ('Generic environmental claim', 'High', ['more sustainable','sustainable fashion','sustainable clothing','sustainable garment','sustainable garments','sustainable product','sustainable products','sustainable collection','sustainable range','sustainable choice','sustainable materials','sustainable cotton','sustainable viscose','sustainable fibres','sustainable fibers','sustainably sourced','responsibly sourced material','responsible materials','lower-impact material','low-impact material','eco-design','eco design','conscious collection','join life','preferred materials'],
+    ('Generic environmental claim', 'High', ['more sustainable','sustainable fashion','sustainable clothing','sustainable garment','sustainable garments','sustainable product','sustainable products','sustainable collection','sustainable range','sustainable choice','sustainable materials','sustainable cotton','sustainable viscose','sustainable fibres','sustainable fibers','sustainably sourced','responsibly sourced material','responsible materials','lower-impact material','low-impact material','eco-design','eco design','conscious collection','join life','preferred materials',
+     'duurzamer','duurzame mode','duurzame kleding','duurzaam kledingstuk','duurzame kledingstukken','duurzaam product','duurzame producten','duurzame collectie','duurzaam gamma','duurzame keuze','duurzame materialen','duurzaam katoen','duurzame viscose','duurzame vezels','duurzaam ingekocht','verantwoord ingekocht materiaal','verantwoorde materialen','materiaal met lagere impact','bewuste collectie','voorkeursmaterialen',
+     'plus durable','mode durable','vêtements durables','vêtement durable','produit durable','produits durables','collection durable','gamme durable','choix durable','matériaux durables','coton durable','viscose durable','fibres durables','sourcé de manière durable','matériau responsable','matériaux responsables','matériau à impact réduit','éco-conception','collection consciente','matériaux préférés'],
      'EmpCo risk: broad environmental wording such as sustainable, eco, conscious, preferred or lower-impact can be misleading where the exact environmental attribute, scope and evidence are not clear on the same medium.',
      'Specify the exact attribute, product/material scope, baseline, method, evidence, reporting period and limitations.'),
-    ('Recycled / recyclable material claim', 'Medium', ['recycled polyester','recycled cotton','recycled material','recycled materials','made from recycled','made with recycled','recyclable packaging','recycled packaging','recyclable materials','circular material','circular materials','is recyclable','are recyclable','fully recyclable','widely recyclable','easily recyclable','recyclable bottle','recyclable container'],
+    ('Recycled / recyclable material claim', 'Medium', ['recycled polyester','recycled cotton','recycled material','recycled materials','made from recycled','made with recycled','recyclable packaging','recycled packaging','recyclable materials','circular material','circular materials','is recyclable','are recyclable','fully recyclable','widely recyclable','easily recyclable','recyclable bottle','recyclable container',
+     'gerecycleerd polyester','gerecycleerd katoen','gerecycleerd materiaal','gerecycleerde materialen','gemaakt van gerecycleerd','gemaakt met gerecycleerd','recycleerbare verpakking','gerecycleerde verpakking','recycleerbare materialen','circulair materiaal','circulaire materialen','is recycleerbaar','zijn recycleerbaar','volledig recycleerbaar','breed recycleerbaar','gemakkelijk recycleerbaar','recycleerbare fles',
+     'polyester recyclé','coton recyclé','matériau recyclé','matériaux recyclés','fabriqué à partir de matériaux recyclés','fabriqué avec des matériaux recyclés','emballage recyclable','emballage recyclé','matériaux recyclables','matériau circulaire','matériaux circulaires','est recyclable','sont recyclables','entièrement recyclable','largement recyclable','facilement recyclable','bouteille recyclable','contenant recyclable'],
      'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
      'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.'),
-    ('Generic environmental claim', 'High', ['environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','eco-friendly','climate friendly','green choice','eco choice','green product','eco product'],
+    ('Generic environmental claim', 'High', ['environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','eco-friendly','climate friendly','green choice','eco choice','green product','eco product',
+     'milieuvriendelijk','milieuvriendelijke','beter voor de planeet','goed voor de planeet','klimaatvriendelijk','groene keuze','groen product',
+     "respectueux de l'environnement",'respectueux du climat','meilleur pour la planète','bon pour la planète','choix vert','choix écologique','produit vert','produit écologique'],
      'EmpCo risk: generic environmental claims are high-sensitivity claims and may be prohibited if they are not specified clearly and prominently or backed by recognised excellent environmental performance.',
      'Replace generic wording with a specific, evidence-backed statement on the exact attribute and scope.'),
 ]
 
 V55_SOCIAL_EXTRA_PATTERNS = [
-    ('Supplier-responsibility / sourcing claim', 'High', ['responsible sourcing','responsibly sourced','ethical sourcing','ethically sourced','supplier code','supplier code of conduct','supplier standards','audited suppliers','certified suppliers','traceable suppliers','traceable supply chain','supply chain traceability','responsible supply chain','sustainable sourcing','all suppliers comply','all suppliers meet','supplier due diligence'],
+    ('Supplier-responsibility / sourcing claim', 'High', ['responsible sourcing','responsibly sourced','ethical sourcing','ethically sourced','supplier code','supplier code of conduct','supplier standards','audited suppliers','certified suppliers','traceable suppliers','traceable supply chain','supply chain traceability','responsible supply chain','sustainable sourcing','all suppliers comply','all suppliers meet','supplier due diligence',
+     'verantwoorde inkoop','verantwoord ingekocht','ethische inkoop','ethisch ingekocht','leverancierscode','gedragscode voor leveranciers','leveranciersnormen','geauditeerde leveranciers','gecertificeerde leveranciers','traceerbare leveranciers','traceerbare toeleveringsketen','traceerbaarheid van de toeleveringsketen','verantwoorde toeleveringsketen','duurzame inkoop','alle leveranciers voldoen','zorgvuldigheidsplicht leveranciers',
+     'approvisionnement responsable','sourcing responsable','approvisionnement éthique','sourcé de manière éthique','code fournisseur','code de conduite des fournisseurs','normes fournisseurs','fournisseurs audités','fournisseurs certifiés','fournisseurs traçables','chaîne d\'approvisionnement traçable','traçabilité de la chaîne d\'approvisionnement','chaîne d\'approvisionnement responsable','sourcing durable','tous les fournisseurs sont conformes','devoir de vigilance fournisseurs'],
      'Supplier and sourcing claims can imply control over supply-chain conduct, audit quality, traceability, due diligence or compliance. They require scope, coverage, methodology, limitations and remediation evidence.',
      'State supplier tiers covered, audit/assessment method, traceability limits, worker voice, corrective-action closure and remediation approach.'),
-    ('Human-rights / labour-rights claim', 'High', ['human rights due diligence','respect human rights','protect human rights','labour rights','labor rights','worker rights','fair wages','living wage','decent work','no child labour','no child labor'],
+    ('Human-rights / labour-rights claim', 'High', ['human rights due diligence','respect human rights','protect human rights','labour rights','labor rights','worker rights','fair wages','living wage','decent work','no child labour','no child labor',
+     'zorgvuldigheidsplicht mensenrechten','respecteren mensenrechten','beschermen mensenrechten','arbeidsrechten','rechten van werknemers','eerlijke lonen','leefbaar loon','waardig werk','geen kinderarbeid',
+     'devoir de vigilance droits humains','respect des droits humains','protection des droits humains','droits du travail','droits des travailleurs','salaires équitables','salaire vital','travail décent','aucun travail des enfants'],
      'Human-rights or labour-rights wording is a high-sensitivity social claim where due diligence, salient risks, grievance channels and remedy are not visible.',
      'Connect the claim to salient-risk assessment, governance, grievance channels, tracking and remedy.'),
-    ('Forced-labour product or supply-chain claim', 'High', ['forced labour free','forced labor free','free from forced labour','free from forced labor','modern slavery free','no forced labour','no forced labor','forced-labour due diligence','forced labor due diligence'],
+    ('Forced-labour product or supply-chain claim', 'High', ['forced labour free','forced labor free','free from forced labour','free from forced labor','modern slavery free','no forced labour','no forced labor','forced-labour due diligence','forced labor due diligence',
+     'vrij van dwangarbeid','geen dwangarbeid','vrij van moderne slavernij','zorgvuldigheidsplicht dwangarbeid',
+     'sans travail forcé','exempt de travail forcé','aucun travail forcé','sans esclavage moderne','devoir de vigilance travail forcé'],
      'Forced-labour or modern-slavery assurance wording can create a product/supply-chain compliance impression under the EU Forced Labour Regulation lens.',
      'Scope the claim and document product/supplier traceability, forced-labour risk assessment, mitigation, remediation and withdrawal/customs response readiness.'),
-    ('Broad social-impact claim', 'Medium', ['positive social impact','positive impact on communities','support communities','supporting communities','empowering communities','inclusive growth'],
+    ('Broad social-impact claim', 'Medium', ['positive social impact','positive impact on communities','support communities','supporting communities','empowering communities','inclusive growth',
+     'positieve sociale impact','positieve impact op gemeenschappen','ondersteunen van gemeenschappen','gemeenschappen versterken','inclusieve groei',
+     'impact social positif','impact positif sur les communautés','soutien aux communautés','autonomisation des communautés','croissance inclusive'],
      'Broad community or social-impact wording can overstate outcomes where stakeholders, geography, metrics and limitations are not defined.',
      'Specify stakeholder group, geography, objective, indicators, period, evidence and limitations.'),
 ]
@@ -3603,7 +3694,7 @@ def _looks_like_toc_or_index(excerpt):
     words=c.split()
     if len(words) >= 8:
         cap_starts=sum(1 for w in words if w[:1].isupper())
-        if cap_starts/len(words) > 0.5 and not re.search(r'\b(we|our|is|are|has|have|will|to)\b', c.lower()):
+        if cap_starts/len(words) > 0.5 and not re.search(r'\b(we|our|is|are|has|have|will|to|wij|we|onze|zijn|heeft|hebben|zal|naar|nous|notre|nos|est|sont|a|ont|sera|à)\b', c.lower()):
             return True
     # v57n: very short excerpts made up of two or more bare, verb-less fragments (e.g.
     # "Responsible sourcing . Environment.") are typically adjacent section headings glued
@@ -3648,7 +3739,9 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if sum(1 for m in letterhead_markers if m in c) >= 2:
         return False
     # Exclude headings that have no claim object.
-    if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon']):
+    if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon',
+        'product','verpakking','materiaal','leverancier','rechten','loon','gemeenschap','gerecycleerd','recycleerbaar','koolstof',
+        'produit','emballage','matériau','fournisseur','droits','salaire','communauté','recyclé','recyclable','carbone']):
         return False
     if 'challenges' in c and 'opportunities' in c:
         return False
@@ -3722,7 +3815,7 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         'experts say','analysts say','critics argue','research suggests','study found','survey found',
         'across the industry','industry-wide','other brands','other companies','competitors',
         'happening across','trend in the industry']
-    has_first_person=bool(re.search(r'\b(we|our|us)\b', c))
+    has_first_person=bool(re.search(r'\b(we|our|us|wij|we|ons|onze|nous|notre|nos)\b', c))
     if any(x in c for x in third_party_context) and not has_first_person:
         return False
     # v57f: describing that staff/teams are trained or educated ON a topic is a capacity-building
@@ -3818,7 +3911,13 @@ def social_specification_check(claim_type, claim_text):
     c=(claim_text or '').lower(); t=(claim_type or '').lower()
     specificity_terms=['%','audit','audited','certified','certification','scope','tier 1','tier 2','due diligence',
                         'grievance','remediation','remediated','traceab','methodology','assessment','assessed',
-                        'according to','standard','iso','sa8000','third-party','independent','kpi','baseline','policy']
+                        'according to','standard','iso','sa8000','third-party','independent','kpi','baseline','policy',
+                        'audit','geauditeerd','gecertificeerd','certificering','reikwijdte','zorgvuldigheidsplicht',
+                        'klachtenmechanisme','herstelmaatregel','traceerbaar','methodologie','beoordeling','beoordeeld',
+                        'volgens','norm','onafhankelijk','nulmeting','beleid',
+                        'audité','certifié','certification','périmètre','devoir de vigilance',
+                        'mécanisme de plainte','mesure corrective','traçable','méthodologie','évaluation','évalué',
+                        'selon','norme','indépendant','année de référence','politique']
     has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%\b', c))
     if t.startswith('no ') or t.startswith('no material'):
         return {'status':'Not applicable','comment':'No material social claim was detected.'}
@@ -3948,13 +4047,14 @@ def detect_green_claims(text):
     # "contains 30% recycled content") use an arbitrary number, so a fixed trigger phrase can
     # never match them -- a small regex catches the pattern regardless of the exact percentage.
     hits=0
-    for m in _PERCENT_RECYCLED_RE.finditer(text or ''):
-        if hits >= 3: break
-        _v55_add_finding(fs, seen, text, m.group(0), 'Recycled / recyclable material claim', 'Medium',
-                          'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
-                          'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.',
-                          'green', 62)
-        hits += 1
+    for rx in (_PERCENT_RECYCLED_RE, _PERCENT_RECYCLED_NL_RE, _PERCENT_RECYCLED_FR_RE):
+        for m in rx.finditer(text or ''):
+            if hits >= 3: break
+            _v55_add_finding(fs, seen, text, m.group(0), 'Recycled / recyclable material claim', 'Medium',
+                              'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
+                              'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.',
+                              'green', 62)
+            hits += 1
     fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:12]
     if not fs:
         fs.append(enrich_green_finding({'dimension':'green','type':'No material problematic green claim retained','risk':'Low','claim':'No exact problematic green claim was retained from the reviewed material.','issue':'The scan did not retain a direct EmpCo blacklisted-practice indicator or high-sensitivity environmental claim. General sustainability context is not scored as a problematic claim unless it contains specific claim wording.','rewrite':'No rewrite is needed unless the company wants to make a specific environmental claim.','claim_score':8,'standards':['General green-claim quality review'],'action':'Keep environmental claims specific, scoped and evidence-backed.','problematic_terms':[]},''))
