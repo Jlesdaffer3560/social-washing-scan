@@ -3582,7 +3582,7 @@ V55_GREEN_EXTRA_PATTERNS = [
      'more sustainable','sustainable product','sustainable products','sustainable collection','sustainable range','sustainable choice','sustainable materials','sustainably sourced','responsibly sourced material','responsible materials','lower-impact material','low-impact material','eco-design','eco design','preferred materials','sustainable business','sustainable operations','sustainable practices',
      'sustainable fashion','sustainable clothing','sustainable garment','sustainable garments','sustainable cotton','sustainable viscose','sustainable fibres','sustainable fibers','conscious collection','join life',
      'sustainable ingredients','sustainably sourced ingredients','sustainable farming','sustainable agriculture','sustainable food','sustainable packaging','sustainably farmed','sustainably grown',
-     'sustainable formula','sustainable beauty','clean beauty',
+     'sustainable formula','sustainable beauty',
      'sustainable building','sustainable construction','sustainable building materials',
      'sustainable electronics','sustainable technology','sustainable manufacturing','sustainable design',
      'sustainable mobility','sustainable transport','sustainable transportation','sustainable vehicle','sustainable vehicles',
