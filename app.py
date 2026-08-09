@@ -218,7 +218,7 @@ def _dedupe_similar_sources(items):
     listing the same event repeatedly as if it were several independent signals."""
     def _sig(it):
         title=(it.get('title','') or '').lower()
-        words=[w for w in re.findall(r'[a-z]{4,}', title) if w not in ('this','that','with','from','have','been','will','their','about')]
+        words=[w for w in re.findall(r'[a-zà-öø-ÿ]{4,}', title) if w not in ('this','that','with','from','have','been','will','their','about')]
         return frozenset(words[:8])
     clusters=[]
     for it in items:
@@ -821,7 +821,9 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     return '\n\n'.join(chunks)[:150000], pages
 
 COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
-_COMPANY_NAME_RE=re.compile(r'\b([A-Z][A-Za-z0-9&\'\.\-]*(?:\s+[A-Z][A-Za-z0-9&\'\.\-]*){0,3}\s+'+COMPANY_SUFFIXES+r')\b')
+_NAME_CAP=r'A-ZÀ-ÖØ-Þ'
+_NAME_CONT=r'A-Za-z0-9À-ÖØ-öø-ÿ'
+_COMPANY_NAME_RE=re.compile(r'\b(['+_NAME_CAP+r']['+_NAME_CONT+r'&\'\.\-]*(?:\s+['+_NAME_CAP+r']['+_NAME_CONT+r'&\'\.\-]*){0,3}\s+'+COMPANY_SUFFIXES+r')\b')
 
 def _guess_company_from_text(text):
     """Best-effort text-mining fallback for document uploads with no domain to infer from:
@@ -878,12 +880,12 @@ def query_themes_from_findings(findings):
 def summarise_ext(results):
     if not results: return "No external public-source results were returned."
     combo=" ".join((r.get("title","")+" "+r.get("content","")).lower() for r in results)
-    terms=["forced labour","forced labor","EU forced labour regulation","product ban","import ban","child labour","child labor","lawsuit","complaint","strike","union","ngo","discrimination","human rights","supplier","workers","controversy","regulator","customs","withdrawal"]
+    terms=["forced labour","forced labor","eu forced labour regulation","product ban","import ban","child labour","child labor","lawsuit","complaint","strike","union","ngo","discrimination","human rights","supplier","workers","controversy","regulator","customs","withdrawal"]
     hits=[t for t in terms if t in combo]
     return ("External results contain potentially relevant social-risk signals, including: "+", ".join(hits[:8])+". These require verification.") if hits else "External results were found, but no strong social-risk signal was detected from snippets alone."
 def infer_context(company,text,ext):
     combo=(company.get("context","")+" "+text[:20000]+" "+ext.get("summary","")).lower(); level="Medium" if "No recognised" not in company.get("context","") else "Low"
-    high=["forced labour","forced labor","EU forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","living wage","lawsuit","strike","union","human rights complaint","discrimination","regulator"]
+    high=["forced labour","forced labor","eu forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","living wage","lawsuit","strike","union","human rights complaint","discrimination","regulator"]
     med=["complaint","supplier","workers","controversy","ngo","accessibility","vulnerable customers","subcontractor","franchise"]
     if any(t in combo for t in high): level="Medium" if level=="Low" else level
     elif any(t in combo for t in med) and level=="Low": level="Medium"
@@ -1011,7 +1013,7 @@ def external_relevance_score(findings, external_research):
 
     claim_text = " ".join((f.get("type","") + " " + f.get("issue","")).lower() for f in findings)
 
-    severe_terms = ["forced labour","forced labor","EU forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","human rights complaint","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage"]
+    severe_terms = ["forced labour","forced labor","eu forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","human rights complaint","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage"]
     relevant_terms = ["human rights","labour","labor","workers","supplier","supply chain","accessibility","customer protection","discrimination","grievance","complaint","ngo","oecd","ncp","audit","wage","safety"]
 
     severe_hits = [t for t in severe_terms if t in text]
@@ -1265,7 +1267,7 @@ def build_confidence(pages,ext,findings,crawl_log=None):
 def split_scores(findings,sector,context,external_modifier,score_components=None):
     if score_components:
         return {k:score_components[k] for k in ["claim_wording_risk","substantiation_risk","external_context_risk","sector_baseline_risk"] if k in score_components}
-    claim=max(f.get("claim_score",0) for f in findings)
+    claim=max((f.get("claim_score",0) for f in findings), default=0)
     return {"claim_wording_risk":min(100,round(claim*.75)),"substantiation_risk":50,"external_context_risk":min(100,round((external_modifier or 0)*4+{"Low":5,"Medium":25,"High":50,"Very high":70}.get(context.get("level","Low"),5))),"sector_baseline_risk":{"Low":10,"Medium":35,"High":60}.get(sector.get("level","Medium"),35)}
 
 def concise_standards_lens():
@@ -1286,7 +1288,7 @@ def strict_external_context_risk(external_research, company_name=""):
         return {"score":0, "level":"Low", "note":"No usable external public-source signals were found."}
 
     company_key = (company_name or "").lower().split("/")[0].strip()
-    serious_terms = ["forced labour","forced labor","EU forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","human rights","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage","complaint","oecd","ncp"]
+    serious_terms = ["forced labour","forced labor","eu forced labour regulation","product ban","import ban","customs","withdrawal","child labour","child labor","modern slavery","human rights","lawsuit","court","regulator","regulatory","discrimination","strike","union","living wage","complaint","oecd","ncp"]
     medium_terms = ["supplier","workers","supply chain","accessibility","grievance","ngo","audit","wage","safety","customer protection"]
 
     serious_hits = 0
@@ -1326,7 +1328,7 @@ def integrated_score_view(overall_score, split_scores, external_context):
         "substantiation_risk": split_scores.get("substantiation_risk",0),
         "external_context_risk": split_scores.get("external_context_risk", external_context.get("score",0)),
         "sector_baseline_risk": split_scores.get("sector_baseline_risk",0),
-        "formula": "Overall score = 30% claim wording risk + 30% substantiation/evidence-gap risk + 25% external contradictory-context risk + 15% sector sensitivity.",
+        "formula": "Overall score = 42% claim wording risk + 24% substantiation/evidence-gap risk + 22% external contradictory-context risk + 12% sector sensitivity.",
         "weights": "High social-washing risk requires a sensitive or broad social claim, insufficient substantiation and relevant external contradiction. Sector sensitivity is a modifier only."
     }
 
