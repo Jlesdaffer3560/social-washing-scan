@@ -3579,28 +3579,28 @@ V55_GREEN_EXTRA_PATTERNS = [
      # originally built from) -- kept alongside, not replaced by, equivalents for food/beverage,
      # cosmetics, construction, electronics, automotive/mobility, energy and general business
      # wording, so the scan is not structurally biased toward apparel retailers.
-     'more sustainable','sustainable product','sustainable products','sustainable collection','sustainable range','sustainable choice','sustainable materials','sustainably sourced','responsibly sourced material','responsible materials','lower-impact material','low-impact material','eco-design','eco design','preferred materials','sustainable business','sustainable operations','sustainable practices',
+     'more sustainable','sustainable product','sustainable products','sustainable collection','sustainable range','sustainable choice','sustainable materials','sustainably sourced','responsibly sourced material','responsible materials','lower-impact material','low-impact material','eco-design','eco design','preferred materials',
      'sustainable fashion','sustainable clothing','sustainable garment','sustainable garments','sustainable cotton','sustainable viscose','sustainable fibres','sustainable fibers','conscious collection','join life',
      'sustainable ingredients','sustainably sourced ingredients','sustainable farming','sustainable agriculture','sustainable food','sustainable packaging','sustainably farmed','sustainably grown',
      'sustainable formula','sustainable beauty',
      'sustainable building','sustainable construction','sustainable building materials',
-     'sustainable electronics','sustainable technology','sustainable manufacturing','sustainable design',
+     'sustainable electronics','sustainable technology',
      'sustainable mobility','sustainable transport','sustainable transportation','sustainable vehicle','sustainable vehicles',
      'sustainable energy','sustainable banking','sustainable investment','sustainable finance',
-     'duurzamer','duurzaam product','duurzame producten','duurzame collectie','duurzaam gamma','duurzame keuze','duurzame materialen','duurzaam ingekocht','verantwoord ingekocht materiaal','verantwoorde materialen','materiaal met lagere impact','voorkeursmaterialen','duurzame onderneming','duurzame bedrijfsvoering','duurzame praktijken',
+     'duurzamer','duurzaam product','duurzame producten','duurzame collectie','duurzaam gamma','duurzame keuze','duurzame materialen','duurzaam ingekocht','verantwoord ingekocht materiaal','verantwoorde materialen','materiaal met lagere impact','voorkeursmaterialen',
      'duurzame mode','duurzame kleding','duurzaam kledingstuk','duurzame kledingstukken','duurzaam katoen','duurzame viscose','duurzame vezels','bewuste collectie',
      'duurzame ingrediënten','duurzaam ingekochte ingrediënten','duurzame landbouw','duurzaam voedsel','duurzame verpakking','duurzaam geteeld',
      'duurzame formule','duurzame schoonheidsproducten',
      'duurzaam bouwen','duurzame bouwmaterialen',
-     'duurzame elektronica','duurzame technologie','duurzaam ontwerp',
+     'duurzame elektronica','duurzame technologie',
      'duurzame mobiliteit','duurzaam transport','duurzaam voertuig','duurzame voertuigen',
      'duurzame energie','duurzaam bankieren','duurzaam beleggen','duurzame financiering',
-     'plus durable','produit durable','produits durables','collection durable','gamme durable','choix durable','matériaux durables','sourcé de manière durable','matériau responsable','matériaux responsables','matériau à impact réduit','éco-conception','matériaux préférés','entreprise durable','exploitation durable','pratiques durables',
+     'plus durable','plus durables','produit durable','produits durables','collection durable','gamme durable','choix durable','matériaux durables','sourcé de manière durable','matériau responsable','matériaux responsables','matériau à impact réduit','éco-conception','matériaux préférés',
      'mode durable','vêtements durables','vêtement durable','coton durable','viscose durable','fibres durables','collection consciente',
      'ingrédients durables','ingrédients d\'origine durable','agriculture durable','alimentation durable','emballage durable','cultivé de manière durable',
      'formule durable','beauté durable',
      'construction durable','matériaux de construction durables',
-     'électronique durable','technologie durable','fabrication durable','conception durable',
+     'électronique durable','technologie durable',
      'mobilité durable','transport durable','véhicule durable','véhicules durables',
      'énergie durable','banque durable','investissement durable','finance durable'],
      'EmpCo risk: broad environmental wording such as sustainable, eco, conscious, preferred or lower-impact can be misleading where the exact environmental attribute, scope and evidence are not clear on the same medium.',
@@ -3868,6 +3868,14 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         return False
     if dimension == 'green':
         if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
+            return False
+        # v75: "more sustainable"/"duurzamer"/"plus durable" alone is ambiguous -- English/Dutch/
+        # French "sustainable"/"duurzaam"/"durable" routinely means "financially durable" or
+        # "can be maintained long-term" with no environmental content at all ("a more sustainable
+        # approach to managing debt", "duurzamer pensioenstelsel", "modèle plus durable pour
+        # l'entreprise"). Require the same nearby product/environmental-context anchor as the bare
+        # single-word triggers above before treating it as a green claim.
+        if trig in ['more sustainable','duurzamer','plus durable','plus durables'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental','milieu','klimaat','koolstof','verpakking','materiaal','materialen','environnement','emballage','matériau','matériaux']):
             return False
         # v57g: same principles/policy meta-description pattern as social claims below, applied
         # to green wording (e.g. "sets out our approach to climate action" describes a document,
