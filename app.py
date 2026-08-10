@@ -5690,13 +5690,27 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
 
 
 def _v71_query_specs(company_name,dimension):
-    brand=_v63_company_query_names(company_name)[0]
+    names=_v63_company_query_names(company_name)
+    brand=names[0]
     q='"'+brand.replace('"','')+'"'
+    # v79: independent/organic press coverage very rarely spells out a company's full
+    # registered or marketing name ("Protix Ingredients") -- it just says "Protix". A
+    # quoted exact-phrase search on the long form systematically misses that coverage. Use
+    # the shorter brand form (already computed by _v63_company_query_names, which puts the
+    # single-token brand second precisely because it has better recall) for the
+    # topically-narrow complaint/investigation/NL/FR queries, where "complaint",
+    # "investigation" etc. keep the query specific enough that a short, less unique brand
+    # name is still a safe bet -- entity_match_details() independently verifies afterwards
+    # that any retained result is actually about this company, so a short name cannot smuggle
+    # an unrelated result past the pipeline. The plain "news"-topic queries keep the long
+    # form, since those have no other disambiguating keyword to lean on.
+    short=names[1] if len(names)>1 and names[1].lower()!=brand.lower() else brand
+    qs='"'+short.replace('"','')+'"'
     if dimension=='green':
         stakeholder=_V71_REGULATOR_DOMAINS+_V71_GREEN_STAKEHOLDER_DOMAINS
         return [
             {'query':f'{q} greenwashing misleading environmental claims fine regulator','topic':'news'},
-            {'query':f'{q} sustainability claims investigation complaint ruling','topic':'news'},
+            {'query':f'{qs} sustainability claims investigation complaint ruling','topic':'news'},
             {'query':f'{q} environmental sustainability claims enforcement','topic':'general','include_domains':stakeholder},
             # v78: a single query mixing English/French/Dutch terms in one string performs
             # poorly for surfacing genuinely Dutch- or French-language coverage -- a real
@@ -5705,18 +5719,18 @@ def _v71_query_specs(company_name,dimension):
             # results returned for the old mixed query, even though it passes every
             # downstream entity/polarity check when tested directly. Split into two clean,
             # mono-lingual queries instead of one multilingual jumble.
-            {'query':f'{q} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general','include_domains':stakeholder},
-            {'query':f'{q} allégation environnementale trompeuse plainte','topic':'general','include_domains':stakeholder},
+            {'query':f'{qs} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general','include_domains':stakeholder},
+            {'query':f'{qs} allégation environnementale trompeuse plainte','topic':'general','include_domains':stakeholder},
         ]
     stakeholder=_V71_REGULATOR_DOMAINS+_V71_SOCIAL_STAKEHOLDER_DOMAINS
     return [
         {'query':f'{q} forced labour child labour workers allegations investigation','topic':'news'},
-        {'query':f'{q} working conditions wages overtime labour rights report','topic':'news'},
+        {'query':f'{qs} working conditions wages overtime labour rights report','topic':'news'},
         {'query':f'{q} workers suppliers forced labour human rights','topic':'general','include_domains':stakeholder},
         # v78: same fix as the green queries above -- split the mixed-language query into
         # separate Dutch and French ones for better search recall.
-        {'query':f'{q} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general','include_domains':stakeholder},
-        {'query':f'{q} travail forcé plainte conditions de travail','topic':'general','include_domains':stakeholder},
+        {'query':f'{qs} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general','include_domains':stakeholder},
+        {'query':f'{qs} travail forcé plainte conditions de travail','topic':'general','include_domains':stakeholder},
     ]
 
 
