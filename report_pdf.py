@@ -85,12 +85,32 @@ def clean_text(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+_DANGLING_TRAIL_WORDS = {
+    "and", "or", "the", "a", "an", "of", "in", "on", "at", "to", "is", "are",
+    "with", "by", "for", "as", "that", "this", "not", "no", "its", "it's",
+}
+
+
 def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
     text = clean_text(value)
     if len(text) <= max_chars:
         return text
     cut = text[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:.")
-    return cut + suffix
+    # Word-boundary truncation can still leave a dangling conjunction/article as the
+    # final word (e.g. "...limitations and"), or end partway through an opened-but-
+    # never-closed quotation (e.g. "...matching the “Absolute or purity environmental" --
+    # the quote mark opened several words earlier, not just on the final word). Keep
+    # backing up one word at a time rather than ship a fragment ending in "and." or a
+    # dangling, unclosed quote.
+    def _unclosed_quote(s):
+        return (s.count("“") + s.count("”") + s.count('"')) % 2 == 1
+    while cut:
+        bare = cut.rsplit(" ", 1)[-1].strip("“”\"'").lower()
+        if bare in _DANGLING_TRAIL_WORDS or _unclosed_quote(cut):
+            cut = cut.rsplit(" ", 1)[0].rstrip(" ,;:.") if " " in cut else ""
+        else:
+            break
+    return (cut + suffix) if cut else clean_text(value)[:max_chars].rstrip() + suffix
 
 
 def first_sentence(value, max_chars=190) -> str:
@@ -205,7 +225,20 @@ def why_text(claim, max_chars=150):
 def evidence_gap_text(claim, max_chars=125):
     evidence = claim.get("evidence_needed")
     if isinstance(evidence, (list, tuple)) and evidence:
-        return bounded_text("; ".join(str(x) for x in evidence[:5]), max_chars)
+        # Truncate at whole-item boundaries rather than mid-item: a semicolon-joined list
+        # cut by raw character count can land inside the last item (e.g. "limitations and
+        # exclusions" -> "limitations and"), which bounded_text's dangling-word cleanup can
+        # only patch up to a point. Keep only as many complete items as fit.
+        items = [str(x) for x in evidence[:5]]
+        kept, total = [], 0
+        for item in items:
+            added = (2 if kept else 0) + len(item)
+            if kept and total + added > max_chars:
+                break
+            kept.append(item)
+            total += added
+        result = "; ".join(kept) if kept else "; ".join(items)
+        return result + "." if len(result) <= max_chars else bounded_text(result, max_chars)
     if isinstance(evidence, str) and evidence:
         return bounded_text(evidence, max_chars)
     return "Scope, methodology, evidence period, verification basis and limitations."
