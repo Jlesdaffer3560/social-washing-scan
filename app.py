@@ -863,18 +863,22 @@ def google_search(query, max_results=5):
 
 
 def query_themes_from_findings(findings):
-    themes=set()
+    # v77: NL/FR baseline themes go first (in an order-preserving list, not a set -- a set
+    # would not guarantee they survive the [:9] cap below) so a company whose real press
+    # coverage is mainly Dutch or French (common across the Benelux/France market) still gets
+    # searched in those languages -- see the matching note on green_query_themes().
+    themes=["dwangarbeid misstanden arbeidsomstandigheden klacht", "travail forcé plainte conditions de travail"]
     joined=" ".join((f.get("type","")+" "+f.get("claim","")).lower() for f in (findings or []))
-    if "supplier" in joined or "supply" in joined: themes.update(["supplier labour rights controversy", "forced labour supply chain", "audit failure worker voice remediation", "workers wage complaint", "NGO labour rights report", "EU forced labour regulation supply chain product import"])
-    if "forced" in joined or "modern slavery" in joined: themes.update(["forced labour products regulation investigation", "modern slavery supply chain import ban", "forced labour product withdrawal customs EU"])
-    if "human" in joined or "labour" in joined or "labor" in joined: themes.update(["human rights complaint", "labour rights lawsuit", "modern slavery forced labour", "workers rights NGO report"])
-    if "diversity" in joined or "inclusion" in joined or "equality" in joined: themes.update(["discrimination lawsuit", "diversity inclusion controversy", "pay gap equal opportunity complaint"])
-    if "safety" in joined or "worker" in joined or "welfare" in joined: themes.update(["worker safety accident", "union strike working conditions", "employee welfare complaint"])
-    if "customer" in joined or "accessibility" in joined or "vulnerable" in joined: themes.update(["customer protection regulator complaint", "accessibility complaint", "vulnerable customers investigation"])
-    if "community" in joined or "impact" in joined: themes.update(["community impact criticism", "affected communities complaint", "social impact controversy"])
-    if not themes:
-        themes.update(["social responsibility criticism", "human rights labour controversy", "workers supplier complaint"])
-    return list(themes)[:8]
+    if "supplier" in joined or "supply" in joined: themes += ["supplier labour rights controversy", "forced labour supply chain", "audit failure worker voice remediation", "workers wage complaint", "NGO labour rights report", "EU forced labour regulation supply chain product import"]
+    if "forced" in joined or "modern slavery" in joined: themes += ["forced labour products regulation investigation", "modern slavery supply chain import ban", "forced labour product withdrawal customs EU"]
+    if "human" in joined or "labour" in joined or "labor" in joined: themes += ["human rights complaint", "labour rights lawsuit", "modern slavery forced labour", "workers rights NGO report"]
+    if "diversity" in joined or "inclusion" in joined or "equality" in joined: themes += ["discrimination lawsuit", "diversity inclusion controversy", "pay gap equal opportunity complaint"]
+    if "safety" in joined or "worker" in joined or "welfare" in joined: themes += ["worker safety accident", "union strike working conditions", "employee welfare complaint"]
+    if "customer" in joined or "accessibility" in joined or "vulnerable" in joined: themes += ["customer protection regulator complaint", "accessibility complaint", "vulnerable customers investigation"]
+    if "community" in joined or "impact" in joined: themes += ["community impact criticism", "affected communities complaint", "social impact controversy"]
+    if len(themes) <= 2:
+        themes += ["social responsibility criticism", "human rights labour controversy", "workers supplier complaint"]
+    return list(dict.fromkeys(themes))[:9]
 
 
 def summarise_ext(results):
@@ -2135,14 +2139,20 @@ def enrich_green_finding(f, trigger=''):
 
 def green_query_themes(findings):
     joined=' '.join((f.get('type','')+' '+f.get('claim','')).lower() for f in findings or [])
-    themes=[]
+    # v77: NL/FR baseline themes go first, so they are never crowded out by the per-category
+    # English themes below once the list is capped -- a company whose real press coverage is
+    # mainly Dutch or French (common across the Benelux/France market this scan targets) would
+    # otherwise never get searched in those languages at all. The post-hoc relevance filter
+    # already recognises Dutch/French greenwashing vocabulary (_V71_GREEN_EXPLICIT etc.), but
+    # that only helps once a search actually returns Dutch/French-language results to filter.
+    themes=['misleidende duurzaamheidsclaim klacht greenwashing','greenwashing allégation environnementale trompeuse plainte']
     if 'climate' in joined or 'carbon' in joined or 'net zero' in joined: themes += ['greenwashing carbon neutral offset claim','net zero misleading advertising complaint']
     if 'generic' in joined or 'sustainable' in joined: themes += ['greenwashing sustainable claim advertising regulator','misleading environmental claim complaint']
     if 'comparative' in joined or 'lower' in joined: themes += ['misleading lower emissions comparison complaint','environmental comparison advertising claim']
     if 'label' in joined or 'certification' in joined: themes += ['sustainability label misleading certification complaint','eco label greenwashing']
     if 'circular' in joined or 'recycl' in joined or 'durab' in joined: themes += ['recyclable claim greenwashing complaint','circularity claim misleading advertising']
-    if not themes: themes=['greenwashing misleading environmental claims complaint']
-    return list(dict.fromkeys(themes))[:8]
+    if len(themes) <= 2: themes.append('greenwashing misleading environmental claims complaint')
+    return list(dict.fromkeys(themes))[:9]
 
 
 def summarise_green_ext(results):
