@@ -5698,14 +5698,25 @@ def _v71_query_specs(company_name,dimension):
             {'query':f'{q} greenwashing misleading environmental claims fine regulator','topic':'news'},
             {'query':f'{q} sustainability claims investigation complaint ruling','topic':'news'},
             {'query':f'{q} environmental sustainability claims enforcement','topic':'general','include_domains':stakeholder},
-            {'query':f'{q} greenwashing ecoblanchiment misleidende milieuclaims','topic':'general','include_domains':stakeholder},
+            # v78: a single query mixing English/French/Dutch terms in one string performs
+            # poorly for surfacing genuinely Dutch- or French-language coverage -- a real
+            # negative article (found live, missed entirely: "Klacht tegen insectenfabriek
+            # Protix wegens misleidende duurzaamheidsclaims") never appeared in the 23 raw
+            # results returned for the old mixed query, even though it passes every
+            # downstream entity/polarity check when tested directly. Split into two clean,
+            # mono-lingual queries instead of one multilingual jumble.
+            {'query':f'{q} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general','include_domains':stakeholder},
+            {'query':f'{q} allégation environnementale trompeuse plainte','topic':'general','include_domains':stakeholder},
         ]
     stakeholder=_V71_REGULATOR_DOMAINS+_V71_SOCIAL_STAKEHOLDER_DOMAINS
     return [
         {'query':f'{q} forced labour child labour workers allegations investigation','topic':'news'},
         {'query':f'{q} working conditions wages overtime labour rights report','topic':'news'},
         {'query':f'{q} workers suppliers forced labour human rights','topic':'general','include_domains':stakeholder},
-        {'query':f'{q} travail forcé dwangarbeid arbeidsomstandigheden conditions de travail','topic':'general','include_domains':stakeholder},
+        # v78: same fix as the green queries above -- split the mixed-language query into
+        # separate Dutch and French ones for better search recall.
+        {'query':f'{q} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general','include_domains':stakeholder},
+        {'query':f'{q} travail forcé plainte conditions de travail','topic':'general','include_domains':stakeholder},
     ]
 
 
