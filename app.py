@@ -5719,18 +5719,30 @@ def _v71_query_specs(company_name,dimension):
             # results returned for the old mixed query, even though it passes every
             # downstream entity/polarity check when tested directly. Split into two clean,
             # mono-lingual queries instead of one multilingual jumble.
-            {'query':f'{qs} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general','include_domains':stakeholder},
-            {'query':f'{qs} allégation environnementale trompeuse plainte','topic':'general','include_domains':stakeholder},
+            # v80: deeper still -- these two were *also* restricted to `stakeholder`, a
+            # hardcoded allowlist of ~13 major English-language outlets (Reuters, Guardian,
+            # BBC, Greenpeace...) with zero Belgian/Dutch/French domains on it. Tavily's and
+            # Serper's include_domains is a hard filter, not a preference, so a Dutch or
+            # French-language query combined with that allowlist could *never* return a
+            # Dutch or French result -- the two restrictions directly contradicted each
+            # other. Dropped include_domains here so these queries can actually reach
+            # local-language independent press; the query text's own specificity plus
+            # entity_match_details()/is_green_negative_source() downstream still gate what
+            # gets retained.
+            {'query':f'{qs} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general'},
+            {'query':f'{qs} allégation environnementale trompeuse plainte','topic':'general'},
         ]
     stakeholder=_V71_REGULATOR_DOMAINS+_V71_SOCIAL_STAKEHOLDER_DOMAINS
     return [
         {'query':f'{q} forced labour child labour workers allegations investigation','topic':'news'},
         {'query':f'{qs} working conditions wages overtime labour rights report','topic':'news'},
         {'query':f'{q} workers suppliers forced labour human rights','topic':'general','include_domains':stakeholder},
-        # v78: same fix as the green queries above -- split the mixed-language query into
-        # separate Dutch and French ones for better search recall.
-        {'query':f'{qs} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general','include_domains':stakeholder},
-        {'query':f'{qs} travail forcé plainte conditions de travail','topic':'general','include_domains':stakeholder},
+        # v78/v80: split mixed-language query into Dutch and French, and (see the matching
+        # v80 note on the green queries above) dropped the English-outlet-only
+        # include_domains restriction that made a Dutch/French result structurally
+        # impossible to return in the first place.
+        {'query':f'{qs} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general'},
+        {'query':f'{qs} travail forcé plainte conditions de travail','topic':'general'},
     ]
 
 
