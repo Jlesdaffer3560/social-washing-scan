@@ -3742,6 +3742,37 @@ def _looks_like_toc_or_index(excerpt):
             return True
     return False
 
+def _looks_like_impersonal_non_claim(excerpt):
+    """v76: two real-world false positives (found via live company scan alerts) share a root
+    cause -- the excerpt describes something in general or third-party terms rather than the
+    reviewed company asserting it about itself, and reads as ordinary prose so nothing else
+    catches it. (1) An ESG-glossary page: "Carbon Neutral. Achieving a net-zero carbon footprint
+    by balancing carbon emissions with carbon removal or offsetting." was flagged as if it were
+    the company's own claim -- it is a definition of the term, not an assertion the company
+    makes about itself. (2) A sourcing-policy clause: "the customer is responsible to conduct
+    due diligence on its suppliers and ensure that only responsibly sourced material..." was
+    flagged the same way -- the customer, not the reviewed company, is the actor. Both share one
+    signal: no first-person company voice (we/our/us) anywhere in the excerpt, combined with
+    either (a) a short capitalised term immediately followed by an impersonal, gerund-led
+    definition sentence, or (b) a named third party (the customer/buyer/supplier/"you") as the
+    one responsible for the described action. Badge/label-style short claims ("100% Recycled",
+    "Carbon Neutral" on its own, with no definition sentence attached) match neither pattern and
+    are unaffected."""
+    c=(excerpt or '').strip()
+    if not c or re.search(r'\b(we|our|us|wij|onze|ons|nous|notre|nos)\b', c, re.I):
+        return False
+    if re.match(r'^[A-Z][A-Za-z0-9\-\séèëïàâôûùç]{1,40}\.\s+(Achieving|Reducing|Ensuring|Balancing|Measuring|Offsetting|Meaning|Referring|Supporting|Delivering|Providing|Creating|Building|Promoting|Protecting|Enabling|Improving|Defined|Involving|Covering|Bereiken|Verminderen|Zorgen|Compenseren|Betekent|Atteindre|Réduire|Assurer|Compenser|Signifie|Garantir)\b', c):
+        return True
+    third_party_actor=['the customer is responsible','the buyer is responsible','the supplier is responsible',
+        'the client is responsible','you are responsible','your company must','you must ensure',
+        'the customer must ensure','the customer must conduct','it is the customer','it is the buyer',
+        'it is the supplier','de klant is verantwoordelijk','de koper is verantwoordelijk','de leverancier is verantwoordelijk',
+        'u bent verantwoordelijk','le client est responsable','l\'acheteur est responsable','le fournisseur est responsable',
+        'vous êtes responsable']
+    if any(p in c.lower() for p in third_party_actor):
+        return True
+    return False
+
 def _v55_claim_context_ok(excerpt, trigger, dimension):
     c=(excerpt or '').lower(); trig=(trigger or '').lower()
     # v73: a blanket 25-character minimum previously rejected short-but-material claims
@@ -3752,6 +3783,8 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if not c.strip():
         return False
     if _looks_like_toc_or_index(excerpt):
+        return False
+    if _looks_like_impersonal_non_claim(excerpt):
         return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
