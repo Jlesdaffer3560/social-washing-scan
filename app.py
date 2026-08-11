@@ -5640,7 +5640,7 @@ def _v71_google_query(query,include_domains=None,exclude_domains=None):
     return value
 
 
-def search_public_sources(query,max_results=8,topic='general',include_domains=None,exclude_domains=None):
+def search_public_sources(query,max_results=8,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
     """Combine configured providers while preserving source and company-domain controls."""
     attempts=[]; gathered=[]
     def _run(provider):
@@ -5657,7 +5657,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
             if not TAVILY_API_KEY:
                 return [],{'provider':provider,'status':'not_configured'}
             try:
-                res=tavily_search(query,max_results,topic=topic,include_domains=include_domains,exclude_domains=exclude_domains)
+                res=tavily_search(query,max_results,topic=topic,include_domains=include_domains,exclude_domains=exclude_domains,search_depth=search_depth)
                 for item in res: item['provider']=provider
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
@@ -5729,8 +5729,14 @@ def _v71_query_specs(company_name,dimension):
             # local-language independent press; the query text's own specificity plus
             # entity_match_details()/is_green_negative_source() downstream still gate what
             # gets retained.
-            {'query':f'{qs} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general'},
-            {'query':f'{qs} allégation environnementale trompeuse plainte','topic':'general'},
+            # v81: Tavily's 'basic' search_depth is a lighter, cheaper retrieval pass that can
+            # miss smaller/less-prominent pages; 'advanced' does deeper retrieval at higher
+            # API cost, which is a reasonable trade specifically for the two local-language
+            # queries above -- they are the ones most likely to be searching a smaller,
+            # non-mainstream domain in the first place. Not applied to the English queries,
+            # which already lean on major outlets where 'basic' performs well.
+            {'query':f'{qs} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general','search_depth':'advanced'},
+            {'query':f'{qs} allégation environnementale trompeuse plainte','topic':'general','search_depth':'advanced'},
         ]
     stakeholder=_V71_REGULATOR_DOMAINS+_V71_SOCIAL_STAKEHOLDER_DOMAINS
     return [
@@ -5741,8 +5747,10 @@ def _v71_query_specs(company_name,dimension):
         # v80 note on the green queries above) dropped the English-outlet-only
         # include_domains restriction that made a Dutch/French result structurally
         # impossible to return in the first place.
-        {'query':f'{qs} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general'},
-        {'query':f'{qs} travail forcé plainte conditions de travail','topic':'general'},
+        # v81: 'advanced' search_depth for these two -- see the matching note on the green
+        # queries above.
+        {'query':f'{qs} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general','search_depth':'advanced'},
+        {'query':f'{qs} travail forcé plainte conditions de travail','topic':'general','search_depth':'advanced'},
     ]
 
 
@@ -5753,7 +5761,8 @@ def _v71_run_query_specs(specs,reviewed_pages=None):
     def _one(spec):
         query=spec['query']
         return spec,search_public_sources(query,EXTERNAL_SIGNAL_RESULTS_PER_QUERY,
-            topic=spec.get('topic','general'),include_domains=spec.get('include_domains'),exclude_domains=official)
+            topic=spec.get('topic','general'),include_domains=spec.get('include_domains'),exclude_domains=official,
+            search_depth=spec.get('search_depth','basic'))
     with ThreadPoolExecutor(max_workers=min(EXTERNAL_SIGNAL_WORKERS,len(specs) or 1)) as pool:
         futures=[pool.submit(_one,spec) for spec in specs]
         for future in as_completed(futures):
