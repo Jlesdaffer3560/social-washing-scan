@@ -5735,8 +5735,14 @@ def _v71_query_specs(company_name,dimension):
             # queries above -- they are the ones most likely to be searching a smaller,
             # non-mainstream domain in the first place. Not applied to the English queries,
             # which already lean on major outlets where 'basic' performs well.
-            {'query':f'{qs} misleidende duurzaamheidsclaim klacht greenwashing','topic':'general','search_depth':'advanced'},
-            {'query':f'{qs} allégation environnementale trompeuse plainte','topic':'general','search_depth':'advanced'},
+            # v82: named the actual Dutch/French national advertising-standards regulators
+            # (Reclame Code Commissie, ARPP) explicitly, the same way the English queries
+            # already say "regulator" -- a real, live complaint found during this
+            # investigation ("Wakker Dier dient een klacht in bij de Reclame Code Commissie
+            # tegen Protix") uses this exact institution name, and any future NL/FR
+            # greenwashing complaint is likewise likely to be filed with it.
+            {'query':f'{qs} misleidende duurzaamheidsclaim klacht Reclame Code Commissie greenwashing','topic':'general','search_depth':'advanced'},
+            {'query':f'{qs} allégation environnementale trompeuse plainte ARPP','topic':'general','search_depth':'advanced'},
         ]
     stakeholder=_V71_REGULATOR_DOMAINS+_V71_SOCIAL_STAKEHOLDER_DOMAINS
     return [
