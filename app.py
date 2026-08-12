@@ -767,7 +767,17 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
 
     if time.time()<deadline-2:
         try:
-            for u in discover_sitemap_urls(url,deadline=deadline):
+            # A retail/grocery site's sitemap index can have several large child sitemaps
+            # (product/category listings), and discover_sitemap_urls() fetches up to 8 of
+            # them sequentially. Handing it the full crawl deadline let that sequential
+            # fetching alone consume the entire remaining budget on some sites before a
+            # single actual page got fetched below -- crawl() would then return just the
+            # homepage with no failed attempts logged (nothing else was ever tried, not
+            # even the unconditional COMMON_PUBLIC_PATHS candidates a few lines down).
+            # Cap discovery to a bounded slice of whatever time is left so the page-fetch
+            # loop always keeps a guaranteed share of the budget.
+            sitemap_deadline=min(deadline,time.time()+max(4,min(10,remaining()*0.5)))
+            for u in discover_sitemap_urls(url,deadline=sitemap_deadline):
                 add_candidate(u,'sitemap')
         except Exception:
             pass
