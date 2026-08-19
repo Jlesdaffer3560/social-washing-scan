@@ -5,7 +5,7 @@ from urllib.request import Request, urlopen, HTTPRedirectHandler, build_opener, 
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _get_build_company_report_pdf():
@@ -3114,7 +3114,7 @@ def _looks_like_aspirational_social_claim(excerpt):
     return any(t in c for t in _SOCIAL_ASPIRATION_TOPICS)
 
 def _social_claim_context(excerpt, typ, trigger):
-    c=(excerpt or '').lower(); t=(typ or '').lower(); trig=(trigger or '').lower()
+    c=_normalize_apostrophes((excerpt or '').lower()); t=(typ or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 35:
         return False
     neutral_supplier_phrases=['backing british suppliers','supporting local suppliers','working with suppliers','our suppliers include','supplier list','become a supplier','contact suppliers','supplier portal',
@@ -3669,6 +3669,16 @@ V55_NAV_CONTEXT_EXCLUSIONS = [
     'explore our', 'discover our', 'read on to', 'click here', 'see more'
 ]
 
+def _normalize_apostrophes(s):
+    """Real web/PDF text almost always uses the typographic apostrophe (U+2019, e.g. from CMS
+    output or a curly-quote font), but every French trigger and guard phrase in this file
+    ("l'environnement", "l'acheteur est responsable", ...) is written with a plain straight
+    apostrophe -- without this, those phrases silently never match curly-quote text, in either
+    direction (missed triggers, and false-positive guards that fail to recognise text they were
+    built to exclude)."""
+    return (s or '').replace('’', "'").replace('‘', "'").replace('ʼ', "'")
+
+
 _TRIGGER_RE_CACHE = {}
 def _trigger_present(trigger, low_text):
     """Whole-word/phrase match instead of naive substring containment. Prevents
@@ -3778,23 +3788,23 @@ def _looks_like_impersonal_non_claim(excerpt):
     one responsible for the described action. Badge/label-style short claims ("100% Recycled",
     "Carbon Neutral" on its own, with no definition sentence attached) match neither pattern and
     are unaffected."""
-    c=(excerpt or '').strip()
+    c=_normalize_apostrophes(excerpt or '').strip()
     if not c or re.search(r'\b(we|our|us|wij|onze|ons|nous|notre|nos)\b', c, re.I):
         return False
-    if re.match(r'^[A-Z][A-Za-z0-9\-\séèëïàâôûùç]{1,40}\.\s+(Achieving|Reducing|Ensuring|Balancing|Measuring|Offsetting|Meaning|Referring|Supporting|Delivering|Providing|Creating|Building|Promoting|Protecting|Enabling|Improving|Defined|Involving|Covering|Bereiken|Verminderen|Zorgen|Compenseren|Betekent|Atteindre|Réduire|Assurer|Compenser|Signifie|Garantir)\b', c):
+    if re.match(r'^[A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜ][A-Za-z0-9\-\séèëïàâôûùç]{1,40}\.\s+(Achieving|Reducing|Ensuring|Balancing|Measuring|Offsetting|Meaning|Referring|Supporting|Delivering|Providing|Creating|Building|Promoting|Protecting|Enabling|Improving|Defined|Involving|Covering|Bereiken|Verminderen|Zorgen|Compenseren|Betekent|Atteindre|Réduire|Assurer|Compenser|Signifie|Garantir)\b', c):
         return True
     third_party_actor=['the customer is responsible','the buyer is responsible','the supplier is responsible',
         'the client is responsible','you are responsible','your company must','you must ensure',
         'the customer must ensure','the customer must conduct','it is the customer','it is the buyer',
         'it is the supplier','de klant is verantwoordelijk','de koper is verantwoordelijk','de leverancier is verantwoordelijk',
-        'u bent verantwoordelijk','le client est responsable','l\'acheteur est responsable','le fournisseur est responsable',
+        'u bent verantwoordelijk','le client est responsable',"l'acheteur est responsable",'le fournisseur est responsable',
         'vous êtes responsable']
     if any(p in c.lower() for p in third_party_actor):
         return True
     return False
 
 def _v55_claim_context_ok(excerpt, trigger, dimension):
-    c=(excerpt or '').lower(); trig=(trigger or '').lower()
+    c=_normalize_apostrophes((excerpt or '').lower()); trig=(trigger or '').lower()
     # v73: a blanket 25-character minimum previously rejected short-but-material claims
     # (badges, headings, slogans -- e.g. "We respect human rights." at 24 chars). The more
     # targeted checks below (nav-context exclusion, bare-title detection, and the <=5-word
@@ -3806,6 +3816,19 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         return False
     if _looks_like_impersonal_non_claim(excerpt):
         return False
+    # v77: a negation immediately around the matched trigger flips it into the opposite of a
+    # claim ("These components are NOT recyclable materials", "NOT all suppliers comply with
+    # our code yet") -- nothing elsewhere in this function checks for negation, so both examples
+    # were previously flagged as ordinary affirmative claims. Only look in a short window around
+    # the trigger itself (not the whole excerpt) so a negation modifying an unrelated clause
+    # elsewhere in a longer sentence doesn't suppress a genuine, separate claim.
+    trig_pos=c.find(trig)
+    if trig_pos != -1:
+        neg_before=c[max(0,trig_pos-45):trig_pos]
+        neg_after=c[trig_pos+len(trig):trig_pos+len(trig)+25]
+        if re.search(r"\b(not|never|n't|niet|geen|nooit)\b",neg_before) or \
+           (re.search(r'\bne\b',neg_before) and re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_after)):
+            return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
     # document heading in the same "sentence" (very common in PDF-extracted text, which often
@@ -3931,6 +3954,15 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # l'entreprise"). Require the same nearby product/environmental-context anchor as the bare
         # single-word triggers above before treating it as a green claim.
         if trig in ['more sustainable','duurzamer','plus durable','plus durables'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental','milieu','klimaat','koolstof','verpakking','materiaal','materialen','environnement','emballage','matériau','matériaux']):
+            return False
+        # v77: same request-vs-completed-state distinction as the social supplier_request guard
+        # below, applied to green wording -- "We encourage our suppliers to switch to recycled
+        # packaging by 2027" is a governance request/ambition, not an assurance that the recycled
+        # packaging is already in use.
+        green_request_language=['encourage our suppliers','encourage suppliers','ask our suppliers','ask suppliers',
+            'invite our suppliers','request our suppliers','moedigen onze leveranciers aan','vragen onze leveranciers',
+            'encourageons nos fournisseurs','demandons à nos fournisseurs']
+        if any(r in c for r in green_request_language) and not any(x in c for x in ['have achieved','has achieved','already use','already using','now use','now using','since 20','to date','100% of our suppliers','all of our suppliers']):
             return False
         # v57g: same principles/policy meta-description pattern as social claims below, applied
         # to green wording (e.g. "sets out our approach to climate action" describes a document,
@@ -4118,7 +4150,7 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         fs.append(enrich_social_finding(f,trig))
 
 def detect_green_claims(text):
-    low=(text or '').lower(); fs=[]; seen=set()
+    low=_normalize_apostrophes((text or '').lower()); fs=[]; seen=set()
     # 1) direct / high-priority taxonomy from previous versions
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
         hits=0
@@ -4158,7 +4190,7 @@ def detect_green_claims(text):
     return fs
 
 def detect_claims(text):
-    low=(text or '').lower(); fs=[]; seen=set()
+    low=_normalize_apostrophes((text or '').lower()); fs=[]; seen=set()
     for triggers,typ,risk,issue,rewrite in CLAIMS:
         hits=0
         for trig in triggers:
@@ -4264,7 +4296,7 @@ EXTERNAL_SIGNAL_RESULTS_PER_QUERY=max(4,min(10,int(os.environ.get('EXTERNAL_SIGN
 EXTERNAL_SIGNAL_WORKERS=max(2,min(6,int(os.environ.get('EXTERNAL_SIGNAL_WORKERS','4'))))
 EXTERNAL_SEARCH_ALL_PROVIDERS=os.environ.get('EXTERNAL_SEARCH_ALL_PROVIDERS','1').strip().lower() not in {'0','false','no','off'}
 
-_V60_CORPORATE_WORDS={'group','company','companies','holding','holdings','international','global','corporation','corp','inc','limited','ltd','plc','sa','nv','bv','srl','llc','ag','se','the'}
+_V60_CORPORATE_WORDS={'group','company','companies','holding','holdings','international','global','corporation','corp','inc','limited','ltd','plc','sa','nv','bv','srl','llc','ag','se','the','gmbh'}
 _V60_OFFICIAL_HOST_MARKERS=(
     '.gov','.gouv.','europa.eu','ec.europa.eu','commission.europa.eu','agcm.it','acm.nl',
     'cma.gov.uk','ftc.gov','asa.org.uk','jep.be','oecd.org','ilo.org','ohchr.org',
@@ -4309,16 +4341,29 @@ def _v60_host(result):
     return (urlparse((result or {}).get('url','')).hostname or '').lower().removeprefix('www.')
 
 
+def _v60_host_matches_marker(host, marker):
+    """Boundary-aware host/marker match. A raw `marker in host` substring check let an
+    unrelated host that merely CONTAINS a marker (e.g. "notagcm.it" contains "agcm.it",
+    "verbund.de" contains "bund.de", "networkers.com" contains "workers") get classified as a
+    Government/regulator, media or union source it isn't, inheriting that source type's higher
+    credibility rating undeservedly."""
+    if marker.startswith('.') or marker.endswith('.'):
+        return marker in host  # already a dot-delimited fragment; the dots are the boundary.
+    if '.' in marker:
+        return host==marker or host.endswith('.'+marker)
+    return bool(re.search(r'(?<![a-z0-9])'+re.escape(marker)+r'(?![a-z0-9])', host))
+
+
 def _v60_source_kind(result):
     host=_v60_host(result)
     text=_external_signal_text(result)
-    if any(m in host for m in _V60_OFFICIAL_HOST_MARKERS) or host.endswith('.gov') or '.gov.' in host:
+    if any(_v60_host_matches_marker(host,m) for m in _V60_OFFICIAL_HOST_MARKERS) or host.endswith('.gov') or '.gov.' in host:
         return 'Government / regulator'
-    if any(m in host for m in _V60_NGO_HOST_MARKERS):
+    if any(_v60_host_matches_marker(host,m) for m in _V60_NGO_HOST_MARKERS):
         return 'NGO / civil society'
-    if any(m in host for m in _V60_UNION_HOST_MARKERS) or any(x in text for x in ['trade union','workers union','labour union','labor union']):
+    if any(_v60_host_matches_marker(host,m) for m in _V60_UNION_HOST_MARKERS) or any(x in text for x in ['trade union','workers union','labour union','labor union']):
         return 'Union / worker organisation'
-    if any(m in host for m in _V60_MEDIA_HOST_MARKERS):
+    if any(_v60_host_matches_marker(host,m) for m in _V60_MEDIA_HOST_MARKERS):
         return 'Press / investigative media'
     if any(x in text for x in ['court','lawsuit','legal action','class action','complaint filed']):
         return 'Legal / complaint'
@@ -4327,8 +4372,25 @@ def _v60_source_kind(result):
     return 'Other public source'
 
 
+def _v65_strip_accents(value):
+    """Transliterate accented letters instead of deleting them: the [^a-z0-9] stripping used
+    throughout this file's name-normalisation helpers only recognises plain ASCII, so an
+    accented company name like "L'Oréal" collapsed the "é" into a bare separator (norm
+    "l or al", compact "loral") rather than "loreal" -- a false-negative source for matching
+    French/Dutch company names against their own domains."""
+    return ''.join(c for c in unicodedata.normalize('NFKD', str(value or '')) if not unicodedata.combining(c))
+
+
 def _v60_company_terms(company_name):
-    raw=re.sub(r'\s+',' ',(company_name or '').lower()).strip()
+    raw=re.sub(r'\s+',' ',_v65_strip_accents(company_name or '').lower()).strip()
+    # v77: "&" between short brand initials (H&M, M&S, C&A, P&G) is part of the brand itself.
+    # Treating it as a generic separator like the substitution below does for every other
+    # punctuation character splits these into meaningless single letters ("h", "m"), which then
+    # fail the length>=3 filter just below and degrade the whole brand query to "h m". Join
+    # across it instead -- but only when both sides are short (initials), not for a genuine
+    # multi-word "X & Y" name like "Procter & Gamble", where joining would erase the real word
+    # boundary and produce one unsearchable mega-token.
+    raw=re.sub(r'\b([a-z0-9]{1,2})\s*&\s*([a-z0-9]{1,2})\b',r'\1\2',raw)
     phrase=re.sub(r'[^a-z0-9]+',' ',raw).strip()
     tokens=[t for t in phrase.split() if len(t)>=3 and t not in _V60_CORPORATE_WORDS]
     compact=''.join(tokens)
@@ -4726,11 +4788,11 @@ V64_GENERIC_HOST_LABELS={'www','www2','m','mobile','shop','store','group','globa
 
 
 def _v64_norm(value):
-    return re.sub(r'[^a-z0-9]+',' ',str(value or '').lower()).strip()
+    return re.sub(r'[^a-z0-9]+',' ',_v65_strip_accents(value or '').lower()).strip()
 
 
 def _v64_compact(value):
-    return re.sub(r'[^a-z0-9]+','',str(value or '').lower())
+    return re.sub(r'[^a-z0-9]+','',_v65_strip_accents(value or '').lower())
 
 
 def _v64_brand_aliases(company_name):
@@ -4912,7 +4974,8 @@ def external_green(company,findings=None,reviewed_pages=None):
 # evidence, and related official sustainability sites can be discovered conservatively
 # for any company when primary-site coverage is limited.
 
-V65_CORPORATE_SUFFIXES=('group','holding','holdings','corp','corporation','company','global','plc','sa','nv','ag','se')
+V65_CORPORATE_SUFFIXES=('group','holding','holdings','corp','corporation','company','global','plc','sa','nv','ag','se',
+    'bv','gmbh','inc','ltd','llc','srl')
 V65_RELATED_TERMS=('official','corporate','group','sustainability','responsibility','esg','annual report','impact report','investor relations')
 
 
@@ -4971,7 +5034,8 @@ def _v65_owned_roots(reviewed_pages=None):
 
 
 _V70_SECOND_LEVEL_SUFFIXES={'co','com','org','net','gov','ac'}
-_V70_INDEPENDENT_DOMAIN_MARKERS=('watch','watchdog','justice','rights','campaign','critic','complaint','facts','union','workers')
+_V70_INDEPENDENT_DOMAIN_MARKERS=('watch','watchdog','justice','rights','campaign','critic','complaint','facts','union','workers',
+    'sucks','boycott','scam','fraud','exposed','truth','leaks')
 
 
 def _v70_domain_label(host):
@@ -5003,11 +5067,19 @@ def is_company_owned_source(result, company_name, reviewed_pages=None):
     for alias in aliases:
         if label in {alias+s for s in V65_CORPORATE_SUFFIXES}:
             return True
-        # Treat brand-led microsites as first-party unless the domain clearly identifies
-        # an independent watchdog, rights group, campaign or worker organisation.
-        if len(alias)>=4 and (label.startswith(alias) or label.endswith(alias)):
-            if not any(marker in label for marker in _V70_INDEPENDENT_DOMAIN_MARKERS):
-                return True
+        # Treat brand-led microsites as first-party unless the domain clearly identifies an
+        # independent watchdog, rights group, campaign or worker organisation. A raw
+        # startswith/endswith previously accepted ANY leftover text -- so "notdelhaize.be" or
+        # "delhaizesucks.com" (ends/starts with the alias, no independence marker present) were
+        # wrongly treated as the company's own, silently dropping genuine lookalike/critic
+        # sources from the negative-signals pipeline. Only accept the match when the leftover
+        # part is itself a recognised generic/corporate word (shop, group, eu, official...), not
+        # an arbitrary string.
+        if len(alias)>=4:
+            leftover=label[len(alias):] if label.startswith(alias) else (label[:-len(alias)] if label.endswith(alias) else None)
+            if leftover and (leftover in V64_GENERIC_HOST_LABELS or leftover in _V60_CORPORATE_WORDS):
+                if not any(marker in label for marker in _V70_INDEPENDENT_DOMAIN_MARKERS):
+                    return True
     # Retain only exact verified domain aliases; never substring-match arbitrary hosts.
     key=_v64_norm(company_name)
     for brand,domains in V64_COMPANY_DOMAIN_ALIASES.items():

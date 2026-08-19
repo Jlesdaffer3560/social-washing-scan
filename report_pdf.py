@@ -86,8 +86,17 @@ def clean_text(value) -> str:
 
 
 _DANGLING_TRAIL_WORDS = {
+    # English
     "and", "or", "the", "a", "an", "of", "in", "on", "at", "to", "is", "are",
     "with", "by", "for", "as", "that", "this", "not", "no", "its", "it's",
+    # Dutch -- the scanner quotes NL website/claim text directly into this report, so an
+    # excerpt truncated right after "...duurzame producten en" or "...leveranciers van"
+    # needs the same dangling-word guard as the English case.
+    "en", "of", "de", "het", "een", "van", "in", "op", "aan", "met", "voor",
+    "door", "niet", "geen", "is", "zijn", "dat", "deze", "dit",
+    # French -- likewise for FR-quoted excerpts.
+    "et", "ou", "le", "la", "les", "de", "du", "des", "dans", "à", "en",
+    "pour", "par", "avec", "ce", "cette", "n'est", "pas", "que", "qui",
 }
 
 
@@ -95,7 +104,15 @@ def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
     text = clean_text(value)
     if len(text) <= max_chars:
         return text
-    cut = text[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:.")
+    # Reserve room for the suffix up front in every branch below, not just after the fact --
+    # appending it to an already-full max_chars-length slice pushed the result past the
+    # caller's budget by len(suffix), which matters for a fixed-width table column.
+    budget = max(0, max_chars - len(suffix))
+    cut = text[:budget].rsplit(" ", 1)[0].rstrip(" ,;:.")
+    if not cut:
+        # No space at all within the budget (e.g. a long URL/no-space token scraped from an
+        # href/alt attribute) -- rsplit(" ", 1) can't shorten it, so hard-cut the single token.
+        return text[:budget].rstrip() + suffix
     # Word-boundary truncation can still leave a dangling conjunction/article as the
     # final word (e.g. "...limitations and"), or end partway through an opened-but-
     # never-closed quotation (e.g. "...matching the “Absolute or purity environmental" --
@@ -110,7 +127,21 @@ def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
             cut = cut.rsplit(" ", 1)[0].rstrip(" ,;:.") if " " in cut else ""
         else:
             break
-    return (cut + suffix) if cut else clean_text(value)[:max_chars].rstrip() + suffix
+    if cut:
+        return cut + suffix
+    # Backing up word-by-word can exhaust the whole cut without ever reaching quote parity --
+    # that happens when the unmatched mark sits early in the window, not near the cut point, so
+    # trimming from the right never removes it. Falling back to a raw character slice of the
+    # full value would reintroduce the exact fragment/dangling-word bug this function exists to
+    # prevent, so instead strip quote characters outright from the in-budget prefix (a missing
+    # quote mark is far less noticeable than a dangling unclosed one) and re-check for a
+    # trailing dangling word once more.
+    safe = text[:budget].rsplit(" ", 1)[0].rstrip(" ,;:.")
+    safe = safe.replace("“", "").replace("”", "").replace('"', "").rstrip(" ,;:.")
+    bare = safe.rsplit(" ", 1)[-1].strip("'").lower() if safe else ""
+    if bare in _DANGLING_TRAIL_WORDS and " " in safe:
+        safe = safe.rsplit(" ", 1)[0].rstrip(" ,;:.")
+    return (safe or text[:budget].rstrip()) + suffix
 
 
 def first_sentence(value, max_chars=190) -> str:
@@ -307,7 +338,16 @@ def metadata(data):
     context = data.get("entity_context_indicator") or {}
     assessment = "Internal document scan" if is_internal_doc else "Website scan"
     reasons = confidence.get("reasons") or []
-    reason_text = ". ".join(clean_text(x).rstrip(".") for x in reasons if clean_text(x))
+    # app.py's build_confidence() returns each reason as a lowercase phrase fragment (e.g.
+    # "external public-source search was active"), meant to be read as a standalone bullet, not
+    # already-capitalized sentences -- joining them as-is with ". " produced grammatically broken
+    # mid-paragraph lowercase sentence starts ("...reviewed. external public-source search was
+    # active. claim-level signals were detected.") in the rendered PDF on every scan with more
+    # than one reason. Capitalize each fragment's first letter before joining.
+    def _cap(s):
+        s = clean_text(s).rstrip(".")
+        return s[:1].upper() + s[1:] if s else s
+    reason_text = ". ".join(_cap(x) for x in reasons if clean_text(x))
     if reason_text:
         reason_text += "."
     if is_internal_doc:
