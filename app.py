@@ -82,7 +82,7 @@ CRAWLER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 # v59: crawl more than the first three candidate pages. The crawler keeps trying
 # additional discovered URLs until it has enough usable pages or reaches the shared
 # time/attempt budget. These values can be tuned in Render without changing code.
-CRAWL_TARGET_EXTRA_PAGES=max(3, min(10, int(os.environ.get("CRAWL_TARGET_EXTRA_PAGES", "6"))))
+CRAWL_TARGET_EXTRA_PAGES=max(3, min(10, int(os.environ.get("CRAWL_TARGET_EXTRA_PAGES", "8"))))
 CRAWL_MAX_PAGE_ATTEMPTS=max(CRAWL_TARGET_EXTRA_PAGES, min(24, int(os.environ.get("CRAWL_MAX_PAGE_ATTEMPTS", "14"))))
 CRAWL_BUDGET_SECONDS=max(16, min(35, int(os.environ.get("CRAWL_BUDGET_SECONDS", "24"))))
 CRAWL_FETCH_WORKERS=max(2, min(5, int(os.environ.get("CRAWL_FETCH_WORKERS", "4"))))
@@ -580,7 +580,17 @@ def same_domain(u,base):
 
 
 _RELEVANT_SEGMENT_TERMS=('green','planet')
-_RELEVANT_SUBSTRING_TERMS=('sustain','responsib','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','environment','climate','circular','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','decarbon','net-zero','net_zero')
+# v84: this list was English-only, so a Dutch or French sustainability hub page (e.g.
+# "/nl/duurzaamheid", "/fr/rse") never became a crawl candidate at all -- undercutting the
+# NL/FR claim-detection work done earlier this session, which only touched external-search
+# queries, not in-site crawl discovery. Direct .pdf links bypass this filter, but the HTML
+# hub page that LINKS to the PDF does not, so the PDF itself was often never reached either.
+# Includes both accented and unaccented forms since CMS URL slugs go either way.
+_RELEVANT_SUBSTRING_TERMS=('sustain','responsib','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','environment','climate','circular','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','decarbon','net-zero','net_zero',
+    # Dutch
+    'duurzaam','verantwoord','mensenrecht','diversiteit','inclusie','leverancier','ethisch','gemeenschap','toegankelijkheid','veiligheid','jaarverslag','milieu','klimaat','circulair','bestuur','dwangarbeid','investeerder','maatschappij','koolstof','mvo',
+    # French
+    'durable','durabilite','durabilité','responsab','droits-humain','droits_humain','diversite','diversité','fournisseur','ethique','éthique','communaute','communauté','accessibilite','accessibilité','securite','sécurité','rapport-annuel','environnement','climat','circulaire','gouvernance','esclavage-moderne','esclavage_moderne','investisseur','societe','société','decarbon','carbone','rse')
 # Retail/grocery sitemaps commonly list product and category-listing URLs, and a product
 # name like "Planet Oat Oatmilk" or "Green Beans" trivially matches the sustainability
 # keyword list above. Those catalogue pages are structurally distinctive: the final path
@@ -606,7 +616,12 @@ def relevant(h):
 COMMON_PUBLIC_PATHS=['/sustainability','/sustainability-report','/csr','/esg','/responsibility',
     '/corporate-responsibility','/corporate-social-responsibility','/human-rights','/supply-chain','/policies','/investors',
     '/investor-relations','/about/sustainability','/about-us/sustainability','/en/sustainability',
-    '/our-impact','/planet','/people','/climate','/responsible-sourcing','/news','/press','/newsroom']
+    '/our-impact','/planet','/people','/climate','/responsible-sourcing','/news','/press','/newsroom',
+    # v84: EN-only common-path guesses meant a Dutch/French site's sustainability hub was only
+    # ever found if it happened to be linked/sitemapped -- there was no localized guess to try.
+    '/nl/duurzaamheid','/duurzaamheid','/nl/mvo','/mvo','/nl/verantwoord-ondernemen','/nl/over-ons/duurzaamheid',
+    '/fr/rse','/rse','/fr/developpement-durable','/developpement-durable','/fr/responsabilite-sociale',
+    '/fr/droits-humains','/nl/mensenrechten','/investisseurs','/beleggers','/fr/actualites','/nl/nieuws']
 
 
 def _fetch_text_document(url,timeout=5,max_bytes=1600000):
@@ -867,8 +882,14 @@ def google_search(query, max_results=5):
     with urlopen(req,timeout=7) as r:
         data=json.loads(r.read().decode("utf-8",errors="ignore"))
     out=[]
-    for item in data.get("items",[]):
-        out.append({"title":item.get("title",""),"url":item.get("link",""),"content":item.get("snippet",""),"score":0,"provider":"Google Custom Search"})
+    # v84: was a flat 0, while Tavily returns a native 0-1 relevance score and Serper computes
+    # one from rank (1.0/position). When multiple providers are merged and sorted by score
+    # before the pre-filter cap in search_public_sources(), a flat 0 meant Google's results
+    # were provably always sorted last and the first to be dropped -- structurally silencing
+    # that provider whenever others were also configured. Google's JSON API doesn't return a
+    # relevance score, but result order IS rank order, so derive one the same way Serper does.
+    for i,item in enumerate(data.get("items",[]),start=1):
+        out.append({"title":item.get("title",""),"url":item.get("link",""),"content":item.get("snippet",""),"score":1.0/i,"provider":"Google Custom Search"})
     return out
 
 
@@ -1485,7 +1506,7 @@ def reader_friendly_summary(company, sector, findings, external_research, score,
     sector_name = company.get("sector", "the identified sector")
     claim_findings = [f for f in findings if not is_placeholder_finding(f.get("type",""))]
     first = claim_findings[0] if claim_findings else None
-    targeted = targeted_negative_sources(external_research.get("results", []) if external_research else [], name, 5)
+    targeted = targeted_negative_sources(external_research.get("results", []) if external_research else [], name, 10)
     comps=score_components or {}
     conclusion=washing_conclusion(score, findings, comps.get("substantiation_risk",50), comps.get("external_context_risk",0))
     if first:
@@ -2830,8 +2851,13 @@ def analyse_url_v27(raw):
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
     sec=infer_sector(comp,txt+'\n'+exttext)
     ctx=infer_context(comp,txt,social_ext)
-    social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 5, [d.get('url') for d in documents_checked], is_negative_external_source)
-    green_targeted=targeted_negative_sources(green_ext.get('results',[]), comp.get('company',''), 5, [d.get('url') for d in documents_checked], is_green_negative_source)
+    # v84: was capped at 5 -- this same capped list both fed the risk score AND was the only
+    # thing ever eligible to reach the report/frontend, even though _v60_rank_dedupe below can
+    # retain up to limit*3 candidates. Raised to 10; strict_external_context_risk's thresholds
+    # already saturate at >=3 matching signals, so this mainly widens what gets SHOWN, not the
+    # score.
+    social_targeted=targeted_negative_sources(social_ext.get('results',[]), comp.get('company',''), 10, [d.get('url') for d in documents_checked], is_negative_external_source)
+    green_targeted=targeted_negative_sources(green_ext.get('results',[]), comp.get('company',''), 10, [d.get('url') for d in documents_checked], is_green_negative_source)
     # Score and display only retained external stakeholder signals. Company-owned policies,
     # reports and sustainability pages are deliberately excluded from this layer.
     social_ext_scoring=dict(social_ext, results=social_targeted, compact_sources=social_targeted, targeted_negative_sources=social_targeted)
@@ -3803,10 +3829,19 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # elsewhere in a longer sentence doesn't suppress a genuine, separate claim.
     trig_pos=c.find(trig)
     if trig_pos != -1:
-        neg_before=c[max(0,trig_pos-45):trig_pos]
-        neg_after=c[trig_pos+len(trig):trig_pos+len(trig)+25]
-        if re.search(r"\b(not|never|n't|niet|geen|nooit)\b",neg_before) or \
-           (re.search(r'\bne\b',neg_before) and re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_after)):
+        # v84: two real gaps found in this window's negation matching. (1) "\bn't\b" requires a
+        # word boundary BEFORE "n", but a real contraction glues the "n" onto the previous letter
+        # ("isn't", "aren't", "doesn't", "wasn't", "can't", "won't") -- there is no boundary
+        # there, so the pattern never matched any actual contraction, only a spelled-out "not".
+        # (2) French elides "ne" to "n'" before any vowel-initial verb -- "n'est pas", "n'a pas"
+        # -- which is the default form for "etre" (est/etaient/...), the single most common
+        # claim-adjacent verb; "\bne\b" alone missed it entirely. Also added the bare English
+        # "no" (mirroring Dutch "geen", already present) and widened the window slightly for
+        # ordinary hedging clauses between the negation and the trigger.
+        neg_before=c[max(0,trig_pos-70):trig_pos]
+        neg_after=c[trig_pos+len(trig):trig_pos+len(trig)+35]
+        if re.search(r"\b(not|never|no)\b|n't|niet|geen|nooit",neg_before) or \
+           (re.search(r"\bne\b|\bn'",neg_before) and re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_after)):
             return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
@@ -3840,13 +3875,31 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # "fair wages" or "decent work" mean in general (citations, statistics, definitions,
     # references to an SDG or ILO convention) are not first-person company claims, even when
     # they happen to contain "we"/"our" only in an industry-wide or advocacy sense.
-    definitional_citation=['according to the','research shows','research suggests','studies show','study shows',
+    definitional_citation=['according to','research shows','research suggests','studies show','study shows',
         'data shows','is estimated at','is defined as','refers to','supports un sustainable development goal',
         'sustainable development goal','sdg 8','ilo convention','csddd requires','csrd requires','the law requires',
         'regulation requires','directive requires','is a fundamental part of']
     if any(n in c for n in definitional_citation) and not any(x in c for x in ['we ensure','we guarantee','we comply','we are compliant','our compliance','we achieve','we have achieved']):
         return False
-    if 'our industry' in c and not any(x in c for x in ['we ensure','we guarantee','we comply','our operations','our supply chain','our products','our business']):
+    # v84: "our industry" only caught that exact phrase; a very common equivalent phrasing --
+    # an industry-wide/sector-wide statistic with no claim about the scanned company itself,
+    # e.g. "The industry average is 30% recycled content" -- has neither "we/our/us" nor "our
+    # industry" and slipped through untouched.
+    if any(n in c for n in ['our industry','industry average','industry-wide average','sector average','sector-wide average']) and not any(x in c for x in ['we ensure','we guarantee','we comply','our operations','our supply chain','our products','our business']):
+        return False
+    # v84: a claim the company is merely REPORTING that a third party said (a supplier, a
+    # certifier, a customer) is not the company's own assertion -- but the only existing guard
+    # for this (third_party_context, below) is disabled by the mere presence of "we/our/us",
+    # which is almost always present in a normal attribution sentence ("Our supplier told us
+    # their packaging is recyclable"). Check for explicit reported-speech markers independent of
+    # pronoun presence, unless paired with the company's own first-person assurance.
+    reported_speech=['told us','informed us','told them','said their','claims that','stated that','assured us',
+        'vertelde ons','meldde ons','verzekerde ons','nous a dit','nous a informé','nous a assuré']
+    if any(n in c for n in reported_speech) and not any(x in c for x in ['we ensure','we guarantee','we confirm','we verified','we independently']):
+        return False
+    # v84: an interrogative sentence ("Is our packaging recyclable?", a genuine FAQ heading) is
+    # a question, not an assertion -- the bare trigger words fire regardless of sentence type.
+    if c.rstrip().endswith('?') and not any(x in c for x in ['we ensure','we guarantee','we confirm','yes,','yes ']):
         return False
     # v57j: bare legal-requirement triggers ("required by law", "legal requirement", "meets
     # legal requirements") fire on ANY mention of a legal obligation, not just one presented as
@@ -4325,9 +4378,24 @@ def _v60_host_matches_marker(host, marker):
     unrelated host that merely CONTAINS a marker (e.g. "notagcm.it" contains "agcm.it",
     "verbund.de" contains "bund.de", "networkers.com" contains "workers") get classified as a
     Government/regulator, media or union source it isn't, inheriting that source type's higher
-    credibility rating undeservedly."""
-    if marker.startswith('.') or marker.endswith('.'):
-        return marker in host  # already a dot-delimited fragment; the dots are the boundary.
+    credibility rating undeservedly.
+
+    v84 fix: a marker with a dot on only ONE side (e.g. ".gov", "amnesty.") previously took the
+    same "the dot is the boundary" shortcut as a fully-delimited marker like ".gouv." -- but
+    that only bounds the side that HAS the dot. ".gov" matched inside ".governance.com" (no
+    boundary after "gov"), and "amnesty." matched inside "notamnesty.org" (no boundary before
+    "amnesty"). Both sides are now explicitly bounded to a dot or start/end of string.
+    """
+    if not host or not marker:
+        return False
+    if marker.startswith('.') and marker.endswith('.'):
+        return marker in host  # fully dot-delimited fragment; both boundaries already present.
+    if marker.startswith('.'):
+        core = marker[1:]
+        return bool(core) and bool(re.search(r'\.'+re.escape(core)+r'(?:\.|$)', host))
+    if marker.endswith('.'):
+        core = marker[:-1]
+        return bool(core) and bool(re.search(r'(?:^|\.)'+re.escape(core)+r'\.', host))
     if '.' in marker:
         return host==marker or host.endswith('.'+marker)
     return bool(re.search(r'(?<![a-z0-9])'+re.escape(marker)+r'(?![a-z0-9])', host))
@@ -4763,7 +4831,13 @@ V64_OTHER_BRANDS={
     'nike','adidas','mango','gap','amazon','walmart','alibaba','forever 21','patagonia',
     'lidl','aldi','delhaize','tesco','carrefour','shein'
 }
-V64_GENERIC_HOST_LABELS={'www','www2','m','mobile','shop','store','group','global','corporate','official','eu','eur','us','uk'}
+V64_GENERIC_HOST_LABELS={'www','www2','m','mobile','shop','store','group','global','corporate','official','eu','eur','us','uk',
+    # v84: this app specifically targets NL/FR/Benelux companies -- without these, a company's
+    # own localized domain (e.g. "brandnl.com", "brand-be.com") failed the is_company_owned_source
+    # leftover-word check (the "nl"/"be" leftover matched neither this set nor
+    # _V60_CORPORATE_WORDS) and was wrongly treated as a third-party source, feeding the
+    # company's own content into the negative-external-signal pipeline instead of excluding it.
+    'nl','be','fr','de','es','it','ch','pt','dk','no','fi','at','se','ie','lu'}
 
 
 def _v64_norm(value):

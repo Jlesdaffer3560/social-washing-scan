@@ -402,9 +402,18 @@ def reliability_warning(data):
 
 def external_signals(data, limit=2):
     ext = data.get("external_research") or {}
+    green_rows = (ext.get("green") or {}).get("targeted_negative_sources") or []
+    social_rows = (ext.get("social") or {}).get("targeted_negative_sources") or []
+    legacy_rows = ext.get("targeted_negative_sources") or []
+    # v84: was green-then-social sequential, so once `limit` was reached from green sources
+    # alone, social coverage could be entirely absent from the report even when real social
+    # sources existed and were retained. Alternate the two, mirroring the same fairness fix
+    # already applied to the live frontend's renderExternal().
     rows = []
-    for branch in (ext.get("green") or {}, ext.get("social") or {}, ext):
-        rows.extend(branch.get("targeted_negative_sources") or [])
+    for i in range(max(len(green_rows), len(social_rows))):
+        if i < len(green_rows): rows.append(green_rows[i])
+        if i < len(social_rows): rows.append(social_rows[i])
+    rows += legacy_rows
     unique, seen = [], set()
     for item in rows:
         if not isinstance(item, dict):
@@ -827,11 +836,17 @@ def build_company_report_pdf(data: dict) -> bytes:
     PDF is rebuilt once more with the known final page count so the footer can read "Page X of
     N" correctly instead of the two-page assumption baked into earlier drafts.
     """
+    # v84: external_limit's top tier was 2 -- combined across BOTH green and social, so
+    # up to 8 genuinely retained, filtered negative sources (now that targeted_negative_sources
+    # allows up to 10 per dimension) could exist and still show at most 2 in the PDF. Raised the
+    # starting tiers; the existing auto-shrink ladder below already handles the case where a
+    # scan has too many findings/sources to fit 3 pages, same as it always has for
+    # additional_limit/source_limit.
     variants = [
-        dict(additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=6),
-        dict(additional_limit=2, external_limit=2, excerpt_chars=200, source_limit=5),
-        dict(additional_limit=1, external_limit=2, excerpt_chars=180, source_limit=4),
-        dict(additional_limit=1, external_limit=1, excerpt_chars=165, source_limit=3),
+        dict(additional_limit=2, external_limit=6, excerpt_chars=220, source_limit=6),
+        dict(additional_limit=2, external_limit=4, excerpt_chars=200, source_limit=5),
+        dict(additional_limit=1, external_limit=3, excerpt_chars=180, source_limit=4),
+        dict(additional_limit=1, external_limit=2, excerpt_chars=165, source_limit=3),
         dict(additional_limit=0, external_limit=1, excerpt_chars=150, source_limit=3),
     ]
     last = b""
