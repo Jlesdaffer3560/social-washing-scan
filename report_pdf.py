@@ -1,8 +1,9 @@
-"""Readable native two-page Durably company claim-risk report (v67).
+"""Readable native Durably company claim-risk report (v83).
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
-uses a minimum body size of 9 pt and protects the two-page format by reducing the
-amount of detail, never by shrinking fonts.
+uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
+reducing the amount of detail rather than shrinking fonts; content that still doesn't
+fit spills to a 3rd page (see the pagination note further down) instead of being cut.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
@@ -109,9 +111,13 @@ def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
     # caller's budget by len(suffix), which matters for a fixed-width table column.
     budget = max(0, max_chars - len(suffix))
     cut = text[:budget].rsplit(" ", 1)[0].rstrip(" ,;:.")
-    if not cut:
-        # No space at all within the budget (e.g. a long URL/no-space token scraped from an
-        # href/alt attribute) -- rsplit(" ", 1) can't shorten it, so hard-cut the single token.
+    if not cut or len(cut) < budget * 0.6:
+        # Either no space at all within the budget (e.g. a long URL/no-space token scraped
+        # from an href/alt attribute), or the trailing word straddling the cutoff is so long
+        # that dropping it whole would waste most of the budget -- e.g. "DOC - a-very-long-
+        # filename-with-no-spaces.pdf" previously collapsed to just "DOC -." because the only
+        # space in the whole string is right before that one long token. Hard-truncate the
+        # token itself instead of discarding it outright.
         return text[:budget].rstrip() + suffix
     # Word-boundary truncation can still leave a dangling conjunction/article as the
     # final word (e.g. "...limitations and"), or end partway through an opened-but-
@@ -734,19 +740,40 @@ def coverage_sources_methodology(data, limit=5):
     return t
 
 
+def _fit_text_to_width(text, font, size, max_width):
+    if stringWidth(text, font, size) <= max_width:
+        return text
+    ellipsis = "…"
+    while text and stringWidth(text + ellipsis, font, size) > max_width:
+        text = text[:-1].rstrip()
+    return (text + ellipsis) if text else ellipsis
+
+
 def draw_footer(canvas, doc):
     page = canvas.getPageNumber()
     canvas.saveState()
     canvas.setStrokeColor(GREY_300)
     canvas.setLineWidth(.5)
     canvas.line(MARGIN_X, 8.5*mm, PAGE_W-MARGIN_X, 8.5*mm)
-    canvas.setFont("Helvetica-Oblique", 6.5)
+    font, size = "Helvetica-Oblique", 6.5
+    canvas.setFont(font, size)
     canvas.setFillColor(GREY_500)
     disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
-    canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
     total = getattr(doc, 'total_pages_hint', None)
     page_label = f"Page {page} of {total}" if total else f"Page {page}"
-    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · {page_label}")
+    right_text = f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · {page_label}"
+    # The disclaimer (left, drawString) and the company/page label (right, drawRightString)
+    # were both drawn at the same y-coordinate with no width check against each other --
+    # for a long company/legal name the two visually collided. Reserve a fixed gap and cap
+    # the variable-length right side to at most 45% of the footer width so a long name never
+    # eats into the disclaimer's space, then fit the disclaimer to whatever remains.
+    available_w = PAGE_W - 2*MARGIN_X
+    gap = 6*mm
+    right_text = _fit_text_to_width(right_text, font, size, available_w*0.45)
+    right_w = stringWidth(right_text, font, size)
+    disclaimer = _fit_text_to_width(disclaimer, font, size, available_w - right_w - gap)
+    canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
+    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, right_text)
     canvas.restoreState()
 
 

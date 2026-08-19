@@ -71,7 +71,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v72')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v83')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -84,7 +84,7 @@ def build_methodology_pdf():
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Claims Risk Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v72 &middot; 22 July 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v83 &middot; 19 August 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '

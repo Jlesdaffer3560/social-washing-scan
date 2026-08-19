@@ -3,7 +3,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v72_legal_basis_classification'
+    assert app.APP_VERSION == 'hostable_v83_placeholder_finding_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -94,6 +94,31 @@ def test_frontend_score_bands_and_privacy():
     assert "if(n>=45)return 'Medium" in text
     assert 'Document privacy:' in text
     assert 'Analysis status' in text
+
+
+def test_placeholder_finding_not_counted_as_real_claim():
+    """v83: the synthetic "no claim retained" row detect_green_claims()/detect_claims()
+    append when nothing material was found used the type string "No material problematic
+    ... claim retained" -- but most of the call sites that needed to recognise it were
+    checking only startswith('no major'), a string no code path actually produces, so it
+    silently never matched. A document with only a real green claim was wrongly credited
+    with a phantom social claim-module and a phantom social pre-publication-review row."""
+    green_fs=[app.enrich_green_finding(f, f.get('matched_phrase',''))
+              for f in app.detect_green_claims('This product is climate neutral thanks to verified offsetting.')]
+    social_fs=[app.enrich_social_finding(f, f.get('matched_phrase',''))
+               for f in app.detect_claims('We have no other claims to make about our people or suppliers.')]
+    assert app.is_placeholder_finding(social_fs[0]['type'])
+    modules=app.build_claim_modules_summary(green_fs, social_fs)
+    assert [m['module'] for m in modules]==['Carbon / Offsetting Claim Check']
+    rows=app.build_pre_publication_review(green_fs, social_fs, {'audience':'Consumer-facing'})
+    assert [r['dimension'] for r in rows]==['Green']
+    inv=app.build_scan_inventory(['https://example.com'],[],[],full_text='dummy')
+    all_claims=app.build_green_claim_inventory(green_fs)+app.social_claim_inventory_with_dimension(social_fs)
+    for c in all_claims: c.setdefault('source_url','https://example.com')
+    app.attach_claim_counts_to_inventory(inv, all_claims)
+    page=inv['website_pages'][0]
+    assert page['claim_dimensions']==['Green']
+    assert page['claim_signal_count']==1
 
 
 def test_inventory_distinguishes_limited_text():

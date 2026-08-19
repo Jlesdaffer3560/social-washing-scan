@@ -47,9 +47,9 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v72_legal_basis_classification"
-APP_RELEASE_LABEL="v72"
-APP_RELEASE_DATE="2026-07-21"
+APP_VERSION="hostable_v83_placeholder_finding_fix"
+APP_RELEASE_LABEL="v83"
+APP_RELEASE_DATE="2026-08-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -1064,13 +1064,26 @@ def external_relevance_score(findings, external_research):
         note = "External-source modifier applied because public-source signals appear relevant to the company and claim areas: " + ", ".join((severe_hits + relevant_hits)[:8]) + "."
     return score, note
 
+def is_placeholder_finding(finding_type):
+    """True for the synthetic "no claim retained" row detect_green_claims()/detect_claims()
+    append when nothing material was found. That row's actual type string is "No material
+    problematic {green,social} claim retained" -- but a large fraction of the functions in
+    this file that need to detect it were checking only startswith('no major'), a string no
+    code path has generated in a long time, which never matched. Each of those was silently
+    always treating "no findings" the same as a real, material claim (spurious evidence-gap
+    analysis, phantom pre-publication-review rows, phantom claim-module/signal counts). Use
+    this single helper everywhere instead of re-implementing the prefix check ad hoc."""
+    t = (finding_type or '').lower()
+    return t.startswith('no material') or t.startswith('no major')
+
+
 def evidence_signal_score(page_text, findings):
     """
     V25: evidence is assessed only in the original crawled website text, not in generated
     recommendations. This avoids giving credit for wording that the tool itself produced.
     """
     text=(page_text or "").lower()
-    if not text.strip() or (findings and findings[0].get("type","").lower().startswith("no major")):
+    if not text.strip() or (findings and is_placeholder_finding(findings[0].get("type",""))):
         return 75, ["No major claim detected; evidence gap is not the main driver."]
     strong_terms=[
         "kpi","kpis","metric","metrics","indicator","baseline","target","targets","percentage","%",
@@ -1110,7 +1123,7 @@ def evidence_quality_credit(page_text, findings):
     return 0
 
 def washing_conclusion(score, findings, evidence_gap, external_score):
-    no_major = findings and findings[0].get("type","").lower().startswith("no major")
+    no_major = findings and is_placeholder_finding(findings[0].get("type",""))
     if no_major:
         return "No clear social-washing signal detected"
     if score < 30:
@@ -1215,7 +1228,7 @@ def build_confidence(pages,ext,findings,crawl_log=None):
     elif ext.get("enabled") and not ext_search_failed: pts+=1; reasons.append("external public-source search was active")
     elif ext_search_failed: reasons.append("external public-source search failed to run (provider error/quota, not a clean result)")
     else: reasons.append("external public-source search was not active")
-    no_findings=not findings or findings[0].get("type","").lower().startswith("no major")
+    no_findings=not findings or is_placeholder_finding(findings[0].get("type",""))
     if not no_findings: pts+=1; reasons.append("claim-level signals were detected")
 
     # v56: fold crawl reliability into confidence instead of leaving it as a silent side-channel.
@@ -1400,7 +1413,7 @@ def company_specific_summary(company, sector, context, findings, external_resear
     top_claim = quoted[0] if quoted else ""
     negative_count = len([r for r in (external_research.get("results", []) if external_research else []) if is_negative_external_source(r)])
     high_claims = [f for f in findings if f.get("risk") == "High"]
-    if findings and findings[0].get("type","").lower().startswith("no major"):
+    if findings and is_placeholder_finding(findings[0].get("type","")):
         claim_sentence = "The scan did not identify a strong high-risk social-washing claim in the reviewed company pages."
     elif high_claims:
         claim_sentence = "The main risk comes from high-sensitivity wording around " + ", ".join(claim_types[:2]) + "."
@@ -1470,7 +1483,7 @@ def company_owned_roots(reviewed_pages=None):
 def reader_friendly_summary(company, sector, findings, external_research, score, score_components=None):
     name = company.get("company", "The company")
     sector_name = company.get("sector", "the identified sector")
-    claim_findings = [f for f in findings if not f.get("type","").lower().startswith("no major")]
+    claim_findings = [f for f in findings if not is_placeholder_finding(f.get("type",""))]
     first = claim_findings[0] if claim_findings else None
     targeted = targeted_negative_sources(external_research.get("results", []) if external_research else [], name, 5)
     comps=score_components or {}
@@ -1782,6 +1795,13 @@ def attach_claim_counts_to_inventory(inventory, claims):
     for item in items:
         item['claim_signal_count']=0; item['claim_dimensions']=[]
     for claim in claims or []:
+        # The synthetic "no claim retained" placeholder row (present whenever a document/page
+        # genuinely had no material claim) was being counted the same as a real claim here,
+        # so a page/document with zero actual findings could still show "1 claim signal" in
+        # the coverage table -- e.g. a document with only a green claim also wrongly showed a
+        # Social claim signal, purely from the social-side placeholder.
+        if is_placeholder_finding(claim.get('claim_type') or claim.get('type') or ''):
+            continue
         source=str(claim.get('source_url') or claim.get('source') or claim.get('source_label') or '').strip()
         if not source: continue
         try: skey=_canonical_url(source)
@@ -1902,7 +1922,7 @@ def split_red_flags_by_dimension(green_findings, social_findings, green_ext=None
     for f in green_findings or []:
         if f.get('blacklisted_practice_indicator'):
             empco_flag=True
-        if f.get('risk')!='High' or f.get('type','').lower().startswith('no major'):
+        if f.get('risk')!='High' or is_placeholder_finding(f.get('type','')):
             continue
         typ=f.get('type','Green claim'); row=green_groups.setdefault(typ,{'terms':[],'sources':[]})
         row['terms'].extend(f.get('problematic_terms') or [])
@@ -1914,7 +1934,7 @@ def split_red_flags_by_dimension(green_findings, social_findings, green_ext=None
     if empco_flag:
         green.append('Potential EmpCo issue: generic or high-sensitivity environmental wording may require clearer on-page specification and recognised supporting evidence.')
     for f in social_findings or []:
-        if f.get('risk')!='High' or f.get('type','').lower().startswith('no major'):
+        if f.get('risk')!='High' or is_placeholder_finding(f.get('type','')):
             continue
         typ=f.get('type','Social claim'); row=social_groups.setdefault(typ,{'sources':[]})
         row['sources'].append(concise_source(f))
@@ -2022,7 +2042,7 @@ def green_specification_check(claim_type, claim_text):
         'reikwijdte', 'nulmeting', 'referentiejaar', 'vergeleken met', 'gemaakt van', 'geverifieerd', 'gecertificeerd', 'volgens', 'methodologie', 'levenscyclus', 'voor dit product', 'verpakking', 'geldig tot', 'norm',
         'périmètre', 'année de référence', 'par rapport à', 'fabriqué à partir de', 'vérifié', 'certifié', 'selon', 'méthodologie', 'cycle de vie', 'pour ce produit', 'emballage', "valable jusqu'au", 'norme']
     has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,4}(?:[.,]\d+)?\s?%\b', c))
-    if t.startswith('no major'):
+    if is_placeholder_finding(t):
         return {'status':'Not applicable','comment':'No material green claim was detected.'}
     if has_specific:
         return {'status':'Partly specified','comment':'Some specification indicators were found, but scope, methodology, limitations and evidence should still be reviewed.'}
@@ -2053,7 +2073,7 @@ def green_ready_to_use_rewrite(claim_type):
     facts. Nothing inside [brackets] is invented or assumed true; it marks exactly what still
     needs to be supplied before the wording can be reused."""
     t=(claim_type or '').lower()
-    if t.startswith('no major'):
+    if is_placeholder_finding(t):
         return ''
     if 'climate' in t or 'offset' in t:
         return ('"We have reduced our [Scope 1 and 2 / Scope 1, 2 and 3] emissions by [X%] since [baseline year], measured '
@@ -2143,7 +2163,7 @@ def enrich_green_finding(f, trigger=''):
     f.update(classify_legal_basis(f))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
     f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''))
-    f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no major') else 'Can normally proceed only after standard evidence and wording review.'
+    f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
 
@@ -2177,7 +2197,7 @@ GREEN_NEGATIVE_SIGNAL_TERMS=['greenwashing','misleading','complaint','lawsuit','
 
 def green_evidence_signal_score(page_text, findings):
     text=(page_text or '').lower()
-    if not text.strip() or (findings and findings[0].get('type','').lower().startswith('no major')):
+    if not text.strip() or (findings and is_placeholder_finding(findings[0].get('type',''))):
         return 75, ['No major green claim detected; evidence gap is not the main driver.']
     strong=['lca','life cycle','scope 1','scope 2','scope 3','baseline','methodology','verified','assurance','certified','iso','ghg protocol','science based','sbt','emissions data','recycled content','percentage','%','third party','audit','standard','criteria','valid until','implementation plan','transition plan','milestone','resources allocated']
     weak=['policy','commitment','aim','target','progress','initiative','programme','program']
@@ -2238,7 +2258,7 @@ def combine_green_social(green_score, social_score, audience):
     return max(0, min(max(green, social), overall))
 
 def green_washing_conclusion(score, findings, evidence_gap, external_score, audience):
-    no_major=findings and findings[0].get('type','').lower().startswith('no major')
+    no_major=findings and is_placeholder_finding(findings[0].get('type',''))
     prefix='Consumer-facing EmpCo-relevant material: ' if ('Client-facing' in audience.get('audience','') or 'Consumer-facing' in audience.get('audience','') or 'commercial' in audience.get('audience','').lower()) else ''
     if no_major: return prefix+'No clear greenwashing signal detected'
     if score<30: return prefix+'Low green-claim substantiation risk'
@@ -2265,7 +2285,13 @@ def green_evidence_checklist(f):
 def social_claim_inventory_with_dimension(findings):
     rows=build_claim_inventory(findings)
     for r in rows:
-        r['dimension']='Social'; r['washing_type']=SOCIAL_WASHING_TAXONOMY.get(r.get('claim_type',''),r.get('claim_type',''))
+        r['dimension']='Social'
+        # SOCIAL_WASHING_TAXONOMY's only "no claim" key is the legacy "No major high-risk
+        # social claim detected" string, which the placeholder row never actually uses (it's
+        # "No material problematic social claim retained") -- the .get() fallback silently
+        # showed that raw, wordier type string instead of a clean "no signal" label.
+        r['washing_type']=('No clear social-washing signal' if is_placeholder_finding(r.get('claim_type',''))
+                            else SOCIAL_WASHING_TAXONOMY.get(r.get('claim_type',''),r.get('claim_type','')))
     return rows
 
 def build_green_social_actions(green_findings, social_findings, audience, company_name=''):
@@ -2275,8 +2301,8 @@ def build_green_social_actions(green_findings, social_findings, audience, compan
     client_facing=('Client-facing' in audience.get('audience','') or 'Consumer-facing' in audience.get('audience','') or 'commercial' in audience.get('audience','').lower())
     high_green=[f for f in (green_findings or []) if f.get('risk')=='High']
     high_social=[f for f in (social_findings or []) if f.get('risk')=='High']
-    green_types=list(dict.fromkeys([f.get('type','') for f in (green_findings or []) if f.get('type') and not f.get('type','').lower().startswith('no ')]))[:3]
-    social_types=list(dict.fromkeys([f.get('type','') for f in (social_findings or []) if f.get('type') and not f.get('type','').lower().startswith('no ')]))[:3]
+    green_types=list(dict.fromkeys([f.get('type','') for f in (green_findings or []) if f.get('type') and not is_placeholder_finding(f.get('type',''))]))[:3]
+    social_types=list(dict.fromkeys([f.get('type','') for f in (social_findings or []) if f.get('type') and not is_placeholder_finding(f.get('type',''))]))[:3]
     green_terms=list(dict.fromkeys([t for f in high_green for t in (f.get('problematic_terms') or [])]))[:5]
     social_terms=list(dict.fromkeys([t for f in high_social for t in (f.get('problematic_terms') or [])]))[:5]
     if client_facing or high_green:
@@ -2354,7 +2380,7 @@ def merge_documents(primary, discovered):
 
 def score_driver_details(green_score, social_score, green_fs, social_fs, green_splits, social_splits, green_components, social_components, green_ext, social_ext, sector, audience):
     def claim_names(fs):
-        vals=[f.get('type','claim') for f in fs or [] if not f.get('type','').lower().startswith('no major') and not f.get('type','').lower().startswith('no material')]
+        vals=[f.get('type','claim') for f in fs or [] if not is_placeholder_finding(f.get('type',''))]
         # v57i: previously each retained claim *instance* was listed by type name with no
         # de-duplication, so e.g. three separate "Aspirational or future social-performance
         # claim" excerpts showed up as that same phrase repeated three times in a row -- noisy
@@ -2375,7 +2401,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
         best=max(labels, key=lambda k: (splits or {}).get(k,0))
         return labels[best], (splits or {}).get(best,0)
     def material_count(fs):
-        return len([f for f in fs or [] if not f.get('type','').lower().startswith(('no major','no material'))])
+        return len([f for f in fs or [] if not is_placeholder_finding(f.get('type',''))])
     def gap_label(value):
         value=int(value or 0)
         return 'limited' if value<30 else 'moderate' if value<60 else 'substantial'
@@ -2589,7 +2615,7 @@ def collect_investor_internal_text(discovered_docs, limit=2):
 def build_pre_publication_review(green_findings, social_findings, audience):
     rows=[]
     for f in green_findings or []:
-        if f.get('type','').lower().startswith('no major'):
+        if is_placeholder_finding(f.get('type','')):
             continue
         rows.append({
             'dimension':'Green',
@@ -2604,7 +2630,7 @@ def build_pre_publication_review(green_findings, social_findings, audience):
             'safer_rewrite':f.get('rewrite','')
         })
     for f in social_findings or []:
-        if f.get('type','').lower().startswith('no major'):
+        if is_placeholder_finding(f.get('type','')):
             continue
         rows.append({
             'dimension':'Social',
@@ -2667,13 +2693,21 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
 
 def build_claim_modules_summary(green_findings, social_findings):
     modules={}
+    # The green loop previously had NO placeholder guard at all (the social loop below at
+    # least attempted one, just with the broken "no major" prefix) -- a document with zero
+    # real green claims still counted its "No material problematic green claim retained"
+    # placeholder as one claim-module signal.
     for f in green_findings or []:
+        if is_placeholder_finding(f.get('type','')):
+            continue
         m=f.get('module', green_claim_module(f.get('type','')))
         modules.setdefault(m, {'count':0,'risk_levels':[],'claim_types':[]})
         modules[m]['count']+=1; modules[m]['risk_levels'].append(f.get('risk','')); modules[m]['claim_types'].append(f.get('type',''))
-    if social_findings and not social_findings[0].get('type','').lower().startswith('no major'):
+    if social_findings and not is_placeholder_finding(social_findings[0].get('type','')):
         modules.setdefault('Social Washing Claim Check', {'count':0,'risk_levels':[],'claim_types':[]})
         for f in social_findings:
+            if is_placeholder_finding(f.get('type','')):
+                continue
             modules['Social Washing Claim Check']['count']+=1; modules['Social Washing Claim Check']['risk_levels'].append(f.get('risk','')); modules['Social Washing Claim Check']['claim_types'].append(f.get('type',''))
     out=[]
     for m,v in modules.items():
@@ -2940,7 +2974,7 @@ def has_regulatory_green_signal(findings, audience):
     if not consumer:
         return False
     for f in findings or []:
-        if f.get('type','').lower().startswith('no material') or f.get('type','').lower().startswith('no major'):
+        if is_placeholder_finding(f.get('type','')):
             continue
         t=(f.get('type','')+' '+f.get('claim','')+' '+f.get('regulatory_signal','')).lower()
         if any(x in t for x in ['generic environmental','climate-neutrality','offsetting','comparative environmental','future environmental','sustainability label','absolute or purity','legal requirement']):
@@ -2949,67 +2983,12 @@ def has_regulatory_green_signal(findings, audience):
 
 def has_forced_labour_regulatory_signal(findings):
     for f in findings or []:
-        if f.get('type','').lower().startswith('no material') or f.get('type','').lower().startswith('no major'):
+        if is_placeholder_finding(f.get('type','')):
             continue
         t=(f.get('type','')+' '+f.get('claim','')+' '+f.get('analysis','')).lower()
         if any(x in t for x in ['forced labour','forced-labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','supplier traceability']):
             return True
     return False
-
-def recalibrate_dimension_score(raw_score, components, findings, targeted_sources, regulatory_signal=False, dimension='green'):
-    """Material-claim scoring.
-
-    The score measures risk intensity, not the number of sustainability words. It is
-    conservative: isolated wording without weak substantiation and external negative
-    stakeholder signals normally remains low to medium. High scores require multiple
-    material claim signals, a major evidence gap, direct EmpCo / Forced Labour relevance
-    or retained negative external stakeholder signals.
-    """
-    comps=dict(components or {})
-    evidence_gap=int(comps.get('substantiation_risk',0) or 0)
-    claim_wording=int(comps.get('claim_wording_risk',0) or 0)
-    sector_score=int(comps.get('sector_baseline_risk',0) or 0)
-    findings=list(findings or [])
-    material=[f for f in findings if not (f.get('type','').lower().startswith('no material') or f.get('type','').lower().startswith('no major'))]
-    material_count=len(material)
-    high_claims=len([f for f in material if f.get('risk')=='High'])
-    ext_count=len(targeted_sources or [])
-    external_context=min(100, 18 + 14*ext_count) if ext_count else 0
-    comps['external_context_risk']=external_context
-
-    # Base weights. Claim wording and evidence gap are primary; sector is a modest
-    # sensitivity factor; negative external signals can materially lift the result.
-    base=round(claim_wording*0.30 + evidence_gap*0.30 + external_context*0.25 + sector_score*0.15)
-    if regulatory_signal:
-        base += 5 if dimension=='green' else 4
-    if material_count>=2:
-        base += min(6, (material_count-1)*3)
-    if ext_count>=2:
-        base += 4
-
-    # Conservative caps for limited evidence of actual claim risk.
-    if material_count==0:
-        base=min(base, 18 + min(8, ext_count*3) + (4 if sector_score>=55 else 0))
-    elif material_count==1 and ext_count==0:
-        base=min(base, 52 if regulatory_signal else 45)
-    elif material_count<=2 and ext_count==0:
-        base=min(base, 60 if regulatory_signal else 54)
-    elif material_count==1 and ext_count==1:
-        base=min(base, 62 if regulatory_signal else 56)
-
-    # Extremely high scores require a convergence of factors, not just one phrase.
-    if base>=70 and not (evidence_gap>=60 and claim_wording>=58 and (ext_count>=1 or regulatory_signal or high_claims>=2) and material_count>=1):
-        base=66
-    if base>=80 and not (evidence_gap>=72 and claim_wording>=68 and ext_count>=2 and material_count>=2):
-        base=76
-    if base>=90 and not (ext_count>=3 and material_count>=3 and evidence_gap>=80):
-        base=84
-
-    base=max(0,min(100,int(round(base))))
-    comps['score_calculation_note']='Score calculation: material problematic claim wording, evidence gap, retained negative external stakeholder context and sector/channel sensitivity. Isolated claim signals are treated as limited concerns unless supported by stronger regulatory relevance or retained negative external stakeholder context.'
-    return base, comps
-
-
 
 # Stricter negative-stakeholder source filters: company-owned documents, positive news,
 # awards, partnerships and neutral corporate announcements are never retained.
@@ -3046,7 +3025,7 @@ GENERIC_GREEN_EXCLUSIONS = [
 ]
 
 def _material_findings(findings):
-    return [f for f in (findings or []) if not (f.get('type','').lower().startswith('no material') or f.get('type','').lower().startswith('no major'))]
+    return [f for f in (findings or []) if not is_placeholder_finding(f.get('type',''))]
 
 
 def _looks_like_generic_green_claim(excerpt, trigger):
@@ -4048,7 +4027,7 @@ def social_specification_check(claim_type, claim_text):
                         'mécanisme de plainte','mesure corrective','traçable','méthodologie','évaluation','évalué',
                         'selon','norme','indépendant','année de référence','politique']
     has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%\b', c))
-    if t.startswith('no ') or t.startswith('no material'):
+    if is_placeholder_finding(t):
         return {'status':'Not applicable','comment':'No material social claim was detected.'}
     if has_specific:
         return {'status':'Partly specified','comment':'Some substantiation indicators (e.g. audit, certification, scope, %) were found, but coverage, methodology and remediation should still be verified.'}
@@ -4075,7 +4054,7 @@ def social_ready_to_use_rewrite(claim_type):
     see green_ready_to_use_rewrite() for the rationale. Bracketed placeholders mark facts only
     the company can supply; nothing inside them is invented or assumed true."""
     t=(claim_type or '').lower()
-    if t.startswith('no ') or t.startswith('no material'):
+    if is_placeholder_finding(t):
         return ''
     if 'forced' in t or 'modern slavery' in t:
         return ('"Our forced-labour risk-management approach for [product/supply chain] includes [specific traceability '
@@ -4112,7 +4091,7 @@ def enrich_social_finding(f, trigger=''):
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), f.get('claim',''))
     f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''))
-    f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not f.get('type','').lower().startswith('no ') else 'Can normally proceed only after standard evidence and wording review.'
+    f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
 def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score):
