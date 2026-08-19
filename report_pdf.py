@@ -1,4 +1,4 @@
-"""Readable native Durably company claim-risk report (v83).
+"""Readable native Durably company claim-risk report (v84).
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
 uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
@@ -794,6 +794,21 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     clusters = cluster_claims(data)
     material = clusters[0] if clusters else {"representative":{"claim_type":"No material claim signal retained","risk":"Low","claim_text":"No material sustainability claim was retained in the reviewed material.","why_flagged":"No material wording issue was retained in this first-pass screening.","evidence_needed":["Maintain claim-specific evidence and approval records"],"suggested_rewrite":"Continue using precise wording supported by current evidence."},"occurrences":[]}
     additional = clusters[1:1+additional_limit]
+    # v85: clusters are sorted purely by (risk, claim_score) with no dimension awareness, so a
+    # scan with e.g. three High-risk social findings but a slightly higher-scoring green
+    # finding on top could show three green cards and zero social ones in the PDF, even though
+    # social was the more material risk. If the finding shown as "most material" leaves the
+    # OTHER dimension completely unrepresented, swap the lowest-ranked additional slot for the
+    # best-ranked cluster of that missing dimension (only when there's room to do so).
+    if additional:
+        shown_dims = {str((material.get("representative") or {}).get("dimension","")).lower()}
+        shown_dims |= {str(c.get("representative",{}).get("dimension","")).lower() for c in additional}
+        other_dim = "social" if "green" in shown_dims and "social" not in shown_dims else ("green" if "social" in shown_dims and "green" not in shown_dims else "")
+        if other_dim:
+            shown_ids = {id(material)} | {id(c) for c in additional}
+            candidate = next((c for c in clusters if str(c.get("representative",{}).get("dimension","")).lower()==other_dim and id(c) not in shown_ids), None)
+            if candidate:
+                additional[-1] = candidate
     flow = []
     flow += header_block(data, "Company claim-risk report · Assessment overview")
     flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))

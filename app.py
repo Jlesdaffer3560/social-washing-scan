@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v83_placeholder_finding_fix"
-APP_RELEASE_LABEL="v83"
+APP_VERSION="hostable_v84_coverage_and_false_positive_fixes"
+APP_RELEASE_LABEL="v84"
 APP_RELEASE_DATE="2026-08-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -153,7 +153,7 @@ SOCIAL_WASHING_TAXONOMY={
 }
 
 STANDARDS=[
- {"name":"CSRD / ESRS S1-S4 (post-Omnibus I: >1,000 employees AND >EUR450M net turnover; reporting from FY2027)","use":"Connect social claims to policies, actions, targets and metrics across own workforce (S1), value-chain workers (S2), affected communities (S3) and consumers (S4). Post-Omnibus I: first CSRD report due 2028 for in-scope companies. Belgian transposition via Wet van 6 februari 2025."},
+ {"name":"CSRD / ESRS S1-S4 (post-Omnibus I: >1,000 employees AND >EUR450M net turnover; reporting from FY2027)","use":"Connect social claims to policies, actions, targets and metrics across own workforce (S1), value-chain workers (S2), affected communities (S3) and consumers (S4). Post-Omnibus I: first CSRD report due 2028 for in-scope companies. Belgian CSRD transposition: Law of 2 December 2024 (published in the Belgian State Gazette on 20 December 2024). Post-Omnibus scope changes: Directive (EU) 2026/470."},
  {"name":"CSDDD (post-Omnibus I: scope limited to >5,000 employees AND >EUR1.5B net turnover; application from 26 July 2029)","use":"Support human-rights and supply-chain claims with risk-based due diligence, prevention, mitigation, tracking and remediation. Post-Omnibus I (Directive 2026/470, in force 18 March 2026): direct scope applies only to the largest companies. Indirect exposure through customer due diligence expectations is already commercially relevant."},
  {"name":"EU Forced Labour Regulation - Regulation (EU) 2024/3015 (core prohibition, investigation and customs-enforcement provisions apply from 14 December 2027; a small set of governance/preparatory articles -- Art. 5(3), 7, 8, 9(2), 11, 33, 35 and 37(3) -- already apply from 13 December 2024)","use":"A product-market-access and customs-enforcement regime, not a claims/advertising law like EmpCo: it prohibits placing, making available on the Union market, or exporting products made in whole or in part with forced labour (Art. 3), enforced via investigation, withdrawal, disposal and customs suspension (Art. 17-30) rather than by policing marketing text. Article 1(3) explicitly states it does not itself create new due-diligence obligations -- due diligence already required under other Union/national law, or carried out per OECD/ILO guidance, is what investigators rely on as evidence. For this scan's purposes: treat 'forced-labour free', traceability or import/export assurance wording as a claim that should be backed by risk-based due diligence, product/supplier traceability, remediation and withdrawal/customs response readiness now, ahead of the 2027 application date -- not as proof the Regulation's own market-prohibition duties are already enforceable today."},
  {"name":"OECD Guidelines","use":"Check whether responsible-business claims are backed by identification, prevention, mitigation and accounting for adverse impacts."},
@@ -3092,23 +3092,33 @@ _ASPIRATIONAL_SOCIAL_VERBS=['working towards','working to build','work towards',
     'committed to building','committed to build','building a foundation','building a basis',
     'envision a world','envisage a world','vision of a world','working towards a world','working towards a future',
     'we believe in a world where','we dream of a world where','on a journey towards','on our journey towards',
+    # v85: bare "committed to X" (not just "committed to BUILDING X") is the far more common
+    # real-world phrasing of the exact same ambition-only pattern this function targets --
+    # "We are committed to fair working conditions for all workers in our supply chain" has no
+    # achieved-outcome, baseline or timeline either, but the verb list only caught the narrower
+    # "committed to building" form. Still gated on a nearby social topic below, same as every
+    # other verb here, so this doesn't fire on unrelated commitments ("committed to quarterly
+    # board meetings").
+    'committed to','commitment to','committed to ensuring','committed to promoting','committed to protecting',
+    'committed to upholding','committed to respecting',
     'werken aan','werken naar','werken aan de opbouw van','willen bouwen aan','streven naar','we streven ernaar',
     'onze ambitie is','toegewijd aan het opbouwen van','op weg naar','we geloven in een wereld waarin',
-    'we dromen van een wereld waarin','onderweg naar','op onze weg naar',
+    'we dromen van een wereld waarin','onderweg naar','op onze weg naar','toegewijd aan','we zetten ons in voor',
     'nous travaillons vers','nous travaillons à construire','nous visons à construire','nous voulons construire',
     'notre ambition est','engagés à construire','nous croyons en un monde où','nous rêvons d\'un monde où',
-    'en chemin vers','sur notre chemin vers','nous aspirons à']
+    'en chemin vers','sur notre chemin vers','nous aspirons à','engagés à','engagée à',"nous nous engageons à"]
 _SOCIAL_ASPIRATION_TOPICS=['living wage','living wages','human rights','fair wage','fair wages','decent work',
-    'decent working conditions','good working conditions','safe working conditions','workers rights',"workers' rights",
+    'decent working conditions','good working conditions','safe working conditions','working conditions',
+    'workers rights',"workers' rights",
     'worker rights','labour rights','labor rights','gender equality','equal opportunities','dignity',
     'respected','well-being of workers','wellbeing of workers','fair treatment','social justice','worker welfare',
     'workers welfare',
     'leefbaar loon','mensenrechten','eerlijk loon','waardig werk','goede arbeidsomstandigheden',
-    'veilige arbeidsomstandigheden','rechten van werknemers','arbeidsrechten','gendergelijkheid','gelijke kansen',
+    'veilige arbeidsomstandigheden','arbeidsomstandigheden','rechten van werknemers','arbeidsrechten','gendergelijkheid','gelijke kansen',
     'waardigheid','gerespecteerd','welzijn van werknemers','eerlijke behandeling','sociale rechtvaardigheid',
     'werknemerswelzijn',
     'salaire vital','droits humains','salaire équitable','travail décent','bonnes conditions de travail',
-    'conditions de travail sûres','droits des travailleurs','droits du travail','égalité des genres',
+    'conditions de travail sûres','conditions de travail','droits des travailleurs','droits du travail','égalité des genres',
     'égalité des chances','dignité','respecté','bien-être des travailleurs','traitement équitable',
     'justice sociale']
 
