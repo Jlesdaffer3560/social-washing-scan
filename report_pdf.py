@@ -1,4 +1,4 @@
-"""Readable native Durably company claim-risk report (v84).
+"""Readable native Durably company claim-risk report (v86).
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
 uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
@@ -640,7 +640,13 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
-    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREEN_SOFT if material else GREY_100), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    # v86: the "most material finding" card always used GREEN_SOFT as its background
+    # regardless of actual risk, while its border/badge correctly followed risk_color() -- a
+    # High-risk finding rendered with a red badge, a red border, AND a soft-green card
+    # background, which read as visually contradictory ("this looks like a good result").
+    # risk_soft() picks the matching soft tone (red/amber/green) for the actual risk level.
+    card_background = risk_soft(claim_risk(claim)) if material else GREY_100
+    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), card_background), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
     return card
 
 

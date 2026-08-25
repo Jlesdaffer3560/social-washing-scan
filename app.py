@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v84_coverage_and_false_positive_fixes"
-APP_RELEASE_LABEL="v84"
+APP_VERSION="hostable_v86_evidence_locality_and_scoring_fixes"
+APP_RELEASE_LABEL="v86"
 APP_RELEASE_DATE="2026-08-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -133,7 +133,10 @@ PROFILES={
  "proximus":("Proximus","Telecommunications and digital services","Medium","Telecom social claims may concern digital inclusion, vulnerable customers, privacy, cybersecurity, supply-chain labour and responsible digitalisation.")
 }
 SECTOR_RULES=[
- ("High",["fast fashion","apparel","textile","garment","fashion","clothing","discount","supermarket","grocery","food retail","catering","facilities","outsourced","platform","delivery","commodity","cocoa","palm oil","coffee","cotton"],"higher exposure to low-wage work, complex supply chains, migrant or seasonal labour, supplier pressure, audit limitations and worker-voice challenges"),
+ # v86: "platform" was removed -- it is standard SaaS/tech terminology ("our software
+ # platform...") and matched essentially any tech company, not just gig-economy delivery
+ # platforms (which "delivery" already covers on its own).
+ ("High",["fast fashion","apparel","textile","garment","fashion","clothing","discount","supermarket","grocery","food retail","catering","facilities","outsourced","delivery","commodity","cocoa","palm oil","coffee","cotton"],"higher exposure to low-wage work, complex supply chains, migrant or seasonal labour, supplier pressure, audit limitations and worker-voice challenges"),
  ("Medium",["bank","finance","insurance","telecom","digital","aviation","airline","transport","chemical","energy","infrastructure","manufacturing","industrial","technology","utility","gas","logistics"],"meaningful exposure to customer rights, contractor management, responsible procurement, safety, data/privacy or affected-community expectations"),
  ("Low",["software","consulting","professional services","agency","office services"],"lower structural exposure, although broad people, customer or supply-chain claims still require evidence")
 ]
@@ -171,7 +174,13 @@ def standards_for_claim(t):
     # diversity and ethical commitments as examples. EmpCo is therefore also directly relevant
     # to these social-claim categories, not only to green claims as previously cited here.
     if "forced" in x or "modern slavery" in x: return ["EU Forced Labour Regulation 2024/3015","CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO","UNGC"]
-    if "aspirational" in x or "future social" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) & 6(2)(d) (by analogy: future-performance claims require a verifiable, time-bound implementation plan)","CSRD/ESRS S1-S2","OECD Guidelines","UNGPs","ILO","UNGC"]
+    # v86: Art. 6(2)(d) is textually an "environmental claim related to future environmental
+    # performance" test -- it does not itself extend to future SOCIAL-performance claims the
+    # way Art. 6(1)(b) explicitly does. Citing "& 6(2)(d)" alongside 6(1)(b) here, even
+    # parenthetically qualified "by analogy", still read as if 6(2)(d) were a direct legal
+    # basis for this social-claim category. Reframed as an internal evidentiary standard this
+    # scan applies by analogy, not a citation of the article itself.
+    if "aspirational" in x or "future social" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics) -- future-performance evidentiary standard inspired by Art. 6(2)(d)'s environmental-claim logic, not a direct Art. 6(2)(d) requirement for social claims: a verifiable, time-bound implementation plan is expected before an aspirational social claim is treated as substantiated","CSRD/ESRS S1-S2","OECD Guidelines","UNGPs","ILO","UNGC"]
     if "human" in x or "labour" in x or "labor" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics: human/labour rights)","CSRD/ESRS S1-S2","CSDDD","EU Forced Labour Regulation 2024/3015","OECD Guidelines","UNGPs","ILO","UNGC"]
     if "supply" in x or "supplier" in x: return ["CSRD/ESRS S2","CSDDD","OECD Guidelines","UNGPs","ILO"]
     if "diversity" in x or "inclusion" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics: equal treatment, gender equality, inclusion, diversity)","CSRD/ESRS S1","ILO","GRI","UNGC"]
@@ -242,10 +251,15 @@ def _dedupe_similar_sources(items):
 
 class Parser(HTMLParser):
     def __init__(self):
-        super().__init__(); self.skip=False; self.parts=[]; self.links=[]; self.skip_tags={"script","style","noscript","svg","canvas","form"}
+        super().__init__(); self.skip_depth=0; self.parts=[]; self.links=[]; self.skip_tags={"script","style","noscript","svg","canvas","form"}
     def handle_starttag(self,tag,attrs):
         tag_l=tag.lower()
-        if tag_l in self.skip_tags: self.skip=True
+        # v86: a single boolean flipped to False the moment ANY skip-tag closed, even a nested
+        # one -- "<form><svg>...</svg>text after svg but still inside form</form>" incorrectly
+        # let "text after svg" back into the scanned text once </svg> closed, despite the <form>
+        # still being open. A depth counter (incremented per open, decremented per close, floored
+        # at 0 for malformed/mismatched HTML) tracks nesting correctly.
+        if tag_l in self.skip_tags: self.skip_depth+=1
         # Capture visible/semantic cues from images, icons and ARIA labels. These are not treated as proof,
         # but they help detect visual green-claim indicators such as leaf badges, eco icons or trust marks.
         attr_map={k.lower():v for k,v in attrs if v}
@@ -261,9 +275,9 @@ class Parser(HTMLParser):
             for k,v in attrs:
                 if k.lower()=="href" and v: self.links.append(v)
     def handle_endtag(self,tag):
-        if tag.lower() in self.skip_tags: self.skip=False
+        if tag.lower() in self.skip_tags and self.skip_depth>0: self.skip_depth-=1
     def handle_data(self,data):
-        if not self.skip:
+        if not self.skip_depth:
             t=" ".join(data.split())
             if len(t)>2: self.parts.append(t)
 
@@ -436,6 +450,16 @@ def fetch_reader_text(url,timeout=9):
     """
     if not ENABLE_READER_FALLBACK:
         raise ValueError('Reader fallback is disabled.')
+    # v86: direct fetches are validated against is_private() via _open_public_url(), but this
+    # Reader-fallback path forwarded the URL straight to the external r.jina.ai proxy with no
+    # such check. Not a classic SSRF into this app's own network, but it does bypass the
+    # explicit "never request private/local URLs" application rule by handing that URL to a
+    # third-party fetch service instead of fetching it directly.
+    p=urlparse(url)
+    if p.scheme not in ('http','https') or not p.hostname:
+        raise ValueError('Invalid URL.')
+    if is_private(p.hostname):
+        raise ValueError('Private/local URLs are blocked.')
     headers={
         'User-Agent': CRAWLER_USER_AGENT,
         'Accept': 'text/plain,text/markdown;q=0.9,*/*;q=0.5',
@@ -861,14 +885,28 @@ def _guess_company_from_text(text):
             return name
     return ''
 
-def infer_sector(company,text):
+def infer_sector(company,text,page_segments=None):
     if company.get("sector_risk"):
         level=company["sector_risk"]; basis="recognised company/sector profile"
     else:
-        level="Medium"; basis="default medium exposure"; lower=(company.get("sector","")+" "+text[:15000]).lower()
+        # v86: sector was inferred from the first 15,000 chars of the ENTIRE crawled corpus
+        # (every page concatenated), taking the FIRST tier (High wins outright over Medium/Low)
+        # with even a single matching word anywhere. Reproduced: "Our software platform helps
+        # customers track coffee deliveries" and "We provide professional services to
+        # supermarkets" both classified as High sector risk purely from one incidental mention
+        # of the company's CLIENTS' business, not its own. Two changes: (1) prefer the
+        # homepage/about-style content when page-level segments are available -- that's where a
+        # company actually describes what it does, not a page deep in the site about a client
+        # or topic; (2) the High tier (the most consequential, and the one most vulnerable to a
+        # single incidental word) now requires at least 2 distinct matching terms, not 1, before
+        # it can override a Medium/Low match.
+        homepage_text=(page_segments[0].get('text','') if page_segments else '') or ''
+        lower=(company.get("sector","")+" "+(homepage_text[:8000] if homepage_text else text[:15000])).lower()
+        level="Medium"; basis="default medium exposure"
         for lvl,terms,risks in SECTOR_RULES:
             hits=[t for t in terms if t in lower]
-            if hits: level=lvl; basis="matched terms: "+", ".join(hits[:5]); break
+            if hits and (lvl!="High" or len(hits)>=2):
+                level=lvl; basis="matched terms: "+", ".join(hits[:5]); break
     risks=next(r for lvl,terms,r in SECTOR_RULES if lvl==level)
     return {"level":level,"basis":basis,"risks":risks}
 
@@ -2565,7 +2603,15 @@ def _extract_pdf_text_regex_fallback(data):
     try:
         for m in re.finditer(rb'stream\r?\n(.*?)endstream', data, re.DOTALL):
             try:
-                decompressed=zlib.decompress(m.group(1))
+                # v86: zlib.decompress() has no output-size bound -- a small, crafted content
+                # stream can decompress to a very large amount of memory (a classic
+                # decompression-bomb DoS), and this fallback only runs on user-uploaded PDFs.
+                # decompressobj().decompress(data, max_length) caps the OUTPUT size directly
+                # (unlike the unbounded plain zlib.decompress), the same bounded-decompression
+                # pattern already used for report tokens elsewhere in this file. 3MB per stream
+                # is generous for real PDF text content -- the combined-text cap below is only
+                # 200,000 chars anyway.
+                decompressed=zlib.decompressobj().decompress(m.group(1),3_000_000)
             except Exception:
                 continue
             text_parts.append(text_operators(decompressed))
@@ -2764,10 +2810,10 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     social_targeted=[]
     green_targeted=[]
     exttext=''
-    sec=infer_sector(comp,text)
+    sec=infer_sector(comp,text,page_segments)
     ctx=infer_context(comp,text,social_ext)
-    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""))
-    green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext,text,audience)
+    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""),audience,page_segments)
+    green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext,text,audience,page_segments)
     social_splits=split_scores(social_fs,sec,ctx,social_mod,social_components)
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
     overall=combine_green_social(green_score,social_score,audience)
@@ -2849,7 +2895,7 @@ def analyse_url_v27(raw):
     social_ext=external(comp['company'], social_fs, pages)
     green_ext=external_green(comp['company'], green_fs, pages)
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
-    sec=infer_sector(comp,txt+'\n'+exttext)
+    sec=infer_sector(comp,txt+'\n'+exttext,page_segments)
     ctx=infer_context(comp,txt,social_ext)
     # v84: was capped at 5 -- this same capped list both fed the risk score AND was the only
     # thing ever eligible to reach the report/frontend, even though _v60_rank_dedupe below can
@@ -2875,9 +2921,9 @@ def analyse_url_v27(raw):
             return f'Performed \u2014 {len(targeted)} relevant external signal(s) retained'
         return 'Performed \u2014 no relevant external signal identified'
     external_verification_status={'green':_ext_verification_status(green_ext, green_targeted), 'social':_ext_verification_status(social_ext, social_targeted)}
-    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext_scoring,txt,comp.get("company",""))
+    social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext_scoring,txt,comp.get("company",""),audience,page_segments)
     social_external_context = strict_external_context_risk({'results':social_targeted}, comp.get('company',''))
-    green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext_scoring,txt,audience)
+    green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext_scoring,txt,audience,page_segments)
     overall=combine_green_social(green_score,social_score,audience)
     social_splits=split_scores(social_fs,sec,ctx,social_mod,social_components)
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
@@ -3122,13 +3168,29 @@ _SOCIAL_ASPIRATION_TOPICS=['living wage','living wages','human rights','fair wag
     'égalité des chances','dignité','respecté','bien-être des travailleurs','traitement équitable',
     'justice sociale']
 
+_SOCIAL_PROCESS_EVIDENCE_TERMS=['due diligence','grievance mechanism','grievance channel','grievance procedure',
+    'independently audited','third-party audit','third party audit','regularly audited','externally verified',
+    'zorgvuldigheidsplicht','klachtenmechanisme','klachtenprocedure','onafhankelijk gecontroleerd','extern geverifieerd',
+    'devoir de vigilance','mécanisme de plainte','procédure de plainte','audité de manière indépendante','vérifié de manière externe']
+
 def _looks_like_aspirational_social_claim(excerpt):
     c=(excerpt or '').lower()
     if not any(v in c for v in _ASPIRATIONAL_SOCIAL_VERBS):
         return False
-    return any(t in c for t in _SOCIAL_ASPIRATION_TOPICS)
+    if not any(t in c for t in _SOCIAL_ASPIRATION_TOPICS):
+        return False
+    # v86: a commitment paired with concrete process evidence in the same passage ("We are
+    # committed to respecting human rights... We conduct due diligence and maintain grievance
+    # mechanisms") is a substantiated policy statement, not the empty, unfalsifiable ambition
+    # wording this function exists to catch -- the whole point of "aspirational" flagging is
+    # the ABSENCE of exactly this kind of evidence. Flagging it as High regardless of the
+    # evidence right next to it over-penalised ordinary, reasonably well-evidenced policy
+    # commitments.
+    if any(t in c for t in _SOCIAL_PROCESS_EVIDENCE_TERMS):
+        return False
+    return True
 
-def _social_claim_context(excerpt, typ, trigger):
+def _social_claim_context(excerpt, typ, trigger, full_text=None):
     c=_normalize_apostrophes((excerpt or '').lower()); t=(typ or '').lower(); trig=(trigger or '').lower()
     if len(c.strip()) < 35:
         return False
@@ -3161,7 +3223,19 @@ def _social_claim_context(excerpt, typ, trigger):
             'tous les fournisseurs','100% des fournisseurs','audité','certifié','conforme','répond à nos normes','traçable','approvisionnement éthique','approvisionnement responsable','devoir de vigilance','droits humains','travail forcé','esclavage moderne','conformité au code fournisseur']
         return any(s in c for s in strong)
     if 'aspirational' in t or ('future' in t and 'social' in t):
-        return _looks_like_aspirational_social_claim(c)
+        # v86: _v55_sentence_list() only extracts the ONE sentence containing the trigger, so
+        # process-evidence wording in the very next sentence ("We are committed to respecting
+        # human rights across our operations. We conduct due diligence and maintain grievance
+        # mechanisms.") was invisible to _looks_like_aspirational_social_claim's evidence
+        # exception -- the check never saw it. Widen the window (evidence-check only, not the
+        # excerpt shown to the reviewer) to include a bit of text right after the trigger.
+        wider=c
+        if full_text:
+            low_full=_normalize_apostrophes((full_text or '').lower())
+            pos=low_full.find(trig)
+            if pos!=-1:
+                wider=c+' '+low_full[pos+len(trig):pos+len(trig)+250]
+        return _looks_like_aspirational_social_claim(wider)
     if 'forced' in t:
         return any(s in c for s in ['forced labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','product traceability','supplier traceability',
             'dwangarbeid','moderne slavernij','kinderarbeid','traceerbaarheid','importcontroles','producttraceerbaarheid','traceerbaarheid van leveranciers',
@@ -3247,9 +3321,43 @@ CLAIMS=[
 
 
 
-def calc_green_score(findings, sector, ext, page_text, audience):
+def _v86_claim_local_text(findings, page_segments, full_text):
+    """Scope evidence-term matching to the page(s) that actually contain a material claim,
+    instead of the entire crawled corpus. Falls back to the full corpus when no page-segment
+    link is available (e.g. a single uploaded document, or a claim whose source page could not
+    be matched to a segment) -- this preserves existing behaviour for those cases rather than
+    silently returning a thin/empty result.
+
+    v86: evidence_signal_score()/green_evidence_signal_score() searched the entire crawled
+    corpus for evidence terms with no regard to which page a claim actually came from.
+    Reproduced directly: a bare claim ("Our new product is sustainable and better for the
+    planet") scored little substantiation alone, but adding "Scope 1", "Scope 2", "baseline",
+    "ISO", "verified", "third-party audit" etc. ANYWHERE ELSE on the site measurably reduced
+    that claim's evidence gap, even though the evidence has nothing to do with that specific
+    product or claim. Restricting the search to the claim's own source page(s) is a real,
+    bounded step toward claim-specific evidence matching, using the page-segment/source-url
+    infrastructure already built for claim-source attribution elsewhere in this file -- short
+    of a full per-sentence-window rewrite, which would need much deeper changes to how excerpts
+    are tracked."""
+    material=[f for f in findings or [] if not is_placeholder_finding(f.get('type',''))]
+    if not page_segments or not material:
+        return full_text
+    wanted={f.get('source_url') for f in material if f.get('source_url')}
+    if not wanted:
+        return full_text
+    local=[seg.get('text','') for seg in page_segments if seg.get('url') in wanted]
+    local_text='\n'.join(p for p in local if p)
+    # Only fall back to the full corpus when NO segment actually matched (a genuinely short
+    # claim-bearing page is a normal, valid result, not a reason to widen back out to the
+    # whole site -- a high floor here silently defeated the fix for exactly the short pages
+    # this was meant to help with).
+    return local_text if local_text.strip() else full_text
+
+
+def calc_green_score(findings, sector, ext, page_text, audience, page_segments=None):
     material=_material_findings(findings)
-    substantiation, evidence_notes=green_evidence_signal_score(page_text, findings)
+    local_text=_v86_claim_local_text(findings, page_segments, page_text)
+    substantiation, evidence_notes=green_evidence_signal_score(local_text, findings)
     external_context=green_external_context_risk(ext)
     external_score=external_context.get('score',0)
     sector_score=sector_environment_score(sector)
@@ -3261,18 +3369,27 @@ def calc_green_score(findings, sector, ext, page_text, audience):
     comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.'}
     return score, comps, external_context
 
-def calc_score(findings,sector,context,external_research=None,page_text="",company_name=""):
+def calc_score(findings,sector,context,external_research=None,page_text="",company_name="",audience=None,page_segments=None):
     material=_material_findings(findings)
-    substantiation, evidence_notes=evidence_signal_score(page_text, findings)
+    local_text=_v86_claim_local_text(findings, page_segments, page_text)
+    substantiation, evidence_notes=evidence_signal_score(local_text, findings)
     external_context=strict_external_context_risk(external_research or {}, company_name)
     external_score=external_context.get('score',0)
     sector_score={"Low":10,"Medium":35,"High":60}.get(sector.get("level","Medium"),35)
     regulatory=any(('forced-labour' in f.get('type','').lower() or 'forced labor' in f.get('type','').lower()) for f in material)
-    score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, 1.0)
+    # v86: this always passed a hardcoded 1.0 -- calc_green_score applies an audience_factor
+    # (consumer-facing 1.00 / mixed 0.90 / investor-internal 0.75) but calc_score's own
+    # signature didn't even accept an audience argument, so an internal governance-document
+    # social claim scored the same as the identical wording on a public product page, despite
+    # the app's own audience methodology saying internal content should not be weighted like
+    # consumer-facing marketing.
+    audience_label=audience.get('audience','') if isinstance(audience,dict) else ''
+    audience_factor=1.0 if ('Client-facing' in audience_label or 'Consumer-facing' in audience_label or 'commercial' in audience_label.lower()) else 0.90 if ('Mixed' in audience_label or 'unclear' in audience_label.lower()) else 0.75
+    score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     external_mod, external_note=external_relevance_score(findings, external_research or {})
     top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"score_calculation_note":"Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals."}
-    return score, external_mod, external_note, evidence_quality_credit(page_text, findings), comps
+    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"audience_factor":audience_factor,"score_calculation_note":"Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals."}
+    return score, external_mod, external_note, evidence_quality_credit(local_text, findings), comps
 
 def recalc_global_score(green_score, social_score, green_findings=None, social_findings=None):
     gmat=_material_findings(green_findings); smat=_material_findings(social_findings)
@@ -3907,6 +4024,19 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         'vertelde ons','meldde ons','verzekerde ons','nous a dit','nous a informé','nous a assuré']
     if any(n in c for n in reported_speech) and not any(x in c for x in ['we ensure','we guarantee','we confirm','we verified','we independently']):
         return False
+    # v86: a passage reporting CRITICISM or an ALLEGATION against the company (e.g. "Critics
+    # said the company falsely advertised the product as eco-friendly", found via the crawler's
+    # own news/press-page candidates) was flagged as if "eco-friendly" were the company's own
+    # claim -- it is the opposite, a description of criticism about the company. Excluded unless
+    # the company is actually rebutting/denying the allegation in the same passage.
+    criticism_context=['critics said','critics say','critics claim','critics have said','accused of','was accused',
+        'were accused','accused the company','was criticized for','was criticised for','was sued for','was fined for',
+        'falsely advertised','falsely marketed','falsely claimed','falsely marketing','alleged that','allegedly',
+        'greenwashing lawsuit','greenwashing complaint','regulators found','watchdog found','investigation found',
+        'critici zeiden','critici stellen','beschuldigd van','werd beschuldigd','aangeklaagd wegens','ten onrechte adverteerde',
+        'les critiques ont dit','accusé de','accusée de','poursuivi pour','a été accusé','faussement annoncé','faussement présenté']
+    if any(n in c for n in criticism_context) and not any(x in c for x in ['we deny','we reject','we dispute','we strongly disagree','this is false','the allegation is incorrect']):
+        return False
     # v84: an interrogative sentence ("Is our packaging recyclable?", a genuine FAQ heading) is
     # a question, not an assertion -- the bare trigger words fire regardless of sentence type.
     if c.rstrip().endswith('?') and not any(x in c for x in ['we ensure','we guarantee','we confirm','yes,','yes ']):
@@ -4238,7 +4368,7 @@ def detect_claims(text):
         for trig in triggers:
             if _trigger_present(trig, low):
                 excerpt=_v55_sentence_list(text,trig)
-                if not _social_claim_context(excerpt, typ, trig):
+                if not _social_claim_context(excerpt, typ, trig, text):
                     continue
                 score=76 if typ=='Forced-labour product or supply-chain claim' else (62 if risk=='High' else 40)
                 _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score)
