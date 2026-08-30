@@ -47,9 +47,9 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v86_evidence_locality_and_scoring_fixes"
-APP_RELEASE_LABEL="v86"
-APP_RELEASE_DATE="2026-08-19"
+APP_VERSION="hostable_v87_regression_and_security_fixes"
+APP_RELEASE_LABEL="v87"
+APP_RELEASE_DATE="2026-08-30"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -745,7 +745,15 @@ def _candidate_score(item):
     elif source=='sitemap': score+=25
     elif source=='common_path': score-=5
     if low.split('?')[0].endswith('.pdf'): score+=70
-    for word,weight in [('sustainab',55),('esg',50),('responsib',45),('human-right',45),('modern-slavery',45),('climate',38),('environment',35),('supplier',32),('annual',25),('report',24),('people',18),('planet',18),('impact',16),('governance',15)]:
+    # v87: this scoring list was English-only, so a Dutch/French sustainability candidate that
+    # DID pass the relevant() filter (NL/FR terms were added there earlier) still scored no
+    # keyword credit here, only the flat source-type bonus -- systematically pushing it toward
+    # the bottom of the ranked queue and toward the CRAWL_MAX_PAGE_ATTEMPTS cutoff whenever it
+    # competed against English or common-path candidates. Added NL/FR terms at the same weights
+    # as their English equivalents.
+    for word,weight in [('sustainab',55),('esg',50),('responsib',45),('human-right',45),('modern-slavery',45),('climate',38),('environment',35),('supplier',32),('annual',25),('report',24),('people',18),('planet',18),('impact',16),('governance',15),
+        ('duurzaam',55),('verantwoord',45),('mensenrecht',45),('moderne-slavernij',45),('klimaat',38),('milieu',35),('leverancier',32),('jaarverslag',25),('mensen',18),('planeet',18),('bestuur',15),
+        ('durabilite',55),('durable',55),('responsab',45),('droits-humain',45),('esclavage-moderne',45),('climat',38),('environnement',35),('fournisseur',32),('annuel',25),('rapport',24),('personnes',18),('planete',18),('gouvernance',15)]:
         if word in low: score+=weight
     return -score,len(url)
 
@@ -885,7 +893,7 @@ def _guess_company_from_text(text):
             return name
     return ''
 
-def infer_sector(company,text,page_segments=None):
+def infer_sector(company,text,page_segments=None,homepage_url=None):
     if company.get("sector_risk"):
         level=company["sector_risk"]; basis="recognised company/sector profile"
     else:
@@ -900,7 +908,24 @@ def infer_sector(company,text,page_segments=None):
         # or topic; (2) the High tier (the most consequential, and the one most vulnerable to a
         # single incidental word) now requires at least 2 distinct matching terms, not 1, before
         # it can override a Medium/Low match.
-        homepage_text=(page_segments[0].get('text','') if page_segments else '') or ''
+        # v87: page_segments[0] is NOT always the scanned company's own homepage --
+        # crawl_with_related_sites() only appends the primary domain's pages to `all_pages` when
+        # its crawled text is non-whitespace (`if txt.strip():`); a JS-rendered/SPA homepage that
+        # parse_html can't extract text from leaves `all_pages` starting with a RELATED/group
+        # domain's pages instead, so "the first segment" could describe a different company
+        # entirely. Match on the actual scanned hostname when available, falling back to
+        # position 0 only when that hostname can't be found in the segments (e.g. the
+        # single-document-scan path, which has no real "homepage" concept anyway).
+        homepage_text=''
+        if page_segments:
+            target_host=(urlparse(homepage_url).hostname or '').lower().removeprefix('www.') if homepage_url else ''
+            match=None
+            if target_host:
+                for seg in page_segments:
+                    seg_host=(urlparse(str(seg.get('url') or '')).hostname or '').lower().removeprefix('www.')
+                    if seg_host==target_host:
+                        match=seg; break
+            homepage_text=(match or page_segments[0]).get('text','') or ''
         lower=(company.get("sector","")+" "+(homepage_text[:8000] if homepage_text else text[:15000])).lower()
         level="Medium"; basis="default medium exposure"
         for lvl,terms,risks in SECTOR_RULES:
@@ -1653,7 +1678,15 @@ def extract_page_segments(full_text, pages):
     if not pages:
         return []
     text=full_text or ''
-    parts=re.split(r'\n\n(PAGE|REPORT \(PDF\)|RELATED COMPANY SITE): ', text)
+    # v87: the actual marker crawl_with_related_sites() writes is "RELATED OFFICIAL COMPANY
+    # SITE: " (see the append call there) -- this split regex and the comparison below were
+    # still looking for the shorter "RELATED COMPANY SITE: " with no "OFFICIAL", so the branch
+    # below was DEAD CODE: it never matched, and a related/group domain's entire crawl output
+    # silently became part of whichever primary-domain page happened to precede it in the text,
+    # instead of getting its own page-level segments. This defeated claim-source attribution,
+    # _v86_claim_local_text()'s evidence-locality fix and infer_sector()'s homepage-preference
+    # fix for every claim actually sourced from a related/group domain page.
+    parts=re.split(r'\n\n(PAGE|REPORT \(PDF\)|RELATED OFFICIAL COMPANY SITE): ', text)
     segments=[{'url':pages[0] if pages else '', 'text':parts[0]}]
     i=1
     while i < len(parts)-1:
@@ -1661,7 +1694,7 @@ def extract_page_segments(full_text, pages):
         rest=parts[i+1]
         line, _, body = rest.partition('\n')
         label=line.strip()
-        if marker_type == 'RELATED COMPANY SITE':
+        if marker_type == 'RELATED OFFICIAL COMPANY SITE':
             nested=re.split(r'\n\n(PAGE|REPORT \(PDF\)): ', body)
             if label:
                 segments.append({'url':label, 'text':nested[0]})
@@ -2895,7 +2928,7 @@ def analyse_url_v27(raw):
     social_ext=external(comp['company'], social_fs, pages)
     green_ext=external_green(comp['company'], green_fs, pages)
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
-    sec=infer_sector(comp,txt+'\n'+exttext,page_segments)
+    sec=infer_sector(comp,txt+'\n'+exttext,page_segments,url)
     ctx=infer_context(comp,txt,social_ext)
     # v84: was capped at 5 -- this same capped list both fed the risk score AND was the only
     # thing ever eligible to reach the report/frontend, even though _v60_rank_dedupe below can
@@ -3234,7 +3267,29 @@ def _social_claim_context(excerpt, typ, trigger, full_text=None):
             low_full=_normalize_apostrophes((full_text or '').lower())
             pos=low_full.find(trig)
             if pos!=-1:
-                wider=c+' '+low_full[pos+len(trig):pos+len(trig)+250]
+                # v87: a flat 250-char span can cross from the commitment sentence into an
+                # UNRELATED topic and still count as "evidence" -- reproduced with "We are
+                # committed to respecting human rights... Separately, our annual financial
+                # statements were subject to statutory audit and due diligence procedures
+                # required by law." ("due diligence"/"audit" here are financial-reporting
+                # boilerplate, not human-rights process evidence, yet the flat window still saw
+                # them and wrongly excluded a genuinely unsubstantiated claim). Bound the
+                # extension to just the ONE immediately-following sentence (matching the
+                # original target case), and skip it altogether when that next sentence opens
+                # with a topic-shift discourse marker.
+                after=low_full[pos+len(trig):pos+len(trig)+250]
+                # after[0] is usually still the tail of the TRIGGER's own sentence (e.g. trig=
+                # "committed to" matches early, leaving "...respecting human rights..." before
+                # the first period) -- split into sentences so the topic-shift check looks at
+                # the actual NEXT sentence, not just whatever text precedes the first period.
+                sentence_parts=re.split(r'(?<=[.!?])\s+',after)
+                include=sentence_parts[:1]
+                if len(sentence_parts)>1:
+                    next_sentence=sentence_parts[1].strip()
+                    topic_shift=['separately','elsewhere','in addition','meanwhile','unrelated','in other news','on a different note','turning to','par ailleurs',"d'autre part",'overigens','daarnaast']
+                    if not any(next_sentence.startswith(m) for m in topic_shift):
+                        include.append(sentence_parts[1])
+                wider=c+' '+' '.join(include)
         return _looks_like_aspirational_social_claim(wider)
     if 'forced' in t:
         return any(s in c for s in ['forced labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','product traceability','supplier traceability',
@@ -3345,13 +3400,18 @@ def _v86_claim_local_text(findings, page_segments, full_text):
     wanted={f.get('source_url') for f in material if f.get('source_url')}
     if not wanted:
         return full_text
-    local=[seg.get('text','') for seg in page_segments if seg.get('url') in wanted]
-    local_text='\n'.join(p for p in local if p)
-    # Only fall back to the full corpus when NO segment actually matched (a genuinely short
-    # claim-bearing page is a normal, valid result, not a reason to widen back out to the
-    # whole site -- a high floor here silently defeated the fix for exactly the short pages
-    # this was meant to help with).
-    return local_text if local_text.strip() else full_text
+    matched_segments=[seg for seg in page_segments if seg.get('url') in wanted]
+    # v87: fall back to the full corpus only when NO segment's URL matched at all (genuinely no
+    # data to scope to). The previous version instead checked whether the joined LOCAL TEXT was
+    # non-empty -- so a claim whose source page matched a real segment that just happened to
+    # have empty/unextracted text (e.g. a JS-rendered page parse_html couldn't read) silently
+    # fell back to full-corpus behaviour too, reopening exactly the cross-page evidence leakage
+    # this function exists to prevent. A matched-but-empty page should stay empty (a real "no
+    # local evidence" signal), not be treated the same as "no page-segment data available".
+    if not matched_segments:
+        return full_text
+    local_text='\n'.join(seg.get('text','') for seg in matched_segments if seg.get('text'))
+    return local_text
 
 
 def calc_green_score(findings, sector, ext, page_text, audience, page_segments=None):
@@ -3967,8 +4027,32 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # ordinary hedging clauses between the negation and the trigger.
         neg_before=c[max(0,trig_pos-70):trig_pos]
         neg_after=c[trig_pos+len(trig):trig_pos+len(trig)+35]
-        if re.search(r"\b(not|never|no)\b|n't|niet|geen|nooit",neg_before) or \
-           (re.search(r"\bne\b|\bn'",neg_before) and re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_after)):
+        # v87: two more real gaps. (1) clause-boundary leak -- "We do not believe in empty
+        # promises; our packaging is 100% recyclable" wrongly suppressed the SECOND clause's
+        # genuine claim, because the flat 70-char window reached back across the semicolon into
+        # an unrelated clause's negation. Truncate the before-window to start after the nearest
+        # preceding clause boundary, so only the current clause is checked. (2) French "ne...pas"
+        # wraps the VERB, so when the trigger IS the negated adjective/object itself ("n'est
+        # PAS 100% recyclable"), "pas" sits BEFORE the trigger too, not only after it -- the
+        # previous version only ever looked for "pas" in the AFTER window, so this extremely
+        # common, unambiguous negation was never caught. Check both windows for the pas-family.
+        last_boundary=max(neg_before.rfind(';'),neg_before.rfind('.'),neg_before.rfind('!'),neg_before.rfind('?'))
+        if last_boundary != -1:
+            neg_before=neg_before[last_boundary+1:]
+        fr_negator=re.search(r"\bne\b|\bn'",neg_before)
+        fr_pas=re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_before) or re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_after)
+        if re.search(r"\b(not|never|no)\b|n't|niet|geen|nooit",neg_before) or (fr_negator and fr_pas):
+            return False
+        # v87: a conditional/hypothetical sentence ("If our packaging were fully recyclable, it
+        # would reduce waste", "Should we become carbon neutral, we would be proud") is not an
+        # assertion that the current state is already true -- nothing else in this function
+        # checks sentence mood. Requires an "if"/"should we" marker AND a subjunctive helper
+        # ("would"/"were"/"could") together in the window around the trigger (either order,
+        # since the conditional clause can come before or after the claim clause), not just
+        # "if" alone, to avoid firing on an unrelated "if you have questions..." aside.
+        cond_window=neg_before+' '+neg_after
+        if (re.search(r'\bif\b',cond_window) and re.search(r'\b(would|were|could)\b',cond_window)) or \
+           re.search(r'\bshould (we|our|they)\b',cond_window) or re.search(r'\bwere (we|our|they) to\b',cond_window):
             return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
@@ -4020,10 +4104,28 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # which is almost always present in a normal attribution sentence ("Our supplier told us
     # their packaging is recyclable"). Check for explicit reported-speech markers independent of
     # pronoun presence, unless paired with the company's own first-person assurance.
+    # v87: this previously excluded on ANY of these reporting-verb phrases, but "CEO Jane Smith
+    # STATED THAT our packaging is fully recyclable" or "the company CLAIMS THAT its supply
+    # chain is fully audited and all suppliers comply" use the exact same ordinary reporting
+    # verbs for the COMPANY'S OWN official voice -- these were wrongly suppressed as if they
+    # were third-party attribution. Requiring a third-party role word ANYWHERE in the excerpt
+    # isn't enough either -- a genuine "all suppliers comply" claim inherently mentions
+    # "suppliers" too, just as the OBJECT of the company's own claim, not the subject doing the
+    # telling. Only exclude when the third-party role word appears immediately BEFORE the
+    # specific reporting phrase (i.e. actually acting as its grammatical subject, "Our SUPPLIER
+    # told us...") rather than anywhere else in the sentence.
     reported_speech=['told us','informed us','told them','said their','claims that','stated that','assured us',
         'vertelde ons','meldde ons','verzekerde ons','nous a dit','nous a informé','nous a assuré']
-    if any(n in c for n in reported_speech) and not any(x in c for x in ['we ensure','we guarantee','we confirm','we verified','we independently']):
-        return False
+    third_party_roles=['supplier','vendor','buyer','distributor','wholesaler',
+        'leverancier','groothandel','distributeur',
+        'fournisseur','grossiste','distributeur']
+    for _rs_phrase in reported_speech:
+        _rs_pos=c.find(_rs_phrase)
+        if _rs_pos==-1:
+            continue
+        if any(r in c[max(0,_rs_pos-30):_rs_pos] for r in third_party_roles) and not any(
+                x in c for x in ['we ensure','we guarantee','we confirm','we verified','we independently']):
+            return False
     # v86: a passage reporting CRITICISM or an ALLEGATION against the company (e.g. "Critics
     # said the company falsely advertised the product as eco-friendly", found via the crawler's
     # own news/press-page candidates) was flagged as if "eco-friendly" were the company's own
@@ -4035,7 +4137,15 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         'greenwashing lawsuit','greenwashing complaint','regulators found','watchdog found','investigation found',
         'critici zeiden','critici stellen','beschuldigd van','werd beschuldigd','aangeklaagd wegens','ten onrechte adverteerde',
         'les critiques ont dit','accusé de','accusée de','poursuivi pour','a été accusé','faussement annoncé','faussement présenté']
-    if any(n in c for n in criticism_context) and not any(x in c for x in ['we deny','we reject','we dispute','we strongly disagree','this is false','the allegation is incorrect']):
+    # v87: the rebuttal exception only covered outright DENIAL ("we deny", "we reject") -- but a
+    # company admitting past criticism while stating what it does NOW ("We were previously
+    # accused of greenwashing and have since made our climate-neutral claims fully third-party
+    # verified") isn't denying anything; it's making a genuine, CURRENT substantiation claim
+    # that should still be evaluated. Added a present/perfect-tense current-claim signal as a
+    # second, independent exception alongside outright denial.
+    current_claim_signal=['have since','has since','we have since','now fully','are now','have made','have improved',
+        'have addressed','have corrected','have fixed','hebben sindsdien','hebben inmiddels','nous avons depuis']
+    if any(n in c for n in criticism_context) and not any(x in c for x in ['we deny','we reject','we dispute','we strongly disagree','this is false','the allegation is incorrect']) and not any(y in c for y in current_claim_signal):
         return False
     # v84: an interrogative sentence ("Is our packaging recyclable?", a genuine FAQ heading) is
     # a question, not an assertion -- the bare trigger words fire regardless of sentence type.
@@ -4520,25 +4630,44 @@ def _v60_host_matches_marker(host, marker):
     Government/regulator, media or union source it isn't, inheriting that source type's higher
     credibility rating undeservedly.
 
-    v84 fix: a marker with a dot on only ONE side (e.g. ".gov", "amnesty.") previously took the
-    same "the dot is the boundary" shortcut as a fully-delimited marker like ".gouv." -- but
-    that only bounds the side that HAS the dot. ".gov" matched inside ".governance.com" (no
-    boundary after "gov"), and "amnesty." matched inside "notamnesty.org" (no boundary before
-    "amnesty"). Both sides are now explicitly bounded to a dot or start/end of string.
+    v87 fix: the v84 fix bounded markers with a dot on only one side (".gov", "amnesty.") with
+    `re.search`, which finds the dot-bounded fragment ANYWHERE in the host, not just at a
+    plausible domain-suffix position -- ".gov" still matched inside
+    "fake-cma.gov.uk.evil.com", and "amnesty." still matched inside
+    "news.amnesty.org.phish.ru", because both are legitimately dot-bounded fragments that just
+    happen to have more (attacker-controlled) domain structure tacked on afterward. Rewritten
+    on host LABELS: the marker's own labels must appear as a contiguous run within the host's
+    labels, followed by at most one further label (a plausible bare TLD, e.g. "org" after
+    "amnesty", or "fr" after "gouv") -- not an arbitrary number of additional labels that would
+    mean the REAL registrable domain is something else entirely.
     """
     if not host or not marker:
         return False
-    if marker.startswith('.') and marker.endswith('.'):
-        return marker in host  # fully dot-delimited fragment; both boundaries already present.
-    if marker.startswith('.'):
-        core = marker[1:]
-        return bool(core) and bool(re.search(r'\.'+re.escape(core)+r'(?:\.|$)', host))
-    if marker.endswith('.'):
-        core = marker[:-1]
-        return bool(core) and bool(re.search(r'(?:^|\.)'+re.escape(core)+r'\.', host))
-    if '.' in marker:
-        return host==marker or host.endswith('.'+marker)
-    return bool(re.search(r'(?<![a-z0-9])'+re.escape(marker)+r'(?![a-z0-9])', host))
+    if '.' not in marker:
+        # No dot anywhere (e.g. "union", "workers") -- a bare word makes no domain-suffix/prefix
+        # claim, so a simple word-boundary substring match is right.
+        return bool(re.search(r'(?<![a-z0-9])'+re.escape(marker)+r'(?![a-z0-9])', host))
+    core=marker.strip('.')
+    if not core:
+        return False
+    host_labels=host.split('.')
+    core_labels=[l for l in core.split('.') if l]
+    n=len(core_labels)
+    if n==0 or n>len(host_labels):
+        return False
+    for i in range(len(host_labels)-n+1):
+        if host_labels[i:i+n]!=core_labels:
+            continue
+        tail=host_labels[i+n:]
+        # A bare TLD tail ("org" after "amnesty", "fr" after "gouv") is fine. A two-label tail
+        # is only fine when it's a recognised compound ccTLD shape (e.g. "co.uk", "org.uk",
+        # "com.au") -- an arbitrary two-label tail like "notreal.io" or "fake.ru" means the
+        # REAL registrable domain is something else entirely, tacked on after the marker.
+        if len(tail)<=1:
+            return True
+        if len(tail)==2 and tail[0] in {'co','com','org','net','gov','ac'} and len(tail[1])==2:
+            return True
+    return False
 
 
 def _v60_source_kind(result):
@@ -4977,7 +5106,15 @@ V64_GENERIC_HOST_LABELS={'www','www2','m','mobile','shop','store','group','globa
     # leftover-word check (the "nl"/"be" leftover matched neither this set nor
     # _V60_CORPORATE_WORDS) and was wrongly treated as a third-party source, feeding the
     # company's own content into the negative-external-signal pipeline instead of excluding it.
-    'nl','be','fr','de','es','it','ch','pt','dk','no','fi','at','se','ie','lu'}
+    # v87: "no"/"at"/"it" were removed from this v84 list -- they are also common short English
+    # words, and "brand+no" is an established activism-domain naming convention (e.g. the real
+    # "ShellNo" campaign). Confirmed exploitable: is_company_owned_source wrongly classified
+    # "shell-no.com"/"shellno.org" as Shell's own domain, which would have silently excluded a
+    # genuine critic site from the negative-external-signal pipeline -- the opposite of what
+    # this leftover-word tightening was meant to achieve. The remaining codes (nl, be, fr, de,
+    # es, ch, pt, dk, fi, se, ie, lu) don't double as common standalone English words the same
+    # way, so they keep the original v84 fix's value for actually-relevant Benelux/EU markets.
+    'nl','be','fr','de','es','ch','pt','dk','fi','se','ie','lu'}
 
 
 def _v64_norm(value):

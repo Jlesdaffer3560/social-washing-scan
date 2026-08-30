@@ -1,4 +1,4 @@
-"""Readable native Durably company claim-risk report (v86).
+"""Readable native Durably company claim-risk report (v87).
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
 uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
