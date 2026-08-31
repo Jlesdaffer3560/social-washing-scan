@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v89_search_diagnostics_and_domain_guess_fix"
-APP_RELEASE_LABEL="v89"
+APP_VERSION="hostable_v90_domain_resolution_deadline_fix"
+APP_RELEASE_LABEL="v90"
 APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5533,7 +5533,11 @@ def _v72_validate_guessed_domain(url, name):
     otherwise None. This lets bare-name resolution work for any company with a
     conventional domain, without depending on a paid search API being configured."""
     try:
-        data,ctype,final_url=_open_public_url(url,timeout=8,
+        # v90: was timeout=8 -- combined with _open_public_url's own 2-user-agent retry, a
+        # single slow/unresponsive candidate could cost up to 16s on its own. Tightened so the
+        # overall domain_guess_deadline in resolve_company_website() can't be overshot by much
+        # even if the deadline check only happens between candidates, not during one.
+        data,ctype,final_url=_open_public_url(url,timeout=5,
             accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',max_bytes=2500000)
     except Exception:
         return None
@@ -5604,8 +5608,23 @@ def resolve_company_website(name):
     # substituting the wrong company. When several validate, prefer the flagship gTLD over a
     # country-code domain, then the richer page (more content usually means the main corporate
     # site rather than a thin regional one).
+    # v90: this loop had NO overall time budget -- each candidate can cost up to
+    # len(BROWSER_USER_AGENTS)*8s (~16s) inside _open_public_url's own per-user-agent retry,
+    # and up to 14 candidates are tried unconditionally (no early exit once one validates, by
+    # design, so the flagship/highest-content domain can still be preferred over an earlier
+    # weaker match). Reproduced directly: resolve_company_website('AB InBev') took 174 SECONDS
+    # -- none of the 6 guessed candidates (abinbev.com/.eu/.net/.org/.co/.be) matched the real
+    # domain (ab-inbev.com, with a hyphen) quickly, so several were slow/unresponsive and ate
+    # their full per-candidate budget one after another. This is a completely separate time
+    # sink from CRAWL_BUDGET_SECONDS, which only bounds the crawl that happens AFTER
+    # resolution -- a scan can hang here before the crawl budget is ever reached. Cap the whole
+    # guessing loop to a fixed deadline and stop trying further candidates once it's spent,
+    # using whatever validated so far.
+    domain_guess_deadline=time.time()+22
     validated=[]
     for candidate_url in _v72_guess_domain_candidates(name):
+        if time.time()>=domain_guess_deadline:
+            break
         result=_v72_validate_guessed_domain(candidate_url,name)
         if result:
             final_url,content_length=result
