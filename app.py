@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v91_external_search_provider_cooldown"
-APP_RELEASE_LABEL="v91"
+APP_VERSION="hostable_v91_1_cooldown_coverage_fix"
+APP_RELEASE_LABEL="v91.1"
 APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5590,17 +5590,24 @@ def resolve_company_website(name):
         return known, f'Company name "{name}" was resolved to the verified official domain {host}. Related official sustainability/group sites may also be checked when coverage is limited.'
     query=f'"{name}" official company website'
     results=[]
-    try:
-        a=tavily_search(query,max_results=6) or []
-        for r in a: r.setdefault('provider','Tavily')
-        results.extend(a)
-    except Exception: pass
-    try:
-        b=google_search(query,max_results=6) or []
-        for r in b: r.setdefault('provider','Google Custom Search')
-        seen={_v60_canonical_url(r.get('url','')) for r in results}
-        results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
-    except Exception: pass
+    # v91: these two calls used to bypass search_public_sources() entirely, so they never
+    # benefited from the provider cooldown added there -- meaning a quota-exhausted Tavily/
+    # Google account still paid full request+retry latency here on the FIRST search call of
+    # EVERY single scan, before the cooldown from the crawl's own external-signal queries
+    # could ever kick in. Checking/setting the same cooldown here closes that gap.
+    if not _v90_provider_in_cooldown('Tavily'):
+        try:
+            a=tavily_search(query,max_results=6) or []
+            for r in a: r.setdefault('provider','Tavily')
+            results.extend(a)
+        except Exception: _v90_note_provider_result('Tavily')
+    if not _v90_provider_in_cooldown('Google Custom Search'):
+        try:
+            b=google_search(query,max_results=6) or []
+            for r in b: r.setdefault('provider','Google Custom Search')
+            seen={_v60_canonical_url(r.get('url','')) for r in results}
+            results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
+        except Exception: _v90_note_provider_result('Google Custom Search')
     ranked=sorted(((_v65_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
     if ranked and ranked[0][0]>=70:
         host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
@@ -6067,9 +6074,17 @@ _TAVILY_RATE_LOCK=threading.Semaphore(1)
 # memory of the identical failure moments earlier. Live-reproduced: a single "AB InBev"
 # scan took 250 SECONDS end-to-end for exactly this reason, even after the separate
 # domain-resolution hang above was fixed. A short process-wide cooldown means the first
-# quota-flavoured failure for a provider in this run is enough -- every subsequent call
-# to that provider (this query's siblings, the fallback round, and the other dimension)
-# skips it near-instantly instead of re-paying the same doomed request.
+# failure for a provider in this run is enough -- every subsequent call to that provider
+# (this query's siblings, the fallback round, and the other dimension) skips it
+# near-instantly instead of re-paying the same doomed request.
+# v91.1: cooling down only on a keyword match against the error text ('quota', 'credit',
+# etc.) missed a real, live failure mode -- a live "AB InBev" run showed Google Custom
+# Search fail with "This project does not have the access to Custom Search JSON API",
+# a permanent per-project configuration error with none of those keywords, so it kept
+# being retried on every later query instead of entering cooldown. Any failure from a
+# configured provider within the same short scan is unlikely to recover a few seconds
+# later regardless of its wording, so cool down on ANY exception, not just ones that
+# happen to mention quota/credits.
 _PROVIDER_COOLDOWN_LOCK=threading.Lock()
 _PROVIDER_COOLDOWN_UNTIL={}
 _PROVIDER_COOLDOWN_SECONDS=90
@@ -6078,11 +6093,9 @@ def _v90_provider_in_cooldown(provider):
     with _PROVIDER_COOLDOWN_LOCK:
         return time.time()<_PROVIDER_COOLDOWN_UNTIL.get(provider,0)
 
-def _v90_note_provider_result(provider,error_text=None):
-    text=(error_text or '').lower()
-    if any(s in text for s in ('quota','credit','rate limit','429','432','limit exceeded','plan')):
-        with _PROVIDER_COOLDOWN_LOCK:
-            _PROVIDER_COOLDOWN_UNTIL[provider]=time.time()+_PROVIDER_COOLDOWN_SECONDS
+def _v90_note_provider_result(provider):
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_COOLDOWN_UNTIL[provider]=time.time()+_PROVIDER_COOLDOWN_SECONDS
 
 def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
     """Tavily search with optional news/source controls for the external-signal layer."""
@@ -6165,7 +6178,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
                 for item in res: item['provider']=provider
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
-                _v90_note_provider_result(provider,str(exc))
+                _v90_note_provider_result(provider)
                 return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
         if provider=='Tavily':
             if not TAVILY_API_KEY:
@@ -6177,7 +6190,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
                 for item in res: item['provider']=provider
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
-                _v90_note_provider_result(provider,str(exc))
+                _v90_note_provider_result(provider)
                 return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
         if not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
             return [],{'provider':provider,'status':'not_configured'}
@@ -6188,7 +6201,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
             for item in res: item['provider']=provider
             return res,{'provider':provider,'status':'ok','results':len(res)}
         except Exception as exc:
-            _v90_note_provider_result(provider,str(exc))
+            _v90_note_provider_result(provider)
             return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
     providers=['Serper','Tavily','Google Custom Search']
     if EXTERNAL_SEARCH_ALL_PROVIDERS:
