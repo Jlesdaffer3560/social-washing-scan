@@ -71,7 +71,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v87')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v88')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -84,7 +84,7 @@ def build_methodology_pdf():
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Claims Risk Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v87 &middot; 30 August 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v88 &middot; 30 August 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '
@@ -210,14 +210,14 @@ def build_methodology_pdf():
     flow.append(Spacer(1, 5))
     driver_rows = [
         ('Component', 'Weight (primary driver)', 'What increases the score'),
-        (Paragraph('Claim wording severity', STY['td_b']), Paragraph('Primary driver (42%)', STY['td']),
+        (Paragraph('Claim wording severity', STY['td_b']), Paragraph('Primary driver (50%)', STY['td']),
          Paragraph('Direct EmpCo blacklist indicators (generic claims, offsetting, labels, absolute wording) and '
                    'forced-labour or supplier assurance wording, plus multiple retained material claim signals.', STY['td'])),
-        (Paragraph('Evidence-gap risk', STY['td_b']), Paragraph('Important driver (24%)', STY['td']),
+        (Paragraph('Evidence-gap risk', STY['td_b']), Paragraph('Important driver (22%)', STY['td']),
          Paragraph('Limited visible substantiation, missing scope, missing methodology, missing dates, missing verification, missing supplier coverage or weak remediation evidence.', STY['td'])),
-        (Paragraph('Negative external stakeholder context', STY['td_b']), Paragraph('Context driver (22%)', STY['td']),
+        (Paragraph('Negative external stakeholder context', STY['td_b']), Paragraph('Context driver (20%)', STY['td']),
          Paragraph('Relevant criticism, allegations, enforcement, litigation, NGO/union/regulator concerns or negative press linked to the same claim area.', STY['td'])),
-        (Paragraph('Sector and channel sensitivity', STY['td_b']), Paragraph('Modifier (12%)', STY['td']),
+        (Paragraph('Sector and channel sensitivity', STY['td_b']), Paragraph('Modifier (8%)', STY['td']),
          Paragraph('Consumer-facing communication, high-risk supply chains, fashion, food, retail, energy, chemicals, logistics or other sectors with elevated green/social claim exposure.', STY['td'])),
     ]
     flow.append(section_table(driver_rows, [W * 0.26, W * 0.20, W * 0.54]))
@@ -229,13 +229,13 @@ def build_methodology_pdf():
     flow.append(Spacer(1, 6))
     band_rows = [
         ('Score band', 'Interpretation'),
-        (Paragraph('0 &ndash; 44  Low', ParagraphStyle('bl', parent=STY['td_b'], textColor=GREEN)),
+        (Paragraph('0 &ndash; 24  Low', ParagraphStyle('bl', parent=STY['td_b'], textColor=GREEN)),
          Paragraph('No material problematic claim retained or only limited wording risk visible.', STY['td'])),
-        (Paragraph('45 &ndash; 74  Medium', ParagraphStyle('bm', parent=STY['td_b'], textColor=AMBER)),
+        (Paragraph('25 &ndash; 49  Medium', ParagraphStyle('bm', parent=STY['td_b'], textColor=AMBER)),
          Paragraph('Some claim signals, wording risk or evidence gaps for review.', STY['td'])),
-        (Paragraph('75 &ndash; 89  High', ParagraphStyle('bh', parent=STY['td_b'], textColor=DANGER)),
+        (Paragraph('50 &ndash; 74  High', ParagraphStyle('bh', parent=STY['td_b'], textColor=DANGER)),
          Paragraph('Strong wording risk, evidence gaps and/or negative external stakeholder signals require priority review.', STY['td'])),
-        (Paragraph('90 &ndash; 100  Very high', ParagraphStyle('bv', parent=STY['td_b'], textColor=colors.HexColor('#7a1e1e'))),
+        (Paragraph('75 &ndash; 100  Very high', ParagraphStyle('bv', parent=STY['td_b'], textColor=colors.HexColor('#7a1e1e'))),
          Paragraph('Reserved for multiple severe claim signals with strong external or regulatory context.', STY['td'])),
     ]
     flow.append(section_table(band_rows, [W * 0.28, W * 0.72]))
@@ -278,8 +278,8 @@ def build_methodology_pdf():
     flow.append(Paragraph(
         'Worked example (fully fictional, for illustration only): a claim scores 65/100 on claim-wording severity, '
         '70/100 on evidence-gap risk, 30/100 on external context and 40/100 on the sector/channel modifier. Applying '
-        'the published weights above: 65&times;42% + 70&times;24% + 30&times;22% + 40&times;12% = 27.3 + 16.8 + 6.6 + '
-        '4.8 = 55.5, rounded to <b>56/100</b> (Medium risk band). This shows how the four weighted components combine into the final '
+        'the published weights above: 65&times;50% + 70&times;22% + 30&times;20% + 40&times;8% = 32.5 + 15.4 + 6.0 + '
+        '3.2 = 57.1, rounded to <b>57/100</b> (High risk band). This shows how the four weighted components combine into the final '
         'score; it does not disclose the full internal point schedule used to score any individual claim, which '
         'varies by claim type, channel and retained evidence.', STY['body']))
 

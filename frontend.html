@@ -258,10 +258,12 @@ if(docs.length){html+=`<details class="source-register" open><summary>Documents 
 if(failed.length){html+=`<details class="source-register"><summary>Pages attempted but not accessed (${failed.length})</summary><div class="source-register-body"><table class="source-table"><thead><tr><th>Page</th><th>URL</th><th>Status / reason</th><th>Discovery</th></tr></thead><tbody>${failed.map(x=>`<tr><td>${esc(x.name||'Page')}</td><td class="source-url"><span class="failed-source">${esc(x.url||'')}</span></td><td>${esc((x.http_status?'HTTP '+x.http_status+' · ':'')+(x.error||''))}</td><td>${esc(x.discovery_source||'discovered')}</td></tr>`).join('')}</tbody></table></div></details>`}
 let coverageNotes=[];if(inv.note)coverageNotes.push(inv.note);if(s.fallback_pages)coverageNotes.push(`${s.fallback_pages} page(s) required a public text-extraction fallback.`);if(coverageNotes.length)html+=`<p class="coverage-note">${esc(coverageNotes.join(' '))}</p>`;$('scanCoverage').innerHTML=html}
 function scoreInterp(n){
+  // v88: rebalanced to four equal 25-point bands, matching app.py's level(); the previous
+  // 0-44/45-74/75-89/90-100 bands gave "Low" a disproportionately wide catch-all range.
   if(n==null)return '';
-  if(n>=90)return 'Very high — multiple severe signals';
-  if(n>=75)return 'High — priority review needed';
-  if(n>=45)return 'Medium — material claim signals require review';
+  if(n>=75)return 'Very high — multiple severe signals';
+  if(n>=50)return 'High — priority review needed';
+  if(n>=25)return 'Medium — material claim signals require review';
   return 'Low — limited detected claim-risk signal';
 }
 function renderScores(d){

@@ -3,7 +3,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v87_regression_and_security_fixes'
+    assert app.APP_VERSION == 'hostable_v88_scoring_rebalance'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -89,9 +89,9 @@ def test_flagship_domain_preferred_over_country_domain(monkeypatch):
 
 def test_frontend_score_bands_and_privacy():
     text=Path('frontend.html').read_text(encoding='utf-8')
-    assert "if(n>=90)return 'Very high" in text
-    assert "if(n>=75)return 'High" in text
-    assert "if(n>=45)return 'Medium" in text
+    assert "if(n>=75)return 'Very high" in text
+    assert "if(n>=50)return 'High" in text
+    assert "if(n>=25)return 'Medium" in text
     assert 'Document privacy:' in text
     assert 'Analysis status' in text
 

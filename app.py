@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v87_regression_and_security_fixes"
-APP_RELEASE_LABEL="v87"
+APP_VERSION="hostable_v88_scoring_rebalance"
+APP_RELEASE_LABEL="v88"
 APP_RELEASE_DATE="2026-08-30"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1094,7 +1094,13 @@ def problematic_terms_for_finding(claim_text, claim_type=''):
     return out[:10]
 
 def level(score):
-    return "Very high" if score>=90 else "High" if score>=75 else "Medium" if score>=45 else "Low"
+    # v88: rebalanced to four EQUAL 25-point bands (0-24/25-49/50-74/75-100). The previous
+    # bands (0-44/45-74/75-89/90-100) gave "Low" a 45-point catch-all range nearly three times
+    # wider than "High" (15 points) or "Very high" (11 points) -- a company with several
+    # High-risk EmpCo Annex I-category claims (claim_wording_risk maxed at 100/100) could still
+    # land at a raw score in the low-to-mid 40s purely from the blended formula, and the
+    # lopsided bands then labelled that "Low" instead of "Medium".
+    return "Very high" if score>=75 else "High" if score>=50 else "Medium" if score>=25 else "Low"
 def external_relevance_score(findings, external_research):
     """
     V24 calibrated external modifier:
@@ -1439,7 +1445,7 @@ def integrated_score_view(overall_score, split_scores, external_context):
         "substantiation_risk": split_scores.get("substantiation_risk",0),
         "external_context_risk": split_scores.get("external_context_risk", external_context.get("score",0)),
         "sector_baseline_risk": split_scores.get("sector_baseline_risk",0),
-        "formula": "Overall score = 42% claim wording risk + 24% substantiation/evidence-gap risk + 22% external contradictory-context risk + 12% sector sensitivity.",
+        "formula": "Overall score = 50% claim wording risk + 22% substantiation/evidence-gap risk + 20% external contradictory-context risk + 8% sector sensitivity.",
         "weights": "High social-washing risk requires a sensitive or broad social claim, insufficient substantiation and relevant external contradiction. Sector sensitivity is a modifier only."
     }
 
@@ -2487,7 +2493,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
         return len(ext.get('targeted_negative_sources') or []) if ext else 0
     def band(n):
         n=n or 0
-        return 'low' if n<45 else 'medium' if n<75 else 'high' if n<90 else 'very high'
+        return 'low' if n<25 else 'medium' if n<50 else 'high' if n<75 else 'very high'
     def dominant_driver(splits):
         labels={'claim_wording_risk':'the wording of the claims themselves','substantiation_risk':'a lack of visible evidence/substantiation','external_context_risk':'negative external signals','sector_baseline_risk':'sector-level exposure'}
         best=max(labels, key=lambda k: (splits or {}).get(k,0))
@@ -3426,7 +3432,7 @@ def calc_green_score(findings, sector, ext, page_text, audience, page_segments=N
     regulatory=any(f.get('blacklisted_practice_indicator') for f in material)
     score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.'}
+    comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.'}
     return score, comps, external_context
 
 def calc_score(findings,sector,context,external_research=None,page_text="",company_name="",audience=None,page_segments=None):
@@ -3448,7 +3454,7 @@ def calc_score(findings,sector,context,external_research=None,page_text="",compa
     score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     external_mod, external_note=external_relevance_score(findings, external_research or {})
     top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"audience_factor":audience_factor,"score_calculation_note":"Score = 42% claim wording severity + 24% evidence gap + 22% external stakeholder context + 12% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals."}
+    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"audience_factor":audience_factor,"score_calculation_note":"Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals."}
     return score, external_mod, external_note, evidence_quality_credit(local_text, findings), comps
 
 def recalc_global_score(green_score, social_score, green_findings=None, social_findings=None):
@@ -4521,7 +4527,13 @@ def _recalibrated_score(material, substantiation, evidence_notes, external_score
     count_factor=min(20, 4*max(0,len(material)-1))
     claim_wording=min(100, top + count_factor + 5*blacklisted)
     evidence_gap=max(0,100-substantiation)
-    raw=round((claim_wording*0.42 + evidence_gap*0.24 + external_score*0.22 + sector_score*0.12)*audience_factor)
+    # v88: claim-wording severity carried only 42% of the blended score, so even a MAXED-OUT
+    # claim_wording_risk (100/100, e.g. multiple EmpCo Annex I blacklisted-practice claims) could
+    # still land in "Low" territory once evidence-gap/external/sector -- which are frequently
+    # near-zero in an ordinary scan with no external controversy -- diluted it. Raised claim
+    # wording's weight; evidence-gap and external stayed at roughly their prior ratio to each
+    # other, sector (the least specific signal) absorbed most of the reduction.
+    raw=round((claim_wording*0.50 + evidence_gap*0.22 + external_score*0.20 + sector_score*0.08)*audience_factor)
     cap=_score_cap(material, external_score, regulatory_signal or blacklisted>0)
     return max(0,min(100,min(raw,cap)))
 
