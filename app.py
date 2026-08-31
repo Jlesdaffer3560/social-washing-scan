@@ -47,9 +47,9 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v88_scoring_rebalance"
-APP_RELEASE_LABEL="v88"
-APP_RELEASE_DATE="2026-08-30"
+APP_VERSION="hostable_v89_search_diagnostics_and_domain_guess_fix"
+APP_RELEASE_LABEL="v89"
+APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -942,8 +942,16 @@ def google_search(query, max_results=5):
     from urllib.parse import urlencode
     params=urlencode({"key":GOOGLE_SEARCH_API_KEY,"cx":GOOGLE_SEARCH_CX,"q":query,"num":max(1,min(max_results,10))})
     req=Request("https://www.googleapis.com/customsearch/v1?"+params,headers={"User-Agent":CRAWLER_USER_AGENT},method="GET")
-    with urlopen(req,timeout=7) as r:
-        data=json.loads(r.read().decode("utf-8",errors="ignore"))
+    try:
+        with urlopen(req,timeout=7) as r:
+            data=json.loads(r.read().decode("utf-8",errors="ignore"))
+    except HTTPError as e:
+        # v89: same fix as serper_search() -- surface Google's actual JSON error body (e.g. "API
+        # not enabled for this project", "Daily Limit Exceeded", an invalid CX/key message)
+        # instead of the bare "HTTP Error 403: Forbidden" status line.
+        try: body=e.read().decode("utf-8",errors="ignore")[:300].strip()
+        except Exception: body=""
+        raise ValueError(f'HTTP Error {e.code}: {body or e.reason or "(no error body)"}') from e
     out=[]
     # v84: was a flat 0, while Tavily returns a native 0-1 relevance score and Serper computes
     # one from rank (1.0/position). When multiple providers are merged and sorted by score
@@ -5478,7 +5486,8 @@ _V72_TLD_PREFERENCE={tld:i for i,tld in enumerate(_V72_DOMAIN_GUESS_TLDS)}
 def _v72_guess_domain_bases(name):
     """Plausible bare-domain name bases for a company, derived from the name alone --
     no external search API involved."""
-    tokens=[t for t in _v64_norm(name).split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
+    norm=_v64_norm(name)
+    tokens=[t for t in norm.split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
     bases=[]
     compact=_v64_compact(name)
     if compact and len(compact)>=3:
@@ -5489,7 +5498,23 @@ def _v72_guess_domain_bases(name):
             bases.append(joined)
         if len(tokens[0])>=4 and tokens[0] not in bases:
             bases.append(tokens[0])
-    return bases[:3]
+    # v89: a leading definite article ("Le Pain Cotidien", "La Redoute", "Het Financieele
+    # Dagblad") was never stripped, so the ONLY base tried was e.g. "lepaincotidien" -- if the
+    # real domain omits the article ("paincotidien.com"), it was never even attempted.
+    # Reproduced: "Pain Cotidien" alone correctly generates a "paincotidien" candidate, but "Le
+    # Pain Cotidien" does not, purely because "le" isn't in the stopword set the way English
+    # "the" already is. Add the article-stripped form as an EXTRA candidate rather than
+    # replacing the with-article one -- some brands genuinely keep the article in their real
+    # domain (lecreuset.com), so both forms need to stay in play; validation against live page
+    # content decides which one is actually correct.
+    leading_articles=('le','la','les','de','het','the')
+    norm_words=norm.split()
+    if norm_words and norm_words[0] in leading_articles and len(norm_words)>1:
+        stripped=' '.join(norm_words[1:])
+        stripped_compact=_v64_compact(stripped)
+        if stripped_compact and len(stripped_compact)>=3 and stripped_compact not in bases:
+            bases.append(stripped_compact)
+    return bases[:4]
 
 def _v72_guess_domain_candidates(name):
     bases=_v72_guess_domain_bases(name)
@@ -6045,8 +6070,19 @@ def serper_search(q,max_results=5,include_domains=None,exclude_domains=None):
     req=Request('https://google.serper.dev/search',
                 data=json.dumps({'q':query,'num':max(1,min(max_results,20))}).encode(),
                 headers={'X-API-KEY':SERPER_API_KEY,'Content-Type':'application/json'},method='POST')
-    with urlopen(req,timeout=10) as r:
-        data=json.loads(r.read().decode('utf-8',errors='ignore'))
+    try:
+        with urlopen(req,timeout=10) as r:
+            data=json.loads(r.read().decode('utf-8',errors='ignore'))
+    except HTTPError as e:
+        # v89: urlopen's HTTPError only exposes the bare status line by default ("HTTP Error
+        # 400: Bad Request") -- the same class of gap already fixed for Tavily's own retry
+        # logic, but never applied here. Serper's actual JSON error body (e.g. "not enough
+        # credits", an invalid API key message, or a genuinely malformed query) is what
+        # actually explains a 400/403, and was being silently discarded before it ever reached
+        # provider_attempts in the scan diagnostics.
+        try: body=e.read().decode('utf-8',errors='ignore')[:300].strip()
+        except Exception: body=''
+        raise ValueError(f'HTTP Error {e.code}: {body or e.reason or "(no error body)"}') from e
     out=[]
     for i in data.get('organic',[]):
         out.append({'title':i.get('title',''),'url':i.get('link',''),'content':i.get('snippet',''),
