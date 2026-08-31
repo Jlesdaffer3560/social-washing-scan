@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v90_domain_resolution_deadline_fix"
-APP_RELEASE_LABEL="v90"
+APP_VERSION="hostable_v91_external_search_provider_cooldown"
+APP_RELEASE_LABEL="v91"
 APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5281,7 +5281,12 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
     # and must not be reported the same way as "we searched and found nothing". Silently
     # treating the two identically was making the tool report a false clean bill of health
     # whenever the configured API keys hit a rate limit or usage cap.
-    search_failed=bool(attempts) and not any(a.get('status')=='ok' for a in attempts) and any(a.get('status')=='failed' for a in attempts)
+    # v90: a provider can also come back 'skipped_cooldown' (this run already saw that
+    # provider fail on quota/rate-limit grounds and skipped re-trying it) rather than
+    # 'failed' outright. That is just as much "the search did not actually run" as a
+    # live failure -- treating only 'failed' as disqualifying would silently let a
+    # cooldown-skipped provider count as a clean, confirmed-empty result.
+    search_failed=bool(attempts) and not any(a.get('status')=='ok' for a in attempts) and any(a.get('status') in ('failed','skipped_cooldown') for a in attempts)
     if ranked:
         summary=(summarise_green_ext(ranked) if dimension=='green' else summarise_ext(ranked))
     elif search_failed:
@@ -6052,6 +6057,33 @@ def _v69_external_polarity(result,dimension='social'):
 # provider_attempts instead of having to keep guessing.
 _TAVILY_RATE_LOCK=threading.Semaphore(1)
 
+# v90: a scan issues up to ~7 external-search queries per dimension (green + social,
+# each with a primary batch plus a same-dimension fallback when too few results come
+# back), and every query calls all 3 configured providers. When a provider's account is
+# genuinely out of quota/credits (confirmed live for Tavily, Serper and Google Custom
+# Search on 2026-08-31 -- see the v89 error-diagnostics fix), EVERY one of those ~14
+# query x provider calls still pays that provider's full request+retry latency (Tavily
+# alone retries once after a 2s sleep on 429) before failing, because each call had no
+# memory of the identical failure moments earlier. Live-reproduced: a single "AB InBev"
+# scan took 250 SECONDS end-to-end for exactly this reason, even after the separate
+# domain-resolution hang above was fixed. A short process-wide cooldown means the first
+# quota-flavoured failure for a provider in this run is enough -- every subsequent call
+# to that provider (this query's siblings, the fallback round, and the other dimension)
+# skips it near-instantly instead of re-paying the same doomed request.
+_PROVIDER_COOLDOWN_LOCK=threading.Lock()
+_PROVIDER_COOLDOWN_UNTIL={}
+_PROVIDER_COOLDOWN_SECONDS=90
+
+def _v90_provider_in_cooldown(provider):
+    with _PROVIDER_COOLDOWN_LOCK:
+        return time.time()<_PROVIDER_COOLDOWN_UNTIL.get(provider,0)
+
+def _v90_note_provider_result(provider,error_text=None):
+    text=(error_text or '').lower()
+    if any(s in text for s in ('quota','credit','rate limit','429','432','limit exceeded','plan')):
+        with _PROVIDER_COOLDOWN_LOCK:
+            _PROVIDER_COOLDOWN_UNTIL[provider]=time.time()+_PROVIDER_COOLDOWN_SECONDS
+
 def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
     """Tavily search with optional news/source controls for the external-signal layer."""
     if not TAVILY_API_KEY:
@@ -6126,28 +6158,37 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
         if provider=='Serper':
             if not SERPER_API_KEY:
                 return [],{'provider':provider,'status':'not_configured'}
+            if _v90_provider_in_cooldown(provider):
+                return [],{'provider':provider,'status':'skipped_cooldown'}
             try:
                 res=serper_search(query,max_results,include_domains=include_domains,exclude_domains=exclude_domains)
                 for item in res: item['provider']=provider
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
+                _v90_note_provider_result(provider,str(exc))
                 return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
         if provider=='Tavily':
             if not TAVILY_API_KEY:
                 return [],{'provider':provider,'status':'not_configured'}
+            if _v90_provider_in_cooldown(provider):
+                return [],{'provider':provider,'status':'skipped_cooldown'}
             try:
                 res=tavily_search(query,max_results,topic=topic,include_domains=include_domains,exclude_domains=exclude_domains,search_depth=search_depth)
                 for item in res: item['provider']=provider
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
+                _v90_note_provider_result(provider,str(exc))
                 return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
         if not (GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX):
             return [],{'provider':provider,'status':'not_configured'}
+        if _v90_provider_in_cooldown(provider):
+            return [],{'provider':provider,'status':'skipped_cooldown'}
         try:
             res=google_search(_v71_google_query(query,include_domains,exclude_domains),max_results)
             for item in res: item['provider']=provider
             return res,{'provider':provider,'status':'ok','results':len(res)}
         except Exception as exc:
+            _v90_note_provider_result(provider,str(exc))
             return [],{'provider':provider,'status':'failed','error':str(exc)[:180]}
     providers=['Serper','Tavily','Google Custom Search']
     if EXTERNAL_SEARCH_ALL_PROVIDERS:
