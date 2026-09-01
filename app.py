@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v91_3_health_exposes_crawl_config"
-APP_RELEASE_LABEL="v91.3"
+APP_VERSION="hostable_v91_4_health_exposes_container_cpu"
+APP_RELEASE_LABEL="v91.4"
 APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3647,6 +3647,37 @@ def verify_report_signature(payload):
     return bool(supplied) and hmac.compare_digest(supplied,_report_signature(payload))
 
 
+def _v91_4_container_cpu_quota():
+    """Best-effort read of the container's actual CPU allocation via the Linux cgroup
+    files Render's runtime enforces -- e.g. the free tier's 0.1 CPU vs a paid instance
+    type's 0.5/1/2 CPU. This is the only externally-visible signal of the instance's real
+    compute tier: Render does not expose plan/instance-type as an env var, and CPU
+    throttling from an under-provisioned tier is exactly what was found to be the
+    dominant cost of slow PDF extraction/crawling earlier in this investigation, so being
+    able to confirm a paid-plan upgrade actually raised the enforced quota (without
+    dashboard access) is directly useful, not just diagnostic curiosity.
+    Returns None if the cgroup files aren't present (e.g. not running in a Linux
+    container, or a cgroup layout this doesn't recognise) rather than guessing.
+    """
+    try:
+        cgroup_v2=Path('/sys/fs/cgroup/cpu.max')
+        if cgroup_v2.exists():
+            quota_str,period_str=cgroup_v2.read_text().split()
+            if quota_str=='max':
+                return {'cgroup_version':'v2','cpu_quota':'unlimited'}
+            return {'cgroup_version':'v2','allocated_cpus':round(int(quota_str)/int(period_str),3)}
+        quota_file=Path('/sys/fs/cgroup/cpu/cpu.cfs_quota_us')
+        period_file=Path('/sys/fs/cgroup/cpu/cpu.cfs_period_us')
+        if quota_file.exists() and period_file.exists():
+            quota=int(quota_file.read_text().strip()); period=int(period_file.read_text().strip())
+            if quota<=0:
+                return {'cgroup_version':'v1','cpu_quota':'unlimited'}
+            return {'cgroup_version':'v1','allocated_cpus':round(quota/period,3)}
+    except Exception:
+        pass
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version=f'DurablyScan/{APP_RELEASE_LABEL}'
 
@@ -3758,7 +3789,8 @@ class Handler(BaseHTTPRequestHandler):
                                'crawl_config':{'CRAWL_TARGET_EXTRA_PAGES':CRAWL_TARGET_EXTRA_PAGES,'CRAWL_MAX_PAGE_ATTEMPTS':CRAWL_MAX_PAGE_ATTEMPTS,
                                    'CRAWL_BUDGET_SECONDS':CRAWL_BUDGET_SECONDS,'CRAWL_FETCH_WORKERS':CRAWL_FETCH_WORKERS,
                                    'EXTERNAL_SIGNAL_MAX_QUERIES':EXTERNAL_SIGNAL_MAX_QUERIES,'EXTERNAL_SIGNAL_RESULTS_PER_QUERY':EXTERNAL_SIGNAL_RESULTS_PER_QUERY,
-                                   'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS}})
+                                   'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS},
+                               'container_cpu':_v91_4_container_cpu_quota()})
         return self._json({'error':'Not found'},404)
 
     def do_POST(self):

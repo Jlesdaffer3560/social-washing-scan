@@ -3,7 +3,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v91_3_health_exposes_crawl_config'
+    assert app.APP_VERSION == 'hostable_v91_4_health_exposes_container_cpu'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
