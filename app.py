@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v91_2_fr_nl_company_document_guard"
-APP_RELEASE_LABEL="v91.2"
+APP_VERSION="hostable_v91_3_health_exposes_crawl_config"
+APP_RELEASE_LABEL="v91.3"
 APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3749,7 +3749,16 @@ class Handler(BaseHTTPRequestHandler):
                                'external_search_configured':components['external_search'],
                                'report_pdf_available':report_pdf_ok,'methodology_pdf_available':methodology_pdf_ok,
                                'report_token_enabled':True,'report_signing_key_configured':_REPORT_SIGNING_KEY_CONFIGURED,
-                               'email_delivery_configured':bool(BREVO_API_KEY and BREVO_SENDER_EMAIL),'email_sender_set':bool(BREVO_SENDER_EMAIL)})
+                               'email_delivery_configured':bool(BREVO_API_KEY and BREVO_SENDER_EMAIL),'email_sender_set':bool(BREVO_SENDER_EMAIL),
+                               # v91.3: surfaces the EFFECTIVE crawl-coverage config this running
+                               # process actually resolved (env var if set and within its clamp,
+                               # otherwise the default) -- added after a render.yaml env-var bump
+                               # left it unclear, without a dashboard login, whether Render's
+                               # blueprint sync had actually picked up the new values on deploy.
+                               'crawl_config':{'CRAWL_TARGET_EXTRA_PAGES':CRAWL_TARGET_EXTRA_PAGES,'CRAWL_MAX_PAGE_ATTEMPTS':CRAWL_MAX_PAGE_ATTEMPTS,
+                                   'CRAWL_BUDGET_SECONDS':CRAWL_BUDGET_SECONDS,'CRAWL_FETCH_WORKERS':CRAWL_FETCH_WORKERS,
+                                   'EXTERNAL_SIGNAL_MAX_QUERIES':EXTERNAL_SIGNAL_MAX_QUERIES,'EXTERNAL_SIGNAL_RESULTS_PER_QUERY':EXTERNAL_SIGNAL_RESULTS_PER_QUERY,
+                                   'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS}})
         return self._json({'error':'Not found'},404)
 
     def do_POST(self):
