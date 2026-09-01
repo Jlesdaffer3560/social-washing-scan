@@ -47,8 +47,8 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v91_1_cooldown_coverage_fix"
-APP_RELEASE_LABEL="v91.1"
+APP_VERSION="hostable_v91_2_fr_nl_company_document_guard"
+APP_RELEASE_LABEL="v91.2"
 APP_RELEASE_DATE="2026-08-31"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5944,12 +5944,43 @@ _V71_COMPANY_DOCUMENT_MARKERS=(
     'modern slavery statement','modern slavery act transparency statement',
     'transparency statement','annual report','sustainability report','esg report',
     'human rights policy','human-rights policy','supplier code','supplier code of conduct',
-    'code of conduct','responsible sourcing policy','responsible-sourcing policy'
+    'code of conduct','responsible sourcing policy','responsible-sourcing policy',
+    # v91.2: a Global Framework Agreement (a joint company/global-union-federation text --
+    # e.g. Umicore's own French-language "Convention de développement durable" with
+    # IndustriALL, hosted on the UNION's domain, not Umicore's) is the company stating its
+    # own policy commitments, not an independent adverse finding -- yet every marker above
+    # was English-only, so this whole document class (and any French/Dutch-language company
+    # policy document, common for Belgian/French companies this tool targets) fell straight
+    # through to the adverse-vocabulary check below, which then flagged ordinary policy
+    # language ("interdiction du travail forcé" = "prohibition of forced labour") as a
+    # negative external signal. Live-reproduced against the exact Umicore/IndustriALL PDF.
+    'global framework agreement','framework agreement','collective bargaining agreement',
+    'collective agreement','joint declaration','social charter','code of ethics',
+    # French
+    'déclaration de transparence','rapport annuel','rapport de durabilité',
+    'rapport de développement durable','politique des droits humains',
+    "politique droits de l'homme",'code de conduite fournisseur',
+    'code de conduite des fournisseurs','code de conduite',
+    "politique d'approvisionnement responsable",'convention de développement durable',
+    'accord-cadre mondial','accord cadre mondial','accord cadre','accord collectif',
+    # Dutch
+    'transparantieverklaring','jaarverslag','duurzaamheidsverslag','mensenrechtenbeleid',
+    'gedragscode leveranciers','leveranciersgedragscode','gedragscode',
+    'beleid verantwoorde inkoop','raamovereenkomst','collectieve overeenkomst'
 )
 _V71_DOCUMENT_OVERRIDE_TITLE_TERMS=(
     'fined','fine over','investigation','investigates','regulator','authority finds',
     'complaint','lawsuit','court','criticises','criticizes','accuses','alleges','allegations',
-    'report finds','report reveals','found misleading','misleading statement','deceptive statement'
+    'report finds','report reveals','found misleading','misleading statement','deceptive statement',
+    # v91.2: added alongside the French/Dutch _V71_COMPANY_DOCUMENT_MARKERS above -- without
+    # these, a genuinely adverse French/Dutch-titled article (e.g. a regulator investigation)
+    # whose body happened to also mention a policy-document phrase like "rapport annuel" would
+    # now be wrongly suppressed as a company document, the opposite failure to the one being
+    # fixed.
+    'amende','enquête','enquêtes','régulateur','autorité','plainte','poursuite','tribunal',
+    'critique','critiques','accuse','accusé','accusée','allégations','trompeur','trompeuse',
+    'boete','onderzoek','toezichthouder','klacht','rechtszaak','rechtbank','bekritiseert',
+    'beschuldigt','beschuldigingen','misleidend','misleidende'
 )
 _V71_ADVERSE_EVENT_TERMS=(
     'accused','accuses','alleged','alleges','alleging','allegation','allegations',
