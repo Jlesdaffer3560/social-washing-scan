@@ -47,9 +47,9 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v91_4_health_exposes_container_cpu"
-APP_RELEASE_LABEL="v91.4"
-APP_RELEASE_DATE="2026-08-31"
+APP_VERSION="hostable_v91_5_empco_burden_of_proof_wording"
+APP_RELEASE_LABEL="v91.5"
+APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -2116,14 +2116,22 @@ def classify_legal_basis(f):
       the described conditions are met -- no individual balancing test is
       needed, only whether the wording fits the listed practice.
 
-    - 'problematic': the claim is not on that fixed list, but can still be
+    - 'problematic': the claim is not on that fixed list, so it is not
+      automatically unfair -- but it is not a free pass either. It can still be
       found misleading after an individual, case-by-case assessment under the
       general UCPD provisions (Article 6 misleading actions, Article 7
       misleading omissions, or Article 6(2)(d) specifically for forward-looking
-      claims). This covers social/human-rights/labour claims, forced-labour
-      readiness wording, absolute and comparative overstatements, and future
-      environmental-performance claims -- the outcome always depends on
-      context, evidence and consumer impact, not on a fixed rule.
+      claims). Critically, UCPD Art. 12/12a (reinforced by EmpCo) lets a court
+      or authority REQUIRE the company to substantiate the claim's factual
+      accuracy, and treats the claim as inaccurate/misleading for that
+      assessment if adequate evidence is not supplied -- so once a claim is
+      challenged, the evidentiary burden in practice sits with the company,
+      not with the enforcer. This covers social/human-rights/labour claims,
+      forced-labour readiness wording, absolute and comparative overstatements,
+      and future environmental-performance claims -- the ultimate outcome
+      still depends on context, evidence and consumer impact, not on a fixed
+      rule, but "no evidence on hand" is a real liability here, not a neutral
+      gap.
     """
     if bool(f.get('blacklisted_practice_indicator')):
         return {
@@ -2136,10 +2144,13 @@ def classify_legal_basis(f):
     return {
         'legal_basis_category': 'problematic',
         'legal_basis_label': 'Problematic, not automatically prohibited (case-by-case)',
-        'legal_basis_short': ('Not on the fixed Annex I list. It can still be found misleading after an individual '
-                               'assessment under general UCPD rules (Art. 6 misleading actions, Art. 7 omissions, or '
-                               'Art. 6(2)(d) for future claims) -- the outcome depends on context, evidence and '
-                               'consumer impact, not on a fixed rule.'),
+        'legal_basis_short': ('Not on the fixed Annex I list, so not automatically unfair -- but under UCPD Art. '
+                               '12/12a (reinforced by EmpCo), an authority or court can require the company to '
+                               "substantiate the claim's factual accuracy, and the claim is treated as inaccurate/"
+                               'misleading for that assessment if adequate evidence is not supplied. In practice, once '
+                               'challenged, the burden falls on the company to produce evidence, not on the enforcer to '
+                               'disprove the claim. Whether it is ultimately found misleading still depends on context, '
+                               'evidence and consumer impact, and is not determined by this scan.'),
     }
 
 def green_specification_check(claim_type, claim_text):

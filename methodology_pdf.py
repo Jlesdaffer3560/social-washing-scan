@@ -71,7 +71,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v89')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v91.5')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -84,7 +84,7 @@ def build_methodology_pdf():
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Claims Risk Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v89 &middot; 31 August 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v91.5 &middot; 1 September 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '
@@ -150,10 +150,15 @@ def build_methodology_pdf():
                    'operations-wide neutrality claim, or a generic claim that already carries same-medium specification, falls '
                    'outside this fixed list and is assessed case-by-case instead.', STY['td'])),
         (Paragraph('<b>Problematic (case-by-case)</b>', ParagraphStyle('lb2', parent=STY['td_b'], textColor=AMBER)),
-         Paragraph('Not on the Annex I list, but wording that may still be found misleading after an individual '
-                   'assessment under general UCPD unfair-commercial-practice rules (Art. 6/7, or Art. 6(2)(d) for '
-                   'future environmental-performance claims). Whether it is actually misleading depends on context, '
-                   'substantiation and likely consumer impact, and is not determined by this scan.', STY['td'])),
+         Paragraph('Not on the Annex I list, so not automatically unfair &mdash; but not a free pass either. It may '
+                   'still be found misleading after an individual assessment under general UCPD unfair-commercial-'
+                   'practice rules (Art. 6/7, or Art. 6(2)(d) for future environmental-performance claims). Under '
+                   'UCPD Art. 12/12a (reinforced by EmpCo), an authority or court can require the company to '
+                   'substantiate the claim\'s factual accuracy, and the claim is treated as inaccurate for that '
+                   'assessment if adequate evidence is not supplied &mdash; in practice, once challenged, the burden '
+                   'falls on the company to produce evidence, not on the enforcer to disprove the claim. Whether it '
+                   'is ultimately found misleading still depends on context and likely consumer impact, and is not '
+                   'determined by this scan.', STY['td'])),
     ]
     flow.append(section_table(legal_basis_rows, [W * 0.26, W * 0.74]))
 
