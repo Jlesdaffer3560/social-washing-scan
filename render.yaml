@@ -19,3 +19,24 @@ services:
         value: "3600"
       - key: MAX_CONCURRENT_SCANS
         value: "2"
+      # Crawl-coverage upgrade (2026-08-31): raised to the maximum each variable's own
+      # clamp in app.py allows (see CRAWL_TARGET_EXTRA_PAGES etc. near the top of app.py --
+      # each is bounded by max(...,min(...)) regardless of what's set here, so these values
+      # cannot push the app past a safe range). Widens how many pages/documents and external
+      # search results a scan covers; pair with a paid Render instance type (dedicated CPU,
+      # no cold-start spin-down) so the larger budget doesn't just make scans proportionally
+      # slower on the free tier's shared/throttled CPU.
+      - key: CRAWL_TARGET_EXTRA_PAGES
+        value: "10"
+      - key: CRAWL_MAX_PAGE_ATTEMPTS
+        value: "24"
+      - key: CRAWL_BUDGET_SECONDS
+        value: "35"
+      - key: CRAWL_FETCH_WORKERS
+        value: "5"
+      - key: EXTERNAL_SIGNAL_MAX_QUERIES
+        value: "8"
+      - key: EXTERNAL_SIGNAL_RESULTS_PER_QUERY
+        value: "10"
+      - key: EXTERNAL_SIGNAL_WORKERS
+        value: "6"
