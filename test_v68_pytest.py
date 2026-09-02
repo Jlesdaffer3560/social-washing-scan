@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v92_scan_history'
+    assert app.APP_VERSION == 'hostable_v92_1_history_error_diagnostics'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -178,3 +178,16 @@ def test_history_cookie_auth(monkeypatch):
     assert app._v92_valid_history_cookie(f'{app._HISTORY_COOKIE_NAME}={old_ts}.{old_sig}') is False
     monkeypatch.setattr(app,'HISTORY_ADMIN_PASSWORD','')
     assert app._v92_valid_history_cookie(header) is False
+
+
+def test_scan_history_error_redaction(monkeypatch):
+    """v92.1: a psycopg2 connection error can echo back the DSN it tried, which for a
+    typical Postgres URL includes the username and PASSWORD in plain text -- and this
+    error is surfaced via the public, unauthenticated /api/health endpoint for debugging.
+    Both the exact configured DATABASE_URL and any generic scheme://user:pass@ pattern
+    must be stripped before that ever happens."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgresql://myuser:supersecretpw@ep-x.neon.tech/db?sslmode=require')
+    redacted=app._v92_redact_error('failed (using DSN: postgresql://myuser:supersecretpw@ep-x.neon.tech/db?sslmode=require)')
+    assert 'supersecretpw' not in redacted and 'myuser' not in redacted
+    redacted_generic=app._v92_redact_error('timeout connecting to postgresql://otheruser:otherpw@otherhost/db')
+    assert 'otherpw' not in redacted_generic

@@ -68,8 +68,8 @@ def _get_psycopg2():
 _psycopg2_module = None
 _psycopg2_import_error = None
 
-APP_VERSION="hostable_v92_scan_history"
-APP_RELEASE_LABEL="v92"
+APP_VERSION="hostable_v92_1_history_error_diagnostics"
+APP_RELEASE_LABEL="v92.1"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3730,24 +3730,47 @@ def _v91_4_container_cpu_quota():
 
 _V92_TABLE_LOCK=threading.Lock()
 _V92_TABLE_READY=False
+# v92.1: _v92_save_scan_history() deliberately swallows every exception so a database
+# problem can never turn a successful scan into a failed response -- but that also makes
+# a silent failure impossible to diagnose from outside (no dashboard/log access). Capture
+# the last error here so it can be surfaced via /api/health instead of guessed at.
+_V92_LAST_ERROR=None
+
+def _v92_redact_error(text):
+    """A psycopg2 connection error can echo back the DSN it tried to use, which for a
+    typical Postgres connection string includes the username and PASSWORD in plain text
+    (postgresql://user:pass@host/db) -- /api/health is a public, unauthenticated endpoint,
+    so this MUST be stripped before the error is ever stored/exposed there, not just before
+    display. Redacts the literal configured DATABASE_URL if present, plus any
+    scheme://user:pass@ credential pattern in general as defense-in-depth against the
+    driver rendering the DSN differently than the exact configured string."""
+    text=str(text or '')
+    if DATABASE_URL:
+        text=text.replace(DATABASE_URL,'[REDACTED]')
+    text=re.sub(r'[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/@]+@','[REDACTED]://',text)
+    return text[:300]
 
 def _v92_db_connect():
     """Returns a new connection, or None if the feature isn't configured/available.
-    A short connect_timeout keeps a database hiccup from turning into a slow scan
-    response -- history saving is best-effort, never something a scan should wait on
-    for long."""
+    connect_timeout is deliberately generous (15s, not a couple of seconds) because a
+    free-tier serverless Postgres project (e.g. Neon) can scale its compute to zero after
+    inactivity and take a few seconds to wake on the first connection after a while --
+    a too-short timeout would misreport a cold-start delay as a real connection failure."""
+    global _V92_LAST_ERROR
     if not DATABASE_URL:
         return None
     pg=_get_psycopg2()
     if pg is None:
+        _V92_LAST_ERROR='psycopg2 not available: '+str(_psycopg2_import_error)
         return None
     try:
-        return pg.connect(DATABASE_URL,connect_timeout=5)
-    except Exception:
+        return pg.connect(DATABASE_URL,connect_timeout=15)
+    except Exception as e:
+        _V92_LAST_ERROR=_v92_redact_error('connect failed: '+str(e))
         return None
 
 def _v92_ensure_table(conn):
-    global _V92_TABLE_READY
+    global _V92_TABLE_READY,_V92_LAST_ERROR
     if _V92_TABLE_READY:
         return True
     with _V92_TABLE_LOCK:
@@ -3779,7 +3802,8 @@ def _v92_ensure_table(conn):
             conn.commit()
             _V92_TABLE_READY=True
             return True
-        except Exception:
+        except Exception as e:
+            _V92_LAST_ERROR=_v92_redact_error('ensure_table failed: '+str(e))
             try: conn.rollback()
             except Exception: pass
             return False
@@ -3787,6 +3811,7 @@ def _v92_ensure_table(conn):
 def _v92_save_scan_history(result,scan_type,client_ip):
     """Best-effort log of a completed scan. Never raises -- a database problem must
     never turn a successful scan into a failed response for the person using the tool."""
+    global _V92_LAST_ERROR
     if not DATABASE_URL:
         return
     try:
@@ -3823,8 +3848,8 @@ def _v92_save_scan_history(result,scan_type,client_ip):
             conn.commit()
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        _V92_LAST_ERROR=_v92_redact_error('save failed: '+str(e))
 
 def _v92_fetch_scan_history(search='',page=1,page_size=25):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
@@ -4093,7 +4118,14 @@ class Handler(BaseHTTPRequestHandler):
                                    'CRAWL_BUDGET_SECONDS':CRAWL_BUDGET_SECONDS,'CRAWL_FETCH_WORKERS':CRAWL_FETCH_WORKERS,
                                    'EXTERNAL_SIGNAL_MAX_QUERIES':EXTERNAL_SIGNAL_MAX_QUERIES,'EXTERNAL_SIGNAL_RESULTS_PER_QUERY':EXTERNAL_SIGNAL_RESULTS_PER_QUERY,
                                    'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS},
-                               'container_cpu':_v91_4_container_cpu_quota()})
+                               'container_cpu':_v91_4_container_cpu_quota(),
+                               # v92.1: history_configured mirrors the other optional-feature
+                               # flags above; history_last_error surfaces the most recent
+                               # scan-history save/connect failure (if any) since this process
+                               # started, without needing dashboard/log access to diagnose why
+                               # a scan silently didn't appear on /history.
+                               'history_configured':bool(DATABASE_URL and HISTORY_ADMIN_PASSWORD),
+                               'history_last_error':_V92_LAST_ERROR})
         if self.path=='/history' or self.path.startswith('/history?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._send(_v92_render_history_page([],0,1,25,''))
