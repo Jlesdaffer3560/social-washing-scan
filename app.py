@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v92_4_sector_risk_fallback"
-APP_RELEASE_LABEL="v92.4"
+APP_VERSION="hostable_v92_5_history_row_selection"
+APP_RELEASE_LABEL="v92.5"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3941,13 +3941,13 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period=''):
             total=cur.fetchone()[0]
             offset=max(0,(page-1)*page_size)
             cur.execute(
-                f'''SELECT scanned_at,scan_type,company,sector,input_url,global_score,global_risk,
+                f'''SELECT id,scanned_at,scan_type,company,sector,input_url,global_score,global_risk,
                            green_score,social_score,audience,findings_count,summary,
                            sector_risk,empco_blacklisted_count,high_risk_findings_count
                     FROM scan_history {where}
                     ORDER BY scanned_at DESC LIMIT %s OFFSET %s''',
                 params+(page_size,offset))
-            cols=['scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
+            cols=['id','scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
                   'green_score','social_score','audience','findings_count','summary',
                   'sector_risk','empco_blacklisted_count','high_risk_findings_count']
             rows=[dict(zip(cols,r)) for r in cur.fetchall()]
@@ -3999,6 +3999,30 @@ def _v92_fetch_all_for_export(search='',risk='',period=''):
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
                              ORDER BY scanned_at DESC''',params)
+            return [dict(zip(_V92_EXPORT_COLUMNS,r)) for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+def _v92_fetch_by_ids(ids):
+    """Fetch specific rows by id, for exporting only the rows a user checked on /history
+    rather than the whole current filtered view. ids are validated as plain integers by
+    the caller before this is reached, but the placeholder count is still built from
+    len(ids) here -- each id itself remains a bound parameter, never interpolated into
+    the SQL text, so this is safe regardless."""
+    if not ids:
+        return []
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        placeholders=','.join(['%s']*len(ids))
+        with conn.cursor() as cur:
+            cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history
+                             WHERE id IN ({placeholders}) ORDER BY scanned_at DESC''',tuple(ids))
             return [dict(zip(_V92_EXPORT_COLUMNS,r)) for r in cur.fetchall()]
     except Exception:
         return []
@@ -4138,7 +4162,12 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             else:
                 sector=''
             input_url=html_escape(str(r.get('input_url') or '')[:60])
+            # v92.5: row id, needed so "Export selected" knows exactly which rows were
+            # checked -- not part of any display value, so no escaping concern (it's an
+            # integer straight from the database's own SERIAL primary key).
+            row_id=r.get('id')
             trs.append(f'''<tr>
+<td><input type="checkbox" class="row-check" name="ids" value="{row_id}" form="selectForm"></td>
 <td>{when}</td>
 <td><strong>{company}</strong><div class="small">{sector}</div></td>
 <td class="small">{input_url}</td>
@@ -4147,7 +4176,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <td>{r.get("social_score") if r.get("social_score") is not None else "—"}</td>
 <td>{r.get("findings_count") if r.get("findings_count") is not None else "—"}</td>
 </tr>''')
-        body=f'''<table><thead><tr><th>Date</th><th>Company</th><th>Input</th><th>Global</th><th>Green</th><th>Social</th><th>Findings</th></tr></thead>
+        body=f'''<table><thead><tr><th><input type="checkbox" id="selectAll" title="Select all"></th><th>Date</th><th>Company</th><th>Input</th><th>Global</th><th>Green</th><th>Social</th><th>Findings</th></tr></thead>
 <tbody>{"".join(trs)}</tbody></table>'''
     total_pages=max(1,(total+page_size-1)//page_size)
     extra_q=(f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
@@ -4173,9 +4202,20 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 {'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
 <a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}">Export CSV</a>
 </form>
+<form id="selectForm" method="POST" action="/history/export_selected"></form>
 {body}
+<div style="margin-top:12px"><button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button></div>
 {pager}
-</div></div></body></html>'''
+</div></div>
+<script>
+(function(){{
+  var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'), btn=document.getElementById('exportSelectedBtn');
+  function sync(){{ var any=false; boxes.forEach(function(b){{ if(b.checked) any=true; }}); if(btn) btn.disabled=!any; }}
+  if(all) all.addEventListener('change',function(){{ boxes.forEach(function(b){{ b.checked=all.checked; }}); sync(); }});
+  boxes.forEach(function(b){{ b.addEventListener('change',sync); }});
+}})();
+</script>
+</body></html>'''
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -4348,10 +4388,38 @@ class Handler(BaseHTTPRequestHandler):
                 'Set-Cookie':f'{_HISTORY_COOKIE_NAME}={cookie_val}; Max-Age={_HISTORY_SESSION_SECONDS}; Path=/; HttpOnly; SameSite=Lax'})
         return self._send(_v92_render_history_login('Incorrect password.'),status=401)
 
+    def _handle_history_export_selected(self):
+        """POST /history/export_selected submits a plain HTML form (the row checkboxes on
+        /history, application/x-www-form-urlencoded, not JSON) -- handled separately from
+        do_POST's JSON-only body parsing below, same as the login form above."""
+        if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+            return self._json({'error':'Scan history is not configured for this deployment.'},404)
+        if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+            return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+        try: n=int(self.headers.get('Content-Length',0) or 0)
+        except Exception: n=0
+        raw=self.rfile.read(n) if n>0 else b''
+        form=parse_qs(raw.decode('utf-8','ignore'))
+        # Only plain positive integers are ever passed through to the query -- anything
+        # else in the submitted ids (there shouldn't be, since these are checkbox values
+        # this same page rendered, but the request body is still client-controlled) is
+        # silently dropped rather than trusted.
+        ids=[]
+        for v in form.get('ids',[]):
+            try: ids.append(int(v))
+            except ValueError: pass
+        rows=_v92_fetch_by_ids(ids) if ids else []
+        csv_bytes=_v92_rows_to_csv(rows)
+        stamp=datetime.date.today().isoformat()
+        return self._send(csv_bytes,'text/csv; charset=utf-8',200,
+            {'Content-Disposition':f'attachment; filename="scan_history_selected_{stamp}.csv"'})
+
     def do_POST(self):
         client=_client_ip(self)
         if self.path=='/history/login':
             return self._handle_history_login()
+        if self.path=='/history/export_selected':
+            return self._handle_history_export_selected()
         try:
             data=self._read_json()
             if self.path in {'/api/scan/url','/api/scan/document'}:

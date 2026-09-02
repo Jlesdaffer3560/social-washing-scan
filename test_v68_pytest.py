@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v92_4_sector_risk_fallback'
+    assert app.APP_VERSION == 'hostable_v92_5_history_row_selection'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -276,3 +276,37 @@ def test_scan_history_table_falls_back_to_sector_risk(monkeypatch):
                'global_risk':'Low','green_score':12,'social_score':12,'findings_count':2}
     html2=app._v92_render_history_page([known_row],1,1,25,'')
     assert 'Banking and financial services' in html2 and 'Sector risk: Medium' not in html2
+
+
+def test_scan_history_row_selection_markup(monkeypatch):
+    """v92.5: each row needs a checkbox carrying its database id (bound to the separate
+    #selectForm via the HTML `form` attribute, since it lives inside the table rather than
+    physically inside that form), a select-all checkbox, and an Export-selected button
+    that starts disabled (enabled by the page's own JS once something is checked)."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row1={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
+          'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+          'green_score':57,'social_score':50,'findings_count':14}
+    row2={'id':43,'scanned_at':'2026-09-02T13:40','company':'KBC','sector':'Banking and financial services',
+          'sector_risk':'Medium','input_url':'https://careers.kbc-group.com','global_score':12,'global_risk':'Low',
+          'green_score':12,'social_score':12,'findings_count':2}
+    html=app._v92_render_history_page([row1,row2],2,1,25,'')
+    assert 'name="ids" value="42"' in html and 'name="ids" value="43"' in html
+    assert 'id="selectAll"' in html
+    assert 'id="selectForm"' in html and 'action="/history/export_selected"' in html
+    assert 'id="exportSelectedBtn"' in html and 'disabled' in html
+
+
+def test_scan_history_fetch_by_ids_and_id_parsing():
+    """v92.5: fetching by id must short-circuit on an empty list without touching the
+    database, and the export-selected handler's id parsing (mirrored here since it lives
+    inside a Handler method) must silently drop anything that isn't a plain integer from
+    the submitted form -- the request body is client-controlled even though these values
+    are meant to be checkbox values this same page rendered."""
+    assert app._v92_fetch_by_ids([])==[]
+    form_values=['42','43','not-a-number','','17abc']
+    ids=[]
+    for v in form_values:
+        try: ids.append(int(v))
+        except ValueError: pass
+    assert ids==[42,43]
