@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v92_6_view_selected_filter'
+    assert app.APP_VERSION == 'hostable_v92_7_delete_selected'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -326,9 +326,29 @@ def test_scan_history_view_selected_filter(monkeypatch):
          'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
          'green_score':57,'social_score':50,'findings_count':14}
     html_plain=app._v92_render_history_page([row],1,1,25,'')
-    assert 'selected scan(s)' not in html_plain
+    assert 'class="notice"' not in html_plain
     html_ids=app._v92_render_history_page([row],1,1,25,'',ids=[42])
     assert 'Showing 1 selected scan(s)' in html_ids and 'Clear selection' in html_ids
     assert '&ids=42' in html_ids  # carried into the Export CSV link
     html_ids_search=app._v92_render_history_page([row],1,1,25,'Puratos',ids=[42])
     assert 'q=Puratos' in html_ids_search  # preserved by the clear-selection link
+
+
+def test_scan_history_delete_selected(monkeypatch):
+    """v92.7: deleting must short-circuit on an empty id list without touching the
+    database (never accidentally interpreted as "delete everything"), and the rendered
+    page must include the delete button (posting to /history/delete_selected) plus a
+    client-side confirm() dialog as a UX safety net -- the real guard is server-side
+    cookie auth, already covered by test_history_cookie_auth, but the confirmation
+    dialog matters too since this is an irreversible action a logged-in operator could
+    otherwise trigger with a single misclick."""
+    assert app._v92_delete_by_ids([])==0
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'')
+    assert 'id="deleteSelectedBtn"' in html
+    assert 'formaction="/history/delete_selected"' in html
+    assert 'confirm(' in html
+    assert 'btn danger' in html

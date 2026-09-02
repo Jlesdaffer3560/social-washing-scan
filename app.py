@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v92_6_view_selected_filter"
-APP_RELEASE_LABEL="v92.6"
+APP_VERSION="hostable_v92_7_delete_selected"
+APP_RELEASE_LABEL="v92.7"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4011,6 +4011,33 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None):
     finally:
         conn.close()
 
+def _v92_delete_by_ids(ids):
+    """Permanently deletes the given rows from scan_history. Returns the number of rows
+    actually deleted (0 if the feature isn't configured/available, ids is empty, or the
+    delete failed) rather than raising -- callers report a count back to the user either
+    way. Never called from this app without the caller already having gone through the
+    /history cookie-auth check and the row ids themselves having been chosen by that
+    logged-in operator on the page these ids came from."""
+    if not ids:
+        return 0
+    conn=_v92_db_connect()
+    if conn is None:
+        return 0
+    try:
+        if not _v92_ensure_table(conn):
+            return 0
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM scan_history WHERE id = ANY(%s)',(list(ids),))
+            deleted=cur.rowcount
+        conn.commit()
+        return deleted
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        return 0
+    finally:
+        conn.close()
+
 def _v92_parse_ids(source):
     """Shared id-list validation for both the GET ?ids=..&ids=.. query-string form (View
     selected -- a plain HTML GET form turns checked checkboxes into repeated query params
@@ -4079,6 +4106,8 @@ input[type=text],input[type=password]{width:100%;border:1.5px solid var(--line);
 select{border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit;background:#fff}
 .btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}
 .btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}
+.btn.danger{background:var(--danger-soft);color:var(--danger);border:1px solid #e7c1c1}
+.btn:disabled{opacity:.5;cursor:not-allowed}
 .error{margin-top:12px;padding:10px 12px;border-radius:10px;background:#fff0f0;border:1px solid #e2baba;color:#842424}
 .notice{margin-bottom:14px;padding:10px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}
 table{width:100%;border-collapse:collapse;margin-top:6px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
@@ -4216,16 +4245,26 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div style="margin-top:12px;display:flex;gap:8px">
 <button class="btn secondary" type="submit" form="selectForm" formaction="/history" formmethod="GET" id="viewSelectedBtn" disabled>View selected</button>
 <button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button>
+<button class="btn danger" type="submit" form="selectForm" formaction="/history/delete_selected" id="deleteSelectedBtn" disabled>Delete selected</button>
 </div>
 {pager}
 </div></div>
 <script>
 (function(){{
   var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'),
-      exportBtn=document.getElementById('exportSelectedBtn'), viewBtn=document.getElementById('viewSelectedBtn');
-  function sync(){{ var any=false; boxes.forEach(function(b){{ if(b.checked) any=true; }}); if(exportBtn) exportBtn.disabled=!any; if(viewBtn) viewBtn.disabled=!any; }}
+      exportBtn=document.getElementById('exportSelectedBtn'), viewBtn=document.getElementById('viewSelectedBtn'),
+      deleteBtn=document.getElementById('deleteSelectedBtn');
+  function sync(){{ var n=0; boxes.forEach(function(b){{ if(b.checked) n++; }});
+    if(exportBtn) exportBtn.disabled=!n; if(viewBtn) viewBtn.disabled=!n; if(deleteBtn) deleteBtn.disabled=!n; }}
   if(all) all.addEventListener('change',function(){{ boxes.forEach(function(b){{ b.checked=all.checked; }}); sync(); }});
   boxes.forEach(function(b){{ b.addEventListener('change',sync); }});
+  // Destructive action: require an explicit confirmation before the delete actually
+  // submits. This is a UX safety net, not the real guard -- the server independently
+  // requires /history's own cookie auth regardless of what this dialog does.
+  if(deleteBtn) deleteBtn.addEventListener('click',function(e){{
+    var n=0; boxes.forEach(function(b){{ if(b.checked) n++; }});
+    if(!confirm('Delete '+n+' selected scan(s) from history? This cannot be undone.')) e.preventDefault();
+  }});
 }})();
 </script>
 </body></html>'''
@@ -4422,12 +4461,33 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(csv_bytes,'text/csv; charset=utf-8',200,
             {'Content-Disposition':f'attachment; filename="scan_history_selected_{stamp}.csv"'})
 
+    def _handle_history_delete_selected(self):
+        """POST /history/delete_selected -- same plain-HTML-form pattern as export/login
+        above, handled separately from do_POST's JSON-only body parsing below. This is a
+        destructive, irreversible action, so the page's own JS asks for a browser-native
+        confirm() before this request is ever sent -- but the real guarantee is server-
+        side: it requires the same /history cookie auth as everything else here, and only
+        ever deletes the exact ids the logged-in operator checked on that page."""
+        if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+            return self._json({'error':'Scan history is not configured for this deployment.'},404)
+        if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+            return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+        try: n=int(self.headers.get('Content-Length',0) or 0)
+        except Exception: n=0
+        raw=self.rfile.read(n) if n>0 else b''
+        form=parse_qs(raw.decode('utf-8','ignore'))
+        ids=_v92_parse_ids(form)
+        _v92_delete_by_ids(ids)
+        return self._send(b'',status=302,extra_headers={'Location':'/history'})
+
     def do_POST(self):
         client=_client_ip(self)
         if self.path=='/history/login':
             return self._handle_history_login()
         if self.path=='/history/export_selected':
             return self._handle_history_export_selected()
+        if self.path=='/history/delete_selected':
+            return self._handle_history_delete_selected()
         try:
             data=self._read_json()
             if self.path in {'/api/scan/url','/api/scan/document'}:
