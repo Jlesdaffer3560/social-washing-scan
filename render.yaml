@@ -2,7 +2,7 @@ services:
   - type: web
     name: social-washing-scan-python
     env: python
-    plan: free
+    plan: starter
     buildCommand: "pip install -r requirements.txt && python methodology_pdf.py"
     startCommand: "python app.py"
     healthCheckPath: /api/health
@@ -40,3 +40,13 @@ services:
         value: "10"
       - key: EXTERNAL_SIGNAL_WORKERS
         value: "6"
+      # Optional scan-history log (2026-09-01): both unset by default via `sync: false` --
+      # Render will prompt for these in the dashboard rather than ever storing the actual
+      # secret values in this version-controlled file. With either left blank, /history and
+      # the history-save call both no-op gracefully; the rest of the app is unaffected.
+      # DATABASE_URL: a Postgres connection string (e.g. from a free Neon or Supabase
+      # project). HISTORY_ADMIN_PASSWORD: a password of your choosing that gates /history.
+      - key: DATABASE_URL
+        sync: false
+      - key: HISTORY_ADMIN_PASSWORD
+        sync: false

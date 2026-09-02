@@ -1,9 +1,10 @@
 from pathlib import Path
+import time, hmac, hashlib
 import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v91_5_empco_burden_of_proof_wording'
+    assert app.APP_VERSION == 'hostable_v92_scan_history'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -132,3 +133,48 @@ def test_inventory_distinguishes_limited_text():
     inv=app.build_scan_inventory(pages,docs,log,full_text=text)
     limited=next(x for x in inv['website_pages'] if x['url']==pages[1])
     assert limited['analysis_status']=='Limited text extracted'
+
+
+def test_scan_history_noop_without_database_url(monkeypatch):
+    """v92: the scan-history feature must be fully optional. With DATABASE_URL unset
+    (the default), saving must never raise -- a database problem or missing config must
+    never turn a successful scan into a failed response -- and fetching must return an
+    empty, not erroring, result."""
+    monkeypatch.setattr(app,'DATABASE_URL','')
+    app._v92_save_scan_history({'company':{'company':'Acme'},'global_score':50},'url','1.2.3.4')
+    rows,total=app._v92_fetch_scan_history()
+    assert rows==[] and total==0
+
+
+def test_scan_history_page_escapes_untrusted_content(monkeypatch):
+    """v92: company/sector/input_url in a history row originate from a user-supplied scan
+    input (not a trusted source), and the search box echoes the raw query string -- both
+    must be HTML-escaped before being interpolated into the /history page, or a scan input
+    or search containing markup becomes a stored/reflected XSS against whoever views the
+    history page."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'scanned_at':'2026-09-01T12:00:00','company':'<script>alert(1)</script>',
+         'sector':'Retail & "Fashion"','input_url':'https://evil.example.com/<img src=x onerror=alert(2)>',
+         'global_score':42,'global_risk':'High','green_score':30,'social_score':50,'findings_count':3}
+    html=app._v92_render_history_page([row],1,1,25,'<b>xss</b>')
+    assert '<script>alert(1)</script>' not in html
+    assert '<img src=x onerror=alert(2)>' not in html
+    assert '&lt;script&gt;' in html
+    assert '&lt;b&gt;xss&lt;/b&gt;' in html
+
+
+def test_history_cookie_auth(monkeypatch):
+    """v92: the /history page's shared-password cookie must accept a freshly-issued valid
+    cookie, reject a tampered signature, reject an expired one, and -- critically -- deny
+    access outright when no password is configured at all, rather than defaulting open."""
+    monkeypatch.setattr(app,'HISTORY_ADMIN_PASSWORD','testpw123')
+    cookie_val=app._v92_history_cookie_value()
+    header=f'{app._HISTORY_COOKIE_NAME}={cookie_val}'
+    assert app._v92_valid_history_cookie(header) is True
+    tampered=cookie_val.rsplit('.',1)[0]+'.deadbeef'
+    assert app._v92_valid_history_cookie(f'{app._HISTORY_COOKIE_NAME}={tampered}') is False
+    old_ts=str(int(time.time())-app._HISTORY_SESSION_SECONDS-10)
+    old_sig=hmac.new(app._REPORT_SIGNING_KEY,('history-auth:'+old_ts).encode(),hashlib.sha256).hexdigest()
+    assert app._v92_valid_history_cookie(f'{app._HISTORY_COOKIE_NAME}={old_ts}.{old_sig}') is False
+    monkeypatch.setattr(app,'HISTORY_ADMIN_PASSWORD','')
+    assert app._v92_valid_history_cookie(header) is False

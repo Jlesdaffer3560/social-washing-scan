@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, urljoin, quote
+from urllib.parse import urlparse, urljoin, quote, parse_qs
 from urllib.request import Request, urlopen, HTTPRedirectHandler, build_opener, install_opener
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
+from html import escape as html_escape
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -47,8 +48,28 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-APP_VERSION="hostable_v91_5_empco_burden_of_proof_wording"
-APP_RELEASE_LABEL="v91.5"
+def _get_psycopg2():
+    """Lazily import psycopg2 on first use, same pattern as the PDF-library lazy imports
+    above: the scan-history feature is entirely optional (gated on DATABASE_URL being
+    configured), so a missing/broken psycopg2 install must never block server startup or
+    the rest of the app -- only history saving/viewing is affected."""
+    global _psycopg2_module, _psycopg2_import_error
+    if _psycopg2_module is not None:
+        return _psycopg2_module
+    if _psycopg2_import_error is not None:
+        return None
+    try:
+        import psycopg2 as _pg
+        _psycopg2_module = _pg
+        return _pg
+    except Exception as e:
+        _psycopg2_import_error = str(e)
+        return None
+_psycopg2_module = None
+_psycopg2_import_error = None
+
+APP_VERSION="hostable_v92_scan_history"
+APP_RELEASE_LABEL="v92"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -121,6 +142,17 @@ def external_search_configured():
 # of credentials. HTTPS (443) is not affected.
 BREVO_API_KEY=os.environ.get("BREVO_API_KEY","").strip()
 BREVO_SENDER_EMAIL=os.environ.get("BREVO_SENDER_EMAIL","").strip()
+# v92: optional scan-history log, so the operator can see which companies were scanned and
+# with what result -- useful once the tool is used by people other than the operator.
+# DATABASE_URL is a standard Postgres connection string (e.g. from a free Neon/Supabase
+# project); HISTORY_ADMIN_PASSWORD gates the /history page behind a single shared password
+# (a full multi-user account system is not needed -- this is one operator's own private
+# view, not a public feature). Both are optional: with either unset, /history and the
+# history-save call both no-op gracefully rather than failing the scan itself.
+DATABASE_URL=os.environ.get("DATABASE_URL","").strip()
+HISTORY_ADMIN_PASSWORD=os.environ.get("HISTORY_ADMIN_PASSWORD","").strip()
+_HISTORY_COOKIE_NAME='durably_history_auth'
+_HISTORY_SESSION_SECONDS=30*24*3600
 
 PROFILES={
  "kbc":("KBC","Banking and financial services","Medium","Responsible-finance, customer-protection, accessibility and financial-inclusion claims can be sensitive because financing decisions may create indirect social impacts."),
@@ -3689,6 +3721,266 @@ def _v91_4_container_cpu_quota():
     return None
 
 
+# ---------------------------------------------------------------------------
+# V92 SCAN HISTORY -- optional Postgres-backed log of past scans, viewable at
+# /history behind a single shared password. Entirely opt-in: with DATABASE_URL
+# unset, every function below is a safe no-op and the scan endpoints behave
+# exactly as before. See render.yaml for the (unset-by-default) env var keys.
+# ---------------------------------------------------------------------------
+
+_V92_TABLE_LOCK=threading.Lock()
+_V92_TABLE_READY=False
+
+def _v92_db_connect():
+    """Returns a new connection, or None if the feature isn't configured/available.
+    A short connect_timeout keeps a database hiccup from turning into a slow scan
+    response -- history saving is best-effort, never something a scan should wait on
+    for long."""
+    if not DATABASE_URL:
+        return None
+    pg=_get_psycopg2()
+    if pg is None:
+        return None
+    try:
+        return pg.connect(DATABASE_URL,connect_timeout=5)
+    except Exception:
+        return None
+
+def _v92_ensure_table(conn):
+    global _V92_TABLE_READY
+    if _V92_TABLE_READY:
+        return True
+    with _V92_TABLE_LOCK:
+        if _V92_TABLE_READY:
+            return True
+        try:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS scan_history (
+                        id SERIAL PRIMARY KEY,
+                        scanned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        scan_type TEXT,
+                        company TEXT,
+                        sector TEXT,
+                        input_url TEXT,
+                        global_score INTEGER,
+                        global_risk TEXT,
+                        green_score INTEGER,
+                        green_risk TEXT,
+                        social_score INTEGER,
+                        social_risk TEXT,
+                        audience TEXT,
+                        findings_count INTEGER,
+                        summary TEXT,
+                        client_ip TEXT
+                    )
+                ''')
+                cur.execute('CREATE INDEX IF NOT EXISTS scan_history_scanned_at_idx ON scan_history (scanned_at DESC)')
+            conn.commit()
+            _V92_TABLE_READY=True
+            return True
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            return False
+
+def _v92_save_scan_history(result,scan_type,client_ip):
+    """Best-effort log of a completed scan. Never raises -- a database problem must
+    never turn a successful scan into a failed response for the person using the tool."""
+    if not DATABASE_URL:
+        return
+    try:
+        comp=result.get('company') or {}
+        audience=result.get('document_audience') or {}
+        findings=result.get('findings') or result.get('merged_claims') or []
+        conn=_v92_db_connect()
+        if conn is None:
+            return
+        try:
+            if not _v92_ensure_table(conn):
+                return
+            with conn.cursor() as cur:
+                cur.execute(
+                    '''INSERT INTO scan_history
+                       (scan_type,company,sector,input_url,global_score,global_risk,
+                        green_score,green_risk,social_score,social_risk,audience,
+                        findings_count,summary,client_ip)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                    (scan_type,
+                     str(comp.get('company','') or '')[:300],
+                     str(comp.get('sector','') or '')[:300],
+                     str(result.get('original_url') or result.get('source_label') or '')[:1000],
+                     result.get('global_score'),
+                     str(result.get('global_risk','') or '')[:50],
+                     result.get('green_score'),
+                     str(result.get('green_risk','') or '')[:50],
+                     result.get('social_score'),
+                     str(result.get('social_risk','') or '')[:50],
+                     str(audience.get('audience','') or '')[:200],
+                     len(findings),
+                     str(result.get('screening_conclusion','') or '')[:2000],
+                     str(client_ip or '')[:64]))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+def _v92_fetch_scan_history(search='',page=1,page_size=25):
+    """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
+    isn't configured/available -- callers render an empty/unconfigured state rather
+    than erroring."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return [],0
+    try:
+        if not _v92_ensure_table(conn):
+            return [],0
+        where='WHERE company ILIKE %s' if search else ''
+        params=(f'%{search}%',) if search else ()
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
+            total=cur.fetchone()[0]
+            offset=max(0,(page-1)*page_size)
+            cur.execute(
+                f'''SELECT scanned_at,scan_type,company,sector,input_url,global_score,global_risk,
+                           green_score,social_score,audience,findings_count,summary
+                    FROM scan_history {where}
+                    ORDER BY scanned_at DESC LIMIT %s OFFSET %s''',
+                params+(page_size,offset))
+            cols=['scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
+                  'green_score','social_score','audience','findings_count','summary']
+            rows=[dict(zip(cols,r)) for r in cur.fetchall()]
+        return rows,total
+    except Exception:
+        return [],0
+    finally:
+        conn.close()
+
+def _v92_history_cookie_value():
+    """HMAC-signed, timestamped token proving the shared history password was supplied
+    correctly -- reuses the same signing-key infrastructure already used for report
+    tokens, so no new secret material is introduced for this feature."""
+    ts=str(int(time.time()))
+    sig=hmac.new(_REPORT_SIGNING_KEY,('history-auth:'+ts).encode(),hashlib.sha256).hexdigest()
+    return f'{ts}.{sig}'
+
+def _v92_valid_history_cookie(cookie_header):
+    if not HISTORY_ADMIN_PASSWORD:
+        return False
+    cookies=_v92_parse_cookies(cookie_header)
+    value=cookies.get(_HISTORY_COOKIE_NAME,'')
+    if not value or '.' not in value:
+        return False
+    ts_str,_,sig=value.partition('.')
+    try:
+        ts=int(ts_str)
+    except ValueError:
+        return False
+    if time.time()-ts>_HISTORY_SESSION_SECONDS:
+        return False
+    expected=hmac.new(_REPORT_SIGNING_KEY,('history-auth:'+ts_str).encode(),hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected,sig)
+
+def _v92_parse_cookies(header):
+    out={}
+    for part in (header or '').split(';'):
+        if '=' in part:
+            k,_,v=part.strip().partition('=')
+            if k: out[k]=v
+    return out
+
+_V92_STYLE='''
+:root{--bg:#f6f8fb;--card:#ffffff;--ink:#132033;--muted:#5e6b7d;--line:#dfe5ee;--accent:#265f5c;--accent2:#173f5f;
+--danger:#a43c3c;--danger-soft:#fff1f1;--warn:#9b6a17;--warn-soft:#fff8ea;--ok:#276749;--ok-soft:#edf7f0;--shadow:0 8px 24px rgba(20,35,55,.08);--radius:14px}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;font-size:15px}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:26px;margin:0 0 4px}.muted{color:var(--muted)}.small{font-size:13px;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-top:18px}
+input[type=text],input[type=password]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:11px;font:inherit}
+.btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}
+.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}
+.error{margin-top:12px;padding:10px 12px;border-radius:10px;background:#fff0f0;border:1px solid #e2baba;color:#842424}
+table{width:100%;border-collapse:collapse;margin-top:6px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc}td{font-size:13.5px}
+.risk-badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.risk-badge.low{background:var(--ok-soft);color:var(--ok)}.risk-badge.medium{background:var(--warn-soft);color:var(--warn)}
+.risk-badge.high,.risk-badge.very-high{background:var(--danger-soft);color:var(--danger)}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:6px}
+.pager{display:flex;gap:8px;margin-top:14px}
+.empty{color:var(--muted);font-style:italic;padding:20px 0}
+a{color:var(--accent2)}
+'''
+
+def _v92_risk_badge(risk):
+    cls=str(risk or '').lower().replace(' ','-')
+    return f'<span class="risk-badge {cls}">{risk or "—"}</span>'
+
+def _v92_render_history_login(error=None):
+    err_html=f'<div class="error">{error}</div>' if error else ''
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history &mdash; login</title>
+<style>{_V92_STYLE}</style></head><body><div class="wrap" style="max-width:420px">
+<h1>Scan history</h1><p class="muted">This page is private. Enter the shared password to continue.</p>
+<div class="card"><form method="POST" action="/history/login">
+<label class="small" for="pw">Password</label><br>
+<input type="password" id="pw" name="password" autofocus>
+{err_html}
+<div style="margin-top:14px"><button class="btn" type="submit">Log in</button></div>
+</form></div></div></body></html>'''
+
+def _v92_render_history_page(rows,total,page,page_size,search):
+    # Every value below either comes from the database (company/sector/input_url were
+    # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
+    # from the request's own query string (the search box's echoed value) -- all of it is
+    # HTML-escaped before interpolation to avoid a stored/reflected XSS via a scan input or
+    # search query containing HTML.
+    search_safe=html_escape(search)
+    if not DATABASE_URL:
+        body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
+    elif not rows and not search:
+        body='<div class="empty">No scans logged yet.</div>'
+    elif not rows:
+        body=f'<div class="empty">No scans found matching "{search_safe}".</div>'
+    else:
+        trs=[]
+        for r in rows:
+            when=html_escape(str(r.get('scanned_at') or '')[:16].replace('T',' '))
+            company=html_escape(str(r.get('company') or '—'))
+            sector=html_escape(str(r.get('sector') or ''))
+            input_url=html_escape(str(r.get('input_url') or '')[:60])
+            trs.append(f'''<tr>
+<td>{when}</td>
+<td><strong>{company}</strong><div class="small">{sector}</div></td>
+<td class="small">{input_url}</td>
+<td>{r.get("global_score") if r.get("global_score") is not None else "—"} {_v92_risk_badge(r.get("global_risk"))}</td>
+<td>{r.get("green_score") if r.get("green_score") is not None else "—"}</td>
+<td>{r.get("social_score") if r.get("social_score") is not None else "—"}</td>
+<td>{r.get("findings_count") if r.get("findings_count") is not None else "—"}</td>
+</tr>''')
+        body=f'''<table><thead><tr><th>Date</th><th>Company</th><th>Input</th><th>Global</th><th>Green</th><th>Social</th><th>Findings</th></tr></thead>
+<tbody>{"".join(trs)}</tbody></table>'''
+    total_pages=max(1,(total+page_size-1)//page_size)
+    q=f'&q={quote(search)}' if search else ''
+    pager=''
+    if total_pages>1:
+        prev=f'<a class="btn secondary" href="/history?page={page-1}{q}">&larr; Previous</a>' if page>1 else ''
+        nxt=f'<a class="btn secondary" href="/history?page={page+1}{q}">Next &rarr;</a>' if page<total_pages else ''
+        pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history</title>
+<style>{_V92_STYLE}</style></head><body><div class="wrap">
+<div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
+<a class="btn secondary" href="/history/logout">Log out</a></div>
+<div class="card">
+<form method="GET" action="/history" style="display:flex;gap:8px;margin-bottom:14px">
+<input type="text" name="q" placeholder="Search by company name" value="{search_safe}">
+<button class="btn" type="submit">Search</button>
+{'<a class="btn secondary" href="/history">Clear</a>' if search else ''}
+</form>
+{body}
+{pager}
+</div></div></body></html>'''
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version=f'DurablyScan/{APP_RELEASE_LABEL}'
 
@@ -3802,10 +4094,43 @@ class Handler(BaseHTTPRequestHandler):
                                    'EXTERNAL_SIGNAL_MAX_QUERIES':EXTERNAL_SIGNAL_MAX_QUERIES,'EXTERNAL_SIGNAL_RESULTS_PER_QUERY':EXTERNAL_SIGNAL_RESULTS_PER_QUERY,
                                    'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS},
                                'container_cpu':_v91_4_container_cpu_quota()})
+        if self.path=='/history' or self.path.startswith('/history?'):
+            if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+                return self._send(_v92_render_history_page([],0,1,25,''))
+            if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+                return self._send(_v92_render_history_login())
+            qs=parse_qs(urlparse(self.path).query)
+            search=(qs.get('q',[''])[0] or '').strip()[:200]
+            try: page=max(1,int(qs.get('page',['1'])[0]))
+            except Exception: page=1
+            page_size=25
+            rows,total=_v92_fetch_scan_history(search,page,page_size)
+            return self._send(_v92_render_history_page(rows,total,page,page_size,search))
+        if self.path=='/history/logout':
+            return self._send(_v92_render_history_login(),status=200,
+                extra_headers={'Set-Cookie':f'{_HISTORY_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'})
         return self._json({'error':'Not found'},404)
+
+    def _handle_history_login(self):
+        """POST /history/login submits a plain HTML form (application/x-www-form-urlencoded,
+        not JSON), so it is handled entirely separately from do_POST's JSON-only body
+        parsing below -- routed here before that generic path is ever reached."""
+        try: n=int(self.headers.get('Content-Length',0) or 0)
+        except Exception: n=0
+        raw=self.rfile.read(n) if n>0 else b''
+        form=parse_qs(raw.decode('utf-8','ignore'))
+        submitted=(form.get('password',[''])[0] or '')
+        if HISTORY_ADMIN_PASSWORD and hmac.compare_digest(submitted,HISTORY_ADMIN_PASSWORD):
+            cookie_val=_v92_history_cookie_value()
+            return self._send(b'',status=302,extra_headers={
+                'Location':'/history',
+                'Set-Cookie':f'{_HISTORY_COOKIE_NAME}={cookie_val}; Max-Age={_HISTORY_SESSION_SECONDS}; Path=/; HttpOnly; SameSite=Lax'})
+        return self._send(_v92_render_history_login('Incorrect password.'),status=401)
 
     def do_POST(self):
         client=_client_ip(self)
+        if self.path=='/history/login':
+            return self._handle_history_login()
         try:
             data=self._read_json()
             if self.path in {'/api/scan/url','/api/scan/document'}:
@@ -3816,11 +4141,13 @@ class Handler(BaseHTTPRequestHandler):
                         u=data.get('url','')
                         if not u: return self._json({'error':'No URL provided'},400)
                         result=analyse_url(u)
+                        _v92_save_scan_history(result,'url',client)
                     else:
                         filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')
                         if not content: return self._json({'error':'No document content provided'},400)
                         txt=decode_uploaded_document(filename,content,data.get('mime_type',''))
                         result=analyse_uploaded_document(filename,txt,data.get('company_name',''))
+                        _v92_save_scan_history(result,'document',client)
                     if data.get('format')=='pdf': return self._respond_pdf(result)
                     return self._json(attach_report_signature(result))
                 finally: _SCAN_SEMAPHORE.release()
