@@ -48,28 +48,37 @@ def _get_pypdf():
 _pypdf_module = None
 _pypdf_import_error = None
 
-def _get_psycopg2():
-    """Lazily import psycopg2 on first use, same pattern as the PDF-library lazy imports
+def _get_psycopg():
+    """Lazily import psycopg on first use, same pattern as the PDF-library lazy imports
     above: the scan-history feature is entirely optional (gated on DATABASE_URL being
-    configured), so a missing/broken psycopg2 install must never block server startup or
-    the rest of the app -- only history saving/viewing is affected."""
-    global _psycopg2_module, _psycopg2_import_error
-    if _psycopg2_module is not None:
-        return _psycopg2_module
-    if _psycopg2_import_error is not None:
+    configured), so a missing/broken psycopg install must never block server startup or
+    the rest of the app -- only history saving/viewing is affected.
+    v92.2: uses psycopg (v3), not psycopg2 -- psycopg2-binary==2.9.9 failed to import at
+    all on this deployment ("undefined symbol: _PyInterpreterState_Get") because Render
+    is actually running Python 3.14 despite render.yaml pinning PYTHON_VERSION to 3.12.7
+    (env vars set directly in the dashboard, from an earlier point, take precedence over a
+    blueprint sync -- the same behaviour already seen with the EXTERNAL_SIGNAL_* vars).
+    psycopg2 is legacy/maintenance-only and lags new CPython internals; psycopg (v3) is
+    actively maintained with current-Python wheels, and its basic connect/cursor/execute
+    API used here is essentially identical, so this sidesteps the Python-version mismatch
+    entirely rather than depending on getting that pin to actually take effect."""
+    global _psycopg_module, _psycopg_import_error
+    if _psycopg_module is not None:
+        return _psycopg_module
+    if _psycopg_import_error is not None:
         return None
     try:
-        import psycopg2 as _pg
-        _psycopg2_module = _pg
+        import psycopg as _pg
+        _psycopg_module = _pg
         return _pg
     except Exception as e:
-        _psycopg2_import_error = str(e)
+        _psycopg_import_error = str(e)
         return None
-_psycopg2_module = None
-_psycopg2_import_error = None
+_psycopg_module = None
+_psycopg_import_error = None
 
-APP_VERSION="hostable_v92_1_history_error_diagnostics"
-APP_RELEASE_LABEL="v92.1"
+APP_VERSION="hostable_v92_2_switch_to_psycopg3"
+APP_RELEASE_LABEL="v92.2"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3737,7 +3746,7 @@ _V92_TABLE_READY=False
 _V92_LAST_ERROR=None
 
 def _v92_redact_error(text):
-    """A psycopg2 connection error can echo back the DSN it tried to use, which for a
+    """A database connection error can echo back the DSN it tried to use, which for a
     typical Postgres connection string includes the username and PASSWORD in plain text
     (postgresql://user:pass@host/db) -- /api/health is a public, unauthenticated endpoint,
     so this MUST be stripped before the error is ever stored/exposed there, not just before
@@ -3759,9 +3768,9 @@ def _v92_db_connect():
     global _V92_LAST_ERROR
     if not DATABASE_URL:
         return None
-    pg=_get_psycopg2()
+    pg=_get_psycopg()
     if pg is None:
-        _V92_LAST_ERROR='psycopg2 not available: '+str(_psycopg2_import_error)
+        _V92_LAST_ERROR='psycopg not available: '+str(_psycopg_import_error)
         return None
     try:
         return pg.connect(DATABASE_URL,connect_timeout=15)

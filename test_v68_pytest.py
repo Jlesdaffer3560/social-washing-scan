@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v92_1_history_error_diagnostics'
+    assert app.APP_VERSION == 'hostable_v92_2_switch_to_psycopg3'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -181,7 +181,7 @@ def test_history_cookie_auth(monkeypatch):
 
 
 def test_scan_history_error_redaction(monkeypatch):
-    """v92.1: a psycopg2 connection error can echo back the DSN it tried, which for a
+    """v92.1: a database connection error can echo back the DSN it tried, which for a
     typical Postgres URL includes the username and PASSWORD in plain text -- and this
     error is surfaced via the public, unauthenticated /api/health endpoint for debugging.
     Both the exact configured DATABASE_URL and any generic scheme://user:pass@ pattern
