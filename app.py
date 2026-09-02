@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v92_5_history_row_selection"
-APP_RELEASE_LABEL="v92.5"
+APP_VERSION="hostable_v92_6_view_selected_filter"
+APP_RELEASE_LABEL="v92.6"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3910,11 +3910,17 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
     'high_risk_findings_count','external_green_retained_count','external_social_retained_count',
     'data_reliability_warning','summary']
 
-def _v92_build_filters(search='',risk='',period=''):
+def _v92_build_filters(search='',risk='',period='',ids=None):
     """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
     all three always agree on what "the current view" means. Every value is bound as a
-    parameter, never interpolated into the SQL text, regardless of source."""
+    parameter, never interpolated into the SQL text, regardless of source.
+    v92.6: ids lets "View selected"/"Export selected" narrow to an explicit set of row
+    ids (from the /history checkboxes) -- passed as a single list parameter bound to
+    `id = ANY(%s)`, which both psycopg drivers adapt to a Postgres array natively, rather
+    than building one placeholder per id."""
     clauses=[]; params=[]
+    if ids:
+        clauses.append('id = ANY(%s)'); params.append(list(ids))
     if search:
         clauses.append('company ILIKE %s'); params.append(f'%{search}%')
     if risk in _V92_RISK_LEVELS:
@@ -3924,7 +3930,7 @@ def _v92_build_filters(search='',risk='',period=''):
     where=('WHERE '+' AND '.join(clauses)) if clauses else ''
     return where,tuple(params)
 
-def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period=''):
+def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -3935,7 +3941,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period=''):
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where,params=_v92_build_filters(search,risk,period)
+        where,params=_v92_build_filters(search,risk,period,ids)
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
             total=cur.fetchone()[0]
@@ -3958,7 +3964,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period=''):
     finally:
         conn.close()
 
-def _v92_fetch_stats(search='',risk='',period=''):
+def _v92_fetch_stats(search='',risk='',period='',ids=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
     whatever filters are currently applied. Returns safe all-zero defaults if the
     feature isn't configured/available rather than erroring."""
@@ -3969,7 +3975,7 @@ def _v92_fetch_stats(search='',risk='',period=''):
     try:
         if not _v92_ensure_table(conn):
             return empty
-        where,params=_v92_build_filters(search,risk,period)
+        where,params=_v92_build_filters(search,risk,period,ids)
         month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
@@ -3985,7 +3991,7 @@ def _v92_fetch_stats(search='',risk='',period=''):
     finally:
         conn.close()
 
-def _v92_fetch_all_for_export(search='',risk='',period=''):
+def _v92_fetch_all_for_export(search='',risk='',period='',ids=None):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -3995,7 +4001,7 @@ def _v92_fetch_all_for_export(search='',risk='',period=''):
     try:
         if not _v92_ensure_table(conn):
             return []
-        where,params=_v92_build_filters(search,risk,period)
+        where,params=_v92_build_filters(search,risk,period,ids)
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
                              ORDER BY scanned_at DESC''',params)
@@ -4005,29 +4011,18 @@ def _v92_fetch_all_for_export(search='',risk='',period=''):
     finally:
         conn.close()
 
-def _v92_fetch_by_ids(ids):
-    """Fetch specific rows by id, for exporting only the rows a user checked on /history
-    rather than the whole current filtered view. ids are validated as plain integers by
-    the caller before this is reached, but the placeholder count is still built from
-    len(ids) here -- each id itself remains a bound parameter, never interpolated into
-    the SQL text, so this is safe regardless."""
-    if not ids:
-        return []
-    conn=_v92_db_connect()
-    if conn is None:
-        return []
-    try:
-        if not _v92_ensure_table(conn):
-            return []
-        placeholders=','.join(['%s']*len(ids))
-        with conn.cursor() as cur:
-            cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history
-                             WHERE id IN ({placeholders}) ORDER BY scanned_at DESC''',tuple(ids))
-            return [dict(zip(_V92_EXPORT_COLUMNS,r)) for r in cur.fetchall()]
-    except Exception:
-        return []
-    finally:
-        conn.close()
+def _v92_parse_ids(source):
+    """Shared id-list validation for both the GET ?ids=..&ids=.. query-string form (View
+    selected -- a plain HTML GET form turns checked checkboxes into repeated query params
+    natively, no JS needed) and the POST form-body form (Export selected). Silently drops
+    anything that isn't a plain integer rather than trusting it -- these are meant to be
+    checkbox values this same page rendered, but the request is still client-controlled.
+    `source` is whatever a parse_qs() call already returned (a dict of str -> list[str])."""
+    out=[]
+    for v in source.get('ids',[]):
+        try: out.append(int(v))
+        except (TypeError,ValueError): pass
+    return out
 
 def _v92_rows_to_csv(rows):
     """CSV is not HTML -- no escaping concern here, values go straight into cells as-is
@@ -4085,6 +4080,7 @@ select{border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inher
 .btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}
 .btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}
 .error{margin-top:12px;padding:10px 12px;border-radius:10px;background:#fff0f0;border:1px solid #e2baba;color:#842424}
+.notice{margin-bottom:14px;padding:10px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}
 table{width:100%;border-collapse:collapse;margin-top:6px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc}td{font-size:13.5px}
 .risk-badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700}
@@ -4121,13 +4117,16 @@ def _v92_option(value,label,current):
     sel=' selected' if value==current else ''
     return f'<option value="{value}"{sel}>{label}</option>'
 
-def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None):
+def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
     # HTML-escaped before interpolation to avoid a stored/reflected XSS via a scan input or
     # search query containing HTML. risk/period only ever come from a fixed, hardcoded
-    # option list (_V92_RISK_LEVELS / _V92_PERIOD_SQL keys), so they don't need escaping.
+    # option list (_V92_RISK_LEVELS / _V92_PERIOD_SQL keys); ids are already validated as
+    # plain integers by _v92_parse_ids() before reaching here -- none of the three need
+    # escaping.
+    ids=ids or []
     search_safe=html_escape(search)
     stats=stats or {'total':0,'avg_score':None,'this_month':0,'by_risk':{}}
     by_risk=stats.get('by_risk') or {}
@@ -4140,7 +4139,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 </div>'''
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
-    elif not rows and not (search or risk or period):
+    elif not rows and not (search or risk or period or ids):
         body='<div class="empty">No scans logged yet.</div>'
     elif not rows:
         body='<div class="empty">No scans match the current search/filters.</div>'
@@ -4180,14 +4179,23 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <tbody>{"".join(trs)}</tbody></table>'''
     total_pages=max(1,(total+page_size-1)//page_size)
     extra_q=(f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
+    # v92.6: an active ids selection-filter (from "View selected") is preserved across
+    # pagination and the plain "Export CSV" link the same way search/risk/period already
+    # are -- each id is its own repeated ?ids=N query param, matching exactly what the
+    # GET form itself produces when submitted, so a bookmarked/shared URL round-trips.
+    ids_q=''.join(f'&ids={i}' for i in ids)
+    full_q=extra_q+ids_q
     pager=''
     if total_pages>1:
-        prev=f'<a class="btn secondary" href="/history?page={page-1}{extra_q}">&larr; Previous</a>' if page>1 else ''
-        nxt=f'<a class="btn secondary" href="/history?page={page+1}{extra_q}">Next &rarr;</a>' if page<total_pages else ''
+        prev=f'<a class="btn secondary" href="/history?page={page-1}{full_q}">&larr; Previous</a>' if page>1 else ''
+        nxt=f'<a class="btn secondary" href="/history?page={page+1}{full_q}">Next &rarr;</a>' if page<total_pages else ''
         pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
     risk_options=''.join(_v92_option(v,v,risk) for v in _V92_RISK_LEVELS)
     period_options=''.join(_v92_option(k,l,period) for k,l in (('month','This month'),('30d','Last 30 days'),('90d','Last 90 days')))
-    has_filters=bool(search or risk or period)
+    has_filters=bool(search or risk or period or ids)
+    clear_selection_href='/history?'+extra_q.lstrip('&') if extra_q else '/history'
+    selection_banner=(f'<div class="notice">Showing {len(ids)} selected scan(s). '
+                       f'<a href="{clear_selection_href}">Clear selection</a></div>') if ids else ''
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history</title>
 <style>{_V92_STYLE}</style></head><body><div class="wrap">
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
@@ -4200,17 +4208,22 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <select name="period"><option value="">All time</option>{period_options}</select>
 <button class="btn" type="submit">Filter</button>
 {'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
-<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}">Export CSV</a>
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}{ids_q}">Export CSV</a>
 </form>
+{selection_banner}
 <form id="selectForm" method="POST" action="/history/export_selected"></form>
 {body}
-<div style="margin-top:12px"><button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button></div>
+<div style="margin-top:12px;display:flex;gap:8px">
+<button class="btn secondary" type="submit" form="selectForm" formaction="/history" formmethod="GET" id="viewSelectedBtn" disabled>View selected</button>
+<button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button>
+</div>
 {pager}
 </div></div>
 <script>
 (function(){{
-  var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'), btn=document.getElementById('exportSelectedBtn');
-  function sync(){{ var any=false; boxes.forEach(function(b){{ if(b.checked) any=true; }}); if(btn) btn.disabled=!any; }}
+  var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'),
+      exportBtn=document.getElementById('exportSelectedBtn'), viewBtn=document.getElementById('viewSelectedBtn');
+  function sync(){{ var any=false; boxes.forEach(function(b){{ if(b.checked) any=true; }}); if(exportBtn) exportBtn.disabled=!any; if(viewBtn) viewBtn.disabled=!any; }}
   if(all) all.addEventListener('change',function(){{ boxes.forEach(function(b){{ b.checked=all.checked; }}); sync(); }});
   boxes.forEach(function(b){{ b.addEventListener('change',sync); }});
 }})();
@@ -4347,12 +4360,13 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
+            ids=_v92_parse_ids(qs)
             try: page=max(1,int(qs.get('page',['1'])[0]))
             except Exception: page=1
             page_size=25
-            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period)
-            stats=_v92_fetch_stats(search,risk,period)
-            return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats))
+            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids)
+            stats=_v92_fetch_stats(search,risk,period,ids)
+            return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -4362,7 +4376,8 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
-            rows=_v92_fetch_all_for_export(search,risk,period)
+            ids=_v92_parse_ids(qs)
+            rows=_v92_fetch_all_for_export(search,risk,period,ids)
             csv_bytes=_v92_rows_to_csv(rows)
             stamp=datetime.date.today().isoformat()
             return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -4400,15 +4415,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception: n=0
         raw=self.rfile.read(n) if n>0 else b''
         form=parse_qs(raw.decode('utf-8','ignore'))
-        # Only plain positive integers are ever passed through to the query -- anything
-        # else in the submitted ids (there shouldn't be, since these are checkbox values
-        # this same page rendered, but the request body is still client-controlled) is
-        # silently dropped rather than trusted.
-        ids=[]
-        for v in form.get('ids',[]):
-            try: ids.append(int(v))
-            except ValueError: pass
-        rows=_v92_fetch_by_ids(ids) if ids else []
+        ids=_v92_parse_ids(form)
+        rows=_v92_fetch_all_for_export(ids=ids) if ids else []
         csv_bytes=_v92_rows_to_csv(rows)
         stamp=datetime.date.today().isoformat()
         return self._send(csv_bytes,'text/csv; charset=utf-8',200,

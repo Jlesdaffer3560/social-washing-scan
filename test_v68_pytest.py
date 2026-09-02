@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v92_5_history_row_selection'
+    assert app.APP_VERSION == 'hostable_v92_6_view_selected_filter'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -297,16 +297,38 @@ def test_scan_history_row_selection_markup(monkeypatch):
     assert 'id="exportSelectedBtn"' in html and 'disabled' in html
 
 
-def test_scan_history_fetch_by_ids_and_id_parsing():
-    """v92.5: fetching by id must short-circuit on an empty list without touching the
-    database, and the export-selected handler's id parsing (mirrored here since it lives
-    inside a Handler method) must silently drop anything that isn't a plain integer from
-    the submitted form -- the request body is client-controlled even though these values
-    are meant to be checkbox values this same page rendered."""
-    assert app._v92_fetch_by_ids([])==[]
-    form_values=['42','43','not-a-number','','17abc']
-    ids=[]
-    for v in form_values:
-        try: ids.append(int(v))
-        except ValueError: pass
-    assert ids==[42,43]
+def test_scan_history_fetch_and_id_parsing():
+    """v92.6: _v92_parse_ids() (shared by both the GET ?ids=.. query-string form -- "View
+    selected" -- and the POST export-selected form body) must silently drop anything that
+    isn't a plain integer -- the request is client-controlled even though these values are
+    meant to be checkbox values this same page rendered. An ids filter with at least one
+    id must add an `id = ANY(%s)` clause; an EMPTY ids list must add no filter at all
+    (None and [] both mean "no ids constraint" to the query builder) -- callers that mean
+    "nothing was selected, export nothing" (export-selected) guard on `if ids` themselves
+    before ever calling the fetch, rather than relying on an empty list to mean that here."""
+    assert app._v92_parse_ids({'ids':['42','43','not-a-number','','17abc']})==[42,43]
+    assert app._v92_parse_ids({})==[]
+    where,params=app._v92_build_filters(ids=[42,43])
+    assert where=='WHERE id = ANY(%s)' and params==([42,43],)
+    assert app._v92_build_filters(ids=[])==('',())
+    assert app._v92_build_filters(ids=None)==('',())
+
+
+def test_scan_history_view_selected_filter(monkeypatch):
+    """v92.6: "View selected" narrows /history to just the checked rows via a GET
+    ?ids=.. query string (a plain HTML GET form turns checkboxes into repeated query
+    params natively). Without an active ids filter there is no selection banner; with one,
+    a banner names the count and offers a "Clear selection" link that preserves any other
+    active search/risk/period filter (dropping only the ids constraint), and the pager/
+    Export CSV links carry the active ids filter forward."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html_plain=app._v92_render_history_page([row],1,1,25,'')
+    assert 'selected scan(s)' not in html_plain
+    html_ids=app._v92_render_history_page([row],1,1,25,'',ids=[42])
+    assert 'Showing 1 selected scan(s)' in html_ids and 'Clear selection' in html_ids
+    assert '&ids=42' in html_ids  # carried into the Export CSV link
+    html_ids_search=app._v92_render_history_page([row],1,1,25,'Puratos',ids=[42])
+    assert 'q=Puratos' in html_ids_search  # preserved by the clear-selection link
