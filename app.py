@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v92_3_history_stats_filters_export"
-APP_RELEASE_LABEL="v92.3"
+APP_VERSION="hostable_v92_4_sector_risk_fallback"
+APP_RELEASE_LABEL="v92.4"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3839,6 +3839,17 @@ def _v92_save_scan_history(result,scan_type,client_ip):
         return
     try:
         comp=result.get('company') or {}
+        # v92.4: infer_company() sets company['sector'] to the literal placeholder
+        # "Sector not explicitly identified" for every company outside the ~8-entry
+        # hardcoded PROFILES list (KBC, Delhaize, Aldi...) -- Puratos among them -- and
+        # company['sector_risk'] stays empty for exactly the same companies. The tool DOES
+        # compute a real content-based sector RISK LEVEL (Low/Medium/High) for every scan
+        # via the separate infer_sector() function, but that lands in the top-level
+        # result['sector'] dict ({'level':...,'basis':...}), not company['sector_risk'] --
+        # so the sector_risk column here was silently empty for any company not in that
+        # tiny list, even though a real computed value existed. Reported by the user after
+        # seeing "Sector not explicitly identified" for Puratos on /history.
+        sec=result.get('sector') or {}
         audience=result.get('document_audience') or {}
         findings=result.get('findings') or result.get('merged_claims') or []
         green_findings=result.get('green_findings') or []
@@ -3876,7 +3887,7 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      len(findings),
                      str(result.get('screening_conclusion','') or '')[:2000],
                      str(client_ip or '')[:64],
-                     str(comp.get('sector_risk','') or '')[:50],
+                     str(sec.get('level','') or comp.get('sector_risk','') or '')[:50],
                      bool(result.get('data_reliability_warning')),
                      empco_count,
                      high_risk_count,
@@ -4114,7 +4125,18 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         for r in rows:
             when=html_escape(str(r.get('scanned_at') or '')[:16].replace('T',' '))
             company=html_escape(str(r.get('company') or '—'))
-            sector=html_escape(str(r.get('sector') or ''))
+            # v92.4: company['sector'] is a real descriptive label only for the small
+            # hardcoded PROFILES list (KBC, Delhaize...) -- otherwise it's the generic
+            # placeholder "Sector not explicitly identified", which told the viewer
+            # nothing. Fall back to the always-computed sector RISK level (Low/Medium/
+            # High, from infer_sector()) when the name itself isn't a real label.
+            sector_name=str(r.get('sector') or '')
+            if sector_name and 'not explicitly identified' not in sector_name.lower():
+                sector=html_escape(sector_name)
+            elif r.get('sector_risk'):
+                sector=f'Sector risk: {html_escape(str(r.get("sector_risk")))}'
+            else:
+                sector=''
             input_url=html_escape(str(r.get('input_url') or '')[:60])
             trs.append(f'''<tr>
 <td>{when}</td>
