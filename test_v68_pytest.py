@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v92_2_switch_to_psycopg3'
+    assert app.APP_VERSION == 'hostable_v92_3_history_stats_filters_export'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -191,3 +191,51 @@ def test_scan_history_error_redaction(monkeypatch):
     assert 'supersecretpw' not in redacted and 'myuser' not in redacted
     redacted_generic=app._v92_redact_error('timeout connecting to postgresql://otheruser:otherpw@otherhost/db')
     assert 'otherpw' not in redacted_generic
+
+
+def test_scan_history_filter_builder():
+    """v92.3: the WHERE-clause builder shared by the table view, stats block and CSV
+    export must bind every value as a parameter (never interpolate it into the SQL
+    text), and must silently ignore a risk/period value outside the fixed option list
+    rather than accepting an arbitrary string into a raw SQL fragment."""
+    assert app._v92_build_filters()==('',())
+    where,params=app._v92_build_filters(search='Acme')
+    assert where=='WHERE company ILIKE %s' and params==('%Acme%',)
+    where,params=app._v92_build_filters(risk='High')
+    assert where=='WHERE global_risk = %s' and params==('High',)
+    # not a real risk level / period key -- must be dropped, not smuggled into the SQL
+    assert app._v92_build_filters(risk='1=1; DROP TABLE scan_history')==('',())
+    assert app._v92_build_filters(period='not-a-real-period')==('',())
+    where,params=app._v92_build_filters(search='Acme',risk='High',period='month')
+    assert where.startswith('WHERE company ILIKE %s AND global_risk = %s AND') and params==('%Acme%','High')
+
+
+def test_scan_history_csv_export():
+    """v92.3: CSV export must include every _V92_EXPORT_COLUMNS field, correctly quote a
+    value containing a comma and embedded double quotes, and lead with a UTF-8 BOM so it
+    opens with the right encoding directly in Excel."""
+    rows=[{'scanned_at':'2026-09-01 10:00:00','company':'Acme, Inc.','summary':'Some "quoted" text, with a comma.'}]
+    csv_bytes=app._v92_rows_to_csv(rows)
+    assert csv_bytes.startswith(b'\xef\xbb\xbf')
+    text=csv_bytes.decode('utf-8-sig')
+    assert ','.join(app._V92_EXPORT_COLUMNS) in text.splitlines()[0]
+    assert '"Acme, Inc."' in text
+    assert '"Some ""quoted"" text, with a comma."' in text
+
+
+def test_scan_history_page_renders_stats_and_filters(monkeypatch):
+    """v92.3: the stats block must reflect the passed-in aggregates, and the risk/period
+    dropdowns must mark the currently-selected value -- while the untrusted-content
+    escaping added earlier (test_scan_history_page_escapes_untrusted_content) must still
+    hold with the new stats/filter UI in place."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    stats={'total':12,'avg_score':43.7,'this_month':5,'by_risk':{'Low':4,'Medium':3,'High':4,'Very high':1}}
+    row={'scanned_at':'2026-09-01T12:00:00','company':'<script>alert(1)</script>','sector':'Retail',
+         'input_url':'https://example.com','global_score':42,'global_risk':'High','green_score':30,
+         'social_score':50,'findings_count':3}
+    html=app._v92_render_history_page([row],1,1,25,'',risk='High',period='month',stats=stats)
+    assert '<script>alert(1)</script>' not in html and '&lt;script&gt;' in html
+    assert '43.7' in html
+    assert '<option value="High" selected>' in html
+    assert '<option value="month" selected>' in html
+    assert '/history/export.csv?q=' in html

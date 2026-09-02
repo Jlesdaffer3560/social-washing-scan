@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from html import escape as html_escape
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _get_build_company_report_pdf():
@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v92_2_switch_to_psycopg3"
-APP_RELEASE_LABEL="v92.2"
+APP_VERSION="hostable_v92_3_history_stats_filters_export"
+APP_RELEASE_LABEL="v92.3"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3808,6 +3808,20 @@ def _v92_ensure_table(conn):
                     )
                 ''')
                 cur.execute('CREATE INDEX IF NOT EXISTS scan_history_scanned_at_idx ON scan_history (scanned_at DESC)')
+                # v92.3: additive migration for a table that may already exist from before
+                # this round -- ADD COLUMN IF NOT EXISTS never touches/loses rows already
+                # saved (e.g. the KBC scan logged under v92.2), it only widens the schema.
+                # Captures more of what a scan already computes, per the user's explicit
+                # goal of collecting as much structured, later-filterable/exportable data
+                # per scan as reasonably possible (short of the full raw result payload,
+                # which would defeat "structured" and bloat a free-tier database for little
+                # benefit over what's summarised here).
+                for col_sql in (
+                    'sector_risk TEXT','data_reliability_warning BOOLEAN',
+                    'empco_blacklisted_count INTEGER','high_risk_findings_count INTEGER',
+                    'external_green_retained_count INTEGER','external_social_retained_count INTEGER',
+                    'document_type TEXT'):
+                    cur.execute(f'ALTER TABLE scan_history ADD COLUMN IF NOT EXISTS {col_sql}')
             conn.commit()
             _V92_TABLE_READY=True
             return True
@@ -3827,6 +3841,12 @@ def _v92_save_scan_history(result,scan_type,client_ip):
         comp=result.get('company') or {}
         audience=result.get('document_audience') or {}
         findings=result.get('findings') or result.get('merged_claims') or []
+        green_findings=result.get('green_findings') or []
+        ext=result.get('external_research') or {}
+        empco_count=sum(1 for f in green_findings if f.get('blacklisted_practice_indicator'))
+        high_risk_count=sum(1 for f in findings if str(f.get('risk','')).lower()=='high')
+        green_retained=len((ext.get('green') or {}).get('compact_sources') or [])
+        social_retained=len((ext.get('social') or {}).get('compact_sources') or [])
         conn=_v92_db_connect()
         if conn is None:
             return
@@ -3838,8 +3858,10 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                     '''INSERT INTO scan_history
                        (scan_type,company,sector,input_url,global_score,global_risk,
                         green_score,green_risk,social_score,social_risk,audience,
-                        findings_count,summary,client_ip)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                        findings_count,summary,client_ip,sector_risk,data_reliability_warning,
+                        empco_blacklisted_count,high_risk_findings_count,
+                        external_green_retained_count,external_social_retained_count,document_type)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                     (scan_type,
                      str(comp.get('company','') or '')[:300],
                      str(comp.get('sector','') or '')[:300],
@@ -3853,43 +3875,135 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      str(audience.get('audience','') or '')[:200],
                      len(findings),
                      str(result.get('screening_conclusion','') or '')[:2000],
-                     str(client_ip or '')[:64]))
+                     str(client_ip or '')[:64],
+                     str(comp.get('sector_risk','') or '')[:50],
+                     bool(result.get('data_reliability_warning')),
+                     empco_count,
+                     high_risk_count,
+                     green_retained,
+                     social_retained,
+                     str(result.get('document_type','') or '')[:100]))
             conn.commit()
         finally:
             conn.close()
     except Exception as e:
         _V92_LAST_ERROR=_v92_redact_error('save failed: '+str(e))
 
-def _v92_fetch_scan_history(search='',page=1,page_size=25):
+_V92_RISK_LEVELS=('Low','Medium','High','Very high')
+_V92_PERIOD_SQL={'month':"date_trunc('month', scanned_at) = date_trunc('month', now())",
+                  '30d':"scanned_at >= now() - interval '30 days'",
+                  '90d':"scanned_at >= now() - interval '90 days'"}
+_V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','input_url',
+    'global_score','global_risk','green_score','green_risk','social_score','social_risk',
+    'audience','document_type','findings_count','empco_blacklisted_count',
+    'high_risk_findings_count','external_green_retained_count','external_social_retained_count',
+    'data_reliability_warning','summary']
+
+def _v92_build_filters(search='',risk='',period=''):
+    """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
+    all three always agree on what "the current view" means. Every value is bound as a
+    parameter, never interpolated into the SQL text, regardless of source."""
+    clauses=[]; params=[]
+    if search:
+        clauses.append('company ILIKE %s'); params.append(f'%{search}%')
+    if risk in _V92_RISK_LEVELS:
+        clauses.append('global_risk = %s'); params.append(risk)
+    if period in _V92_PERIOD_SQL:
+        clauses.append(_V92_PERIOD_SQL[period])
+    where=('WHERE '+' AND '.join(clauses)) if clauses else ''
+    return where,tuple(params)
+
+def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period=''):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
+    global _V92_LAST_ERROR
     conn=_v92_db_connect()
     if conn is None:
         return [],0
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where='WHERE company ILIKE %s' if search else ''
-        params=(f'%{search}%',) if search else ()
+        where,params=_v92_build_filters(search,risk,period)
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
             total=cur.fetchone()[0]
             offset=max(0,(page-1)*page_size)
             cur.execute(
                 f'''SELECT scanned_at,scan_type,company,sector,input_url,global_score,global_risk,
-                           green_score,social_score,audience,findings_count,summary
+                           green_score,social_score,audience,findings_count,summary,
+                           sector_risk,empco_blacklisted_count,high_risk_findings_count
                     FROM scan_history {where}
                     ORDER BY scanned_at DESC LIMIT %s OFFSET %s''',
                 params+(page_size,offset))
             cols=['scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
-                  'green_score','social_score','audience','findings_count','summary']
+                  'green_score','social_score','audience','findings_count','summary',
+                  'sector_risk','empco_blacklisted_count','high_risk_findings_count']
             rows=[dict(zip(cols,r)) for r in cur.fetchall()]
         return rows,total
-    except Exception:
+    except Exception as e:
+        _V92_LAST_ERROR=_v92_redact_error('fetch failed: '+str(e))
         return [],0
     finally:
         conn.close()
+
+def _v92_fetch_stats(search='',risk='',period=''):
+    """Aggregate counts/averages for the stats block at the top of /history, scoped to
+    whatever filters are currently applied. Returns safe all-zero defaults if the
+    feature isn't configured/available rather than erroring."""
+    empty={'total':0,'avg_score':None,'this_month':0,'by_risk':{}}
+    conn=_v92_db_connect()
+    if conn is None:
+        return empty
+    try:
+        if not _v92_ensure_table(conn):
+            return empty
+        where,params=_v92_build_filters(search,risk,period)
+        month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
+            total,avg_score=cur.fetchone()
+            cur.execute(f'SELECT COUNT(*) FROM scan_history {month_where}',params)
+            this_month=cur.fetchone()[0]
+            cur.execute(f'SELECT global_risk, COUNT(*) FROM scan_history {where} GROUP BY global_risk',params)
+            by_risk=dict(cur.fetchall())
+        return {'total':total or 0,'avg_score':round(float(avg_score),1) if avg_score is not None else None,
+                'this_month':this_month or 0,'by_risk':by_risk}
+    except Exception:
+        return empty
+    finally:
+        conn.close()
+
+def _v92_fetch_all_for_export(search='',risk='',period=''):
+    """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
+    (tens to low hundreds a month), so a single full query is fine without its own
+    pagination; callers stream the result straight into a CSV response."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        where,params=_v92_build_filters(search,risk,period)
+        with conn.cursor() as cur:
+            cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
+                             ORDER BY scanned_at DESC''',params)
+            return [dict(zip(_V92_EXPORT_COLUMNS,r)) for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+def _v92_rows_to_csv(rows):
+    """CSV is not HTML -- no escaping concern here, values go straight into cells as-is
+    (csv.writer handles quoting/delimiter-escaping itself). A UTF-8 BOM is prefixed so the
+    file opens with correct encoding directly in Excel, not just in text editors/Sheets."""
+    buf=io.StringIO()
+    writer=csv.writer(buf)
+    writer.writerow(_V92_EXPORT_COLUMNS)
+    for r in rows:
+        writer.writerow([str(r.get(c,'') if r.get(c) is not None else '') for c in _V92_EXPORT_COLUMNS])
+    return b'\xef\xbb\xbf'+buf.getvalue().encode('utf-8')
 
 def _v92_history_cookie_value():
     """HMAC-signed, timestamped token proving the shared history password was supplied
@@ -3932,6 +4046,7 @@ _V92_STYLE='''
 h1{font-size:26px;margin:0 0 4px}.muted{color:var(--muted)}.small{font-size:13px;color:var(--muted)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-top:18px}
 input[type=text],input[type=password]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:11px;font:inherit}
+select{border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit;background:#fff}
 .btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}
 .btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}
 .error{margin-top:12px;padding:10px 12px;border-radius:10px;background:#fff0f0;border:1px solid #e2baba;color:#842424}
@@ -3941,9 +4056,14 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;ba
 .risk-badge.low{background:var(--ok-soft);color:var(--ok)}.risk-badge.medium{background:var(--warn-soft);color:var(--warn)}
 .risk-badge.high,.risk-badge.very-high{background:var(--danger-soft);color:var(--danger)}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:6px}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.stat strong{display:block;font-size:24px;color:var(--accent2)}
+.stat span{display:block;font-size:12px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.03em}
 .pager{display:flex;gap:8px;margin-top:14px}
 .empty{color:var(--muted);font-style:italic;padding:20px 0}
 a{color:var(--accent2)}
+@media(max-width:700px){.stats-row{grid-template-columns:1fr 1fr}}
 '''
 
 def _v92_risk_badge(risk):
@@ -3962,19 +4082,33 @@ def _v92_render_history_login(error=None):
 <div style="margin-top:14px"><button class="btn" type="submit">Log in</button></div>
 </form></div></div></body></html>'''
 
-def _v92_render_history_page(rows,total,page,page_size,search):
+def _v92_option(value,label,current):
+    sel=' selected' if value==current else ''
+    return f'<option value="{value}"{sel}>{label}</option>'
+
+def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
     # HTML-escaped before interpolation to avoid a stored/reflected XSS via a scan input or
-    # search query containing HTML.
+    # search query containing HTML. risk/period only ever come from a fixed, hardcoded
+    # option list (_V92_RISK_LEVELS / _V92_PERIOD_SQL keys), so they don't need escaping.
     search_safe=html_escape(search)
+    stats=stats or {'total':0,'avg_score':None,'this_month':0,'by_risk':{}}
+    by_risk=stats.get('by_risk') or {}
+    high_plus=(by_risk.get('High',0) or 0)+(by_risk.get('Very high',0) or 0)
+    stats_html=f'''<div class="stats-row">
+<div class="stat"><strong>{stats.get("total",0)}</strong><span>Scans (current filter)</span></div>
+<div class="stat"><strong>{stats.get("this_month",0)}</strong><span>This month</span></div>
+<div class="stat"><strong>{stats.get("avg_score") if stats.get("avg_score") is not None else "—"}</strong><span>Average global score</span></div>
+<div class="stat"><strong>{high_plus}</strong><span>High / Very high risk</span></div>
+</div>'''
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
-    elif not rows and not search:
+    elif not rows and not (search or risk or period):
         body='<div class="empty">No scans logged yet.</div>'
     elif not rows:
-        body=f'<div class="empty">No scans found matching "{search_safe}".</div>'
+        body='<div class="empty">No scans match the current search/filters.</div>'
     else:
         trs=[]
         for r in rows:
@@ -3994,21 +4128,28 @@ def _v92_render_history_page(rows,total,page,page_size,search):
         body=f'''<table><thead><tr><th>Date</th><th>Company</th><th>Input</th><th>Global</th><th>Green</th><th>Social</th><th>Findings</th></tr></thead>
 <tbody>{"".join(trs)}</tbody></table>'''
     total_pages=max(1,(total+page_size-1)//page_size)
-    q=f'&q={quote(search)}' if search else ''
+    extra_q=(f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
     pager=''
     if total_pages>1:
-        prev=f'<a class="btn secondary" href="/history?page={page-1}{q}">&larr; Previous</a>' if page>1 else ''
-        nxt=f'<a class="btn secondary" href="/history?page={page+1}{q}">Next &rarr;</a>' if page<total_pages else ''
+        prev=f'<a class="btn secondary" href="/history?page={page-1}{extra_q}">&larr; Previous</a>' if page>1 else ''
+        nxt=f'<a class="btn secondary" href="/history?page={page+1}{extra_q}">Next &rarr;</a>' if page<total_pages else ''
         pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
+    risk_options=''.join(_v92_option(v,v,risk) for v in _V92_RISK_LEVELS)
+    period_options=''.join(_v92_option(k,l,period) for k,l in (('month','This month'),('30d','Last 30 days'),('90d','Last 90 days')))
+    has_filters=bool(search or risk or period)
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history</title>
 <style>{_V92_STYLE}</style></head><body><div class="wrap">
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
 <a class="btn secondary" href="/history/logout">Log out</a></div>
+{stats_html}
 <div class="card">
-<form method="GET" action="/history" style="display:flex;gap:8px;margin-bottom:14px">
-<input type="text" name="q" placeholder="Search by company name" value="{search_safe}">
-<button class="btn" type="submit">Search</button>
-{'<a class="btn secondary" href="/history">Clear</a>' if search else ''}
+<form method="GET" action="/history" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+<input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
+<select name="risk"><option value="">All risk levels</option>{risk_options}</select>
+<select name="period"><option value="">All time</option>{period_options}</select>
+<button class="btn" type="submit">Filter</button>
+{'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}">Export CSV</a>
 </form>
 {body}
 {pager}
@@ -4142,11 +4283,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(_v92_render_history_login())
             qs=parse_qs(urlparse(self.path).query)
             search=(qs.get('q',[''])[0] or '').strip()[:200]
+            risk=(qs.get('risk',[''])[0] or '').strip()
+            period=(qs.get('period',[''])[0] or '').strip()
             try: page=max(1,int(qs.get('page',['1'])[0]))
             except Exception: page=1
             page_size=25
-            rows,total=_v92_fetch_scan_history(search,page,page_size)
-            return self._send(_v92_render_history_page(rows,total,page,page_size,search))
+            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period)
+            stats=_v92_fetch_stats(search,risk,period)
+            return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats))
+        if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
+            if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+                return self._json({'error':'Scan history is not configured for this deployment.'},404)
+            if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+                return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+            qs=parse_qs(urlparse(self.path).query)
+            search=(qs.get('q',[''])[0] or '').strip()[:200]
+            risk=(qs.get('risk',[''])[0] or '').strip()
+            period=(qs.get('period',[''])[0] or '').strip()
+            rows=_v92_fetch_all_for_export(search,risk,period)
+            csv_bytes=_v92_rows_to_csv(rows)
+            stamp=datetime.date.today().isoformat()
+            return self._send(csv_bytes,'text/csv; charset=utf-8',200,
+                {'Content-Disposition':f'attachment; filename="scan_history_{stamp}.csv"'})
         if self.path=='/history/logout':
             return self._send(_v92_render_history_login(),status=200,
                 extra_headers={'Set-Cookie':f'{_HISTORY_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'})
