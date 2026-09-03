@@ -1,10 +1,10 @@
 from pathlib import Path
-import time, hmac, hashlib
+import time, hmac, hashlib, json
 import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_3_top_flagged_claims_panel'
+    assert app.APP_VERSION == 'hostable_v93_4_legacy_findings_backfill'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -460,3 +460,71 @@ def test_scan_history_findings_saved_per_claim(monkeypatch):
     _,sql,rows=insert_calls[0]
     assert 'INSERT INTO scan_findings' in sql
     assert rows==[(99,'green','vague eco claim','carbon neutral','High')]  # the empty-phrase finding is skipped
+
+
+def test_backfill_legacy_findings_missing_fixture(monkeypatch, tmp_path):
+    """v93.3: the one-time legacy backfill must report a clear error (not raise) when its
+    bundled fixture file isn't present."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    summary=app._v92_backfill_legacy_findings()
+    assert summary['error']=='Fixture file not found.'
+
+
+def test_backfill_legacy_findings_inserts_and_skips(monkeypatch, tmp_path):
+    """v93.3: each fixture entry must be matched to its company's most recent scan_history
+    row and inserted -- but a company with no matching row is reported as not_found, and a
+    company whose scan already has scan_findings rows is skipped rather than duplicated
+    (so re-running the backfill is always safe)."""
+    fixture=[{'company':'Acme','findings':[{'dimension':'green','type':'x','matched_phrase':'carbon neutral','risk':'High'}]},
+             {'company':'Unknown Co','findings':[{'dimension':'green','type':'x','matched_phrase':'eco','risk':'Medium'}]}]
+    (tmp_path/'data_legacy_findings_backfill.json').write_text(json.dumps(fixture),encoding='utf-8')
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    insert_log=[]
+    fetch_queue=[(1,),(0,),None]  # Acme: scan_id=1, 0 existing findings -> insert; Unknown Co: no scan_history row
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): pass
+        def executemany(self,sql,rows): insert_log.append(rows)
+        def fetchone(self): return fetch_queue.pop(0)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    summary=app._v92_backfill_legacy_findings()
+    assert summary['inserted_companies']==1 and summary['inserted_rows']==1
+    assert summary['not_found']==['Unknown Co']
+    assert insert_log==[[(1,'green','x','carbon neutral','High')]]
+
+
+def test_backfill_legacy_findings_skips_already_populated(monkeypatch, tmp_path):
+    """v93.3: a company whose scan already has scan_findings rows (e.g. a re-run of the
+    backfill) must be skipped, not duplicated."""
+    fixture=[{'company':'Acme','findings':[{'dimension':'green','type':'x','matched_phrase':'carbon neutral','risk':'High'}]}]
+    (tmp_path/'data_legacy_findings_backfill.json').write_text(json.dumps(fixture),encoding='utf-8')
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    insert_log=[]
+    fetch_queue=[(1,),(2,)]  # scan_id=1, but already has 2 scan_findings rows
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): pass
+        def executemany(self,sql,rows): insert_log.append(rows)
+        def fetchone(self): return fetch_queue.pop(0)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    summary=app._v92_backfill_legacy_findings()
+    assert summary['skipped_already_present']==1
+    assert summary['inserted_companies']==0
+    assert insert_log==[]

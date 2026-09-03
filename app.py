@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_3_top_flagged_claims_panel"
-APP_RELEASE_LABEL="v93.3"
+APP_VERSION="hostable_v93_4_legacy_findings_backfill"
+APP_RELEASE_LABEL="v93.4"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3914,9 +3914,16 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                 scan_id=cur.fetchone()[0]
                 # v93.3: one row per flagged claim, feeding the cross-scan "Top 10 most
                 # flagged claims/words" panel -- matched_phrase is the exact wording that
-                # triggered detection (set in _v55_add_finding), not the full claim excerpt.
-                finding_rows=[(scan_id,str(f.get('dimension','') or '')[:20],str(f.get('type','') or '')[:200],
-                               str(f.get('matched_phrase','') or '')[:300],str(f.get('risk','') or '')[:50])
+                # triggered detection (set in _v55_add_finding). `findings` here is
+                # result['findings']/'merged_claims' -- a normalized/merged view that
+                # renames the raw green_findings/social_findings keys ('type'->'claim_type',
+                # 'risk'->'risk_level'), while still carrying 'matched_phrase' and
+                # 'dimension' (capitalized: "Green"/"Social") unchanged -- fall back to the
+                # raw key names too, so this still works if a caller passes the raw lists.
+                finding_rows=[(scan_id,str(f.get('dimension','') or '').lower()[:20],
+                               str(f.get('claim_type') or f.get('type') or '')[:200],
+                               str(f.get('matched_phrase','') or '')[:300],
+                               str(f.get('risk_level') or f.get('risk') or '')[:50])
                               for f in findings if f.get('matched_phrase')]
                 if finding_rows:
                     cur.executemany(
@@ -4047,6 +4054,68 @@ def _v92_fetch_top_claims(limit=10):
         return []
     finally:
         conn.close()
+
+def _v92_backfill_legacy_findings():
+    """One-time import of scan_findings rows for scans logged BEFORE that table existed
+    (v93.3) -- the 44-company batch scan run earlier the same day this feature shipped.
+    Reads a small bundled fixture (data_legacy_findings_backfill.json, built once from the
+    saved raw scan results and committed to the repo) rather than needing the original
+    scan JSON at request time. Matches each fixture entry to that company's most recent
+    scan_history row by name and skips any company that already has scan_findings rows
+    (so this is safe to trigger more than once). Never raises -- returns a summary dict
+    either way, so a single stray row can't take down the whole /history page."""
+    summary={'inserted_companies':0,'inserted_rows':0,'skipped_already_present':0,'not_found':[],'error':None}
+    fixture_path=APP_DIR/'data_legacy_findings_backfill.json'
+    if not fixture_path.exists():
+        summary['error']='Fixture file not found.'
+        return summary
+    try:
+        fixture=json.loads(fixture_path.read_text(encoding='utf-8'))
+    except Exception as e:
+        summary['error']=f'Could not read fixture: {e}'
+        return summary
+    conn=_v92_db_connect()
+    if conn is None:
+        summary['error']='Database not configured.'
+        return summary
+    try:
+        if not _v92_ensure_table(conn):
+            summary['error']='Could not prepare tables.'
+            return summary
+        with conn.cursor() as cur:
+            for entry in fixture:
+                company=str(entry.get('company') or '')
+                findings=entry.get('findings') or []
+                if not company or not findings:
+                    continue
+                cur.execute('SELECT id FROM scan_history WHERE company ILIKE %s ORDER BY scanned_at DESC LIMIT 1',
+                            (company,))
+                row=cur.fetchone()
+                if not row:
+                    summary['not_found'].append(company)
+                    continue
+                scan_id=row[0]
+                cur.execute('SELECT COUNT(*) FROM scan_findings WHERE scan_id = %s',(scan_id,))
+                if cur.fetchone()[0]>0:
+                    summary['skipped_already_present']+=1
+                    continue
+                finding_rows=[(scan_id,str(f.get('dimension','') or '')[:20],str(f.get('type','') or '')[:200],
+                               str(f.get('matched_phrase','') or '')[:300],str(f.get('risk','') or '')[:50])
+                              for f in findings if f.get('matched_phrase')]
+                if finding_rows:
+                    cur.executemany(
+                        'INSERT INTO scan_findings (scan_id,dimension,type,matched_phrase,risk) VALUES (%s,%s,%s,%s,%s)',
+                        finding_rows)
+                    summary['inserted_companies']+=1
+                    summary['inserted_rows']+=len(finding_rows)
+        conn.commit()
+    except Exception as e:
+        summary['error']=str(e)
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        conn.close()
+    return summary
 
 def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
@@ -4648,6 +4717,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/history/logout':
             return self._send(_v92_render_history_login(),status=200,
                 extra_headers={'Set-Cookie':f'{_HISTORY_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'})
+        if self.path=='/history/backfill_legacy_findings':
+            # v93.3: one-time, idempotent import of individual-claim rows for scans logged
+            # before scan_findings existed -- see _v92_backfill_legacy_findings(). Gated
+            # behind the same /history cookie auth as everything else here; safe to visit
+            # more than once (already-populated companies are skipped, not duplicated).
+            if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+                return self._json({'error':'Scan history is not configured for this deployment.'},404)
+            if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+                return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+            return self._json(_v92_backfill_legacy_findings())
         return self._json({'error':'Not found'},404)
 
     def _handle_history_login(self):
