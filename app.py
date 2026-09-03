@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_1_health_exposes_rate_limits"
-APP_RELEASE_LABEL="v93.1"
+APP_VERSION="hostable_v93_2_history_select_all_and_score_filters"
+APP_RELEASE_LABEL="v93.2"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3910,14 +3910,16 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
     'high_risk_findings_count','external_green_retained_count','external_social_retained_count',
     'data_reliability_warning','summary']
 
-def _v92_build_filters(search='',risk='',period='',ids=None):
+def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
     """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
     all three always agree on what "the current view" means. Every value is bound as a
     parameter, never interpolated into the SQL text, regardless of source.
     v92.6: ids lets "View selected"/"Export selected" narrow to an explicit set of row
     ids (from the /history checkboxes) -- passed as a single list parameter bound to
     `id = ANY(%s)`, which both psycopg drivers adapt to a Postgres array natively, rather
-    than building one placeholder per id."""
+    than building one placeholder per id.
+    v93.2: min_global/min_green/min_social/min_findings add "column >= N" threshold
+    filters for the four score/count columns shown in the table -- None means unset."""
     clauses=[]; params=[]
     if ids:
         clauses.append('id = ANY(%s)'); params.append(list(ids))
@@ -3927,10 +3929,30 @@ def _v92_build_filters(search='',risk='',period='',ids=None):
         clauses.append('global_risk = %s'); params.append(risk)
     if period in _V92_PERIOD_SQL:
         clauses.append(_V92_PERIOD_SQL[period])
+    if min_global is not None:
+        clauses.append('global_score >= %s'); params.append(min_global)
+    if min_green is not None:
+        clauses.append('green_score >= %s'); params.append(min_green)
+    if min_social is not None:
+        clauses.append('social_score >= %s'); params.append(min_social)
+    if min_findings is not None:
+        clauses.append('findings_count >= %s'); params.append(min_findings)
     where=('WHERE '+' AND '.join(clauses)) if clauses else ''
     return where,tuple(params)
 
-def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None):
+def _v92_parse_min_filter(source,key):
+    """Parses an optional "column >= N" query/form value (min_global etc.) into an int,
+    or None if absent/invalid -- absent means that threshold filter is not applied."""
+    raw=(source.get(key,[''])[0] or '').strip()
+    if not raw:
+        return None
+    try:
+        v=int(raw)
+    except ValueError:
+        return None
+    return max(0,min(100000,v))
+
+def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -3941,7 +3963,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where,params=_v92_build_filters(search,risk,period,ids)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings)
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
             total=cur.fetchone()[0]
@@ -3964,7 +3986,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     finally:
         conn.close()
 
-def _v92_fetch_stats(search='',risk='',period='',ids=None):
+def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
     whatever filters are currently applied. Returns safe all-zero defaults if the
     feature isn't configured/available rather than erroring."""
@@ -3975,7 +3997,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None):
     try:
         if not _v92_ensure_table(conn):
             return empty
-        where,params=_v92_build_filters(search,risk,period,ids)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings)
         month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
@@ -3991,7 +4013,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None):
     finally:
         conn.close()
 
-def _v92_fetch_all_for_export(search='',risk='',period='',ids=None):
+def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -4001,13 +4023,37 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None):
     try:
         if not _v92_ensure_table(conn):
             return []
-        where,params=_v92_build_filters(search,risk,period,ids)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings)
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
                              ORDER BY scanned_at DESC''',params)
             return [dict(zip(_V92_EXPORT_COLUMNS,r)) for r in cur.fetchall()]
     except Exception:
         return []
+    finally:
+        conn.close()
+
+def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None):
+    """Deletes every row matching the given search/risk/period/threshold filter -- the
+    "select all matching results across every page" counterpart to _v92_delete_by_ids().
+    Used when the operator selects all N results under the current filter (which may span
+    many pages) rather than checking individual boxes."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return 0
+    try:
+        if not _v92_ensure_table(conn):
+            return 0
+        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings)
+        with conn.cursor() as cur:
+            cur.execute(f'DELETE FROM scan_history {where}',params)
+            deleted=cur.rowcount
+        conn.commit()
+        return deleted
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        return 0
     finally:
         conn.close()
 
@@ -4170,7 +4216,8 @@ def _v92_option(value,label,current):
     sel=' selected' if value==current else ''
     return f'<option value="{value}"{sel}>{label}</option>'
 
-def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None):
+def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
+                              min_global=None,min_green=None,min_social=None,min_findings=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -4192,7 +4239,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 </div>'''
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
-    elif not rows and not (search or risk or period or ids):
+    elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None):
         body='<div class="empty">No scans logged yet.</div>'
     elif not rows:
         body='<div class="empty">No scans match the current search/filters.</div>'
@@ -4231,7 +4278,13 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         body=f'''<table><thead><tr><th><input type="checkbox" id="selectAll" title="Select all"></th><th>Date</th><th>Company</th><th>Input</th><th>Global</th><th>Green</th><th>Social</th><th>Findings</th></tr></thead>
 <tbody>{"".join(trs)}</tbody></table>'''
     total_pages=max(1,(total+page_size-1)//page_size)
-    extra_q=(f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
+    min_global_s='' if min_global is None else str(min_global)
+    min_green_s='' if min_green is None else str(min_green)
+    min_social_s='' if min_social is None else str(min_social)
+    min_findings_s='' if min_findings is None else str(min_findings)
+    extra_q=((f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
+              +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
+              +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else ''))
     # v92.6: an active ids selection-filter (from "View selected") is preserved across
     # pagination and the plain "Export CSV" link the same way search/risk/period already
     # are -- each id is its own repeated ?ids=N query param, matching exactly what the
@@ -4245,10 +4298,20 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
     risk_options=''.join(_v92_option(v,v,risk) for v in _V92_RISK_LEVELS)
     period_options=''.join(_v92_option(k,l,period) for k,l in (('month','This month'),('30d','Last 30 days'),('90d','Last 90 days')))
-    has_filters=bool(search or risk or period or ids)
+    has_filters=bool(search or risk or period or ids or min_global_s or min_green_s or min_social_s or min_findings_s)
     clear_selection_href='/history?'+extra_q.lstrip('&') if extra_q else '/history'
     selection_banner=(f'<div class="notice">Showing {len(ids)} selected scan(s). '
                        f'<a href="{clear_selection_href}">Clear selection</a></div>') if ids else ''
+    # v93.2: "Select all N matching results" lets the operator select every row across
+    # every page of the current filter, not just the ones checked on the page they're
+    # looking at -- checkboxes alone can't do this since each page load is a fresh,
+    # independent render with no memory of earlier pages' checked boxes. The link sets
+    # a hidden select_all=1 flag (plus the current filter values, so the server can
+    # resolve "all matching" for itself) instead of relying on an exhaustive ids list.
+    select_all_row=(f'<div class="small" style="margin:8px 0">'
+                     f'<a href="#" id="selectAllMatchingLink">Select all {total} matching result(s)</a>'
+                     f'<span id="selectAllActiveNote" style="display:none">All {total} matching result(s) selected (every page). '
+                     f'<a href="#" id="clearSelectAllLink">Clear</a></span></div>') if total>page_size else ''
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history</title>
 <style>{_V92_STYLE}</style></head><body><div class="wrap">
 {_V92_LOGO_SVG}
@@ -4260,12 +4323,26 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
 <select name="risk"><option value="">All risk levels</option>{risk_options}</select>
 <select name="period"><option value="">All time</option>{period_options}</select>
+<input type="number" name="min_global" placeholder="Global &ge;" min="0" max="100" style="width:90px" value="{min_global_s}">
+<input type="number" name="min_green" placeholder="Green &ge;" min="0" max="100" style="width:90px" value="{min_green_s}">
+<input type="number" name="min_social" placeholder="Social &ge;" min="0" max="100" style="width:90px" value="{min_social_s}">
+<input type="number" name="min_findings" placeholder="Findings &ge;" min="0" style="width:100px" value="{min_findings_s}">
 <button class="btn" type="submit">Filter</button>
 {'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
-<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}{ids_q}">Export CSV</a>
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
-<form id="selectForm" method="POST" action="/history/export_selected"></form>
+{select_all_row}
+<form id="selectForm" method="POST" action="/history/export_selected">
+<input type="hidden" name="q" value="{search_safe}">
+<input type="hidden" name="risk" value="{html_escape(risk)}">
+<input type="hidden" name="period" value="{html_escape(period)}">
+<input type="hidden" name="min_global" value="{min_global_s}">
+<input type="hidden" name="min_green" value="{min_green_s}">
+<input type="hidden" name="min_social" value="{min_social_s}">
+<input type="hidden" name="min_findings" value="{min_findings_s}">
+<input type="hidden" name="select_all" id="selectAllFlag" value="">
+</form>
 {body}
 <div style="margin-top:12px;display:flex;gap:8px">
 <button class="btn secondary" type="submit" form="selectForm" formaction="/history" formmethod="GET" id="viewSelectedBtn" disabled>View selected</button>
@@ -4278,16 +4355,40 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 (function(){{
   var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'),
       exportBtn=document.getElementById('exportSelectedBtn'), viewBtn=document.getElementById('viewSelectedBtn'),
-      deleteBtn=document.getElementById('deleteSelectedBtn');
+      deleteBtn=document.getElementById('deleteSelectedBtn'),
+      selectAllFlag=document.getElementById('selectAllFlag'),
+      selectAllMatchingLink=document.getElementById('selectAllMatchingLink'),
+      clearSelectAllLink=document.getElementById('clearSelectAllLink'),
+      selectAllActiveNote=document.getElementById('selectAllActiveNote'),
+      totalMatching={total};
+  function isSelectAllMatching(){{ return selectAllFlag && selectAllFlag.value==='1'; }}
   function sync(){{ var n=0; boxes.forEach(function(b){{ if(b.checked) n++; }});
-    if(exportBtn) exportBtn.disabled=!n; if(viewBtn) viewBtn.disabled=!n; if(deleteBtn) deleteBtn.disabled=!n; }}
-  if(all) all.addEventListener('change',function(){{ boxes.forEach(function(b){{ b.checked=all.checked; }}); sync(); }});
-  boxes.forEach(function(b){{ b.addEventListener('change',sync); }});
+    if(exportBtn) exportBtn.disabled=!(n||isSelectAllMatching()); if(viewBtn) viewBtn.disabled=!(n||isSelectAllMatching());
+    if(deleteBtn) deleteBtn.disabled=!(n||isSelectAllMatching()); }}
+  function stopSelectAllMatching(){{
+    if(!isSelectAllMatching()) return;
+    selectAllFlag.value='';
+    if(selectAllActiveNote) selectAllActiveNote.style.display='none';
+    if(selectAllMatchingLink) selectAllMatchingLink.style.display='inline';
+  }}
+  function startSelectAllMatching(){{
+    if(selectAllFlag) selectAllFlag.value='1';
+    if(all) all.checked=true; boxes.forEach(function(b){{ b.checked=true; }});
+    if(selectAllActiveNote) selectAllActiveNote.style.display='inline';
+    if(selectAllMatchingLink) selectAllMatchingLink.style.display='none';
+    sync();
+  }}
+  if(all) all.addEventListener('change',function(){{ stopSelectAllMatching(); boxes.forEach(function(b){{ b.checked=all.checked; }}); sync(); }});
+  boxes.forEach(function(b){{ b.addEventListener('change',function(){{ stopSelectAllMatching(); sync(); }}); }});
+  if(selectAllMatchingLink) selectAllMatchingLink.addEventListener('click',function(e){{ e.preventDefault(); startSelectAllMatching(); }});
+  if(clearSelectAllLink) clearSelectAllLink.addEventListener('click',function(e){{ e.preventDefault(); stopSelectAllMatching();
+    boxes.forEach(function(b){{ b.checked=false; }}); if(all) all.checked=false; sync(); }});
   // Destructive action: require an explicit confirmation before the delete actually
   // submits. This is a UX safety net, not the real guard -- the server independently
   // requires /history's own cookie auth regardless of what this dialog does.
   if(deleteBtn) deleteBtn.addEventListener('click',function(e){{
-    var n=0; boxes.forEach(function(b){{ if(b.checked) n++; }});
+    var n=isSelectAllMatching()?totalMatching:0;
+    if(!isSelectAllMatching()) boxes.forEach(function(b){{ if(b.checked) n++; }});
     if(!confirm('Delete '+n+' selected scan(s) from history? This cannot be undone.')) e.preventDefault();
   }});
 }})();
@@ -4426,13 +4527,23 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
-            ids=_v92_parse_ids(qs)
+            # v93.2: while "select all matching" is active, the GET form (View selected)
+            # would otherwise submit only the ids checked on whatever page was visible --
+            # ignore those and fall back to the plain search/risk/period filter instead,
+            # which already represents "every matching row across every page".
+            select_all=(qs.get('select_all',[''])[0]=='1')
+            ids=[] if select_all else _v92_parse_ids(qs)
+            min_global=_v92_parse_min_filter(qs,'min_global')
+            min_green=_v92_parse_min_filter(qs,'min_green')
+            min_social=_v92_parse_min_filter(qs,'min_social')
+            min_findings=_v92_parse_min_filter(qs,'min_findings')
             try: page=max(1,int(qs.get('page',['1'])[0]))
             except Exception: page=1
             page_size=25
-            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids)
-            stats=_v92_fetch_stats(search,risk,period,ids)
-            return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids))
+            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings)
+            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+            return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
+                min_global,min_green,min_social,min_findings))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -4443,7 +4554,11 @@ class Handler(BaseHTTPRequestHandler):
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
             ids=_v92_parse_ids(qs)
-            rows=_v92_fetch_all_for_export(search,risk,period,ids)
+            min_global=_v92_parse_min_filter(qs,'min_global')
+            min_green=_v92_parse_min_filter(qs,'min_green')
+            min_social=_v92_parse_min_filter(qs,'min_social')
+            min_findings=_v92_parse_min_filter(qs,'min_findings')
+            rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings)
             csv_bytes=_v92_rows_to_csv(rows)
             stamp=datetime.date.today().isoformat()
             return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -4482,7 +4597,18 @@ class Handler(BaseHTTPRequestHandler):
         raw=self.rfile.read(n) if n>0 else b''
         form=parse_qs(raw.decode('utf-8','ignore'))
         ids=_v92_parse_ids(form)
-        rows=_v92_fetch_all_for_export(ids=ids) if ids else []
+        select_all=(form.get('select_all',[''])[0]=='1')
+        if select_all:
+            search=(form.get('q',[''])[0] or '').strip()[:200]
+            risk=(form.get('risk',[''])[0] or '').strip()
+            period=(form.get('period',[''])[0] or '').strip()
+            min_global=_v92_parse_min_filter(form,'min_global')
+            min_green=_v92_parse_min_filter(form,'min_green')
+            min_social=_v92_parse_min_filter(form,'min_social')
+            min_findings=_v92_parse_min_filter(form,'min_findings')
+            rows=_v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings)
+        else:
+            rows=_v92_fetch_all_for_export(ids=ids) if ids else []
         csv_bytes=_v92_rows_to_csv(rows)
         stamp=datetime.date.today().isoformat()
         return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -4504,7 +4630,18 @@ class Handler(BaseHTTPRequestHandler):
         raw=self.rfile.read(n) if n>0 else b''
         form=parse_qs(raw.decode('utf-8','ignore'))
         ids=_v92_parse_ids(form)
-        _v92_delete_by_ids(ids)
+        select_all=(form.get('select_all',[''])[0]=='1')
+        if select_all:
+            search=(form.get('q',[''])[0] or '').strip()[:200]
+            risk=(form.get('risk',[''])[0] or '').strip()
+            period=(form.get('period',[''])[0] or '').strip()
+            min_global=_v92_parse_min_filter(form,'min_global')
+            min_green=_v92_parse_min_filter(form,'min_green')
+            min_social=_v92_parse_min_filter(form,'min_social')
+            min_findings=_v92_parse_min_filter(form,'min_findings')
+            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings)
+        else:
+            _v92_delete_by_ids(ids)
         return self._send(b'',status=302,extra_headers={'Location':'/history'})
 
     def do_POST(self):

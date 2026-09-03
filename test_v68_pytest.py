@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_1_health_exposes_rate_limits'
+    assert app.APP_VERSION == 'hostable_v93_2_history_select_all_and_score_filters'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -352,3 +352,58 @@ def test_scan_history_delete_selected(monkeypatch):
     assert 'formaction="/history/delete_selected"' in html
     assert 'confirm(' in html
     assert 'btn danger' in html
+
+
+def test_scan_history_min_score_filters():
+    """v93.2: the Global/Green/Social/Findings "column >= N" filters must parse a valid
+    integer, silently ignore garbage/empty input (treated as "no threshold set", not as
+    0), and clamp into a sane range -- then thread through into the shared WHERE builder
+    as bound parameters, never interpolated into the SQL text."""
+    assert app._v92_parse_min_filter({'min_global':['50']},'min_global')==50
+    assert app._v92_parse_min_filter({'min_global':['']},'min_global') is None
+    assert app._v92_parse_min_filter({},'min_global') is None
+    assert app._v92_parse_min_filter({'min_global':['not-a-number']},'min_global') is None
+    assert app._v92_parse_min_filter({'min_global':['-5']},'min_global')==0
+    assert app._v92_parse_min_filter({'min_global':['999999']},'min_global')==100000
+    where,params=app._v92_build_filters(min_global=50,min_green=30,min_social=40,min_findings=5)
+    assert where=='WHERE global_score >= %s AND green_score >= %s AND social_score >= %s AND findings_count >= %s'
+    assert params==(50,30,40,5)
+    assert app._v92_build_filters()==('',())
+
+
+def test_scan_history_page_renders_min_score_inputs(monkeypatch):
+    """v93.2: the filter form must render the four threshold inputs pre-filled with
+    whatever values are currently active, and carry them into the Export CSV link and
+    pagination query string alongside search/risk/period."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'',min_global=50,min_green=30,min_social=40,min_findings=5)
+    assert 'name="min_global" placeholder="Global &ge;"' in html and 'value="50"' in html
+    assert 'value="30"' in html and 'value="40"' in html and 'value="5"' in html
+    assert 'min_global=50' in html and 'min_findings=5' in html  # carried into Export CSV link
+
+
+def test_scan_history_select_all_matching_link_only_when_multi_page(monkeypatch):
+    """v93.2: "Select all N matching results" only makes sense (and only needs to exist)
+    when there's more than one page of results -- a single page is already fully covered
+    by the existing per-page select-all checkbox."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html_one_page=app._v92_render_history_page([row],1,1,25,'')
+    assert 'id="selectAllMatchingLink"' not in html_one_page
+    html_multi_page=app._v92_render_history_page([row],54,1,25,'')
+    assert 'Select all 54 matching result(s)' in html_multi_page
+    assert 'id="selectAllFlag"' in html_multi_page
+
+
+def test_scan_history_delete_by_filter(monkeypatch):
+    """v93.2: _v92_delete_by_filter() is the "select all matching results across every
+    page, then delete" counterpart to _v92_delete_by_ids() -- it must be a no-op (not an
+    error) when the feature isn't configured (no DATABASE_URL), same safety posture as
+    every other scan-history function in this file."""
+    monkeypatch.setattr(app,'DATABASE_URL','')
+    assert app._v92_delete_by_filter(search='Acme')==0
