@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_4_legacy_findings_backfill"
-APP_RELEASE_LABEL="v93.4"
+APP_VERSION="hostable_v93_5_top_claims_risk_level_label"
+APP_RELEASE_LABEL="v93.5"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4381,7 +4381,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         top_claims_html=f'''<div class="card">
 <h2 style="margin:0 0 4px;font-size:18px">Top {len(top_claims)} most flagged claims/words</h2>
 <p class="small" style="margin:0 0 10px">Across every scan logged on this deployment &mdash; updates automatically as new scans come in.</p>
-<table><thead><tr><th>#</th><th>Phrase</th><th>Worst risk</th><th>Occurrences</th><th>Companies</th></tr></thead>
+<table><thead><tr><th>#</th><th>Phrase</th><th>Risk level</th><th>Occurrences</th><th>Companies</th></tr></thead>
 <tbody>{claim_rows}</tbody></table>
 </div>'''
     else:
