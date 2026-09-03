@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_8_history_sortable_column_headers"
-APP_RELEASE_LABEL="v93.8"
+APP_VERSION="hostable_v93_9_history_excel_style_column_filters"
+APP_RELEASE_LABEL="v93.9"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3959,8 +3959,12 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
     ids (from the /history checkboxes) -- passed as a single list parameter bound to
     `id = ANY(%s)`, which both psycopg drivers adapt to a Postgres array natively, rather
     than building one placeholder per id.
-    v93.2: min_global/min_green/min_social/min_findings add "column >= N" threshold
-    filters for the four score/count columns shown in the table -- None means unset.
+    v93.2/v93.9: min_global/min_green/min_social/min_findings add an EXACT-match filter
+    ("column = N") for the four score/count columns shown in the table -- None means
+    unset. (Named min_* from an earlier >=-threshold design; kept for the already-wired
+    plumbing, but the operator is now exact equality since that's what "click a score
+    cell to see every company with that same score" needs, per explicit user feedback
+    that a >= threshold "wasn't a real filter".)
     v93.7: date_from/date_to are exact YYYY-MM-DD strings (already validated by
     _v92_parse_date_filter) for a precise date-range filter, independent of the existing
     month/30d/90d period presets -- either or both may be set at once as the period."""
@@ -3974,13 +3978,13 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
     if period in _V92_PERIOD_SQL:
         clauses.append(_V92_PERIOD_SQL[period])
     if min_global is not None:
-        clauses.append('global_score >= %s'); params.append(min_global)
+        clauses.append('global_score = %s'); params.append(min_global)
     if min_green is not None:
-        clauses.append('green_score >= %s'); params.append(min_green)
+        clauses.append('green_score = %s'); params.append(min_green)
     if min_social is not None:
-        clauses.append('social_score >= %s'); params.append(min_social)
+        clauses.append('social_score = %s'); params.append(min_social)
     if min_findings is not None:
-        clauses.append('findings_count >= %s'); params.append(min_findings)
+        clauses.append('findings_count = %s'); params.append(min_findings)
     if date_from:
         clauses.append('scanned_at >= %s::date'); params.append(date_from)
     if date_to:
@@ -4047,6 +4051,33 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     except Exception as e:
         _V92_LAST_ERROR=_v92_redact_error('fetch failed: '+str(e))
         return [],0
+    finally:
+        conn.close()
+
+_V92_DISTINCT_SCORE_COLUMNS={'global':'global_score','green':'green_score','social':'social_score','findings':'findings_count'}
+
+def _v92_fetch_distinct_scores():
+    """Returns {'global':[...],'green':[...],'social':[...],'findings':[...]} -- sorted
+    distinct non-null values for each score/count column, used to populate the Excel-style
+    per-column filter dropdowns on /history (pick an exact value, like filtering a
+    spreadsheet column, rather than typing a threshold). Cheap: at most a few dozen
+    distinct integers even at real-world scale. Returns all-empty lists if the feature
+    isn't configured/available."""
+    empty={k:[] for k in _V92_DISTINCT_SCORE_COLUMNS}
+    conn=_v92_db_connect()
+    if conn is None:
+        return empty
+    try:
+        if not _v92_ensure_table(conn):
+            return empty
+        out={}
+        with conn.cursor() as cur:
+            for key,col in _V92_DISTINCT_SCORE_COLUMNS.items():
+                cur.execute(f'SELECT DISTINCT {col} FROM scan_history WHERE {col} IS NOT NULL ORDER BY {col}')
+                out[key]=[r[0] for r in cur.fetchall()]
+        return out
+    except Exception:
+        return empty
     finally:
         conn.close()
 
@@ -4385,7 +4416,7 @@ def _v92_option(value,label,current):
 
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
-                              date_from=None,date_to=None,sort='date'):
+                              date_from=None,date_to=None,sort='date',distinct_scores=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -4432,16 +4463,41 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     else:
         top_claims_html=''
     sort=sort if sort in _V92_SORT_SQL else 'date'
-    # v93.8: sortable column headers replace the earlier separate sort dropdown -- click a
-    # column to sort by it (Date/Global/Green/Social/Findings highest-first, Company A-Z),
-    # preserving the active search/risk/period filter but resetting to page 1.
-    sort_base_q=(f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
-    def _sort_th(key):
+    distinct_scores=distinct_scores or {k:[] for k in _V92_DISTINCT_SCORE_COLUMNS}
+    # v93.9: every currently-active filter/sort in one place, so a column header's sort
+    # link or a score dropdown's option can build a URL that changes ONLY its own piece
+    # while preserving everything else already active (e.g. picking Green=62 must not
+    # silently drop an already-active Global=41 filter). `overrides` replaces specific
+    # keys; a value of None removes that key from the URL entirely.
+    _active={'q':search or None,'risk':risk or None,'period':period or None,
+             'sort':sort if sort!='date' else None,'min_global':min_global,'min_green':min_green,
+             'min_social':min_social,'min_findings':min_findings}
+    def _filter_url(overrides=None):
+        parts=dict(_active)
+        if overrides:
+            parts.update(overrides)
+        q=''.join(f'&{k}={quote(str(v))}' for k,v in parts.items() if v is not None and v!='')
+        return '/history?'+q[1:] if q else '/history'
+    def _sort_link(key):
         arrow=' &darr;' if sort==key else ''
-        return f'<th><a href="/history?sort={key}{sort_base_q}">{_V92_SORT_LABELS[key]}{arrow}</a></th>'
+        return f'<a href="{_filter_url({"sort":key})}">{_V92_SORT_LABELS[key]}{arrow}</a>'
+    def _sort_th(key):
+        return f'<th>{_sort_link(key)}</th>'
+    def _score_th(key,current_val):
+        # v93.9: an Excel-style "pick one exact value" filter dropdown, replacing the
+        # earlier >=-threshold number input the user said "wasn't a real filter". Options
+        # come from the real distinct values in scan_history, not an arbitrary range.
+        param=f'min_{key}'
+        opts=[f'<option value="{_filter_url({param:None})}"{" selected" if current_val is None else ""}>All</option>']
+        for v in distinct_scores.get(key,[]):
+            opts.append(f'<option value="{_filter_url({param:v})}"{" selected" if current_val==v else ""}>{v}</option>')
+        select=(f'<select onchange="if(this.value) location.href=this.value" '
+                f'style="margin-top:4px;font-size:11px;padding:1px;max-width:80px">{"".join(opts)}</select>')
+        return f'<th>{_sort_link(key)}<br>{select}</th>'
     table_header=('<th><input type="checkbox" id="selectAll" title="Select all"></th>'
                    +_sort_th('date')+_sort_th('company')+'<th>Input</th>'
-                   +_sort_th('global')+_sort_th('green')+_sort_th('social')+_sort_th('findings'))
+                   +_score_th('global',min_global)+_score_th('green',min_green)
+                   +_score_th('social',min_social)+_score_th('findings',min_findings))
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
     elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None):
@@ -4757,8 +4813,9 @@ class Handler(BaseHTTPRequestHandler):
                 date_from,date_to,sort)
             stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
             top_claims=_v92_fetch_top_claims()
+            distinct_scores=_v92_fetch_distinct_scores()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
-                min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort))
+                min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)

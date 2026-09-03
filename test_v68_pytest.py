@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_8_history_sortable_column_headers'
+    assert app.APP_VERSION == 'hostable_v93_9_history_excel_style_column_filters'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -355,10 +355,12 @@ def test_scan_history_delete_selected(monkeypatch):
 
 
 def test_scan_history_min_score_filters():
-    """v93.2: the Global/Green/Social/Findings "column >= N" filters must parse a valid
-    integer, silently ignore garbage/empty input (treated as "no threshold set", not as
-    0), and clamp into a sane range -- then thread through into the shared WHERE builder
-    as bound parameters, never interpolated into the SQL text."""
+    """v93.2/v93.9: the Global/Green/Social/Findings filters must parse a valid integer,
+    silently ignore garbage/empty input (treated as "no filter set", not as 0), and clamp
+    into a sane range -- then thread through into the shared WHERE builder as bound
+    parameters (exact equality, per explicit user feedback that a >= threshold "wasn't a
+    real filter" -- they want e.g. "all companies with score 15"), never interpolated
+    into the SQL text."""
     assert app._v92_parse_min_filter({'min_global':['50']},'min_global')==50
     assert app._v92_parse_min_filter({'min_global':['']},'min_global') is None
     assert app._v92_parse_min_filter({},'min_global') is None
@@ -366,7 +368,7 @@ def test_scan_history_min_score_filters():
     assert app._v92_parse_min_filter({'min_global':['-5']},'min_global')==0
     assert app._v92_parse_min_filter({'min_global':['999999']},'min_global')==100000
     where,params=app._v92_build_filters(min_global=50,min_green=30,min_social=40,min_findings=5)
-    assert where=='WHERE global_score >= %s AND green_score >= %s AND social_score >= %s AND findings_count >= %s'
+    assert where=='WHERE global_score = %s AND green_score = %s AND social_score = %s AND findings_count = %s'
     assert params==(50,30,40,5)
     assert app._v92_build_filters()==('',())
 
@@ -418,7 +420,7 @@ def test_scan_history_sortable_headers_cover_all_columns(monkeypatch):
          'social_score':50,'findings_count':14}
     html=app._v92_render_history_page([row],1,1,25,'Puratos',risk='High')
     for key in ('date','company','global','green','social','findings'):
-        assert f'href="/history?sort={key}&q=Puratos&risk=High"' in html
+        assert f'href="/history?q=Puratos&risk=High&sort={key}"' in html
 
 
 def test_scan_history_filter_form_decluttered(monkeypatch):
@@ -437,6 +439,36 @@ def test_scan_history_filter_form_decluttered(monkeypatch):
     assert 'placeholder="Findings &ge;"' not in html
     assert 'type="date"' not in html
     assert '<select name="sort">' not in html
+
+
+def test_scan_history_fetch_distinct_scores_unconfigured():
+    """v93.9: _v92_fetch_distinct_scores() must return all-empty lists (not raise) when
+    the feature isn't configured -- same safety posture as every other scan-history fetch
+    function."""
+    assert app._v92_fetch_distinct_scores()=={'global':[],'green':[],'social':[],'findings':[]}
+
+
+def test_scan_history_excel_style_score_dropdowns(monkeypatch):
+    """v93.9: each score/count column gets an Excel-style dropdown listing the REAL
+    distinct values present in scan_history (not an arbitrary range), with "All" plus the
+    currently-active exact-match value marked selected -- and picking a different column's
+    value must not drop an already-active filter on another score column (AND semantics),
+    per explicit user feedback that a >= threshold "wasn't a real filter" and they want to
+    pick an exact value, "just like filtering a column in Excel"."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    distinct_scores={'global':[41,54,57],'green':[57,62],'social':[12,50],'findings':[3,14]}
+    html=app._v92_render_history_page([row],1,1,25,'',min_global=54,min_social=12,
+        distinct_scores=distinct_scores,top_claims=None)
+    # the active Global value (54) and active Social value (12) are marked selected
+    assert '<option value="/history?min_global=54&min_social=12" selected>54</option>' in html
+    assert '<option value="/history?min_global=54&min_social=12" selected>12</option>' in html
+    # picking a NEW Green value must preserve the already-active Global AND Social filters
+    assert '/history?min_global=54&min_green=57&min_social=12' in html
+    # the "All" option for Global clears only min_global, keeping min_social active
+    assert '<option value="/history?min_social=12">All</option>' in html
 
 
 def test_scan_history_select_all_matching_link_only_when_multi_page(monkeypatch):
