@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_durably_branding"
-APP_RELEASE_LABEL="v93"
+APP_VERSION="hostable_v93_1_health_exposes_rate_limits"
+APP_RELEASE_LABEL="v93.1"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4407,6 +4407,8 @@ class Handler(BaseHTTPRequestHandler):
                                    'CRAWL_BUDGET_SECONDS':CRAWL_BUDGET_SECONDS,'CRAWL_FETCH_WORKERS':CRAWL_FETCH_WORKERS,
                                    'EXTERNAL_SIGNAL_MAX_QUERIES':EXTERNAL_SIGNAL_MAX_QUERIES,'EXTERNAL_SIGNAL_RESULTS_PER_QUERY':EXTERNAL_SIGNAL_RESULTS_PER_QUERY,
                                    'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS},
+                               'rate_limits':{'RATE_LIMIT_SCANS':RATE_LIMIT_SCANS,'RATE_LIMIT_REPORTS':RATE_LIMIT_REPORTS,
+                                   'RATE_LIMIT_WINDOW_SECONDS':RATE_LIMIT_WINDOW_SECONDS,'MAX_CONCURRENT_SCANS':MAX_CONCURRENT_SCANS},
                                'container_cpu':_v91_4_container_cpu_quota(),
                                # v92.1: history_configured mirrors the other optional-feature
                                # flags above; history_last_error surfaces the most recent

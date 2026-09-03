@@ -11,8 +11,11 @@ services:
         value: "3.12.7"
       - key: MAX_REQUEST_BYTES
         value: "12000000"
+      # Raised from 5 to 10/hour (2026-09-03) at the user's request, to let the
+      # in-progress 54-company batch scan finish sooner. No upper clamp exists in
+      # app.py's own RATE_LIMIT_SCANS=max(1, ...) parsing, so this value is used as-is.
       - key: RATE_LIMIT_SCANS
-        value: "5"
+        value: "10"
       - key: RATE_LIMIT_REPORTS
         value: "20"
       - key: RATE_LIMIT_WINDOW_SECONDS
