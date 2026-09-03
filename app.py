@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v92_7_delete_selected"
-APP_RELEASE_LABEL="v92.7"
+APP_VERSION="hostable_v93_durably_branding"
+APP_RELEASE_LABEL="v93"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4096,22 +4096,23 @@ def _v92_parse_cookies(header):
     return out
 
 _V92_STYLE='''
-:root{--bg:#f6f8fb;--card:#ffffff;--ink:#132033;--muted:#5e6b7d;--line:#dfe5ee;--accent:#265f5c;--accent2:#173f5f;
---danger:#a43c3c;--danger-soft:#fff1f1;--warn:#9b6a17;--warn-soft:#fff8ea;--ok:#276749;--ok-soft:#edf7f0;--shadow:0 8px 24px rgba(20,35,55,.08);--radius:14px}
+:root{--bg:#F1F1F2;--card:#ffffff;--ink:#1C2D56;--muted:#5A6B8A;--line:#E2E6EA;--soft:#EAF3F7;--accent:#F26649;--accent2:#1C2D56;
+--danger:#E24B4A;--danger-soft:#FCEBEB;--warn:#F2A93B;--warn-soft:#FAEEDA;--ok:#44B67A;--ok-soft:#EAF3DE;--shadow:0 10px 24px rgba(28,45,86,.10);--radius:14px}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;font-size:15px}
 .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 60px}
+.brand-logo{height:28px;width:auto;display:block;margin-bottom:14px}
 h1{font-size:26px;margin:0 0 4px}.muted{color:var(--muted)}.small{font-size:13px;color:var(--muted)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-top:18px}
 input[type=text],input[type=password]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:11px;font:inherit}
 select{border:1.5px solid var(--line);border-radius:10px;padding:10px;font:inherit;background:#fff}
 .btn{border:0;border-radius:10px;background:var(--accent);color:#fff;padding:10px 16px;font-weight:700;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}
-.btn.secondary{background:#eef3f8;color:#173f5f;border:1px solid #ccd8e4}
+.btn.secondary{background:var(--soft);color:var(--ink);border:1px solid var(--line)}
 .btn.danger{background:var(--danger-soft);color:var(--danger);border:1px solid #e7c1c1}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .error{margin-top:12px;padding:10px 12px;border-radius:10px;background:#fff0f0;border:1px solid #e2baba;color:#842424}
-.notice{margin-bottom:14px;padding:10px 12px;border-radius:10px;background:#eef6f5;border:1px solid #cddfdd;color:#244744}
+.notice{margin-bottom:14px;padding:10px 12px;border-radius:10px;background:var(--soft);border:1px solid var(--line);color:var(--ink)}
 table{width:100%;border-collapse:collapse;margin-top:6px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#516073;background:#f7f9fc}td{font-size:13.5px}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--soft)}td{font-size:13.5px}
 .risk-badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700}
 .risk-badge.low{background:var(--ok-soft);color:var(--ok)}.risk-badge.medium{background:var(--warn-soft);color:var(--warn)}
 .risk-badge.high,.risk-badge.very-high{background:var(--danger-soft);color:var(--danger)}
@@ -4126,6 +4127,28 @@ a{color:var(--accent2)}
 @media(max-width:700px){.stats-row{grid-template-columns:1fr 1fr}}
 '''
 
+_V92_LOGO_SVG='''<svg class="brand-logo" viewBox="0 0 1100 272.5" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Durably"><g>
+<path fill="#1C2D56" d="M1003.1,236.3c25,0,38.2-5.7,47.8-26.6l49.1-106.4h-33.1l-18.8,45.2l-7.9,23.6h-2l-8.3-23.4l-21-45.4h-33.7
+l48.5,99.7c-2,4.4-5.2,6.3-12.5,6.3h-24.4v26.9H1003.1z M970.4,69.9h-29.7v132.8h29.7V69.9z M842.2,153.7v-1.6
+c0-17.2,9.9-23.6,29.1-23.6c19,0,27.7,6.3,27.7,24.6c0,18-8.7,24.4-27.9,24.4C852.4,177.5,842.2,170.9,842.2,153.7 M840.1,202.6
+v-27.5h1.8c3.6,19.6,16.6,29.5,39.6,29.5c30.9,0,47.8-20.2,47.8-51.5c0-31.7-16.6-51.7-46.4-51.7c-23.6,0-35.7,11.7-39,28.3h-1.6
+V69.9h-29.7v132.8H840.1z M723.8,176.1c0-4.8,3.2-6.7,10.3-7.3l34.5-4c-0.8,14.1-11.7,18.8-31.9,18.8
+C728,183.6,723.8,181.4,723.8,176.1 M728.2,204.6c22,0,35.9-9.3,40.4-24.8h1.6v22.8h27.7v-58.3c0-26-15.7-43-48.7-43
+c-32.7,0-53.3,17-53.3,41.6v0.6h29.9v-0.8c0-11.3,6.1-15.3,21.2-15.3c15.9,0,21.6,3.6,21.6,16.4v3.8l-42.6,4.4
+c-21.2,2.2-32.1,11.3-32.1,26C693.9,194.7,706.8,204.6,728.2,204.6 M625.8,202.6v-57.5c0-12.5,4.8-18.6,18-18.6
+c12.1,0,16.4,4.8,16.4,15.7v10.3H690V136c0-19.4-9.1-34.7-31.3-34.7c-20,0-30.5,12.3-33.3,28.3h-1.8v-26.4h-27.5v99.3H625.8z
+M510.9,204.6c26.2,0,38.2-15.7,40.8-32.3h1.6v30.3H581v-99.3h-29.7v50.3c0,16.8-6.9,24.4-26.4,24.4c-18.8,0-25.6-6.7-25.6-22.8
+v-51.9h-29.7v61.8C469.7,187.4,483,204.6,510.9,204.6 M388.5,96.6c26.9,0,37.8,7.7,37.8,39.6s-10.9,39.6-37.8,39.6h-34.3V96.6
+H388.5z M388.5,202.6c42.6,0,69.5-24.8,69.5-66.4s-26.9-66.4-69.5-66.4h-64v132.8H388.5z"/>
+<path fill="#78BED4" d="M264.4,89.7C238.7,19.1,160.3-17.5,89.7,8.2c0,0,0,0,0,0c-14.8,5.4-22.4,21.8-17,36.6
+c5.4,14.8,21.8,22.5,36.6,17.1c0,0,0,0,0,0c41-14.9,86.5,6.3,101.4,47.3c14.9,41-6.3,86.5-47.3,101.4c14.8-5.4,31.2,2.3,36.6,17.1
+c5.4,14.8-2.2,31.2-17.1,36.6c0,0-0.1,0-0.1,0c0,0,0.1,0,0.1,0C253.5,238.6,290.1,160.3,264.4,89.7"/>
+<path fill="#1C2D56" d="M200,227.7c-5.4-14.8-21.8-22.5-36.6-17.1c0,0,0,0,0,0c-41,14.9-86.5-6.3-101.4-47.3c0,0,0,0,0,0
+c-7.2-19.9-6.3-41.3,2.6-60.5c8.9-19.2,24.8-33.7,44.6-40.9c0,0,0,0,0,0c0,0,0,0,0,0C94.4,67.3,78,59.7,72.7,44.8
+c-5.4-14.8,2.2-31.2,17-36.6C55.5,20.7,28.2,45.7,12.8,78.7c-15.4,33-17,70-4.5,104.2c0,0,0,0,0,0c20.1,55.3,72.5,89.6,128.2,89.6
+c15.4,0,31.1-2.6,46.4-8.2c0,0,0.1,0,0.1,0C197.8,258.9,205.4,242.5,200,227.7"/>
+</g></svg>'''
+
 def _v92_risk_badge(risk):
     cls=str(risk or '').lower().replace(' ','-')
     return f'<span class="risk-badge {cls}">{risk or "—"}</span>'
@@ -4134,6 +4157,7 @@ def _v92_render_history_login(error=None):
     err_html=f'<div class="error">{error}</div>' if error else ''
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history &mdash; login</title>
 <style>{_V92_STYLE}</style></head><body><div class="wrap" style="max-width:420px">
+{_V92_LOGO_SVG}
 <h1>Scan history</h1><p class="muted">This page is private. Enter the shared password to continue.</p>
 <div class="card"><form method="POST" action="/history/login">
 <label class="small" for="pw">Password</label><br>
@@ -4227,6 +4251,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
                        f'<a href="{clear_selection_href}">Clear selection</a></div>') if ids else ''
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history</title>
 <style>{_V92_STYLE}</style></head><body><div class="wrap">
+{_V92_LOGO_SVG}
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
 <a class="btn secondary" href="/history/logout">Log out</a></div>
 {stats_html}

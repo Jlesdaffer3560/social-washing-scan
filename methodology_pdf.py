@@ -12,15 +12,15 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from reportlab.lib.styles import ParagraphStyle
 
-NAVY = colors.HexColor('#173f5f')
-INK = colors.HexColor('#132033')
-MUTED = colors.HexColor('#5e6b7d')
-LINE = colors.HexColor('#dfe5ee')
-SOFT = colors.HexColor('#f6f8fb')
-ACCENT = colors.HexColor('#265f5c')
-GREEN = colors.HexColor('#276749')
-AMBER = colors.HexColor('#9b6a17')
-DANGER = colors.HexColor('#a43c3c')
+NAVY = colors.HexColor('#1C2D56')
+INK = colors.HexColor('#1C2D56')
+MUTED = colors.HexColor('#5A6B8A')
+LINE = colors.HexColor('#E2E6EA')
+SOFT = colors.HexColor('#F1F1F2')
+ACCENT = colors.HexColor('#F26649')
+GREEN = colors.HexColor('#117A37')
+AMBER = colors.HexColor('#8A6100')
+DANGER = colors.HexColor('#B42318')
 
 PAGE_W, PAGE_H = A4
 MARGIN = 14 * mm
@@ -71,7 +71,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v91.5')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v93')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -84,7 +84,7 @@ def build_methodology_pdf():
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Claims Risk Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v91.5 &middot; 1 September 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v93 &middot; 3 September 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '

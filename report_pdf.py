@@ -1,4 +1,4 @@
-"""Readable native Durably company claim-risk report (v89).
+"""Readable native Durably company claim-risk report (v93).
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
 uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
@@ -29,16 +29,16 @@ MARGIN_TOP = 10 * mm
 MARGIN_BOTTOM = 13 * mm
 CONTENT_W = PAGE_W - 2 * MARGIN_X
 
-NAVY = colors.HexColor("#173E52")
-TEAL = colors.HexColor("#2C766B")
-TEAL_DARK = colors.HexColor("#195A53")
-GREEN = colors.HexColor("#2F7D55")
-GREEN_SOFT = colors.HexColor("#EAF5EF")
-AMBER = colors.HexColor("#A87311")
-AMBER_SOFT = colors.HexColor("#FFF6DF")
-RED = colors.HexColor("#AF3D43")
-RED_SOFT = colors.HexColor("#FFF0F0")
-BLUE_SOFT = colors.HexColor("#EFF5F8")
+NAVY = colors.HexColor("#1C2D56")
+TEAL = colors.HexColor("#F26649")
+TEAL_DARK = colors.HexColor("#1C2D56")
+GREEN = colors.HexColor("#117A37")
+GREEN_SOFT = colors.HexColor("#EAF3DE")
+AMBER = colors.HexColor("#8A6100")
+AMBER_SOFT = colors.HexColor("#FAEEDA")
+RED = colors.HexColor("#B42318")
+RED_SOFT = colors.HexColor("#FCEBEB")
+BLUE_SOFT = colors.HexColor("#EAF3F7")
 GREY_900 = colors.HexColor("#263238")
 GREY_700 = colors.HexColor("#52616A")
 GREY_500 = colors.HexColor("#7A8A93")
