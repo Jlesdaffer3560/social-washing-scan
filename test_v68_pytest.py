@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_7_history_date_range_and_alpha_sort'
+    assert app.APP_VERSION == 'hostable_v93_8_history_sortable_column_headers'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -388,31 +388,55 @@ def test_scan_history_date_range_filter():
 
 def test_scan_history_sort_alphabetical(monkeypatch):
     """v93.7: sorting by company must be an explicit opt-in ('company' -> alphabetical
-    A-Z), defaulting to the existing newest-first behaviour for any other/missing value --
-    and the sort dropdown on the page must reflect whichever is currently active."""
+    A-Z), defaulting to the existing newest-first behaviour for any other/missing value.
+    v93.8: sorting is triggered by clicking a column header (Date/Company/Global/Green/
+    Social/Findings), not a separate dropdown -- the active column's header link must be
+    marked (a down-arrow), and the currently-active sort must be carried into both the
+    plain filter form (as a hidden field, so changing search/risk/period doesn't silently
+    reset it back to newest-first) and the select-all hidden form."""
     assert app._V92_SORT_SQL['date']=='scanned_at DESC'
     assert app._V92_SORT_SQL['company']=='company ASC, scanned_at DESC'
+    assert app._V92_SORT_SQL['global']=='global_score DESC NULLS LAST, scanned_at DESC'
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
          'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
          'social_score':50,'findings_count':14}
     html=app._v92_render_history_page([row],1,1,25,'',sort='company')
-    assert '<option value="company" selected>' in html
-    assert 'name="sort" value="company"' in html  # carried into the select-all hidden form
+    assert '<a href="/history?sort=company">Company &darr;</a>' in html
+    assert '<a href="/history?sort=date">Date</a>' in html  # inactive column: no arrow
+    assert html.count('name="sort" value="company"')==2  # filter form's hidden field + select-all form
 
 
-def test_scan_history_page_renders_min_score_inputs(monkeypatch):
-    """v93.2: the filter form must render the four threshold inputs pre-filled with
-    whatever values are currently active, and carry them into the Export CSV link and
-    pagination query string alongside search/risk/period."""
+def test_scan_history_sortable_headers_cover_all_columns(monkeypatch):
+    """v93.8: every column the user asked to sort by (Date/Company/Global/Green/Social/
+    Findings) must be a clickable header, and clicking one must preserve the active
+    search/risk/period filter (but not page/ids, since a new sort naturally starts back
+    at page 1 over the full matching set)."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
-    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
-         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
-         'green_score':57,'social_score':50,'findings_count':14}
-    html=app._v92_render_history_page([row],1,1,25,'',min_global=50,min_green=30,min_social=40,min_findings=5)
-    assert 'name="min_global" placeholder="Global &ge;"' in html and 'value="50"' in html
-    assert 'value="30"' in html and 'value="40"' in html and 'value="5"' in html
-    assert 'min_global=50' in html and 'min_findings=5' in html  # carried into Export CSV link
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'Puratos',risk='High')
+    for key in ('date','company','global','green','social','findings'):
+        assert f'href="/history?sort={key}&q=Puratos&risk=High"' in html
+
+
+def test_scan_history_filter_form_decluttered(monkeypatch):
+    """v93.8: the score-threshold inputs (Global/Green/Social/Findings >=) and the exact
+    date-range inputs were reported as cluttering the top filter bar and are no longer
+    part of the visible form -- sorting/filtering by those columns now happens via the
+    clickable column headers and the existing search/risk/period controls instead. The
+    underlying backend filters (_v92_build_filters etc.) are untouched and still tested
+    separately -- only the rendered UI changed."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'')
+    assert 'placeholder="Global &ge;"' not in html
+    assert 'placeholder="Findings &ge;"' not in html
+    assert 'type="date"' not in html
+    assert '<select name="sort">' not in html
 
 
 def test_scan_history_select_all_matching_link_only_when_multi_page(monkeypatch):

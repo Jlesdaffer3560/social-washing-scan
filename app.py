@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_7_history_date_range_and_alpha_sort"
-APP_RELEASE_LABEL="v93.7"
+APP_VERSION="hostable_v93_8_history_sortable_column_headers"
+APP_RELEASE_LABEL="v93.8"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3997,7 +3997,10 @@ def _v92_parse_date_filter(source,key):
         return None
     return raw
 
-_V92_SORT_SQL={'date':'scanned_at DESC','company':'company ASC, scanned_at DESC'}
+_V92_SORT_SQL={'date':'scanned_at DESC','company':'company ASC, scanned_at DESC',
+               'global':'global_score DESC NULLS LAST, scanned_at DESC','green':'green_score DESC NULLS LAST, scanned_at DESC',
+               'social':'social_score DESC NULLS LAST, scanned_at DESC','findings':'findings_count DESC NULLS LAST, scanned_at DESC'}
+_V92_SORT_LABELS={'date':'Date','company':'Company','global':'Global','green':'Green','social':'Social','findings':'Findings'}
 
 def _v92_parse_min_filter(source,key):
     """Parses an optional "column >= N" query/form value (min_global etc.) into an int,
@@ -4428,6 +4431,17 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 </div>'''
     else:
         top_claims_html=''
+    sort=sort if sort in _V92_SORT_SQL else 'date'
+    # v93.8: sortable column headers replace the earlier separate sort dropdown -- click a
+    # column to sort by it (Date/Global/Green/Social/Findings highest-first, Company A-Z),
+    # preserving the active search/risk/period filter but resetting to page 1.
+    sort_base_q=(f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
+    def _sort_th(key):
+        arrow=' &darr;' if sort==key else ''
+        return f'<th><a href="/history?sort={key}{sort_base_q}">{_V92_SORT_LABELS[key]}{arrow}</a></th>'
+    table_header=('<th><input type="checkbox" id="selectAll" title="Select all"></th>'
+                   +_sort_th('date')+_sort_th('company')+'<th>Input</th>'
+                   +_sort_th('global')+_sort_th('green')+_sort_th('social')+_sort_th('findings'))
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
     elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None):
@@ -4466,7 +4480,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <td>{r.get("social_score") if r.get("social_score") is not None else "—"}</td>
 <td>{r.get("findings_count") if r.get("findings_count") is not None else "—"}</td>
 </tr>''')
-        body=f'''<table><thead><tr><th><input type="checkbox" id="selectAll" title="Select all"></th><th>Date</th><th>Company</th><th>Input</th><th>Global</th><th>Green</th><th>Social</th><th>Findings</th></tr></thead>
+        body=f'''<table><thead><tr>{table_header}</tr></thead>
 <tbody>{"".join(trs)}</tbody></table>'''
     total_pages=max(1,(total+page_size-1)//page_size)
     min_global_s='' if min_global is None else str(min_global)
@@ -4475,7 +4489,6 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     min_findings_s='' if min_findings is None else str(min_findings)
     date_from_s=date_from or ''
     date_to_s=date_to or ''
-    sort=sort if sort in _V92_SORT_SQL else 'date'
     extra_q=((f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
               +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
               +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else '')
@@ -4494,7 +4507,6 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
     risk_options=''.join(_v92_option(v,v,risk) for v in _V92_RISK_LEVELS)
     period_options=''.join(_v92_option(k,l,period) for k,l in (('month','This month'),('30d','Last 30 days'),('90d','Last 90 days')))
-    sort_options=''.join(_v92_option(k,l,sort) for k,l in (('date','Newest first'),('company','Company (A-Z)')))
     has_filters=bool(search or risk or period or ids or min_global_s or min_green_s or min_social_s or min_findings_s or date_from_s or date_to_s)
     clear_selection_href='/history?'+extra_q.lstrip('&') if extra_q else '/history'
     selection_banner=(f'<div class="notice">Showing {len(ids)} selected scan(s). '
@@ -4521,19 +4533,12 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
 <select name="risk"><option value="">All risk levels</option>{risk_options}</select>
 <select name="period"><option value="">All time</option>{period_options}</select>
-<input type="date" name="date_from" title="From date" style="width:150px" value="{date_from_s}">
-<input type="date" name="date_to" title="To date" style="width:150px" value="{date_to_s}">
-<select name="sort">{sort_options}</select>
-<input type="number" name="min_global" placeholder="Global &ge;" min="0" max="100" style="width:90px" value="{min_global_s}">
-<input type="number" name="min_green" placeholder="Green &ge;" min="0" max="100" style="width:90px" value="{min_green_s}">
-<input type="number" name="min_social" placeholder="Social &ge;" min="0" max="100" style="width:90px" value="{min_social_s}">
-<input type="number" name="min_findings" placeholder="Findings &ge;" min="0" style="width:100px" value="{min_findings_s}">
+<input type="hidden" name="sort" value="{sort}">
 <button class="btn" type="submit">Filter</button>
 {'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
 <a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
-{select_all_row}
 <form id="selectForm" method="POST" action="/history/export_selected">
 <input type="hidden" name="q" value="{search_safe}">
 <input type="hidden" name="risk" value="{html_escape(risk)}">
@@ -4548,6 +4553,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="hidden" name="select_all" id="selectAllFlag" value="">
 </form>
 {body}
+{select_all_row}
 <div style="margin-top:12px;display:flex;gap:8px">
 <button class="btn secondary" type="submit" form="selectForm" formaction="/history" formmethod="GET" id="viewSelectedBtn" disabled>View selected</button>
 <button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button>
