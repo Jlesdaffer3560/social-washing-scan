@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_2_history_select_all_and_score_filters'
+    assert app.APP_VERSION == 'hostable_v93_3_top_flagged_claims_panel'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -407,3 +407,56 @@ def test_scan_history_delete_by_filter(monkeypatch):
     every other scan-history function in this file."""
     monkeypatch.setattr(app,'DATABASE_URL','')
     assert app._v92_delete_by_filter(search='Acme')==0
+
+
+def test_scan_history_top_claims_unconfigured():
+    """v93.3: _v92_fetch_top_claims() (the evolving Top 10 most-flagged-claims panel) must
+    return an empty list, not raise, when the feature isn't configured -- same safety
+    posture as every other scan-history fetch function."""
+    assert app._v92_fetch_top_claims()==[]
+
+
+def test_scan_history_top_claims_panel_rendering(monkeypatch):
+    """v93.3: when top_claims data is supplied, the page must render a ranked table with
+    the phrase (HTML-escaped, since it's scraped page content), risk badge, occurrence
+    count and company count -- and must render nothing extra when there is no top-claims
+    data yet (a brand-new deployment with no scan_findings rows)."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    top_claims=[{'phrase':'<b>carbon neutral</b>','risk':'High','occurrences':7,'companies':5},
+                {'phrase':'eco-friendly','risk':'Medium','occurrences':4,'companies':3}]
+    html=app._v92_render_history_page([],0,1,25,'',top_claims=top_claims)
+    assert 'Top 2 most flagged claims/words' in html
+    assert '&lt;b&gt;carbon neutral&lt;/b&gt;' in html and '<b>carbon neutral</b>' not in html
+    assert 'eco-friendly' in html
+    html_empty=app._v92_render_history_page([],0,1,25,'')
+    assert 'most flagged claims/words' not in html_empty
+
+
+def test_scan_history_findings_saved_per_claim(monkeypatch):
+    """v93.3: saving a scan must also insert one scan_findings row per finding that has a
+    matched_phrase, tagging each with the new scan's id (via RETURNING id) -- this is what
+    feeds the Top 10 panel. Uses a fake connection/cursor since there's no real database
+    in tests."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append(('execute',sql,params))
+        def executemany(self,sql,rows): executed.append(('executemany',sql,rows))
+        def fetchone(self): return (99,)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    result={'company':{'company':'Acme'},'sector':{'level':'Medium'},
+            'findings':[{'dimension':'green','type':'vague eco claim','risk':'High','matched_phrase':'carbon neutral'},
+                        {'dimension':'social','type':'other','risk':'Low','matched_phrase':''}]}
+    app._v92_save_scan_history(result,'url','1.2.3.4')
+    insert_calls=[c for c in executed if c[0]=='executemany']
+    assert len(insert_calls)==1
+    _,sql,rows=insert_calls[0]
+    assert 'INSERT INTO scan_findings' in sql
+    assert rows==[(99,'green','vague eco claim','carbon neutral','High')]  # the empty-phrase finding is skipped

@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_2_history_select_all_and_score_filters"
-APP_RELEASE_LABEL="v93.2"
+APP_VERSION="hostable_v93_3_top_flagged_claims_panel"
+APP_RELEASE_LABEL="v93.3"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3822,6 +3822,22 @@ def _v92_ensure_table(conn):
                     'external_green_retained_count INTEGER','external_social_retained_count INTEGER',
                     'document_type TEXT'):
                     cur.execute(f'ALTER TABLE scan_history ADD COLUMN IF NOT EXISTS {col_sql}')
+                # v93.3: one row per individual flagged claim/phrase, so the evolving "Top 10
+                # most flagged claims/words" panel on /history can rank matched phrases across
+                # every scan ever logged -- scan_history itself only ever stored per-scan
+                # aggregates (findings_count etc.), never the individual claim text.
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS scan_findings (
+                        id SERIAL PRIMARY KEY,
+                        scan_id INTEGER REFERENCES scan_history(id) ON DELETE CASCADE,
+                        dimension TEXT,
+                        type TEXT,
+                        matched_phrase TEXT,
+                        risk TEXT
+                    )
+                ''')
+                cur.execute('CREATE INDEX IF NOT EXISTS scan_findings_scan_id_idx ON scan_findings (scan_id)')
+                cur.execute('CREATE INDEX IF NOT EXISTS scan_findings_phrase_idx ON scan_findings (LOWER(matched_phrase))')
             conn.commit()
             _V92_TABLE_READY=True
             return True
@@ -3872,7 +3888,8 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                         findings_count,summary,client_ip,sector_risk,data_reliability_warning,
                         empco_blacklisted_count,high_risk_findings_count,
                         external_green_retained_count,external_social_retained_count,document_type)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       RETURNING id''',
                     (scan_type,
                      str(comp.get('company','') or '')[:300],
                      str(comp.get('sector','') or '')[:300],
@@ -3894,6 +3911,17 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      green_retained,
                      social_retained,
                      str(result.get('document_type','') or '')[:100]))
+                scan_id=cur.fetchone()[0]
+                # v93.3: one row per flagged claim, feeding the cross-scan "Top 10 most
+                # flagged claims/words" panel -- matched_phrase is the exact wording that
+                # triggered detection (set in _v55_add_finding), not the full claim excerpt.
+                finding_rows=[(scan_id,str(f.get('dimension','') or '')[:20],str(f.get('type','') or '')[:200],
+                               str(f.get('matched_phrase','') or '')[:300],str(f.get('risk','') or '')[:50])
+                              for f in findings if f.get('matched_phrase')]
+                if finding_rows:
+                    cur.executemany(
+                        'INSERT INTO scan_findings (scan_id,dimension,type,matched_phrase,risk) VALUES (%s,%s,%s,%s,%s)',
+                        finding_rows)
             conn.commit()
         finally:
             conn.close()
@@ -3983,6 +4011,40 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     except Exception as e:
         _V92_LAST_ERROR=_v92_redact_error('fetch failed: '+str(e))
         return [],0
+    finally:
+        conn.close()
+
+_V92_RISK_RANK_SQL="CASE risk WHEN 'Very high' THEN 4 WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END"
+_V92_RISK_RANK_LABEL={4:'Very high',3:'High',2:'Medium',1:'Low',0:''}
+
+def _v92_fetch_top_claims(limit=10):
+    """Aggregates every individually-logged flagged claim (scan_findings, populated per
+    scan since v93.3) into a ranked "most frequently flagged claims/words across every
+    scan" list -- the evolving Top 10 panel on /history. Grouped case-insensitively on
+    the exact matched phrase so "Carbon Neutral" and "carbon neutral" count as one entry;
+    Low-risk matches are excluded, since a Low-risk hit isn't "problematic". Returns []
+    if the feature isn't configured/available, or nothing qualifies yet."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        with conn.cursor() as cur:
+            cur.execute(f'''
+                SELECT MIN(matched_phrase) AS phrase, COUNT(*) AS occurrences,
+                       COUNT(DISTINCT scan_id) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank
+                FROM scan_findings
+                WHERE matched_phrase IS NOT NULL AND matched_phrase <> ''
+                GROUP BY LOWER(matched_phrase)
+                HAVING MAX({_V92_RISK_RANK_SQL}) >= 2
+                ORDER BY occurrences DESC, companies DESC
+                LIMIT %s
+            ''',(limit,))
+            return [{'phrase':r[0],'occurrences':r[1],'companies':r[2],'risk':_V92_RISK_RANK_LABEL.get(r[3],'')}
+                    for r in cur.fetchall()]
+    except Exception:
+        return []
     finally:
         conn.close()
 
@@ -4217,7 +4279,7 @@ def _v92_option(value,label,current):
     return f'<option value="{value}"{sel}>{label}</option>'
 
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
-                              min_global=None,min_green=None,min_social=None,min_findings=None):
+                              min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -4237,6 +4299,24 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="stat"><strong>{stats.get("avg_score") if stats.get("avg_score") is not None else "—"}</strong><span>Average global score</span></div>
 <div class="stat"><strong>{high_plus}</strong><span>High / Very high risk</span></div>
 </div>'''
+    # v93.3: evolving "Top 10 most flagged claims/words" panel, aggregated across every
+    # scan ever logged (not scoped to the current search/filter -- it's meant to answer
+    # "what wording keeps coming up", independent of which companies you're browsing right
+    # now). Untrusted content (the phrase itself, scraped from a scanned page) is escaped.
+    top_claims=top_claims or []
+    if top_claims:
+        claim_rows=''.join(
+            f'<tr><td>{i+1}</td><td>{html_escape(str(c.get("phrase") or ""))}</td>'
+            f'<td>{_v92_risk_badge(c.get("risk"))}</td><td>{c.get("occurrences",0)}</td><td>{c.get("companies",0)}</td></tr>'
+            for i,c in enumerate(top_claims))
+        top_claims_html=f'''<div class="card">
+<h2 style="margin:0 0 4px;font-size:18px">Top {len(top_claims)} most flagged claims/words</h2>
+<p class="small" style="margin:0 0 10px">Across every scan logged on this deployment &mdash; updates automatically as new scans come in.</p>
+<table><thead><tr><th>#</th><th>Phrase</th><th>Worst risk</th><th>Occurrences</th><th>Companies</th></tr></thead>
+<tbody>{claim_rows}</tbody></table>
+</div>'''
+    else:
+        top_claims_html=''
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
     elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None):
@@ -4318,6 +4398,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
 <a class="btn secondary" href="/history/logout">Log out</a></div>
 {stats_html}
+{top_claims_html}
 <div class="card">
 <form method="GET" action="/history" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
 <input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
@@ -4542,8 +4623,9 @@ class Handler(BaseHTTPRequestHandler):
             page_size=25
             rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings)
             stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+            top_claims=_v92_fetch_top_claims()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
-                min_global,min_green,min_social,min_findings))
+                min_global,min_green,min_social,min_findings,top_claims))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
