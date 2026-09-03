@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_5_top_claims_risk_level_label"
-APP_RELEASE_LABEL="v93.5"
+APP_VERSION="hostable_v93_7_history_date_range_and_alpha_sort"
+APP_RELEASE_LABEL="v93.7"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3838,6 +3838,10 @@ def _v92_ensure_table(conn):
                 ''')
                 cur.execute('CREATE INDEX IF NOT EXISTS scan_findings_scan_id_idx ON scan_findings (scan_id)')
                 cur.execute('CREATE INDEX IF NOT EXISTS scan_findings_phrase_idx ON scan_findings (LOWER(matched_phrase))')
+                # v93.6: whether this specific flagged claim maps to a fixed EmpCo Annex I
+                # blacklisted practice (per se unfair, no burden of proof needed) -- distinct
+                # from `risk`, which is the general Low/Medium/High/Very high severity rating.
+                cur.execute('ALTER TABLE scan_findings ADD COLUMN IF NOT EXISTS blacklisted BOOLEAN')
             conn.commit()
             _V92_TABLE_READY=True
             return True
@@ -3923,11 +3927,12 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                 finding_rows=[(scan_id,str(f.get('dimension','') or '').lower()[:20],
                                str(f.get('claim_type') or f.get('type') or '')[:200],
                                str(f.get('matched_phrase','') or '')[:300],
-                               str(f.get('risk_level') or f.get('risk') or '')[:50])
+                               str(f.get('risk_level') or f.get('risk') or '')[:50],
+                               bool(f.get('blacklisted_practice_indicator')))
                               for f in findings if f.get('matched_phrase')]
                 if finding_rows:
                     cur.executemany(
-                        'INSERT INTO scan_findings (scan_id,dimension,type,matched_phrase,risk) VALUES (%s,%s,%s,%s,%s)',
+                        'INSERT INTO scan_findings (scan_id,dimension,type,matched_phrase,risk,blacklisted) VALUES (%s,%s,%s,%s,%s,%s)',
                         finding_rows)
             conn.commit()
         finally:
@@ -3945,7 +3950,8 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
     'high_risk_findings_count','external_green_retained_count','external_social_retained_count',
     'data_reliability_warning','summary']
 
-def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
+def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
+                        date_from=None,date_to=None):
     """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
     all three always agree on what "the current view" means. Every value is bound as a
     parameter, never interpolated into the SQL text, regardless of source.
@@ -3954,7 +3960,10 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
     `id = ANY(%s)`, which both psycopg drivers adapt to a Postgres array natively, rather
     than building one placeholder per id.
     v93.2: min_global/min_green/min_social/min_findings add "column >= N" threshold
-    filters for the four score/count columns shown in the table -- None means unset."""
+    filters for the four score/count columns shown in the table -- None means unset.
+    v93.7: date_from/date_to are exact YYYY-MM-DD strings (already validated by
+    _v92_parse_date_filter) for a precise date-range filter, independent of the existing
+    month/30d/90d period presets -- either or both may be set at once as the period."""
     clauses=[]; params=[]
     if ids:
         clauses.append('id = ANY(%s)'); params.append(list(ids))
@@ -3972,8 +3981,23 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
         clauses.append('social_score >= %s'); params.append(min_social)
     if min_findings is not None:
         clauses.append('findings_count >= %s'); params.append(min_findings)
+    if date_from:
+        clauses.append('scanned_at >= %s::date'); params.append(date_from)
+    if date_to:
+        clauses.append("scanned_at < %s::date + interval '1 day'"); params.append(date_to)
     where=('WHERE '+' AND '.join(clauses)) if clauses else ''
     return where,tuple(params)
+
+def _v92_parse_date_filter(source,key):
+    """Parses an optional exact-date filter value (date_from/date_to, from an HTML
+    <input type="date">) into a validated YYYY-MM-DD string, or None if absent/malformed
+    -- never trusts the raw client-controlled string into SQL beyond this format check."""
+    raw=(source.get(key,[''])[0] or '').strip()
+    if not raw or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',raw):
+        return None
+    return raw
+
+_V92_SORT_SQL={'date':'scanned_at DESC','company':'company ASC, scanned_at DESC'}
 
 def _v92_parse_min_filter(source,key):
     """Parses an optional "column >= N" query/form value (min_global etc.) into an int,
@@ -3987,7 +4011,8 @@ def _v92_parse_min_filter(source,key):
         return None
     return max(0,min(100000,v))
 
-def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
+def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
+                             date_from=None,date_to=None,sort='date'):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -3998,7 +4023,8 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
+        order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
             total=cur.fetchone()[0]
@@ -4008,7 +4034,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
                            green_score,social_score,audience,findings_count,summary,
                            sector_risk,empco_blacklisted_count,high_risk_findings_count
                     FROM scan_history {where}
-                    ORDER BY scanned_at DESC LIMIT %s OFFSET %s''',
+                    ORDER BY {order_by} LIMIT %s OFFSET %s''',
                 params+(page_size,offset))
             cols=['id','scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
                   'green_score','social_score','audience','findings_count','summary',
@@ -4040,7 +4066,8 @@ def _v92_fetch_top_claims(limit=10):
         with conn.cursor() as cur:
             cur.execute(f'''
                 SELECT MIN(matched_phrase) AS phrase, COUNT(*) AS occurrences,
-                       COUNT(DISTINCT scan_id) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank
+                       COUNT(DISTINCT scan_id) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank,
+                       BOOL_OR(blacklisted) AS blacklisted
                 FROM scan_findings
                 WHERE matched_phrase IS NOT NULL AND matched_phrase <> ''
                 GROUP BY LOWER(matched_phrase)
@@ -4048,7 +4075,8 @@ def _v92_fetch_top_claims(limit=10):
                 ORDER BY occurrences DESC, companies DESC
                 LIMIT %s
             ''',(limit,))
-            return [{'phrase':r[0],'occurrences':r[1],'companies':r[2],'risk':_V92_RISK_RANK_LABEL.get(r[3],'')}
+            return [{'phrase':r[0],'occurrences':r[1],'companies':r[2],'risk':_V92_RISK_RANK_LABEL.get(r[3],''),
+                     'blacklisted':bool(r[4])}
                     for r in cur.fetchall()]
     except Exception:
         return []
@@ -4100,11 +4128,12 @@ def _v92_backfill_legacy_findings():
                     summary['skipped_already_present']+=1
                     continue
                 finding_rows=[(scan_id,str(f.get('dimension','') or '')[:20],str(f.get('type','') or '')[:200],
-                               str(f.get('matched_phrase','') or '')[:300],str(f.get('risk','') or '')[:50])
+                               str(f.get('matched_phrase','') or '')[:300],str(f.get('risk','') or '')[:50],
+                               bool(f.get('blacklisted')))
                               for f in findings if f.get('matched_phrase')]
                 if finding_rows:
                     cur.executemany(
-                        'INSERT INTO scan_findings (scan_id,dimension,type,matched_phrase,risk) VALUES (%s,%s,%s,%s,%s)',
+                        'INSERT INTO scan_findings (scan_id,dimension,type,matched_phrase,risk,blacklisted) VALUES (%s,%s,%s,%s,%s,%s)',
                         finding_rows)
                     summary['inserted_companies']+=1
                     summary['inserted_rows']+=len(finding_rows)
@@ -4117,7 +4146,8 @@ def _v92_backfill_legacy_findings():
         conn.close()
     return summary
 
-def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
+def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
+                      date_from=None,date_to=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
     whatever filters are currently applied. Returns safe all-zero defaults if the
     feature isn't configured/available rather than erroring."""
@@ -4128,7 +4158,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
     try:
         if not _v92_ensure_table(conn):
             return empty
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
         month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
@@ -4144,7 +4174,8 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
     finally:
         conn.close()
 
-def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None):
+def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
+                               date_from=None,date_to=None,sort='date'):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -4154,17 +4185,19 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=No
     try:
         if not _v92_ensure_table(conn):
             return []
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
+        order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
-                             ORDER BY scanned_at DESC''',params)
+                             ORDER BY {order_by}''',params)
             return [dict(zip(_V92_EXPORT_COLUMNS,r)) for r in cur.fetchall()]
     except Exception:
         return []
     finally:
         conn.close()
 
-def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None):
+def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None,
+                           date_from=None,date_to=None):
     """Deletes every row matching the given search/risk/period/threshold filter -- the
     "select all matching results across every page" counterpart to _v92_delete_by_ids().
     Used when the operator selects all N results under the current filter (which may span
@@ -4175,7 +4208,7 @@ def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=
     try:
         if not _v92_ensure_table(conn):
             return 0
-        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings)
+        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to)
         with conn.cursor() as cur:
             cur.execute(f'DELETE FROM scan_history {where}',params)
             deleted=cur.rowcount
@@ -4348,7 +4381,8 @@ def _v92_option(value,label,current):
     return f'<option value="{value}"{sel}>{label}</option>'
 
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
-                              min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None):
+                              min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
+                              date_from=None,date_to=None,sort='date'):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -4374,14 +4408,22 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     # now). Untrusted content (the phrase itself, scraped from a scanned page) is escaped.
     top_claims=top_claims or []
     if top_claims:
-        claim_rows=''.join(
-            f'<tr><td>{i+1}</td><td>{html_escape(str(c.get("phrase") or ""))}</td>'
-            f'<td>{_v92_risk_badge(c.get("risk"))}</td><td>{c.get("occurrences",0)}</td><td>{c.get("companies",0)}</td></tr>'
-            for i,c in enumerate(top_claims))
+        # v93.6: EmpCo blacklist status is distinct from the general risk level -- a
+        # blacklisted practice (fixed EmpCo Annex I list) is per se unfair, with no burden
+        # of proof needed by the regulator, unlike a merely "High risk" claim. Reuses the
+        # existing .risk-badge/high styling rather than inventing a new badge class.
+        yes_badge='<span class="risk-badge high">Yes</span>'
+        claim_row_htmls=[]
+        for i,c in enumerate(top_claims):
+            blacklist_cell=yes_badge if c.get('blacklisted') else '&mdash;'
+            claim_row_htmls.append(f'<tr><td>{i+1}</td><td>{html_escape(str(c.get("phrase") or ""))}</td>'
+                        f'<td>{_v92_risk_badge(c.get("risk"))}</td><td>{blacklist_cell}</td>'
+                        f'<td>{c.get("occurrences",0)}</td><td>{c.get("companies",0)}</td></tr>')
+        claim_rows=''.join(claim_row_htmls)
         top_claims_html=f'''<div class="card">
 <h2 style="margin:0 0 4px;font-size:18px">Top {len(top_claims)} most flagged claims/words</h2>
 <p class="small" style="margin:0 0 10px">Across every scan logged on this deployment &mdash; updates automatically as new scans come in.</p>
-<table><thead><tr><th>#</th><th>Phrase</th><th>Risk level</th><th>Occurrences</th><th>Companies</th></tr></thead>
+<table><thead><tr><th>#</th><th>Phrase</th><th>Risk level</th><th>EmpCo blacklist</th><th>Occurrences</th><th>Companies</th></tr></thead>
 <tbody>{claim_rows}</tbody></table>
 </div>'''
     else:
@@ -4431,9 +4473,14 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     min_green_s='' if min_green is None else str(min_green)
     min_social_s='' if min_social is None else str(min_social)
     min_findings_s='' if min_findings is None else str(min_findings)
+    date_from_s=date_from or ''
+    date_to_s=date_to or ''
+    sort=sort if sort in _V92_SORT_SQL else 'date'
     extra_q=((f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
               +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
-              +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else ''))
+              +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else '')
+              +(f'&date_from={date_from_s}' if date_from_s else '')+(f'&date_to={date_to_s}' if date_to_s else '')
+              +(f'&sort={sort}' if sort!='date' else ''))
     # v92.6: an active ids selection-filter (from "View selected") is preserved across
     # pagination and the plain "Export CSV" link the same way search/risk/period already
     # are -- each id is its own repeated ?ids=N query param, matching exactly what the
@@ -4447,7 +4494,8 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
     risk_options=''.join(_v92_option(v,v,risk) for v in _V92_RISK_LEVELS)
     period_options=''.join(_v92_option(k,l,period) for k,l in (('month','This month'),('30d','Last 30 days'),('90d','Last 90 days')))
-    has_filters=bool(search or risk or period or ids or min_global_s or min_green_s or min_social_s or min_findings_s)
+    sort_options=''.join(_v92_option(k,l,sort) for k,l in (('date','Newest first'),('company','Company (A-Z)')))
+    has_filters=bool(search or risk or period or ids or min_global_s or min_green_s or min_social_s or min_findings_s or date_from_s or date_to_s)
     clear_selection_href='/history?'+extra_q.lstrip('&') if extra_q else '/history'
     selection_banner=(f'<div class="notice">Showing {len(ids)} selected scan(s). '
                        f'<a href="{clear_selection_href}">Clear selection</a></div>') if ids else ''
@@ -4473,13 +4521,16 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
 <select name="risk"><option value="">All risk levels</option>{risk_options}</select>
 <select name="period"><option value="">All time</option>{period_options}</select>
+<input type="date" name="date_from" title="From date" style="width:150px" value="{date_from_s}">
+<input type="date" name="date_to" title="To date" style="width:150px" value="{date_to_s}">
+<select name="sort">{sort_options}</select>
 <input type="number" name="min_global" placeholder="Global &ge;" min="0" max="100" style="width:90px" value="{min_global_s}">
 <input type="number" name="min_green" placeholder="Green &ge;" min="0" max="100" style="width:90px" value="{min_green_s}">
 <input type="number" name="min_social" placeholder="Social &ge;" min="0" max="100" style="width:90px" value="{min_social_s}">
 <input type="number" name="min_findings" placeholder="Findings &ge;" min="0" style="width:100px" value="{min_findings_s}">
 <button class="btn" type="submit">Filter</button>
 {'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
-<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}{ids_q}">Export CSV</a>
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
 {select_all_row}
@@ -4491,6 +4542,9 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="hidden" name="min_green" value="{min_green_s}">
 <input type="hidden" name="min_social" value="{min_social_s}">
 <input type="hidden" name="min_findings" value="{min_findings_s}">
+<input type="hidden" name="date_from" value="{date_from_s}">
+<input type="hidden" name="date_to" value="{date_to_s}">
+<input type="hidden" name="sort" value="{sort}">
 <input type="hidden" name="select_all" id="selectAllFlag" value="">
 </form>
 {body}
@@ -4687,14 +4741,18 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(qs,'min_green')
             min_social=_v92_parse_min_filter(qs,'min_social')
             min_findings=_v92_parse_min_filter(qs,'min_findings')
+            date_from=_v92_parse_date_filter(qs,'date_from')
+            date_to=_v92_parse_date_filter(qs,'date_to')
+            sort=(qs.get('sort',['date'])[0] or 'date').strip()
             try: page=max(1,int(qs.get('page',['1'])[0]))
             except Exception: page=1
             page_size=25
-            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings)
-            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+            rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings,
+                date_from,date_to,sort)
+            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
             top_claims=_v92_fetch_top_claims()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
-                min_global,min_green,min_social,min_findings,top_claims))
+                min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -4709,7 +4767,11 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(qs,'min_green')
             min_social=_v92_parse_min_filter(qs,'min_social')
             min_findings=_v92_parse_min_filter(qs,'min_findings')
-            rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings)
+            date_from=_v92_parse_date_filter(qs,'date_from')
+            date_to=_v92_parse_date_filter(qs,'date_to')
+            sort=(qs.get('sort',['date'])[0] or 'date').strip()
+            rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings,
+                date_from,date_to,sort)
             csv_bytes=_v92_rows_to_csv(rows)
             stamp=datetime.date.today().isoformat()
             return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -4767,7 +4829,11 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(form,'min_green')
             min_social=_v92_parse_min_filter(form,'min_social')
             min_findings=_v92_parse_min_filter(form,'min_findings')
-            rows=_v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings)
+            date_from=_v92_parse_date_filter(form,'date_from')
+            date_to=_v92_parse_date_filter(form,'date_to')
+            sort=(form.get('sort',['date'])[0] or 'date').strip()
+            rows=_v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
+                date_from,date_to,sort)
         else:
             rows=_v92_fetch_all_for_export(ids=ids) if ids else []
         csv_bytes=_v92_rows_to_csv(rows)
@@ -4800,7 +4866,9 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(form,'min_green')
             min_social=_v92_parse_min_filter(form,'min_social')
             min_findings=_v92_parse_min_filter(form,'min_findings')
-            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings)
+            date_from=_v92_parse_date_filter(form,'date_from')
+            date_to=_v92_parse_date_filter(form,'date_to')
+            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to)
         else:
             _v92_delete_by_ids(ids)
         return self._send(b'',status=302,extra_headers={'Location':'/history'})

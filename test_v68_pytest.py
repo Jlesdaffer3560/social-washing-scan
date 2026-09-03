@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_5_top_claims_risk_level_label'
+    assert app.APP_VERSION == 'hostable_v93_7_history_date_range_and_alpha_sort'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -371,6 +371,36 @@ def test_scan_history_min_score_filters():
     assert app._v92_build_filters()==('',())
 
 
+def test_scan_history_date_range_filter():
+    """v93.7: date_from/date_to must accept only a strict YYYY-MM-DD string (rejecting
+    garbage or a SQL-injection-shaped value, which must never reach the query), and must
+    thread into the WHERE builder as bound parameters with an inclusive day-boundary for
+    date_to (so a scan made at 23:59 on the end date is still included)."""
+    assert app._v92_parse_date_filter({'date_from':['2026-08-01']},'date_from')=='2026-08-01'
+    assert app._v92_parse_date_filter({'date_from':['']},'date_from') is None
+    assert app._v92_parse_date_filter({},'date_from') is None
+    assert app._v92_parse_date_filter({'date_from':['not-a-date']},'date_from') is None
+    assert app._v92_parse_date_filter({'date_from':["2026-08-01' OR '1'='1"]},'date_from') is None
+    where,params=app._v92_build_filters(date_from='2026-08-01',date_to='2026-08-31')
+    assert where=="WHERE scanned_at >= %s::date AND scanned_at < %s::date + interval '1 day'"
+    assert params==('2026-08-01','2026-08-31')
+
+
+def test_scan_history_sort_alphabetical(monkeypatch):
+    """v93.7: sorting by company must be an explicit opt-in ('company' -> alphabetical
+    A-Z), defaulting to the existing newest-first behaviour for any other/missing value --
+    and the sort dropdown on the page must reflect whichever is currently active."""
+    assert app._V92_SORT_SQL['date']=='scanned_at DESC'
+    assert app._V92_SORT_SQL['company']=='company ASC, scanned_at DESC'
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'',sort='company')
+    assert '<option value="company" selected>' in html
+    assert 'name="sort" value="company"' in html  # carried into the select-all hidden form
+
+
 def test_scan_history_page_renders_min_score_inputs(monkeypatch):
     """v93.2: the filter form must render the four threshold inputs pre-filled with
     whatever values are currently active, and carry them into the Export CSV link and
@@ -432,6 +462,55 @@ def test_scan_history_top_claims_panel_rendering(monkeypatch):
     assert 'most flagged claims/words' not in html_empty
 
 
+def test_scan_history_table_still_renders_alongside_top_claims_panel(monkeypatch):
+    """v93.6 regression guard: a local variable inside the Top 10 panel's rendering block
+    was named `rows`, silently shadowing the function's own `rows` parameter (the actual
+    scan_history rows for the table below) -- whenever top_claims was non-empty, the main
+    table would then try to iterate the panel's HTML strings as if they were row dicts and
+    crash with AttributeError. This must never regress: both sections must render
+    correctly at the same time, with the real company data intact in the table."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    top_claims=[{'phrase':'carbon neutral','risk':'High','occurrences':7,'companies':5,'blacklisted':True}]
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'',top_claims=top_claims)
+    assert 'Top 1 most flagged claims/words' in html
+    assert '<strong>Puratos</strong>' in html  # the real scan table row, not the panel's HTML
+
+
+def test_scan_history_top_claims_blacklist_column(monkeypatch):
+    """v93.6: the Top 10 panel must show whether a phrase was ever flagged as an EmpCo
+    Annex I blacklisted practice, separate from the general risk-level badge -- "Yes" for
+    a blacklisted phrase, a plain dash for one that wasn't."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    top_claims=[{'phrase':'carbon neutral','risk':'High','occurrences':7,'companies':5,'blacklisted':True},
+                {'phrase':'eco-friendly','risk':'Medium','occurrences':4,'companies':3,'blacklisted':False}]
+    html=app._v92_render_history_page([],0,1,25,'',top_claims=top_claims)
+    assert 'EmpCo blacklist' in html
+    assert html.count('>Yes<')==1
+    assert '&mdash;' in html
+
+
+def test_scan_history_fetch_top_claims_includes_blacklist(monkeypatch):
+    """v93.6: _v92_fetch_top_claims() must aggregate blacklisted status with BOOL_OR (true
+    if ANY occurrence of that phrase was blacklisted) alongside the existing risk-rank
+    aggregation."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): pass
+        def fetchall(self): return [('carbon neutral',7,5,3,True)]
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    result=app._v92_fetch_top_claims()
+    assert result==[{'phrase':'carbon neutral','occurrences':7,'companies':5,'risk':'High','blacklisted':True}]
+
+
 def test_scan_history_findings_saved_per_claim(monkeypatch):
     """v93.3: saving a scan must also insert one scan_findings row per finding that has a
     matched_phrase, tagging each with the new scan's id (via RETURNING id) -- this is what
@@ -459,7 +538,7 @@ def test_scan_history_findings_saved_per_claim(monkeypatch):
     assert len(insert_calls)==1
     _,sql,rows=insert_calls[0]
     assert 'INSERT INTO scan_findings' in sql
-    assert rows==[(99,'green','vague eco claim','carbon neutral','High')]  # the empty-phrase finding is skipped
+    assert rows==[(99,'green','vague eco claim','carbon neutral','High',False)]  # the empty-phrase finding is skipped
 
 
 def test_backfill_legacy_findings_missing_fixture(monkeypatch, tmp_path):
@@ -499,7 +578,7 @@ def test_backfill_legacy_findings_inserts_and_skips(monkeypatch, tmp_path):
     summary=app._v92_backfill_legacy_findings()
     assert summary['inserted_companies']==1 and summary['inserted_rows']==1
     assert summary['not_found']==['Unknown Co']
-    assert insert_log==[[(1,'green','x','carbon neutral','High')]]
+    assert insert_log==[[(1,'green','x','carbon neutral','High',False)]]
 
 
 def test_backfill_legacy_findings_skips_already_populated(monkeypatch, tmp_path):
