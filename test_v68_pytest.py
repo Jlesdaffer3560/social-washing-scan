@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_20_kbo_company_number_identity_check'
+    assert app.APP_VERSION == 'hostable_v93_20_1_kbo_identity_check_requires_full_name_match'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1083,6 +1083,22 @@ def test_v93_company_number_identity_check_flags_mismatch():
     assert 'Gaasch Packaging' in result['note']
 
 
+def test_v93_company_number_identity_check_requires_all_tokens_not_just_one():
+    """v93.20.1: verified LIVE against the real reported case -- gaasch.net's own page
+    text reads "Jim & Luann Gaasch Website" (Gaasch is literally the site owners' real
+    surname) and never mentions "packaging" anywhere. An earlier version of this check
+    required only ANY ONE distinctive token to match and was fooled by this exact
+    coincidence into reporting a false "confirmed" match on the real bug report the
+    feature was built for. Requiring every distinctive token (capped at 2) must catch it."""
+    kbo_info={'number':'0404.889.282','name':'GAASCH PACKAGING','address':'Z. 5 Mollem 530, 1730 Asse','nace_activities':[]}
+    real_gaasch_net_text=('Jim & Luann Gaasch Website. We are Jim & Luann Gaasch. We live in Alpena, Michigan. '
+                           'Jim retired from appraising in 2004 as a Certified General Real Estate Appraiser. '
+                           'We are still investing in real estate.')
+    result=app._v93_company_number_identity_check(kbo_info,real_gaasch_net_text)
+    assert result['match'] is False
+    assert 'possible wrong company' in result['note'].lower()
+
+
 def test_analyse_uploaded_document_wires_company_number_end_to_end(monkeypatch):
     """v93.20: analyse_uploaded_document does not crawl a website, so it can exercise the
     full company-number wiring (lookup -> identity check -> comp['company_number'] ->
@@ -1090,7 +1106,7 @@ def test_analyse_uploaded_document_wires_company_number_end_to_end(monkeypatch):
     kbo_info={'number':'0403.170.701','name':'Gaasch Packaging','address':'Industrielaan 10, 9999 Voorbeeldstad',
               'website':None,'nace_activities':[{'code':'46.441','description':'Groothandel in porselein en glaswerk'}]}
     monkeypatch.setattr(app,'_v93_lookup_kbo_company',lambda n: kbo_info if n else None)
-    result=app.analyse_uploaded_document('policy.txt','This document describes our packaging quality policy.','',company_number='BE0403170701')
+    result=app.analyse_uploaded_document('policy.txt','This document describes the packaging quality policy of Gaasch Packaging.','',company_number='BE0403170701')
     assert result['company_identity_check']['match'] is True
     assert result['company']['company_number']=='0403.170.701'
     assert result['company']['company']=='Gaasch Packaging'  # kbo name used as the hint

@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_20_kbo_company_number_identity_check"
-APP_RELEASE_LABEL="v93.20"
+APP_VERSION="hostable_v93_20_1_kbo_identity_check_requires_full_name_match"
+APP_RELEASE_LABEL="v93.20.1"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -678,12 +678,24 @@ def _v93_company_number_identity_check(kbo_info, analysed_text):
     supplied KBO/BTW number is officially registered to? Deliberately checks only the
     crawled page text, never the domain/hostname itself -- the real case this was built
     for is exactly a family-name collision (a scan for "Gaasch Packaging" landing on
-    gaasch.net, an unrelated personal site of two private individuals), where the
-    hostname trivially "matches" the surname and would defeat the whole point of the
-    check if it were allowed to count."""
+    gaasch.net, an unrelated personal site of two private individuals named Gaasch), where
+    the hostname trivially "matches" the surname.
+
+    v93.20.1: an EARLIER version of this check required only ANY ONE distinctive token to
+    appear and was verified live against the real reported case -- it produced a false
+    "confirmed" match, because gaasch.net's own page text prominently reads "Jim & Luann
+    Gaasch Website" (Gaasch is literally their real surname too), while never mentioning
+    "packaging" at all. A single shared word is exactly the coincidence this check exists
+    to catch, so a lone match must not count as confirmation. Requiring EVERY distinctive
+    token to appear (capped at 2, so a long legal name tolerates one word not recurring in
+    casual copy) fixes that specific case: {"gaasch","packaging"} both present confirms;
+    "gaasch" alone does not. A false "possible wrong company" warning on a legitimate site
+    that just phrases its own name unusually is a minor inconvenience; a false silent
+    confirmation defeats the entire feature -- so this deliberately errs toward warning."""
     tokens=_v93_kbo_core_name_tokens(kbo_info.get('name',''))
     haystack=(analysed_text or '').lower()
-    matched=bool(tokens) and any(t in haystack for t in tokens)
+    required=min(2,len(tokens))
+    matched=required>0 and sum(1 for t in tokens if t in haystack)>=required
     official=kbo_info.get('name','')
     number=kbo_info.get('number','')
     if matched:
