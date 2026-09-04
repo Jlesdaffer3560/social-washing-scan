@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_22_google_custom_search_disabled'
+    assert app.APP_VERSION == 'hostable_v93_23_external_signals_column'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -513,7 +513,7 @@ def test_scan_history_fetch_distinct_scores_unconfigured():
     """v93.9: _v92_fetch_distinct_scores() must return all-empty lists (not raise) when
     the feature isn't configured -- same safety posture as every other scan-history fetch
     function."""
-    assert app._v92_fetch_distinct_scores()=={'global':[],'green':[],'social':[],'findings':[]}
+    assert app._v92_fetch_distinct_scores()=={'global':[],'green':[],'social':[],'findings':[],'external':[]}
 
 
 def test_scan_history_excel_style_score_dropdowns(monkeypatch):
@@ -537,6 +537,55 @@ def test_scan_history_excel_style_score_dropdowns(monkeypatch):
     assert '/history?min_global=54&min_green=57&min_social=12' in html
     # the "All" option for Global clears only min_global, keeping min_social active
     assert '<option value="/history?min_social=12">All</option>' in html
+
+
+def test_scan_history_external_signals_column_shows_sum(monkeypatch):
+    """v93.23: the "External signals" column shows retained green + social external
+    public-source signals as a single combined count -- findings_count (7) and the
+    external total (3+2=5) are deliberately different values here so the assertion can't
+    pass by accident against the wrong column."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':1,'scanned_at':'2026-09-04T10:00','company':'Acme','sector':'','sector_risk':'',
+         'input_url':'https://acme.com','global_score':40,'global_risk':'Medium','green_score':40,
+         'social_score':40,'findings_count':7,'external_green_retained_count':3,'external_social_retained_count':2}
+    html=app._v92_render_history_page([row],1,1,25,'')
+    assert '<td>7</td>\n<td>5</td>\n</tr>' in html
+
+
+def test_scan_history_external_signals_column_shows_dash_when_uncounted(monkeypatch):
+    """v93.23: older rows predate the external-signal counters (both columns NULL) --
+    shown as an em dash, distinct from a genuine zero, matching every other nullable
+    count already shown in this table."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':1,'scanned_at':'2026-09-04T10:00','company':'Acme','sector':'','sector_risk':'',
+         'input_url':'https://acme.com','global_score':40,'global_risk':'Medium','green_score':40,
+         'social_score':40,'findings_count':7,'external_green_retained_count':None,'external_social_retained_count':None}
+    html=app._v92_render_history_page([row],1,1,25,'')
+    assert '<td>7</td>\n<td>—</td>\n</tr>' in html
+
+
+def test_scan_history_external_signals_filter_dropdown(monkeypatch):
+    """v93.23: "External signals" gets the same Excel-style exact-match dropdown as the
+    other score/count columns, sourced from the real distinct values."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14,'external_green_retained_count':2,'external_social_retained_count':1}
+    distinct_scores={'global':[54],'green':[57],'social':[50],'findings':[14],'external':[0,3]}
+    html=app._v92_render_history_page([row],1,1,25,'',min_external=3,distinct_scores=distinct_scores)
+    assert 'External signals' in html
+    assert '<option value="/history?min_external=3" selected>3</option>' in html
+    # picking "All" for External signals must clear only min_external
+    assert '<option value="/history">All</option>' in html
+
+
+def test_build_filters_external_signals_exact_match():
+    """v93.23: min_external filters on the DERIVED external-signal total (green +
+    social retained counts), not a raw stored column, so it must use the shared SQL
+    expression consistently."""
+    where,params=app._v92_build_filters(min_external=5)
+    assert f'{app._V92_EXTERNAL_SIGNALS_EXPR} = %s' in where
+    assert params==(5,)
 
 
 def test_scan_history_fetch_distinct_companies_and_dates_unconfigured():

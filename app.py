@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_22_google_custom_search_disabled"
-APP_RELEASE_LABEL="v93.22"
+APP_VERSION="hostable_v93_23_external_signals_column"
+APP_RELEASE_LABEL="v93.23"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4422,8 +4422,10 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
     'company_number','company_number_official_name','company_number_match',
     'data_reliability_warning','summary']
 
+_V92_EXTERNAL_SIGNALS_EXPR="(COALESCE(external_green_retained_count,0) + COALESCE(external_social_retained_count,0))"
+
 def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                        date_from=None,date_to=None):
+                        date_from=None,date_to=None,min_external=None):
     """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
     all three always agree on what "the current view" means. Every value is bound as a
     parameter, never interpolated into the SQL text, regardless of source.
@@ -4439,7 +4441,11 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
     that a >= threshold "wasn't a real filter".)
     v93.7: date_from/date_to are exact YYYY-MM-DD strings (already validated by
     _v92_parse_date_filter) for a precise date-range filter, independent of the existing
-    month/30d/90d period presets -- either or both may be set at once as the period."""
+    month/30d/90d period presets -- either or both may be set at once as the period.
+    v93.23: min_external is the same exact-match pattern for the "External signals"
+    column -- a derived value (retained green + social external-source signals), not a
+    raw stored column, so the filter/sort/distinct-values machinery all use the same
+    _V92_EXTERNAL_SIGNALS_EXPR SQL expression rather than a plain column name."""
     clauses=[]; params=[]
     if ids:
         clauses.append('id = ANY(%s)'); params.append(list(ids))
@@ -4457,6 +4463,8 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
         clauses.append('social_score = %s'); params.append(min_social)
     if min_findings is not None:
         clauses.append('findings_count = %s'); params.append(min_findings)
+    if min_external is not None:
+        clauses.append(f'{_V92_EXTERNAL_SIGNALS_EXPR} = %s'); params.append(min_external)
     if date_from:
         clauses.append('scanned_at >= %s::date'); params.append(date_from)
     if date_to:
@@ -4475,8 +4483,9 @@ def _v92_parse_date_filter(source,key):
 
 _V92_SORT_SQL={'date':'scanned_at DESC','company':'company ASC, scanned_at DESC',
                'global':'global_score DESC NULLS LAST, scanned_at DESC','green':'green_score DESC NULLS LAST, scanned_at DESC',
-               'social':'social_score DESC NULLS LAST, scanned_at DESC','findings':'findings_count DESC NULLS LAST, scanned_at DESC'}
-_V92_SORT_LABELS={'date':'Date','company':'Company','global':'Global','green':'Green','social':'Social','findings':'Findings'}
+               'social':'social_score DESC NULLS LAST, scanned_at DESC','findings':'findings_count DESC NULLS LAST, scanned_at DESC',
+               'external':f'{_V92_EXTERNAL_SIGNALS_EXPR} DESC NULLS LAST, scanned_at DESC'}
+_V92_SORT_LABELS={'date':'Date','company':'Company','global':'Global','green':'Green','social':'Social','findings':'Findings','external':'External signals'}
 
 def _v92_parse_min_filter(source,key):
     """Parses an optional "column >= N" query/form value (min_global etc.) into an int,
@@ -4491,7 +4500,7 @@ def _v92_parse_min_filter(source,key):
     return max(0,min(100000,v))
 
 def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                             date_from=None,date_to=None,sort='company'):
+                             date_from=None,date_to=None,sort='company',min_external=None):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -4502,7 +4511,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
         order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
@@ -4512,14 +4521,16 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
                 f'''SELECT id,scanned_at,scan_type,company,sector,input_url,global_score,global_risk,
                            green_score,social_score,audience,findings_count,summary,
                            sector_risk,empco_blacklisted_count,high_risk_findings_count,
-                           company_number,company_number_official_name,company_number_match
+                           company_number,company_number_official_name,company_number_match,
+                           external_green_retained_count,external_social_retained_count
                     FROM scan_history {where}
                     ORDER BY {order_by} LIMIT %s OFFSET %s''',
                 params+(page_size,offset))
             cols=['id','scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
                   'green_score','social_score','audience','findings_count','summary',
                   'sector_risk','empco_blacklisted_count','high_risk_findings_count',
-                  'company_number','company_number_official_name','company_number_match']
+                  'company_number','company_number_official_name','company_number_match',
+                  'external_green_retained_count','external_social_retained_count']
             rows=[dict(zip(cols,r)) for r in cur.fetchall()]
         return rows,total
     except Exception as e:
@@ -4528,7 +4539,8 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     finally:
         conn.close()
 
-_V92_DISTINCT_SCORE_COLUMNS={'global':'global_score','green':'green_score','social':'social_score','findings':'findings_count'}
+_V92_DISTINCT_SCORE_COLUMNS={'global':'global_score','green':'green_score','social':'social_score','findings':'findings_count',
+                             'external':_V92_EXTERNAL_SIGNALS_EXPR}
 
 def _v92_fetch_distinct_scores():
     """Returns {'global':[...],'green':[...],'social':[...],'findings':[...]} -- sorted
@@ -4788,7 +4800,7 @@ def _v92_backfill_sector_names():
     return summary
 
 def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                      date_from=None,date_to=None):
+                      date_from=None,date_to=None,min_external=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
     whatever filters are currently applied. Returns safe all-zero defaults if the
     feature isn't configured/available rather than erroring."""
@@ -4799,7 +4811,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
     try:
         if not _v92_ensure_table(conn):
             return empty
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
         month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
@@ -4816,7 +4828,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
         conn.close()
 
 def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                               date_from=None,date_to=None,sort='company'):
+                               date_from=None,date_to=None,sort='company',min_external=None):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -4826,7 +4838,7 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=No
     try:
         if not _v92_ensure_table(conn):
             return []
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
         order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
@@ -4853,11 +4865,12 @@ def _v92_resolve_selected_export_rows(form):
         min_green=_v92_parse_min_filter(form,'min_green')
         min_social=_v92_parse_min_filter(form,'min_social')
         min_findings=_v92_parse_min_filter(form,'min_findings')
+        min_external=_v92_parse_min_filter(form,'min_external')
         date_from=_v92_parse_date_filter(form,'date_from')
         date_to=_v92_parse_date_filter(form,'date_to')
         sort=(form.get('sort',['company'])[0] or 'company').strip()
         return _v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
-            date_from,date_to,sort)
+            date_from,date_to,sort,min_external)
     return _v92_fetch_all_for_export(ids=ids) if ids else []
 
 def _v92_resolve_selected_scan_ids(form):
@@ -4876,9 +4889,10 @@ def _v92_resolve_selected_scan_ids(form):
     min_green=_v92_parse_min_filter(form,'min_green')
     min_social=_v92_parse_min_filter(form,'min_social')
     min_findings=_v92_parse_min_filter(form,'min_findings')
+    min_external=_v92_parse_min_filter(form,'min_external')
     date_from=_v92_parse_date_filter(form,'date_from')
     date_to=_v92_parse_date_filter(form,'date_to')
-    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to)
+    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -4894,7 +4908,7 @@ def _v92_resolve_selected_scan_ids(form):
         conn.close()
 
 def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None,
-                           date_from=None,date_to=None):
+                           date_from=None,date_to=None,min_external=None):
     """Deletes every row matching the given search/risk/period/threshold filter -- the
     "select all matching results across every page" counterpart to _v92_delete_by_ids().
     Used when the operator selects all N results under the current filter (which may span
@@ -4905,7 +4919,7 @@ def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=
     try:
         if not _v92_ensure_table(conn):
             return 0
-        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to)
+        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
         with conn.cursor() as cur:
             cur.execute(f'DELETE FROM scan_history {where}',params)
             deleted=cur.rowcount
@@ -5080,7 +5094,7 @@ def _v92_option(value,label,current):
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
                               date_from=None,date_to=None,sort='company',distinct_scores=None,
-                              distinct_companies=None,distinct_dates=None):
+                              distinct_companies=None,distinct_dates=None,min_external=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -5141,7 +5155,8 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     # replaces specific keys; a value of None removes that key from the URL entirely.
     _active={'q':search or None,'risk':risk or None,'period':period or None,
              'sort':sort if sort!='company' else None,'min_global':min_global,'min_green':min_green,
-             'min_social':min_social,'min_findings':min_findings,'date_from':date_from,'date_to':date_to}
+             'min_social':min_social,'min_findings':min_findings,'min_external':min_external,
+             'date_from':date_from,'date_to':date_to}
     def _filter_url(overrides=None):
         parts=dict(_active)
         if overrides:
@@ -5187,10 +5202,11 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     table_header=('<th><input type="checkbox" id="selectAll" title="Select all"></th>'
                    +_date_th()+_company_th()+'<th>Input</th>'
                    +_score_th('global',min_global)+_score_th('green',min_green)
-                   +_score_th('social',min_social)+_score_th('findings',min_findings))
+                   +_score_th('social',min_social)+_score_th('findings',min_findings)
+                   +_score_th('external',min_external))
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
-    elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None):
+    elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None or min_external is not None):
         body='<div class="empty">No scans logged yet.</div>'
     elif not rows:
         body='<div class="empty">No scans match the current search/filters.</div>'
@@ -5231,6 +5247,15 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             # checked -- not part of any display value, so no escaping concern (it's an
             # integer straight from the database's own SERIAL primary key).
             row_id=r.get('id')
+            # v93.23: "External signals" = retained green + social external public-source
+            # signals (relevant, negative-polarity, entity-matched stakeholder sources --
+            # see targeted_negative_sources()), not the raw/candidate result count. Both
+            # source columns are nullable (older rows predate this counter), so missing
+            # means "not counted", not "zero" -- shown as an em dash rather than 0 to keep
+            # that distinction visible, matching every other nullable count in this table.
+            external_green=r.get('external_green_retained_count')
+            external_social=r.get('external_social_retained_count')
+            external_total=(external_green or 0)+(external_social or 0) if (external_green is not None or external_social is not None) else None
             trs.append(f'''<tr>
 <td><input type="checkbox" class="row-check" name="ids" value="{row_id}" form="selectForm"></td>
 <td>{when}</td>
@@ -5240,6 +5265,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <td>{r.get("green_score") if r.get("green_score") is not None else "—"}</td>
 <td>{r.get("social_score") if r.get("social_score") is not None else "—"}</td>
 <td>{r.get("findings_count") if r.get("findings_count") is not None else "—"}</td>
+<td>{external_total if external_total is not None else "—"}</td>
 </tr>''')
         body=f'''<table><thead><tr>{table_header}</tr></thead>
 <tbody>{"".join(trs)}</tbody></table>'''
@@ -5248,11 +5274,13 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     min_green_s='' if min_green is None else str(min_green)
     min_social_s='' if min_social is None else str(min_social)
     min_findings_s='' if min_findings is None else str(min_findings)
+    min_external_s='' if min_external is None else str(min_external)
     date_from_s=date_from or ''
     date_to_s=date_to or ''
     extra_q=((f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
               +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
               +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else '')
+              +(f'&min_external={min_external_s}' if min_external_s else '')
               +(f'&date_from={date_from_s}' if date_from_s else '')+(f'&date_to={date_to_s}' if date_to_s else '')
               +(f'&sort={sort}' if sort!='company' else ''))
     # v92.6: an active ids selection-filter (from "View selected") is preserved across
@@ -5298,7 +5326,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="hidden" name="sort" value="{sort}">
 <button class="btn" type="submit">Filter</button>
 <a class="btn secondary" href="/history">Clear</a>
-<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&min_external={min_external_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
 <form id="selectForm" method="POST" action="/history/export_selected">
@@ -5309,6 +5337,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="hidden" name="min_green" value="{min_green_s}">
 <input type="hidden" name="min_social" value="{min_social_s}">
 <input type="hidden" name="min_findings" value="{min_findings_s}">
+<input type="hidden" name="min_external" value="{min_external_s}">
 <input type="hidden" name="date_from" value="{date_from_s}">
 <input type="hidden" name="date_to" value="{date_to_s}">
 <input type="hidden" name="sort" value="{sort}">
@@ -5515,6 +5544,7 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(qs,'min_green')
             min_social=_v92_parse_min_filter(qs,'min_social')
             min_findings=_v92_parse_min_filter(qs,'min_findings')
+            min_external=_v92_parse_min_filter(qs,'min_external')
             date_from=_v92_parse_date_filter(qs,'date_from')
             date_to=_v92_parse_date_filter(qs,'date_to')
             sort=(qs.get('sort',['company'])[0] or 'company').strip()
@@ -5522,15 +5552,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception: page=1
             page_size=25
             rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort)
-            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
+                date_from,date_to,sort,min_external)
+            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
             top_claims=_v92_fetch_top_claims()
             distinct_scores=_v92_fetch_distinct_scores()
             distinct_companies=_v92_fetch_distinct_companies()
             distinct_dates=_v92_fetch_distinct_dates()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
                 min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores,
-                distinct_companies,distinct_dates))
+                distinct_companies,distinct_dates,min_external))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -5545,11 +5575,12 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(qs,'min_green')
             min_social=_v92_parse_min_filter(qs,'min_social')
             min_findings=_v92_parse_min_filter(qs,'min_findings')
+            min_external=_v92_parse_min_filter(qs,'min_external')
             date_from=_v92_parse_date_filter(qs,'date_from')
             date_to=_v92_parse_date_filter(qs,'date_to')
             sort=(qs.get('sort',['company'])[0] or 'company').strip()
             rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort)
+                date_from,date_to,sort,min_external)
             csv_bytes=_v92_rows_to_csv(rows)
             stamp=datetime.date.today().isoformat()
             return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -5662,9 +5693,10 @@ class Handler(BaseHTTPRequestHandler):
             min_green=_v92_parse_min_filter(form,'min_green')
             min_social=_v92_parse_min_filter(form,'min_social')
             min_findings=_v92_parse_min_filter(form,'min_findings')
+            min_external=_v92_parse_min_filter(form,'min_external')
             date_from=_v92_parse_date_filter(form,'date_from')
             date_to=_v92_parse_date_filter(form,'date_to')
-            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to)
+            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
         else:
             _v92_delete_by_ids(ids)
         return self._send(b'',status=302,extra_headers={'Location':'/history'})
