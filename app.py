@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_9_history_excel_style_column_filters"
-APP_RELEASE_LABEL="v93.9"
+APP_VERSION="hostable_v93_10_history_date_company_filters_and_select_all_btn"
+APP_RELEASE_LABEL="v93.10"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4081,6 +4081,44 @@ def _v92_fetch_distinct_scores():
     finally:
         conn.close()
 
+def _v92_fetch_distinct_companies():
+    """Alphabetically-sorted, distinct company names for the Company column's Excel-style
+    filter dropdown -- reuses the existing `q` search param under the hood (picking a name
+    from the list just fills the search box with that exact value), so no new filter
+    machinery is needed. Returns [] if the feature isn't configured/available."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT company FROM scan_history WHERE company IS NOT NULL AND company <> '' ORDER BY company ASC")
+            return [r[0] for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+def _v92_fetch_distinct_dates():
+    """Distinct calendar dates (newest first) present in scanned_at, for the Date column's
+    Excel-style filter dropdown -- each option sets date_from=date_to=that single day,
+    reusing the existing exact date-range filter. Returns [] if the feature isn't
+    configured/available."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        with conn.cursor() as cur:
+            cur.execute('SELECT DISTINCT DATE(scanned_at) FROM scan_history ORDER BY DATE(scanned_at) DESC')
+            return [r[0].isoformat() if hasattr(r[0],'isoformat') else str(r[0]) for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
 _V92_RISK_RANK_SQL="CASE risk WHEN 'Very high' THEN 4 WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END"
 _V92_RISK_RANK_LABEL={4:'Very high',3:'High',2:'Medium',1:'Low',0:''}
 
@@ -4416,7 +4454,8 @@ def _v92_option(value,label,current):
 
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
-                              date_from=None,date_to=None,sort='date',distinct_scores=None):
+                              date_from=None,date_to=None,sort='date',distinct_scores=None,
+                              distinct_companies=None,distinct_dates=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -4464,14 +4503,16 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         top_claims_html=''
     sort=sort if sort in _V92_SORT_SQL else 'date'
     distinct_scores=distinct_scores or {k:[] for k in _V92_DISTINCT_SCORE_COLUMNS}
-    # v93.9: every currently-active filter/sort in one place, so a column header's sort
-    # link or a score dropdown's option can build a URL that changes ONLY its own piece
-    # while preserving everything else already active (e.g. picking Green=62 must not
-    # silently drop an already-active Global=41 filter). `overrides` replaces specific
-    # keys; a value of None removes that key from the URL entirely.
+    distinct_companies=distinct_companies or []
+    distinct_dates=distinct_dates or []
+    # v93.9/v93.10: every currently-active filter/sort in one place, so a column header's
+    # sort link or a filter dropdown's option can build a URL that changes ONLY its own
+    # piece while preserving everything else already active (e.g. picking Green=62 must
+    # not silently drop an already-active Global=41 or Company filter). `overrides`
+    # replaces specific keys; a value of None removes that key from the URL entirely.
     _active={'q':search or None,'risk':risk or None,'period':period or None,
              'sort':sort if sort!='date' else None,'min_global':min_global,'min_green':min_green,
-             'min_social':min_social,'min_findings':min_findings}
+             'min_social':min_social,'min_findings':min_findings,'date_from':date_from,'date_to':date_to}
     def _filter_url(overrides=None):
         parts=dict(_active)
         if overrides:
@@ -4483,6 +4524,10 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         return f'<a href="{_filter_url({"sort":key})}">{_V92_SORT_LABELS[key]}{arrow}</a>'
     def _sort_th(key):
         return f'<th>{_sort_link(key)}</th>'
+    def _dropdown_th(key,options_html):
+        select=(f'<select onchange="if(this.value) location.href=this.value" '
+                f'style="margin-top:4px;font-size:11px;padding:1px;max-width:110px">{options_html}</select>')
+        return f'<th>{_sort_link(key)}<br>{select}</th>'
     def _score_th(key,current_val):
         # v93.9: an Excel-style "pick one exact value" filter dropdown, replacing the
         # earlier >=-threshold number input the user said "wasn't a real filter". Options
@@ -4491,11 +4536,27 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         opts=[f'<option value="{_filter_url({param:None})}"{" selected" if current_val is None else ""}>All</option>']
         for v in distinct_scores.get(key,[]):
             opts.append(f'<option value="{_filter_url({param:v})}"{" selected" if current_val==v else ""}>{v}</option>')
-        select=(f'<select onchange="if(this.value) location.href=this.value" '
-                f'style="margin-top:4px;font-size:11px;padding:1px;max-width:80px">{"".join(opts)}</select>')
-        return f'<th>{_sort_link(key)}<br>{select}</th>'
+        return _dropdown_th(key,''.join(opts))
+    def _company_th():
+        # v93.10: reuses the existing `q` search param -- picking a name from the list
+        # just fills the search box with that exact company, no new filter machinery.
+        opts=[f'<option value="{_filter_url({"q":None})}"{" selected" if not search else ""}>All</option>']
+        for name in distinct_companies:
+            name_safe=html_escape(name)
+            sel=' selected' if name==search else ''
+            opts.append(f'<option value="{_filter_url({"q":name})}"{sel}>{name_safe}</option>')
+        return _dropdown_th('company',''.join(opts))
+    def _date_th():
+        # v93.10: reuses the existing exact date-range filter -- picking one calendar day
+        # sets date_from=date_to=that day.
+        active_day=date_from if (date_from and date_from==date_to) else None
+        opts=[f'<option value="{_filter_url({"date_from":None,"date_to":None})}"{" selected" if active_day is None else ""}>All</option>']
+        for d in distinct_dates:
+            sel=' selected' if d==active_day else ''
+            opts.append(f'<option value="{_filter_url({"date_from":d,"date_to":d})}"{sel}>{d}</option>')
+        return _dropdown_th('date',''.join(opts))
     table_header=('<th><input type="checkbox" id="selectAll" title="Select all"></th>'
-                   +_sort_th('date')+_sort_th('company')+'<th>Input</th>'
+                   +_date_th()+_company_th()+'<th>Input</th>'
                    +_score_th('global',min_global)+_score_th('green',min_green)
                    +_score_th('social',min_social)+_score_th('findings',min_findings))
     if not DATABASE_URL:
@@ -4567,16 +4628,18 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     clear_selection_href='/history?'+extra_q.lstrip('&') if extra_q else '/history'
     selection_banner=(f'<div class="notice">Showing {len(ids)} selected scan(s). '
                        f'<a href="{clear_selection_href}">Clear selection</a></div>') if ids else ''
-    # v93.2: "Select all N matching results" lets the operator select every row across
-    # every page of the current filter, not just the ones checked on the page they're
-    # looking at -- checkboxes alone can't do this since each page load is a fresh,
-    # independent render with no memory of earlier pages' checked boxes. The link sets
-    # a hidden select_all=1 flag (plus the current filter values, so the server can
-    # resolve "all matching" for itself) instead of relying on an exhaustive ids list.
-    select_all_row=(f'<div class="small" style="margin:8px 0">'
-                     f'<a href="#" id="selectAllMatchingLink">Select all {total} matching result(s)</a>'
-                     f'<span id="selectAllActiveNote" style="display:none">All {total} matching result(s) selected (every page). '
-                     f'<a href="#" id="clearSelectAllLink">Clear</a></span></div>') if total>page_size else ''
+    # v93.2/v93.10: "Select all N matching results" lets the operator select every row
+    # across every page of the current filter, not just the ones checked on the page
+    # they're looking at -- checkboxes alone can't do this since each page load is a
+    # fresh, independent render with no memory of earlier pages' checked boxes. The
+    # button sets a hidden select_all=1 flag (plus the current filter values, so the
+    # server can resolve "all matching" for itself) instead of relying on an exhaustive
+    # ids list. Rendered as a real button (not a plain text link) in the action-button
+    # row, next to View/Export/Delete selected, so it reads as an equal action -- always
+    # shown so the mechanism is discoverable even when everything already fits one page.
+    select_all_btn=f'<a class="btn secondary" href="#" id="selectAllMatchingLink">Select all {total}</a>'
+    select_all_note=(f'<span id="selectAllActiveNote" style="display:none">All {total} matching result(s) selected (every page). '
+                      f'<a href="#" id="clearSelectAllLink">Clear</a></span>')
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scan history</title>
 <style>{_V92_STYLE}</style></head><body><div class="wrap">
 {_V92_LOGO_SVG}
@@ -4609,11 +4672,12 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="hidden" name="select_all" id="selectAllFlag" value="">
 </form>
 {body}
-{select_all_row}
-<div style="margin-top:12px;display:flex;gap:8px">
+<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+{select_all_btn}
 <button class="btn secondary" type="submit" form="selectForm" formaction="/history" formmethod="GET" id="viewSelectedBtn" disabled>View selected</button>
 <button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button>
 <button class="btn danger" type="submit" form="selectForm" formaction="/history/delete_selected" id="deleteSelectedBtn" disabled>Delete selected</button>
+{select_all_note}
 </div>
 {pager}
 </div></div>
@@ -4814,8 +4878,11 @@ class Handler(BaseHTTPRequestHandler):
             stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to)
             top_claims=_v92_fetch_top_claims()
             distinct_scores=_v92_fetch_distinct_scores()
+            distinct_companies=_v92_fetch_distinct_companies()
+            distinct_dates=_v92_fetch_distinct_dates()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
-                min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores))
+                min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores,
+                distinct_companies,distinct_dates))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)

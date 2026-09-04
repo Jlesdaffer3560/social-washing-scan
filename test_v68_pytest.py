@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_9_history_excel_style_column_filters'
+    assert app.APP_VERSION == 'hostable_v93_10_history_date_company_filters_and_select_all_btn'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -471,18 +471,54 @@ def test_scan_history_excel_style_score_dropdowns(monkeypatch):
     assert '<option value="/history?min_social=12">All</option>' in html
 
 
-def test_scan_history_select_all_matching_link_only_when_multi_page(monkeypatch):
-    """v93.2: "Select all N matching results" only makes sense (and only needs to exist)
-    when there's more than one page of results -- a single page is already fully covered
-    by the existing per-page select-all checkbox."""
+def test_scan_history_fetch_distinct_companies_and_dates_unconfigured():
+    """v93.10: both new distinct-value fetchers for the Date and Company dropdown filters
+    must return [] (not raise) when the feature isn't configured -- same safety posture as
+    every other scan-history fetch function."""
+    assert app._v92_fetch_distinct_companies()==[]
+    assert app._v92_fetch_distinct_dates()==[]
+
+
+def test_scan_history_excel_style_date_and_company_dropdowns(monkeypatch):
+    """v93.10: Date and Company get the same Excel-style exact-value dropdown as the
+    score columns -- Company reuses the existing `q` search param (so picking a name just
+    fills the search box with that exact value, no new filter machinery), and Date reuses
+    the existing exact date-range filter by setting date_from=date_to=that single day.
+    Both lists must come back alphabetically/chronologically ordered, and an active
+    Company/Date filter must be preserved when a score dropdown's option is built (AND
+    semantics across every active filter, not just the score ones)."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'Puratos',
+        date_from='2026-09-02',date_to='2026-09-02',
+        distinct_companies=['AB Eiffage','Puratos','Zabra'],
+        distinct_dates=['2026-09-03','2026-09-02'])
+    # Company dropdown: alphabetical order, active value ("Puratos") marked selected
+    assert '<option value="/history?q=AB%20Eiffage&date_from=2026-09-02&date_to=2026-09-02">AB Eiffage</option>' in html
+    assert '<option value="/history?q=Puratos&date_from=2026-09-02&date_to=2026-09-02" selected>Puratos</option>' in html
+    # Date dropdown: newest first, active day marked selected, other day still an option
+    assert ('<option value="/history?q=Puratos&date_from=2026-09-02&date_to=2026-09-02" selected>'
+            '2026-09-02</option>' in html)
+    assert '2026-09-03</option>' in html
+    # picking a different company must preserve the active date filter
+    assert 'q=Zabra&date_from=2026-09-02&date_to=2026-09-02' in html
+
+
+def test_scan_history_select_all_button_always_visible(monkeypatch):
+    """v93.10: the "Select all N" button is now always rendered as a real button in the
+    action row (not a text link that only appeared once there was more than one page) --
+    the user explicitly reported it as "missing" when it only showed up conditionally, so
+    it must be discoverable regardless of how many pages/rows currently exist."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
          'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
          'green_score':57,'social_score':50,'findings_count':14}
     html_one_page=app._v92_render_history_page([row],1,1,25,'')
-    assert 'id="selectAllMatchingLink"' not in html_one_page
+    assert '<a class="btn secondary" href="#" id="selectAllMatchingLink">Select all 1</a>' in html_one_page
     html_multi_page=app._v92_render_history_page([row],54,1,25,'')
-    assert 'Select all 54 matching result(s)' in html_multi_page
+    assert '<a class="btn secondary" href="#" id="selectAllMatchingLink">Select all 54</a>' in html_multi_page
     assert 'id="selectAllFlag"' in html_multi_page
 
 
