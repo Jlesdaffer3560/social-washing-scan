@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_19_multilingual_sector_and_risk_backfill'
+    assert app.APP_VERSION == 'hostable_v93_20_kbo_company_number_identity_check'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -998,6 +998,114 @@ def test_infer_sector_new_specific_keyword_beats_generic_manufacturing():
     comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
     sec=app.infer_sector(comp,'Our vehicle manufacturing plant is one of the largest in the region.')
     assert sec['name']=='Automotive (NACE C)'
+
+
+_KBO_SAMPLE_HTML='''<html><body><div id="table"><table>
+<tr><td class="QL">Ondernemingsnummer:</td><td class="QL" colspan="3">0403.170.701</td></tr>
+<tr><td class="RL">Naam:</td><td class="RL" colspan="3">Gaasch Packaging<br/><span class="upd">Naam in het Nederlands, sinds 1 januari 2000</span><br/></td></tr>
+<tr><td class="QL">Adres van de zetel:</td><td class="QL" colspan="3">
+Industrielaan&nbsp;10
+<br/>9999&nbsp;Voorbeeldstad
+<span class="upd"><br/>Sinds 1 januari 2000</span></td></tr>
+<tr><td class="RL">Webadres:</td><td class="RL" colspan="3">Geen gegevens opgenomen in KBO.</td></tr>
+<tr><td class="I" colspan="3"><h2>Btw-activiteiten Nacebelcode versie 2025</h2></td></tr>
+<tr><td class="QL" colspan="3">Btw
+2025&nbsp;
+<a href="naceToelichting.html?nace.code=46441&amp;nace.version=2025">46.441</a>
+&nbsp;-&nbsp;
+Groothandel in porselein en glaswerk<br/><span class="upd">Sinds 1 januari 2025</span></td></tr>
+</table></body></html>'''
+
+_KBO_NOTFOUND_HTML='<html><body><div class="allContainer">Geen resultaten</div></body></html>'
+
+
+def test_v93_normalize_be_company_number():
+    """v93.20: accepts the common written forms of a Belgian enterprise number and
+    rejects anything that clearly isn't one, without ever raising."""
+    assert app._v93_normalize_be_company_number('BE 0403.170.701')=='0403170701'
+    assert app._v93_normalize_be_company_number('403.170.701')=='0403170701'  # 9 digits, leading 0 dropped
+    assert app._v93_normalize_be_company_number('0403170701')=='0403170701'
+    assert app._v93_normalize_be_company_number('not a number')==None
+    assert app._v93_normalize_be_company_number('')==None
+    assert app._v93_normalize_be_company_number(None)==None
+
+
+def test_v93_lookup_kbo_company_parses_name_address_and_nace(monkeypatch):
+    """v93.20: a real KBO public-register result page (structure confirmed against the
+    live site) must yield the official name, a clean address (the "Sinds <date>"
+    effective-date annotation stripped out) and its current NACEBEL activity code(s)."""
+    def fake_open(url,timeout=8,accept=None,max_bytes=None):
+        assert 'nummer=0403170701' in url
+        return _KBO_SAMPLE_HTML.encode(),'text/html',url
+    monkeypatch.setattr(app,'_open_public_url',fake_open)
+    info=app._v93_lookup_kbo_company('BE 0403.170.701')
+    assert info['name']=='Gaasch Packaging'
+    assert info['number']=='0403.170.701'
+    assert info['address']=='Industrielaan 10 9999 Voorbeeldstad'
+    assert info['website'] is None
+    assert info['nace_activities']==[{'code':'46.441','description':'Groothandel in porselein en glaswerk'}]
+
+
+def test_v93_lookup_kbo_company_not_found_returns_none(monkeypatch):
+    monkeypatch.setattr(app,'_open_public_url',lambda *a,**k: (_KBO_NOTFOUND_HTML.encode(),'text/html',a[0]))
+    assert app._v93_lookup_kbo_company('0999999999') is None
+
+
+def test_v93_lookup_kbo_company_invalid_number_never_hits_network(monkeypatch):
+    def fake_open(*a,**k):
+        raise AssertionError('should never be called for an unparseable number')
+    monkeypatch.setattr(app,'_open_public_url',fake_open)
+    assert app._v93_lookup_kbo_company('not a number') is None
+
+
+def test_v93_lookup_kbo_company_never_raises_on_network_failure(monkeypatch):
+    monkeypatch.setattr(app,'_open_public_url',lambda *a,**k: (_ for _ in ()).throw(Exception('timeout')))
+    assert app._v93_lookup_kbo_company('0403170701') is None
+
+
+def test_v93_company_number_identity_check_confirms_match():
+    """v93.20: when the scanned page's own text names the company the supplied KBO
+    number is registered to, the check must read as a confirmation, not a warning."""
+    kbo_info={'number':'0403.170.701','name':'Gaasch Packaging','address':'Industrielaan 10, 9999 Voorbeeldstad','nace_activities':[]}
+    result=app._v93_company_number_identity_check(kbo_info,'Welcome to Gaasch Packaging, your partner in glass packaging.')
+    assert result['match'] is True
+    assert 'confirmed' in result['note'].lower()
+
+
+def test_v93_company_number_identity_check_flags_mismatch():
+    """v93.20: this is the exact failure mode reported -- a bare-name scan for "Gaasch
+    Packaging" landing on gaasch.net, an unrelated personal website that never mentions
+    the company at all. The identity check must surface a clear warning, not stay silent."""
+    kbo_info={'number':'0403.170.701','name':'Gaasch Packaging','address':'Industrielaan 10, 9999 Voorbeeldstad','nace_activities':[]}
+    result=app._v93_company_number_identity_check(kbo_info,'Welcome to the personal website of Jim and Luann.')
+    assert result['match'] is False
+    assert 'possible wrong company' in result['note'].lower()
+    assert 'Gaasch Packaging' in result['note']
+
+
+def test_analyse_uploaded_document_wires_company_number_end_to_end(monkeypatch):
+    """v93.20: analyse_uploaded_document does not crawl a website, so it can exercise the
+    full company-number wiring (lookup -> identity check -> comp['company_number'] ->
+    NACE-enriched sector classification) without mocking a network crawl."""
+    kbo_info={'number':'0403.170.701','name':'Gaasch Packaging','address':'Industrielaan 10, 9999 Voorbeeldstad',
+              'website':None,'nace_activities':[{'code':'46.441','description':'Groothandel in porselein en glaswerk'}]}
+    monkeypatch.setattr(app,'_v93_lookup_kbo_company',lambda n: kbo_info if n else None)
+    result=app.analyse_uploaded_document('policy.txt','This document describes our packaging quality policy.','',company_number='BE0403170701')
+    assert result['company_identity_check']['match'] is True
+    assert result['company']['company_number']=='0403.170.701'
+    assert result['company']['company']=='Gaasch Packaging'  # kbo name used as the hint
+
+
+def test_analyse_uploaded_document_unverified_company_number_is_flagged(monkeypatch):
+    monkeypatch.setattr(app,'_v93_lookup_kbo_company',lambda n: None)
+    result=app.analyse_uploaded_document('policy.txt','Some internal text.','Acme',company_number='BE1234567890')
+    assert result['company_identity_check']['match'] is None
+    assert 'could not be verified' in result['company_identity_check']['note'].lower()
+
+
+def test_analyse_uploaded_document_without_company_number_has_no_identity_check():
+    result=app.analyse_uploaded_document('policy.txt','Some internal text.','Acme')
+    assert result['company_identity_check'] is None
 
 
 def test_batch_report_analysis_text_mentions_top_company_and_top_claim():

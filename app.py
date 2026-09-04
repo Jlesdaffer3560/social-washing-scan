@@ -4,7 +4,7 @@ from urllib.parse import urlparse, urljoin, quote, parse_qs
 from urllib.request import Request, urlopen, HTTPRedirectHandler, build_opener, install_opener
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
-from html import escape as html_escape
+from html import escape as html_escape, unescape as html_unescape
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_19_multilingual_sector_and_risk_backfill"
-APP_RELEASE_LABEL="v93.19"
+APP_VERSION="hostable_v93_20_kbo_company_number_identity_check"
+APP_RELEASE_LABEL="v93.20"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -575,6 +575,131 @@ NON_OFFICIAL_SITE_DOMAINS = {
 def slugify_company_name(name):
     s=re.sub(r'[^a-z0-9]+','',(name or '').lower())
     return s or 'company'
+
+# v93.20: company-number (KBO/BTW) identity verification. Added after a real
+# mis-identification was reported -- a bare-name scan for "Gaasch Packaging" resolved to
+# gaasch.net, an unrelated personal website belonging to two private individuals who
+# happen to share the family name, instead of the real company's actual site,
+# gaaschpack.eu. A Belgian enterprise number pins down the exact legal entity being
+# scanned, independent of how ambiguous or common its trading name is, and is looked up
+# for free against the public, unauthenticated register at kbopub.economie.fgov.be (the
+# same site anyone can query manually). This also gives an authoritative source of
+# NACEBEL activity codes to feed into sector classification, alongside the existing
+# keyword-based classifier -- see SECTOR_RULES above.
+def _v93_normalize_be_company_number(raw):
+    """Normalize a Belgian enterprise number (KBO/BCE) to its canonical 10-digit form,
+    or return None if the input cannot be interpreted as one. Accepts common written
+    forms: "BE 0403.170.701", "0403170701", "403.170.701" (9 digits -- the leading 0 is
+    often dropped when reading the number off an invoice or letterhead)."""
+    raw=(raw or '').strip()
+    if not raw:
+        return None
+    digits=re.sub(r'[^0-9]','',raw.upper().replace('BE',''))
+    if len(digits)==9:
+        digits='0'+digits
+    if len(digits)!=10 or digits[0] not in ('0','1'):
+        return None
+    return digits
+
+def _v93_format_be_company_number(digits):
+    return f'{digits[0:4]}.{digits[4:7]}.{digits[7:10]}'
+
+_V93_KBO_LEGAL_FORM_WORDS={
+    'nv','sa','bv','bvba','sprl','cv','scrl','cvba','comm','commv','vzw','asbl','vof','snc',
+    'group','groep','holding','international','belgium','belgie','belgique','sca','sc'
+}
+
+def _v93_kbo_core_name_tokens(name):
+    """Strip common Belgian legal-form words/decorations from an official KBO name so the
+    remaining distinctive word(s) can be checked against a scanned website's own text --
+    comparing a full legal name ("Gaasch Packaging NV") against ordinary marketing copy
+    verbatim almost never matches."""
+    cleaned=re.sub(r'[^a-z0-9\s]',' ',(name or '').lower())
+    return [t for t in cleaned.split() if t and t not in _V93_KBO_LEGAL_FORM_WORDS and len(t)>=3]
+
+def _v93_parse_kbo_html(html_text, requested_digits):
+    """Extract the fields this tool uses from a KBO public-register 'zoeknummerform'
+    result page. Only the portion of the page before the historical NACEBEL version
+    tables (2008/2003, kept in hidden <table style="display:none"> blocks further down
+    the same page) is parsed, so a superseded activity code is never picked up as if
+    still current. Table cell classes (QL/RL) simply alternate per row and are not tied
+    to specific fields, so they are matched loosely rather than hardcoded."""
+    if 'Ondernemingsnummer:' not in html_text:
+        return None
+    visible_html=html_text.split('id="toonbtw2008"')[0]
+    m=re.search(r'Ondernemingsnummer:</td>\s*<td class="\w+" colspan="3">\s*([\d.]+)',visible_html)
+    number=m.group(1).strip() if m else _v93_format_be_company_number(requested_digits)
+    m=re.search(r'Naam:\s*</td>\s*<td class="\w+" colspan="3">\s*([^<]+?)\s*<br',visible_html)
+    name=html_unescape(m.group(1)).strip() if m else ''
+    if not name:
+        return None
+    address=''
+    m=re.search(r'Adres van de zetel:</td>\s*<td class="\w+" colspan="3">(.*?)</td>',visible_html,re.S)
+    if m:
+        # Strip the "Sinds <date>" effective-date annotation the page attaches to the
+        # address (wrapped in its own <span class="upd">...</span>) -- useful provenance
+        # on the KBO site itself, but noise in a one-line address shown alongside a scan.
+        addr_html=re.sub(r'<span class="upd">.*?</span>','',m.group(1),flags=re.S)
+        address=re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html_unescape(addr_html))).strip()
+    website=None
+    m=re.search(r'Webadres:\s*</td>\s*<td class="\w+" colspan="3">\s*([^<]+?)\s*</td>',visible_html)
+    if m:
+        w=html_unescape(m.group(1)).strip()
+        if w and 'geen gegevens' not in w.lower():
+            website=w
+    activities=[]
+    for m in re.finditer(
+            r'<a href="naceToelichting\.html\?nace\.code=\d+&amp;nace\.version=\d+">([\d.]+)</a>\s*&nbsp;-&nbsp;\s*([^<]+?)<br',
+            visible_html):
+        code=m.group(1).strip(); description=html_unescape(m.group(2)).strip()
+        if not any(a['code']==code for a in activities):
+            activities.append({'code':code,'description':description})
+    return {'number':number,'name':name,'address':address,'website':website,'nace_activities':activities}
+
+def _v93_lookup_kbo_company(company_number_raw):
+    """Best-effort lookup of a Belgian enterprise number against the public KBO/BCE
+    register. Returns a dict with the officially registered name, address, website (when
+    filled in) and current NACEBEL activity codes, or None if the number is malformed,
+    not found, or the lookup fails for any reason (network error, unexpected page
+    layout, timeout). Deliberately never raises: this is a best-effort accuracy layer on
+    top of the scan, not a dependency the scan should ever fail because of."""
+    digits=_v93_normalize_be_company_number(company_number_raw)
+    if not digits:
+        return None
+    url=f'https://kbopub.economie.fgov.be/kbopub/zoeknummerform.html?nummer={digits}&actionLu=Zoeken'
+    try:
+        raw,_ctype,_final=_open_public_url(url,timeout=8,accept='text/html')
+        return _v93_parse_kbo_html(raw.decode('utf-8',errors='ignore'),digits)
+    except Exception:
+        return None
+
+def _v93_company_number_identity_check(kbo_info, analysed_text):
+    """Does the scanned page's own TEXT content plausibly correspond to the company the
+    supplied KBO/BTW number is officially registered to? Deliberately checks only the
+    crawled page text, never the domain/hostname itself -- the real case this was built
+    for is exactly a family-name collision (a scan for "Gaasch Packaging" landing on
+    gaasch.net, an unrelated personal site of two private individuals), where the
+    hostname trivially "matches" the surname and would defeat the whole point of the
+    check if it were allowed to count."""
+    tokens=_v93_kbo_core_name_tokens(kbo_info.get('name',''))
+    haystack=(analysed_text or '').lower()
+    matched=bool(tokens) and any(t in haystack for t in tokens)
+    official=kbo_info.get('name','')
+    number=kbo_info.get('number','')
+    if matched:
+        note=f'Company number {number} confirmed: officially registered to "{official}", consistent with the scanned website.'
+    else:
+        addr=f" ({kbo_info.get('address')})" if kbo_info.get('address') else ''
+        note=(f'⚠ Possible wrong company: the company number provided ({number}) is officially registered to '
+              f'"{official}"{addr}, but this name was not found anywhere in the scanned website\'s content. '
+              'Verify that this is the correct company before relying on this scan.')
+    return {'number':number,'official_name':official,'official_address':kbo_info.get('address',''),
+            'nace_activities':kbo_info.get('nace_activities',[]),'match':matched,'note':note}
+
+def _v93_unverified_company_number_note(company_number_raw):
+    return {'number':(company_number_raw or '').strip(),'official_name':'','official_address':'','nace_activities':[],'match':None,
+            'note':(f'The company number "{(company_number_raw or "").strip()}" could not be verified against the Belgian KBO/BCE '
+                    'public register (not found, or not a recognised Belgian enterprise-number format) and was not used.')}
 
 def resolve_scan_input(raw):
     """Accepts a bare company name, a bare domain, or a full URL/page and returns
@@ -3129,9 +3254,18 @@ def federation_pilot_output(green_findings, social_findings, overall, green_scor
         'example_sector_output':'A federation can run the same scan across a small sample of member websites and receive an anonymised benchmark of most common claim risks.'
     }
 
-def analyse_uploaded_document(filename, text, company_name_hint=''):
+def analyse_uploaded_document(filename, text, company_name_hint='', company_number=''):
     source='Uploaded internal document: '+(filename or 'document')
+    kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
+    if kbo_info and kbo_info.get('name'):
+        company_name_hint=kbo_info['name']
     comp=infer_company(filename or source, text, company_name_hint)
+    company_identity_check=None
+    if kbo_info:
+        company_identity_check=_v93_company_number_identity_check(kbo_info, text)
+        comp['company_number']=kbo_info.get('number','')
+    elif company_number:
+        company_identity_check=_v93_unverified_company_number_note(company_number)
     audience=classify_document_audience(filename or source, text, [source])
     # Uploaded internal documents should not be treated as consumer-facing unless wording clearly says marketing/product/brochure.
     if audience.get('group')=='mixed':
@@ -3149,7 +3283,8 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     social_targeted=[]
     green_targeted=[]
     exttext=''
-    sec=infer_sector(comp,text,page_segments)
+    nace_hint_text='\n'.join(a['description'] for a in (kbo_info or {}).get('nace_activities',[]))
+    sec=infer_sector(comp,text+('\n'+nace_hint_text if nace_hint_text else ''),page_segments)
     apply_sector_name(comp,sec)
     ctx=infer_context(comp,text,social_ext)
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""),audience,page_segments)
@@ -3168,7 +3303,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
              "evidence available to support it. This is an initial screening result, not a legal finding.")
-    return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
+    return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','company_identity_check':company_identity_check,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
@@ -3194,9 +3329,17 @@ def _describe_fetch_error(err):
     return str(err)
 
 
-def analyse_url_v27(raw):
-    original_url,resolution_note=resolve_scan_input(raw); fallback_note=resolution_note or ''; related_notes=[]
-    company_name_hint=_v65_scan_input_company_hint(raw, original_url)
+def analyse_url_v27(raw, company_number=''):
+    kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
+    # v93.20: when the input is a bare company name (not already a URL/domain) and a
+    # company number was supplied and verified, resolve using the OFFICIAL registered
+    # name rather than whatever free-text the user typed -- a legally exact name gives
+    # search/domain-guessing a stronger, less ambiguous anchor than an informal brand
+    # name that may collide with an unrelated same-name website (see the module comment
+    # above _v93_normalize_be_company_number for the real case this was built for).
+    resolution_input=kbo_info['name'] if (kbo_info and not looks_like_domain_or_url(raw)) else raw
+    original_url,resolution_note=resolve_scan_input(resolution_input); fallback_note=resolution_note or ''; related_notes=[]
+    company_name_hint=kbo_info['name'] if (kbo_info and kbo_info.get('name')) else _v65_scan_input_company_hint(raw, original_url)
     scan_deadline=time.time()+CRAWL_BUDGET_SECONDS
     try:
         try:
@@ -3208,6 +3351,12 @@ def analyse_url_v27(raw):
     except Exception as first_error:
         raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)} No country-domain substitution was attempted; verify the exact official URL and try again.')
     comp=infer_company(url,txt,company_name_hint)
+    company_identity_check=None
+    if kbo_info:
+        company_identity_check=_v93_company_number_identity_check(kbo_info, txt)
+        comp['company_number']=kbo_info.get('number','')
+    elif company_number:
+        company_identity_check=_v93_unverified_company_number_note(company_number)
     page_segments=extract_page_segments(txt,pages)
     audience=classify_document_audience(url,txt,pages)
     documents_checked=build_documents_checked(pages,audience,txt)
@@ -3235,7 +3384,8 @@ def analyse_url_v27(raw):
     social_ext=external(comp['company'], social_fs, pages)
     green_ext=external_green(comp['company'], green_fs, pages)
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
-    sec=infer_sector(comp,txt+'\n'+exttext,page_segments,url)
+    nace_hint_text='\n'.join(a['description'] for a in (kbo_info or {}).get('nace_activities',[]))
+    sec=infer_sector(comp,txt+'\n'+exttext+('\n'+nace_hint_text if nace_hint_text else ''),page_segments,url)
     apply_sector_name(comp,sec)
     ctx=infer_context(comp,txt,social_ext)
     # v84: was capped at 5 -- this same capped list both fed the risk score AND was the only
@@ -3307,7 +3457,7 @@ def analyse_url_v27(raw):
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
-    return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
+    return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'company_identity_check':company_identity_check,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
         'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,
@@ -3411,8 +3561,8 @@ def green_negative_compact_sources(results, limit=5):
     return compact_sources([r for r in results if is_green_negative_source(r)], limit)
 
 # Override v26 endpoint implementation with v27 implementation.
-def analyse_url(raw):
-    return analyse_url_v27(raw)
+def analyse_url(raw, company_number=''):
+    return analyse_url_v27(raw, company_number)
 
 
 # -----------------------------
@@ -4062,7 +4212,12 @@ def _v92_ensure_table(conn):
                     'sector_risk TEXT','data_reliability_warning BOOLEAN',
                     'empco_blacklisted_count INTEGER','high_risk_findings_count INTEGER',
                     'external_green_retained_count INTEGER','external_social_retained_count INTEGER',
-                    'document_type TEXT'):
+                    'document_type TEXT',
+                    # v93.20: the optional KBO/BTW company-number identity check -- see
+                    # _v93_company_number_identity_check(). company_number_match is NULL
+                    # when no number was supplied for that scan (distinct from False,
+                    # which means a number was checked and did not match).
+                    'company_number TEXT','company_number_official_name TEXT','company_number_match BOOLEAN'):
                     cur.execute(f'ALTER TABLE scan_history ADD COLUMN IF NOT EXISTS {col_sql}')
                 # v93.3: one row per individual flagged claim/phrase, so the evolving "Top 10
                 # most flagged claims/words" panel on /history can rank matched phrases across
@@ -4120,6 +4275,7 @@ def _v92_save_scan_history(result,scan_type,client_ip):
         high_risk_count=sum(1 for f in findings if str(f.get('risk','')).lower()=='high')
         green_retained=len((ext.get('green') or {}).get('compact_sources') or [])
         social_retained=len((ext.get('social') or {}).get('compact_sources') or [])
+        identity_check=result.get('company_identity_check') or {}
         conn=_v92_db_connect()
         if conn is None:
             return
@@ -4133,8 +4289,9 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                         green_score,green_risk,social_score,social_risk,audience,
                         findings_count,summary,client_ip,sector_risk,data_reliability_warning,
                         empco_blacklisted_count,high_risk_findings_count,
-                        external_green_retained_count,external_social_retained_count,document_type)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        external_green_retained_count,external_social_retained_count,document_type,
+                        company_number,company_number_official_name,company_number_match)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        RETURNING id''',
                     (scan_type,
                      str(comp.get('company','') or '')[:300],
@@ -4156,7 +4313,10 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      high_risk_count,
                      green_retained,
                      social_retained,
-                     str(result.get('document_type','') or '')[:100]))
+                     str(result.get('document_type','') or '')[:100],
+                     str(identity_check.get('number','') or '')[:20],
+                     str(identity_check.get('official_name','') or '')[:300],
+                     identity_check.get('match')))
                 scan_id=cur.fetchone()[0]
                 # v93.3: one row per flagged claim, feeding the cross-scan "Top 10 most
                 # flagged claims/words" panel -- matched_phrase is the exact wording that
@@ -4190,6 +4350,7 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
     'global_score','global_risk','green_score','green_risk','social_score','social_risk',
     'audience','document_type','findings_count','empco_blacklisted_count',
     'high_risk_findings_count','external_green_retained_count','external_social_retained_count',
+    'company_number','company_number_official_name','company_number_match',
     'data_reliability_warning','summary']
 
 def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
@@ -4281,13 +4442,15 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
             cur.execute(
                 f'''SELECT id,scanned_at,scan_type,company,sector,input_url,global_score,global_risk,
                            green_score,social_score,audience,findings_count,summary,
-                           sector_risk,empco_blacklisted_count,high_risk_findings_count
+                           sector_risk,empco_blacklisted_count,high_risk_findings_count,
+                           company_number,company_number_official_name,company_number_match
                     FROM scan_history {where}
                     ORDER BY {order_by} LIMIT %s OFFSET %s''',
                 params+(page_size,offset))
             cols=['id','scanned_at','scan_type','company','sector','input_url','global_score','global_risk',
                   'green_score','social_score','audience','findings_count','summary',
-                  'sector_risk','empco_blacklisted_count','high_risk_findings_count']
+                  'sector_risk','empco_blacklisted_count','high_risk_findings_count',
+                  'company_number','company_number_official_name','company_number_match']
             rows=[dict(zip(cols,r)) for r in cur.fetchall()]
         return rows,total
     except Exception as e:
@@ -4967,6 +5130,14 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         for r in rows:
             when=html_escape(str(r.get('scanned_at') or '')[:16].replace('T',' '))
             company=html_escape(str(r.get('company') or '—'))
+            # v93.20: a company number was supplied for this scan but its official KBO
+            # name was not found anywhere in the scanned content -- likely the wrong
+            # website was scanned (see _v93_company_number_identity_check()). Surfaced
+            # right on the company name since that's exactly what a reviewer needs to
+            # re-check first.
+            if r.get('company_number_match') is False:
+                official=html_escape(str(r.get('company_number_official_name') or ''))
+                company+=f' <span class="badge" style="background:#fdecea;color:#a33;border:1px solid #e0a0a0" title="Registered to {official}, not found on the scanned website">&#9888; KBO mismatch</span>'
             # v92.4/v93.13: company['sector'] is a real descriptive label only for the
             # small hardcoded PROFILES list (KBC, Delhaize...) -- otherwise it's the
             # generic placeholder "Sector not explicitly identified". Showing the real
@@ -5448,13 +5619,13 @@ class Handler(BaseHTTPRequestHandler):
                     if self.path=='/api/scan/url':
                         u=data.get('url','')
                         if not u: return self._json({'error':'No URL provided'},400)
-                        result=analyse_url(u)
+                        result=analyse_url(u,data.get('company_number',''))
                         _v92_save_scan_history(result,'url',client)
                     else:
                         filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')
                         if not content: return self._json({'error':'No document content provided'},400)
                         txt=decode_uploaded_document(filename,content,data.get('mime_type',''))
-                        result=analyse_uploaded_document(filename,txt,data.get('company_name',''))
+                        result=analyse_uploaded_document(filename,txt,data.get('company_name',''),data.get('company_number',''))
                         _v92_save_scan_history(result,'document',client)
                     if data.get('format')=='pdf': return self._respond_pdf(result)
                     return self._json(attach_report_signature(result))
