@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_14_real_sector_name_detection"
-APP_RELEASE_LABEL="v93.14"
+APP_VERSION="hostable_v93_15_expanded_sector_taxonomy"
+APP_RELEASE_LABEL="v93.15"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -196,19 +196,49 @@ SECTOR_RULES=[
  # v86: "platform" was removed -- it is standard SaaS/tech terminology ("our software
  # platform...") and matched essentially any tech company, not just gig-economy delivery
  # platforms (which "delivery" already covers on its own).
- ("High",["fast fashion","apparel","textile","garment","fashion","clothing","discount","supermarket","grocery","food retail","catering","facilities","outsourced","delivery","commodity","cocoa","palm oil","coffee","cotton"],"higher exposure to low-wage work, complex supply chains, migrant or seasonal labour, supplier pressure, audit limitations and worker-voice challenges"),
- ("Medium",["bank","finance","insurance","telecom","digital","aviation","airline","transport","chemical","energy","infrastructure","manufacturing","industrial","technology","utility","gas","logistics"],"meaningful exposure to customer rights, contractor management, responsible procurement, safety, data/privacy or affected-community expectations"),
- ("Low",["software","consulting","professional services","agency","office services"],"lower structural exposure, although broad people, customer or supply-chain claims still require evidence")
+ # v93.15: expanded with more agriculture/food-production keywords (new terms placed
+ # BEFORE the pre-existing ones in each tier -- see the SECTOR_KEYWORD_NAMES comment
+ # below for why order matters here) at the user's explicit request, after "poultry
+ # producer" companies like Zabra matched nothing at all. The >=2-distinct-hits rule for
+ # High is unchanged.
+ ("High",["agriculture","farming","poultry","livestock","dairy farming","aquaculture",
+          "food manufacturing","bakery","brewery","beverage","confectionery",
+          "fast fashion","apparel","textile","garment","fashion","clothing","discount","supermarket","grocery","food retail","catering","facilities","outsourced","delivery","commodity","cocoa","palm oil","coffee","cotton"],"higher exposure to low-wage work, complex supply chains, migrant or seasonal labour, supplier pressure, audit limitations and worker-voice challenges"),
+ ("Medium",["automotive","vehicle manufacturing",
+            "construction","building contractor","dredging","marine engineering",
+            "real estate","property management","property developer",
+            "metals","mining","materials technology","smelting","recycling",
+            "pharmaceutical","healthcare","medical","nutrition","supplement","animal feed","animal nutrition","veterinary",
+            "hospitality","hotel","tourism","leisure","cinema","entertainment",
+            "staffing","recruitment","human resources services","workforce solutions",
+            "waste management","environmental services","circular economy",
+            "agrochemical","crop protection","pesticide","fertilizer",
+            "flavor","flavour","fragrance","specialty ingredients",
+            "education","training provider",
+            "bank","finance","insurance","telecom","digital","aviation","airline","transport","chemical","energy","infrastructure","manufacturing","industrial","technology","utility","gas","logistics"],"meaningful exposure to customer rights, contractor management, responsible procurement, safety, data/privacy or affected-community expectations"),
+ ("Low",["software","consulting","professional services","agency","office services","media","publishing","broadcasting"],"lower structural exposure, although broad people, customer or supply-chain claims still require evidence")
 ]
-# v93.14: SECTOR_RULES above classifies a RISK TIER only (High/Medium/Low) -- it was never
-# meant to produce a human-readable industry label, and infer_company() otherwise only ever
-# names a sector for the small hardcoded PROFILES list above, leaving every other company
-# showing the uninformative "Sector not explicitly identified" placeholder. This maps each
-# individual SECTOR_RULES keyword to a specific, readable sector name; infer_sector() uses
-# whichever keyword actually matched (the same match that already determines the risk tier)
-# to backfill company['sector'] with a real label instead of the placeholder, without
-# changing the existing risk-tier assignment logic at all.
+# v93.14/v93.15: SECTOR_RULES above classifies a RISK TIER only (High/Medium/Low) -- it
+# was never meant to produce a human-readable industry label, and infer_company()
+# otherwise only ever names a sector for the small hardcoded PROFILES list above, leaving
+# every other company showing the uninformative "Sector not explicitly identified"
+# placeholder. This maps each individual SECTOR_RULES keyword to a specific, readable
+# sector name; infer_sector() uses whichever keyword actually matched (the same match
+# that already determines the risk tier) to backfill company['sector'] with a real label
+# instead of the placeholder, without changing the existing risk-tier assignment logic.
+# Ordering within each SECTOR_RULES tier list matters for naming (not for the tier itself
+# -- that only cares which keywords hit, not which one is first): when a text matches more
+# than one keyword in the same tier, hits[0] (list order, not text position) picks the
+# name, so a specific term like "vehicle manufacturing" is placed before the generic
+# "manufacturing" it's a substring-superset of, so a car maker is named "Automotive"
+# rather than the less useful generic "Industrial manufacturing".
 SECTOR_KEYWORD_NAMES={
+ 'agriculture':'Agriculture, farming and animal production','farming':'Agriculture, farming and animal production',
+ 'poultry':'Agriculture, farming and animal production','livestock':'Agriculture, farming and animal production',
+ 'dairy farming':'Agriculture, farming and animal production','aquaculture':'Agriculture, farming and animal production',
+ 'food manufacturing':'Food and beverage manufacturing','bakery':'Food and beverage manufacturing',
+ 'brewery':'Food and beverage manufacturing','beverage':'Food and beverage manufacturing',
+ 'confectionery':'Food and beverage manufacturing',
  'fast fashion':'Fast fashion and apparel retail','apparel':'Fast fashion and apparel retail',
  'textile':'Textile and apparel manufacturing','garment':'Fast fashion and apparel retail',
  'fashion':'Fast fashion and apparel retail','clothing':'Fast fashion and apparel retail',
@@ -219,6 +249,30 @@ SECTOR_KEYWORD_NAMES={
  'commodity':'Agricultural commodities and raw materials','cocoa':'Agricultural commodities and raw materials',
  'palm oil':'Agricultural commodities and raw materials','coffee':'Agricultural commodities and raw materials',
  'cotton':'Agricultural commodities and raw materials',
+ 'automotive':'Automotive','vehicle manufacturing':'Automotive',
+ 'construction':'Infrastructure and construction','building contractor':'Infrastructure and construction',
+ 'dredging':'Infrastructure and construction','marine engineering':'Infrastructure and construction',
+ 'real estate':'Real estate and property management','property management':'Real estate and property management',
+ 'property developer':'Real estate and property management',
+ 'metals':'Metals, mining and materials technology','mining':'Metals, mining and materials technology',
+ 'materials technology':'Metals, mining and materials technology','smelting':'Metals, mining and materials technology',
+ 'recycling':'Metals, mining and materials technology',
+ 'pharmaceutical':'Healthcare, pharmaceuticals and nutrition','healthcare':'Healthcare, pharmaceuticals and nutrition',
+ 'medical':'Healthcare, pharmaceuticals and nutrition','nutrition':'Healthcare, pharmaceuticals and nutrition',
+ 'supplement':'Healthcare, pharmaceuticals and nutrition','animal feed':'Healthcare, pharmaceuticals and nutrition',
+ 'animal nutrition':'Healthcare, pharmaceuticals and nutrition','veterinary':'Healthcare, pharmaceuticals and nutrition',
+ 'hospitality':'Hospitality, leisure and entertainment','hotel':'Hospitality, leisure and entertainment',
+ 'tourism':'Hospitality, leisure and entertainment','leisure':'Hospitality, leisure and entertainment',
+ 'cinema':'Hospitality, leisure and entertainment','entertainment':'Hospitality, leisure and entertainment',
+ 'staffing':'Staffing and human resources services','recruitment':'Staffing and human resources services',
+ 'human resources services':'Staffing and human resources services','workforce solutions':'Staffing and human resources services',
+ 'waste management':'Waste management and environmental services','environmental services':'Waste management and environmental services',
+ 'circular economy':'Waste management and environmental services',
+ 'agrochemical':'Agrochemicals and crop protection','crop protection':'Agrochemicals and crop protection',
+ 'pesticide':'Agrochemicals and crop protection','fertilizer':'Agrochemicals and crop protection',
+ 'flavor':'Specialty ingredients, flavors and fragrances','flavour':'Specialty ingredients, flavors and fragrances',
+ 'fragrance':'Specialty ingredients, flavors and fragrances','specialty ingredients':'Specialty ingredients, flavors and fragrances',
+ 'education':'Education and training','training provider':'Education and training',
  'bank':'Banking and financial services','finance':'Banking and financial services',
  'insurance':'Insurance','telecom':'Telecommunications','digital':'Digital and technology services',
  'aviation':'Aviation and airlines','airline':'Aviation and airlines','transport':'Transport and logistics',
@@ -229,6 +283,7 @@ SECTOR_KEYWORD_NAMES={
  'software':'Software and technology services','consulting':'Professional and business services',
  'professional services':'Professional and business services','agency':'Professional and business services',
  'office services':'Professional and business services',
+ 'media':'Media and publishing','publishing':'Media and publishing','broadcasting':'Media and publishing',
 }
 
 

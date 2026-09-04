@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_14_real_sector_name_detection'
+    assert app.APP_VERSION == 'hostable_v93_15_expanded_sector_taxonomy'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -889,3 +889,40 @@ def test_apply_sector_name_backfills_placeholder_only():
     comp3={'sector':'Sector not explicitly identified'}
     app.apply_sector_name(comp3,{'name':''})
     assert comp3['sector']=='Sector not explicitly identified'  # no name found -> no change
+
+
+def test_infer_sector_expanded_taxonomy_covers_more_industries():
+    """v93.15: after the sector-name detection shipped, the user reported a real gap --
+    an agriculture/poultry producer (Zabra) matched no keyword at all and stayed
+    unidentified. The taxonomy was expanded with 13 additional named sectors (agriculture,
+    food/beverage manufacturing, automotive, real estate, metals/mining, healthcare/
+    pharma/nutrition, hospitality, staffing, waste management, agrochemicals, specialty
+    ingredients, education, media) covering common industries from the actual batch-scan
+    company list. Each must resolve to its specific name, not a generic fallback."""
+    cases=[
+        ('Zabra is a leading poultry and egg producer supplying supermarkets across Belgium.','Agriculture, farming and animal production','High'),
+        ('Our vehicle manufacturing plants produce automotive parts for global brands.','Automotive','Medium'),
+        ('We are a leading real estate and property management company.','Real estate and property management','Medium'),
+        ('Umicore is a materials technology and recycling company specialising in metals.','Metals, mining and materials technology','Medium'),
+        ('Metagenics produces nutrition supplements and animal feed additives.','Healthcare, pharmaceuticals and nutrition','Medium'),
+        ('A leading hospitality and hotel group operating resorts across Europe.','Hospitality, leisure and entertainment','Medium'),
+        ('A staffing and recruitment agency providing workforce solutions.','Staffing and human resources services','Medium'),
+        ('We produce agrochemical crop protection products and pesticides for farmers.','Agrochemicals and crop protection','Medium'),
+        ('We create flavor and fragrance solutions for the food industry.','Specialty ingredients, flavors and fragrances','Medium'),
+    ]
+    for text,expected_name,expected_level in cases:
+        comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
+        sec=app.infer_sector(comp,text)
+        assert sec['name']==expected_name, f'{text!r} -> {sec["name"]!r}, expected {expected_name!r}'
+        assert sec['level']==expected_level
+
+
+def test_infer_sector_new_specific_keyword_beats_generic_manufacturing():
+    """v93.15: "vehicle manufacturing" is a substring superset of the pre-existing generic
+    "manufacturing" keyword -- both are placed in the same Medium tier, so a text
+    mentioning "vehicle manufacturing" hits both. The new, more specific term must be
+    listed first so it wins the name (Automotive), not the generic Industrial
+    manufacturing fallback that would otherwise apply to almost any factory."""
+    comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
+    sec=app.infer_sector(comp,'Our vehicle manufacturing plant is one of the largest in the region.')
+    assert sec['name']=='Automotive'
