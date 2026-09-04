@@ -29,6 +29,25 @@ def _get_build_company_report_pdf():
 _report_pdf_fn = None
 _report_pdf_import_error = None
 
+def _get_build_batch_summary_report_pdf():
+    """Lazy import of the /history "Create report" PDF generator -- same pattern and same
+    rationale as _get_build_company_report_pdf() above (never let a reportlab import
+    issue block server startup)."""
+    global _batch_report_pdf_fn, _batch_report_pdf_import_error
+    if _batch_report_pdf_fn is not None:
+        return _batch_report_pdf_fn
+    if _batch_report_pdf_import_error is not None:
+        return None
+    try:
+        from batch_report_pdf import build_batch_summary_report_pdf as _fn
+        _batch_report_pdf_fn = _fn
+        return _fn
+    except Exception as e:
+        _batch_report_pdf_import_error = str(e)
+        return None
+_batch_report_pdf_fn = None
+_batch_report_pdf_import_error = None
+
 def _get_pypdf():
     """Lazily import pypdf on first use, same pattern as the ReportLab lazy import above:
     server startup must never be blocked or crashed by a PDF library import issue -- only
@@ -77,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_11_default_alpha_sort_and_always_clear_btn"
-APP_RELEASE_LABEL="v93.11"
+APP_VERSION="hostable_v93_12_history_create_report_pdf"
+APP_RELEASE_LABEL="v93.12"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4268,6 +4287,29 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=No
     finally:
         conn.close()
 
+def _v92_resolve_selected_export_rows(form):
+    """Shared by /history/export_selected and /history/report_selected -- resolves the
+    POSTed form (an explicit `ids` list, or select_all=1 plus the active filter/sort) into
+    the matching scan_history rows via _v92_fetch_all_for_export(). Both endpoints act on
+    exactly the same selection the operator made on the page, just with a different
+    output format (CSV vs. PDF)."""
+    ids=_v92_parse_ids(form)
+    select_all=(form.get('select_all',[''])[0]=='1')
+    if select_all:
+        search=(form.get('q',[''])[0] or '').strip()[:200]
+        risk=(form.get('risk',[''])[0] or '').strip()
+        period=(form.get('period',[''])[0] or '').strip()
+        min_global=_v92_parse_min_filter(form,'min_global')
+        min_green=_v92_parse_min_filter(form,'min_green')
+        min_social=_v92_parse_min_filter(form,'min_social')
+        min_findings=_v92_parse_min_filter(form,'min_findings')
+        date_from=_v92_parse_date_filter(form,'date_from')
+        date_to=_v92_parse_date_filter(form,'date_to')
+        sort=(form.get('sort',['company'])[0] or 'company').strip()
+        return _v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
+            date_from,date_to,sort)
+    return _v92_fetch_all_for_export(ids=ids) if ids else []
+
 def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None,
                            date_from=None,date_to=None):
     """Deletes every row matching the given search/risk/period/threshold filter -- the
@@ -4679,6 +4721,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 {select_all_btn}
 <button class="btn secondary" type="submit" form="selectForm" formaction="/history" formmethod="GET" id="viewSelectedBtn" disabled>View selected</button>
 <button class="btn secondary" type="submit" form="selectForm" id="exportSelectedBtn" disabled>Export selected</button>
+<button class="btn secondary" type="submit" form="selectForm" formaction="/history/report_selected" id="createReportBtn" disabled>Create report</button>
 <button class="btn danger" type="submit" form="selectForm" formaction="/history/delete_selected" id="deleteSelectedBtn" disabled>Delete selected</button>
 {select_all_note}
 </div>
@@ -4688,7 +4731,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 (function(){{
   var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'),
       exportBtn=document.getElementById('exportSelectedBtn'), viewBtn=document.getElementById('viewSelectedBtn'),
-      deleteBtn=document.getElementById('deleteSelectedBtn'),
+      deleteBtn=document.getElementById('deleteSelectedBtn'), reportBtn=document.getElementById('createReportBtn'),
       selectAllFlag=document.getElementById('selectAllFlag'),
       selectAllMatchingLink=document.getElementById('selectAllMatchingLink'),
       clearSelectAllLink=document.getElementById('clearSelectAllLink'),
@@ -4697,7 +4740,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
   function isSelectAllMatching(){{ return selectAllFlag && selectAllFlag.value==='1'; }}
   function sync(){{ var n=0; boxes.forEach(function(b){{ if(b.checked) n++; }});
     if(exportBtn) exportBtn.disabled=!(n||isSelectAllMatching()); if(viewBtn) viewBtn.disabled=!(n||isSelectAllMatching());
-    if(deleteBtn) deleteBtn.disabled=!(n||isSelectAllMatching()); }}
+    if(deleteBtn) deleteBtn.disabled=!(n||isSelectAllMatching()); if(reportBtn) reportBtn.disabled=!(n||isSelectAllMatching()); }}
   function stopSelectAllMatching(){{
     if(!isSelectAllMatching()) return;
     selectAllFlag.value='';
@@ -4818,6 +4861,10 @@ class Handler(BaseHTTPRequestHandler):
                 'external_search':external_search_configured(),
                 'email_service':bool(BREVO_API_KEY and BREVO_SENDER_EMAIL),
                 'report_signing_key':_REPORT_SIGNING_KEY_CONFIGURED,
+                # v93.12: the /history "Create report" PDF -- surfaced as its own optional
+                # field rather than folded into core_ok below, since it's a newer, secondary
+                # feature and an issue here shouldn't flip the whole service to "degraded".
+                'batch_report_pdf':_get_build_batch_summary_report_pdf() is not None,
             }
             # Only components that should always work regardless of deployment/config choices
             # (scan engine, PDF generation) gate the overall status; external_search, email and
@@ -4952,27 +4999,33 @@ class Handler(BaseHTTPRequestHandler):
         except Exception: n=0
         raw=self.rfile.read(n) if n>0 else b''
         form=parse_qs(raw.decode('utf-8','ignore'))
-        ids=_v92_parse_ids(form)
-        select_all=(form.get('select_all',[''])[0]=='1')
-        if select_all:
-            search=(form.get('q',[''])[0] or '').strip()[:200]
-            risk=(form.get('risk',[''])[0] or '').strip()
-            period=(form.get('period',[''])[0] or '').strip()
-            min_global=_v92_parse_min_filter(form,'min_global')
-            min_green=_v92_parse_min_filter(form,'min_green')
-            min_social=_v92_parse_min_filter(form,'min_social')
-            min_findings=_v92_parse_min_filter(form,'min_findings')
-            date_from=_v92_parse_date_filter(form,'date_from')
-            date_to=_v92_parse_date_filter(form,'date_to')
-            sort=(form.get('sort',['company'])[0] or 'company').strip()
-            rows=_v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort)
-        else:
-            rows=_v92_fetch_all_for_export(ids=ids) if ids else []
+        rows=_v92_resolve_selected_export_rows(form)
         csv_bytes=_v92_rows_to_csv(rows)
         stamp=datetime.date.today().isoformat()
         return self._send(csv_bytes,'text/csv; charset=utf-8',200,
             {'Content-Disposition':f'attachment; filename="scan_history_selected_{stamp}.csv"'})
+
+    def _handle_history_report_selected(self):
+        """POST /history/report_selected -- the "Create report" button. Same
+        selection-resolution as Export selected (ids, or select_all=1 + the active
+        filter/sort), but the output is a professional PDF summary instead of a CSV."""
+        if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+            return self._json({'error':'Scan history is not configured for this deployment.'},404)
+        if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+            return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+        build_fn=_get_build_batch_summary_report_pdf()
+        if build_fn is None:
+            return self._json({'error':'Report PDF generation is unavailable: '+(_batch_report_pdf_import_error or 'unknown import error')},500)
+        try: n=int(self.headers.get('Content-Length',0) or 0)
+        except Exception: n=0
+        raw=self.rfile.read(n) if n>0 else b''
+        form=parse_qs(raw.decode('utf-8','ignore'))
+        rows=_v92_resolve_selected_export_rows(form)
+        try: pdf_bytes=build_fn(rows)
+        except Exception as e: return self._json({'error':'Could not generate report PDF: '+str(e)},500)
+        stamp=datetime.date.today().isoformat()
+        return self._send(pdf_bytes,'application/pdf',200,
+            {'Content-Disposition':f'attachment; filename="durably_scan_summary_report_{stamp}.pdf"'})
 
     def _handle_history_delete_selected(self):
         """POST /history/delete_selected -- same plain-HTML-form pattern as export/login
@@ -5012,6 +5065,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_history_login()
         if self.path=='/history/export_selected':
             return self._handle_history_export_selected()
+        if self.path=='/history/report_selected':
+            return self._handle_history_report_selected()
         if self.path=='/history/delete_selected':
             return self._handle_history_delete_selected()
         try:

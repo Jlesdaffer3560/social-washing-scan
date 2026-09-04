@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_11_default_alpha_sort_and_always_clear_btn'
+    assert app.APP_VERSION == 'hostable_v93_12_history_create_report_pdf'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -736,3 +736,107 @@ def test_backfill_legacy_findings_skips_already_populated(monkeypatch, tmp_path)
     assert summary['skipped_already_present']==1
     assert summary['inserted_companies']==0
     assert insert_log==[]
+
+
+def _sample_export_rows():
+    return [
+        {'scanned_at':'2026-09-03T18:04:00','scan_type':'url','company':'Zabra','sector':'','sector_risk':'Medium',
+         'input_url':'https://zabra.org','global_score':41,'global_risk':'Medium','green_score':62,'green_risk':'High',
+         'social_score':12,'social_risk':'Low','audience':'','document_type':'','findings_count':3,
+         'empco_blacklisted_count':1,'high_risk_findings_count':1,'external_green_retained_count':0,
+         'external_social_retained_count':0,'data_reliability_warning':False,'summary':''},
+        {'scanned_at':'2026-09-03T10:00:00','scan_type':'url','company':'Lidl','sector':'Retail','sector_risk':'High',
+         'input_url':'https://lidl.com','global_score':61,'global_risk':'High','green_score':70,'green_risk':'High',
+         'social_score':50,'social_risk':'Medium','audience':'','document_type':'','findings_count':9,
+         'empco_blacklisted_count':2,'high_risk_findings_count':4,'external_green_retained_count':2,
+         'external_social_retained_count':1,'data_reliability_warning':False,'summary':''},
+        {'scanned_at':'2026-09-02T09:00:00','scan_type':'url','company':'Home Invest','sector':'Real estate',
+         'sector_risk':'Low','input_url':'https://homeinvest.be','global_score':9,'global_risk':'Low','green_score':10,
+         'green_risk':'Low','social_score':8,'social_risk':'Low','audience':'','document_type':'','findings_count':1,
+         'empco_blacklisted_count':0,'high_risk_findings_count':0,'external_green_retained_count':0,
+         'external_social_retained_count':0,'data_reliability_warning':False,'summary':''},
+    ]
+
+
+def test_batch_report_aggregate_stats():
+    """v93.12: _aggregate() must compute averages only over present (non-None) scores,
+    count risk buckets correctly (defaulting an unrecognised/blank risk to 'Low' rather
+    than crashing or silently dropping the row), count companies with at least one EmpCo
+    blacklisted claim, and derive the min/max scanned date range."""
+    import batch_report_pdf as brp
+    agg=brp._aggregate(_sample_export_rows())
+    assert agg['total']==3
+    assert agg['avg_global']==37.0  # (41+61+9)/3
+    assert agg['risk_counts']=={'Low':1,'Medium':1,'High':1,'Very high':0}
+    assert agg['high_plus']==1
+    assert agg['blacklisted_companies']==2
+    assert agg['date_range']==('2026-09-02','2026-09-03')
+    empty=brp._aggregate([])
+    assert empty['total']==0 and empty['avg_global'] is None and empty['date_range']==(None,None)
+
+
+def test_batch_report_pdf_generates_valid_multi_page_pdf():
+    """v93.12: build_batch_summary_report_pdf() must produce real, valid PDF bytes (not
+    just non-empty bytes) with the expected 2-page layout (cover/summary + company
+    table) for a normal selection, and must not crash on a row with every score field
+    None (a company outside the small hardcoded PROFILES list can still legitimately
+    have missing scores)."""
+    import pypdf
+    import batch_report_pdf as brp
+    rows=_sample_export_rows()+[{'scanned_at':'2026-09-01T10:00:00','scan_type':'url','company':'No Score Co',
+        'sector':'','sector_risk':'','input_url':'','global_score':None,'global_risk':'','green_score':None,
+        'green_risk':'','social_score':None,'social_risk':'','audience':'','document_type':'','findings_count':None,
+        'empco_blacklisted_count':0,'high_risk_findings_count':0,'external_green_retained_count':0,
+        'external_social_retained_count':0,'data_reliability_warning':False,'summary':''}]
+    pdf_bytes=brp.build_batch_summary_report_pdf(rows,meta={'generated':'2026-09-04'})
+    assert pdf_bytes.startswith(b'%PDF-')
+    reader=pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes))
+    assert len(reader.pages)==2
+    page1_text=reader.pages[0].extract_text()
+    assert 'Scan Summary Report' in page1_text
+    assert '4 selected scan(s)' in page1_text  # 3 sample rows + the no-score row
+
+
+def test_batch_report_pdf_empty_selection():
+    """v93.12: an empty selection must still produce a valid, graceful one-page PDF
+    (never raise) -- e.g. if every row in a select-all filter got deleted between page
+    load and clicking "Create report"."""
+    import batch_report_pdf as brp
+    pdf_bytes=brp.build_batch_summary_report_pdf([])
+    assert pdf_bytes.startswith(b'%PDF-')
+
+
+def test_history_resolve_selected_export_rows(monkeypatch):
+    """v93.12: _v92_resolve_selected_export_rows() is shared by Export selected and the
+    new Create report button -- an explicit ids list must call _v92_fetch_all_for_export
+    with just those ids, while select_all=1 must resolve against the active
+    search/risk/period/score/date/sort filters instead, exactly like Export selected."""
+    calls=[]
+    monkeypatch.setattr(app,'_v92_fetch_all_for_export',lambda *a,**k: calls.append((a,k)) or ['row'])
+    result=app._v92_resolve_selected_export_rows({'ids':['5','9']})
+    assert result==['row'] and calls[-1][1]=={'ids':[5,9]}
+    calls.clear()
+    form={'select_all':['1'],'q':['Acme'],'risk':['High'],'min_global':['50'],'sort':['global']}
+    app._v92_resolve_selected_export_rows(form)
+    args,kwargs=calls[-1]
+    assert args[0]=='Acme' and args[1]=='High' and args[4]==50 and args[10]=='global'
+
+
+def test_history_report_button_disabled_by_default(monkeypatch):
+    """v93.12: the "Create report" button must render alongside the existing selection
+    actions, start disabled like them, and post to /history/report_selected."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'')
+    assert 'id="createReportBtn"' in html and 'disabled' in html
+    assert 'formaction="/history/report_selected"' in html
+
+
+def test_get_build_batch_summary_report_pdf_lazy_import():
+    """v93.12: the lazy-import helper must resolve the real function on a working
+    install (reportlab is already a hard dependency for the existing per-company report,
+    so this must succeed the same way _get_build_company_report_pdf() does)."""
+    fn=app._get_build_batch_summary_report_pdf()
+    assert fn is not None and callable(fn)
