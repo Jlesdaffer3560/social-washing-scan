@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_20_1_kbo_identity_check_requires_full_name_match"
-APP_RELEASE_LABEL="v93.20.1"
+APP_VERSION="hostable_v93_21_empco_blacklist_floor_and_kbo_only_scan"
+APP_RELEASE_LABEL="v93.21"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -2792,6 +2792,31 @@ def combine_green_social(green_score, social_score, audience):
     # If the dimensions are equal, keep equality; otherwise keep a distinct integrated score.
     return max(0, min(max(green, social), overall))
 
+def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings):
+    """A retained green claim with blacklisted_practice_indicator=True matches a FIXED
+    pattern on EmpCo Annex I -- the Directive (EU) 2024/825 practices automatically
+    treated as unfair once EmpCo applies (27 September 2026), with no separate
+    case-by-case materiality or consumer-impact test required (see the "Potentially
+    Prohibited (Annex I)" vs "Problematic (case-by-case)" distinction used throughout
+    this tool). That is categorically more severe than the blended 0-100 formula (claim
+    wording + evidence gap + external context + sector modifier) was designed to capture
+    on its own -- the blend can dilute a confirmed Annex I match down into the Medium or
+    High band, indistinguishable from claims that are merely "problematic, case-by-case".
+
+    v93.21: added after a real scan batch showed EVERY company landing in Low/Medium/High
+    despite roughly half having at least one blacklisted-practice claim -- the tool's own
+    "Very high" band was never actually reached in practice, undermining its purpose as a
+    priority-outreach signal. When at least one retained green finding is blacklisted,
+    both the green score and the overall score are floored at 75 (the "Very high" band
+    threshold) -- this only ever RAISES a score, never lowers one already at or above 75
+    from the blended formula. Social claims have no equivalent fixed Annex I blacklist
+    (assessed case-by-case only -- see the explicit `blacklisted_practice_indicator=False`
+    for social findings), so social_score is never floored by this rule."""
+    has_blacklisted=any(f.get('blacklisted_practice_indicator') for f in green_findings or [])
+    if not has_blacklisted:
+        return green_score, overall_score, False
+    return max(green_score, 75), max(overall_score, 75), True
+
 def green_washing_conclusion(score, findings, evidence_gap, external_score, audience):
     no_major=findings and is_placeholder_finding(findings[0].get('type',''))
     prefix='Consumer-facing EmpCo-relevant material: ' if ('Client-facing' in audience.get('audience','') or 'Consumer-facing' in audience.get('audience','') or 'commercial' in audience.get('audience','').lower()) else ''
@@ -3310,12 +3335,15 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
+    green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs)
+    if empco_blacklist_floor:
+        green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
     methodology='Sustainability Claims Risk Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
     summary=(f"The scan reviewed the uploaded document for {comp['company']} and identified a {level(overall).lower()} "
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
              "evidence available to support it. This is an initial screening result, not a legal finding.")
-    return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','company_identity_check':company_identity_check,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
+    return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','company_identity_check':company_identity_check,'empco_blacklist_floor_applied':empco_blacklist_floor,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
@@ -3343,6 +3371,13 @@ def _describe_fetch_error(err):
 
 def analyse_url_v27(raw, company_number=''):
     kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
+    # v93.21: a company number is enough on its own to run a scan -- the name/website
+    # field can be left empty entirely. If a number was given but could not be resolved
+    # (invalid format, not found, KBO unreachable) and there is also no name/website to
+    # fall back on, say exactly that instead of the generic "enter a company name or
+    # website" message, which would otherwise read as if nothing at all had been entered.
+    if not raw and company_number and not kbo_info:
+        raise ValueError(f'The company number "{company_number}" could not be verified against the Belgian KBO/BCE public register (not found, or not a recognised Belgian enterprise-number format), and no company name or website was entered either. Please check the number or enter a company name/website.')
     # v93.20: when the input is a bare company name (not already a URL/domain) and a
     # company number was supplied and verified, resolve using the OFFICIAL registered
     # name rather than whatever free-text the user typed -- a legally exact name gives
@@ -3432,6 +3467,9 @@ def analyse_url_v27(raw, company_number=''):
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
+    green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs)
+    if empco_blacklist_floor:
+        green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
@@ -3465,7 +3503,11 @@ def analyse_url_v27(raw, company_number=''):
         summary=summary+" Note: external public-source verification was not performed for this scan (no search source configured); the external-context component reflects that no check was run, not a confirmed absence of negative signals."
     if reliability_warning:
         summary=f"⚠ DATA RELIABILITY: {reliability_warning} " + summary
+    if empco_blacklist_floor:
+        summary=summary+" A retained claim matches a fixed EmpCo Annex I blacklisted practice, which automatically raises the green and overall scores to the Very high band regardless of the blended score."
     screening_conclusion=f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}'
+    if empco_blacklist_floor:
+        screening_conclusion='EmpCo Annex I blacklist match: automatic Very high | '+screening_conclusion
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
@@ -3474,6 +3516,7 @@ def analyse_url_v27(raw, company_number=''):
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
         'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,
         'screening_conclusion':screening_conclusion,
+        'empco_blacklist_floor_applied':empco_blacklist_floor,
         'data_reliability_warning':reliability_warning,
         'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'pages_retrieved_via_fallback':len([e for e in crawl_log if e.get('ok') and e.get('method')=='reader_fallback']),'detail':crawl_log},
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
@@ -5630,8 +5673,15 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if self.path=='/api/scan/url':
                         u=data.get('url','')
-                        if not u: return self._json({'error':'No URL provided'},400)
-                        result=analyse_url(u,data.get('company_number',''))
+                        company_number=data.get('company_number','')
+                        # v93.21: a company number alone can resolve to an official name via
+                        # the KBO lookup inside analyse_url() -- requiring a non-empty url/name
+                        # here too would reject exactly the "I only have the BTW number" case
+                        # the field exists for. analyse_url()/resolve_scan_input() already
+                        # raise a clear ValueError if the number turns out unverifiable and no
+                        # name/url was given either.
+                        if not u and not company_number: return self._json({'error':'No company name, website or company number provided'},400)
+                        result=analyse_url(u,company_number)
                         _v92_save_scan_history(result,'url',client)
                     else:
                         filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')

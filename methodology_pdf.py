@@ -71,7 +71,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v93')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · v93.21')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -84,7 +84,7 @@ def build_methodology_pdf():
     flow = []
 
     flow.append(Paragraph('Durably Sustainability Claims Risk Scan', STY['title']))
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v93 &middot; 3 September 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; v93.21 &middot; 4 September 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '
@@ -161,6 +161,17 @@ def build_methodology_pdf():
                    'determined by this scan.', STY['td'])),
     ]
     flow.append(section_table(legal_basis_rows, [W * 0.26, W * 0.74]))
+    flow.append(Spacer(1, 6))
+    flow.append(Paragraph(
+        '<b>Automatic Very high score.</b> When at least one retained green claim is classified <b>Potentially '
+        'Prohibited (Annex I)</b>, the green score and the overall score are automatically raised to the Very high '
+        'band (75/100 or higher), regardless of what the blended scoring formula in Section 6 would otherwise '
+        'produce. A confirmed match against the fixed Annex I list is treated as categorically more severe than a '
+        'case-by-case claim, so it is not diluted by averaging with claim wording, evidence-gap, external-context '
+        'or sector-modifier components that were designed for the broader, non-blacklisted case. This rule only '
+        'ever raises a score — a scan whose blended formula already reaches 75 or higher is unaffected. Social '
+        'claims have no equivalent fixed Annex I list (assessed case-by-case only, per the Forced Labour Regulation '
+        'lens in Section 1), so the social score is never raised by this rule.', STY['body']))
 
     flow.append(Paragraph('3. What is retained as a claim signal', STY['h2']))
     flow.append(Paragraph(
@@ -195,7 +206,55 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(signal_rows, [W * 0.24, W * 0.36, W * 0.40]))
 
-    flow.append(Paragraph('4. Claim source and detected wording', STY['h2']))
+    flow.append(Paragraph('4. Avoiding false positives on social and forced-labour claims', STY['h2']))
+    flow.append(Paragraph(
+        'Words like <i>supplier</i>, <i>audit</i>, <i>human rights</i> or <i>compliant</i> appear constantly in ordinary '
+        'business writing that is not a sustainability claim at all. Flagging every occurrence would bury genuine risk '
+        'signals in noise, so before a social or forced-labour match is retained as a claim, it must pass all of the '
+        'checks below. A reference that fails any of them is dropped silently &mdash; it never reaches the report and '
+        'carries no score impact.', STY['body']))
+    flow.append(Spacer(1, 5))
+    fp_rows = [
+        ('Check', 'What it filters out'),
+        (Paragraph('Minimum context length', STY['td_b']),
+         Paragraph('A match with fewer than roughly 35 characters of surrounding text is dropped &mdash; there is not '
+                   'enough context to judge whether it is actually a claim.', STY['td'])),
+        (Paragraph('Neutral supplier references', STY['td_b']),
+         Paragraph('Ordinary mentions such as <i>supporting local suppliers</i>, <i>our suppliers include&hellip;</i> or '
+                   '<i>become a supplier</i> are not retained on their own. They only count once the same passage also '
+                   'contains a genuine assurance or control term &mdash; audited, certified, traceable, forced labour, '
+                   'human rights, due diligence.', STY['td'])),
+        (Paragraph('Requests vs. completed assurance', STY['td_b']),
+         Paragraph('Wording that <i>asks</i> suppliers to do something (<i>we ask all our suppliers to sign our code</i>) '
+                   'is a governance step, not a compliance claim. It is only flagged if the same passage also shows the '
+                   'step has actually happened &mdash; a stated compliance rate, "have signed", "audited" &mdash; rather '
+                   'than treating every mention of "all suppliers" as an assurance claim.', STY['td'])),
+        (Paragraph('Aspirational / future commitments checked for real evidence', STY['td_b']),
+         Paragraph('A forward-looking statement on wages, human rights or working conditions (<i>we are working towards&hellip;</i>, '
+                   '<i>our ambition is&hellip;</i>) is flagged only when there is <b>no</b> concrete process evidence &mdash; '
+                   'due diligence, a grievance mechanism, tracking &mdash; in the same or immediately following sentence. A '
+                   'commitment paired with real process detail is treated as a substantiated policy statement, not empty '
+                   'ambition. This check also excludes evidence-sounding text that is actually about an unrelated topic '
+                   '(e.g. a financial-audit sentence following a human-rights commitment).', STY['td'])),
+        (Paragraph('Category-specific corroboration', STY['td_b']),
+         Paragraph('Forced-labour, human-rights, workplace-safety and diversity/inclusion wording each require a '
+                   'specific additional strong phrase in the same passage (for example <i>traceability</i> alongside a '
+                   'forced-labour reference, or <i>living wage</i> / <i>worker rights</i> alongside a human-rights '
+                   'reference) &mdash; the bare trigger word by itself is never sufficient.', STY['td'])),
+        (Paragraph('No claim retained → no inflated score', STY['td_b']),
+         Paragraph('If nothing survives these checks, the social score reflects "No material problematic social claim '
+                   'retained" rather than defaulting to an assumed risk level.', STY['td'])),
+    ]
+    flow.append(section_table(fp_rows, [W * 0.26, W * 0.74]))
+    flow.append(Spacer(1, 5))
+    flow.append(Paragraph(
+        'These checks are intentionally conservative and applied before scoring, so they reduce noise at the cost of '
+        'not being exhaustive: social or forced-labour wording that is genuinely misleading but phrased in an unusual '
+        'way may not be caught. Reviewers should not read an absence of retained social claims as proof that a '
+        'company’s communication is free of social-washing risk &mdash; only that no wording matched the scan’s '
+        'retained-signal criteria.', STY['body']))
+
+    flow.append(Paragraph('5. Claim source and detected wording', STY['h2']))
     flow.append(Spacer(1, 3))
     field_rows = [
         ('Field in report', 'Meaning'),
@@ -207,7 +266,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(field_rows, [W * 0.28, W * 0.72]))
 
-    flow.append(Paragraph('5. Score calculation', STY['h2']))
+    flow.append(Paragraph('6. Score calculation', STY['h2']))
     flow.append(Paragraph(
         'The scan produces three scores: <b>Green score</b>, <b>Social score</b> and <b>Global score</b>. Scores are '
         '<b>risk scores, not performance scores</b>. Higher scores indicate higher claim-risk exposure or stronger need '
@@ -241,11 +300,13 @@ def build_methodology_pdf():
         (Paragraph('50 &ndash; 74  High', ParagraphStyle('bh', parent=STY['td_b'], textColor=DANGER)),
          Paragraph('Strong wording risk, evidence gaps and/or negative external stakeholder signals require priority review.', STY['td'])),
         (Paragraph('75 &ndash; 100  Very high', ParagraphStyle('bv', parent=STY['td_b'], textColor=colors.HexColor('#7a1e1e'))),
-         Paragraph('Reserved for multiple severe claim signals with strong external or regulatory context.', STY['td'])),
+         Paragraph('Reached either by multiple severe claim signals with strong external or regulatory context, or '
+                   'automatically whenever a retained green claim is classified Potentially Prohibited (Annex I) '
+                   '&mdash; see Section 2.', STY['td'])),
     ]
     flow.append(section_table(band_rows, [W * 0.28, W * 0.72]))
 
-    flow.append(Paragraph('6. External stakeholder signals', STY['h2']))
+    flow.append(Paragraph('7. External stakeholder signals', STY['h2']))
     flow.append(Spacer(1, 3))
     ext_rows = [
         ('Status', 'Meaning and score treatment'),
@@ -256,7 +317,7 @@ def build_methodology_pdf():
     ]
     flow.append(section_table(ext_rows, [W * 0.22, W * 0.78]))
 
-    flow.append(Paragraph('7. Coverage, confidence and source status', STY['h2']))
+    flow.append(Paragraph('8. Coverage, confidence and source status', STY['h2']))
     coverage_rows=[
         ('Source status','Meaning'),
         (Paragraph('Retrieved and analysed',STY['td_b']),Paragraph('Usable text from the source entered the claim analysis.',STY['td'])),
@@ -269,7 +330,7 @@ def build_methodology_pdf():
     flow.append(Spacer(1,5))
     flow.append(Paragraph('Confidence reflects source coverage, extraction quality, access failures, fallback use, claim-level signals and whether external search was performed. It is reported separately from claim risk. A low detected risk with limited coverage must not be read as proof that risky claims are absent.',STY['body']))
 
-    flow.append(Paragraph('8. Illustrative score example', STY['h2']))
+    flow.append(Paragraph('9. Illustrative score example', STY['h2']))
     example_rows=[
         ('Illustrative input','Risk contribution'),
         (Paragraph('Generic consumer-facing environmental claim',STY['td_b']),Paragraph('Raises claim-wording severity; exact contribution depends on the retained pattern and channel.',STY['td'])),
@@ -286,9 +347,11 @@ def build_methodology_pdf():
         'the published weights above: 65&times;50% + 70&times;22% + 30&times;20% + 40&times;8% = 32.5 + 15.4 + 6.0 + '
         '3.2 = 57.1, rounded to <b>57/100</b> (High risk band). This shows how the four weighted components combine into the final '
         'score; it does not disclose the full internal point schedule used to score any individual claim, which '
-        'varies by claim type, channel and retained evidence.', STY['body']))
+        'varies by claim type, channel and retained evidence. If this claim were additionally classified '
+        'Potentially Prohibited (Annex I), the automatic Very high rule from Section 2 would apply instead, and the '
+        'score would be raised to at least 75/100 regardless of this blended calculation.', STY['body']))
 
-    flow.append(Paragraph('9. Limits of the scan', STY['h2']))
+    flow.append(Paragraph('10. Limits of the scan', STY['h2']))
     flow.append(Paragraph(
         'The scan is a structured screening and prioritisation tool. It does not determine whether greenwashing or '
         'social washing legally occurred. Final assessment requires human review of the complete communication, '

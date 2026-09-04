@@ -266,7 +266,7 @@ function arr(x){return Array.isArray(x)?x:(x?[x]:[])}
 function setStatus(msg,type='notice'){const el=$('status'); if(!el)return; el.className=type; el.innerHTML=msg}
 $('chooseFile')?.addEventListener('click',()=>$('file').click());
 $('file')?.addEventListener('change',()=>{$('fileName').textContent=$('file').files[0]?.name||'No file selected'});
-async function scanUrl(){let url=$('url').value.trim(); if(!url){setStatus('Please enter a company name or website.','notice warning');return} await runScan('/api/scan/url',{url,company_number:$('companyNumber').value.trim()});}
+async function scanUrl(){let url=$('url').value.trim(); let companyNumber=$('companyNumber').value.trim(); if(!url&&!companyNumber){setStatus('Please enter a company name, website, or company number.','notice warning');return} await runScan('/api/scan/url',{url,company_number:companyNumber});}
 async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return}
   // Check the server's 8 MB limit client-side before reading+base64-encoding the whole file --
   // previously a too-large file was read into memory and sent anyway, only to be rejected by

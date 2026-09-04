@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_20_1_kbo_identity_check_requires_full_name_match'
+    assert app.APP_VERSION == 'hostable_v93_21_empco_blacklist_floor_and_kbo_only_scan'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1122,6 +1122,64 @@ def test_analyse_uploaded_document_unverified_company_number_is_flagged(monkeypa
 def test_analyse_uploaded_document_without_company_number_has_no_identity_check():
     result=app.analyse_uploaded_document('policy.txt','Some internal text.','Acme')
     assert result['company_identity_check'] is None
+
+
+def test_analyse_url_v27_empty_name_with_unresolvable_number_gives_specific_error(monkeypatch):
+    """v93.21: a company number is meant to be usable on its own, with the name/website
+    field left empty -- reported live: a user left "Company name or website" blank and
+    only filled in a KBO number, and got the generic "Please enter a company name or
+    website" message, which reads as if nothing had been entered at all even though a
+    number was typed. When the number itself fails to resolve and there's no name/url to
+    fall back on, the error must say so specifically instead of that generic message."""
+    monkeypatch.setattr(app,'_v93_lookup_kbo_company',lambda n: None)
+    try:
+        app.analyse_url_v27('', 'BE0999999999')
+        assert False, 'expected ValueError'
+    except ValueError as e:
+        msg=str(e).lower()
+        assert 'could not be verified' in msg
+        assert 'please enter a company name or website' not in msg
+
+
+def test_empco_blacklist_floor_raises_only_when_blacklisted_claim_present():
+    """v93.21: a scan with no blacklisted-practice claim must be completely unaffected --
+    green/overall pass through unchanged and the floor flag is False."""
+    green_score, overall, applied = app._v93_apply_empco_blacklist_floor(40, 35, [{'blacklisted_practice_indicator': False}])
+    assert (green_score, overall, applied) == (40, 35, False)
+    green_score, overall, applied = app._v93_apply_empco_blacklist_floor(40, 35, [])
+    assert (green_score, overall, applied) == (40, 35, False)
+
+
+def test_empco_blacklist_floor_raises_to_75_but_never_lowers():
+    """v93.21: the floor only ever RAISES a score to 75 (the Very high threshold) -- a
+    score already at or above 75 from the blended formula must be left exactly as is."""
+    green_score, overall, applied = app._v93_apply_empco_blacklist_floor(40, 35, [{'blacklisted_practice_indicator': True}])
+    assert (green_score, overall, applied) == (75, 75, True)
+    green_score, overall, applied = app._v93_apply_empco_blacklist_floor(90, 82, [{'blacklisted_practice_indicator': True}])
+    assert (green_score, overall, applied) == (90, 82, True)
+
+
+def test_analyse_uploaded_document_blacklisted_claim_forces_very_high():
+    """v93.21: end-to-end via the internal-document pipeline (no network/crawl needed) --
+    a generic, unspecified environmental claim ("100% eco-friendly, made from sustainable
+    materials") is a known EmpCo Annex I 4a blacklist match. Before this change, a real
+    scan batch showed EVERY company landing in Low/Medium/High despite roughly half
+    having such a claim -- the tool's own "Very high" band was never actually reached in
+    practice. green_risk and global_risk must both now read "Very high" regardless of
+    what the blended formula alone would have produced."""
+    text='Our products are 100% eco-friendly and made from sustainable materials, helping the planet.'
+    result=app.analyse_uploaded_document('claims.txt', text, 'Acme')
+    assert result['empco_blacklist_floor_applied'] is True
+    assert result['green_risk']=='Very high' and result['green_score']>=75
+    assert result['global_risk']=='Very high' and result['global_score']>=75
+    assert 'Automatic Very high' in result['green_conclusion']
+
+
+def test_analyse_uploaded_document_no_blacklist_claim_not_forced():
+    """v93.21: a document with no blacklisted-practice claim at all must not be affected
+    by the new floor -- confirms the override is conditional, not a blanket change."""
+    result=app.analyse_uploaded_document('claims.txt', 'This is a plain internal memo with no sustainability claims at all.', 'Acme')
+    assert result['empco_blacklist_floor_applied'] is False
 
 
 def test_batch_report_analysis_text_mentions_top_company_and_top_claim():
