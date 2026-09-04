@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_21_empco_blacklist_floor_and_kbo_only_scan"
-APP_RELEASE_LABEL="v93.21"
+APP_VERSION="hostable_v93_22_google_custom_search_disabled"
+APP_RELEASE_LABEL="v93.22"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -157,6 +157,20 @@ TAVILY_API_KEY=os.environ.get("TAVILY_API_KEY","").strip()
 OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY","").strip()
 GOOGLE_SEARCH_API_KEY=os.environ.get("GOOGLE_SEARCH_API_KEY","").strip()
 GOOGLE_SEARCH_CX=os.environ.get("GOOGLE_SEARCH_CX","").strip()
+# v93.22: Google's Custom Search JSON API is closed to new customers (Google's own
+# documented policy, confirmed via official docs and Google Developer forum threads) --
+# this project was created after that cutoff, so every call returns a 100% HTTP 403
+# "This project does not have the access to Custom Search JSON API", independent of
+# billing, API enablement or API-key restrictions (all individually verified correct on
+# the Google Cloud side -- there is no configuration fix available). Blanking the values
+# here, right after reading them, is a single change point: every existing "is Google
+# configured" check (external_search_configured(), the /api/health flag, the per-provider
+# dispatch in search_public_sources(), google_search() itself) already has a graceful
+# not-configured path, so this alone stops every scan from wasting an HTTP round trip per
+# query on a call that can only ever fail -- with no other code changes needed. Revert by
+# deleting these two lines if Google ever restores or grandfathers in access.
+GOOGLE_SEARCH_API_KEY=""
+GOOGLE_SEARCH_CX=""
 SERPER_API_KEY=os.environ.get("SERPER_API_KEY","").strip()
 
 def external_search_configured():

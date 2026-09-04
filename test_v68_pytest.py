@@ -4,12 +4,27 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_21_empco_blacklist_floor_and_kbo_only_scan'
+    assert app.APP_VERSION == 'hostable_v93_22_google_custom_search_disabled'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
     payload['global_score']=90
     assert not app.verify_report_signature(payload)
+
+
+def test_google_custom_search_disabled_by_policy(monkeypatch):
+    """v93.22: Google's Custom Search JSON API is closed to new customers -- confirmed
+    via Google's own documentation and forum threads -- so this project (created after
+    the cutoff) can never get access regardless of billing/API-enablement/key config
+    (all individually verified correct). GOOGLE_SEARCH_API_KEY/GOOGLE_SEARCH_CX are
+    blanked at import time so every existing "is Google configured" check consistently
+    treats it as unavailable, without retrying a call that can only ever fail."""
+    assert app.GOOGLE_SEARCH_API_KEY == ''
+    assert app.GOOGLE_SEARCH_CX == ''
+    assert app.google_search('test query') == []
+    monkeypatch.setattr(app,'TAVILY_API_KEY','')
+    monkeypatch.setattr(app,'SERPER_API_KEY','')
+    assert app.external_search_configured() is False
 
 
 def test_unverified_company_falls_back_to_flagged_guess(monkeypatch):
