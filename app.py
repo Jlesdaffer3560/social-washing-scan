@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_18_nace_sector_classification"
-APP_RELEASE_LABEL="v93.18"
+APP_VERSION="hostable_v93_19_multilingual_sector_and_risk_backfill"
+APP_RELEASE_LABEL="v93.19"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -201,22 +201,65 @@ SECTOR_RULES=[
  # below for why order matters here) at the user's explicit request, after "poultry
  # producer" companies like Zabra matched nothing at all. The >=2-distinct-hits rule for
  # High is unchanged.
- ("High",["agriculture","farming","poultry","livestock","dairy farming","aquaculture",
-          "food manufacturing","bakery","brewery","beverage","confectionery",
-          "fast fashion","apparel","textile","garment","fashion","clothing","discount","supermarket","grocery","food retail","catering","facilities","outsourced","delivery","commodity","cocoa","palm oil","coffee","cotton"],"higher exposure to low-wage work, complex supply chains, migrant or seasonal labour, supplier pressure, audit limitations and worker-voice challenges"),
- ("Medium",["automotive","vehicle manufacturing",
-            "construction","building contractor","dredging","marine engineering",
-            "real estate","property management","property developer",
-            "metals","mining","materials technology","smelting","recycling",
-            "pharmaceutical","healthcare","medical","nutrition","supplement","animal feed","animal nutrition","veterinary",
-            "hospitality","hotel","tourism","leisure","cinema","entertainment",
-            "staffing","recruitment","human resources services","workforce solutions",
-            "waste management","environmental services","circular economy",
-            "agrochemical","crop protection","pesticide","fertilizer",
-            "flavor","flavour","fragrance","specialty ingredients",
-            "education","training provider",
-            "bank","finance","insurance","telecom","digital","aviation","airline","transport","chemical","energy","infrastructure","manufacturing","industrial","technology","utility","gas","logistics"],"meaningful exposure to customer rights, contractor management, responsible procurement, safety, data/privacy or affected-community expectations"),
- ("Low",["software","consulting","professional services","agency","office services","media","publishing","broadcasting"],"lower structural exposure, although broad people, customer or supply-chain claims still require evidence")
+ # v93.19: added Dutch (NL) and French (FR) equivalents for every keyword -- a retroactive
+ # check of the 44-company Belgian batch scan found 41/44 defaulted to "Medium" (the
+ # unmatched fallback), because most of their homepage text is Dutch/French and the
+ # classifier was English-only. Each translated term sits next to its English original in
+ # the SAME tier (so the risk-tier outcome is unaffected by which language matched) and
+ # maps to the identical SECTOR_KEYWORD_NAMES value, so "brouwerij"/"brewery"/"brasserie"
+ # all resolve to the same name. Ordering still matters for naming when multiple keywords
+ # in one tier match at once (see the SECTOR_KEYWORD_NAMES comment below) -- translated
+ # specific terms are placed before translated generic ones, mirroring the English list.
+ ("High",["agriculture","landbouw","farming","veeteelt","élevage","poultry","pluimvee","volaille",
+          "livestock","vee","bétail","dairy farming","melkveehouderij","élevage laitier",
+          "aquaculture","aquacultuur",
+          "food manufacturing","voedingsproductie","fabrication alimentaire",
+          "bakery","bakkerij","boulangerie","brewery","brouwerij","brasserie",
+          "beverage","dranken","boisson","confectionery","banketbakkerij","confiserie",
+          "fast fashion","apparel","textile","textiel","garment","kledingstuk","vêtement",
+          "fashion","clothing","kleding","vêtements","habillement",
+          "discount","supermarket","supermarkt","supermarché",
+          "grocery","kruidenier","épicerie","food retail","voedingsdetailhandel","distribution alimentaire",
+          "catering","horeca","restauration","facilities","facilitaire diensten",
+          "outsourced","uitbesteed","externalisé","delivery","bezorging","livraison",
+          "commodity","grondstof","matière première","cocoa","cacao","palm oil","palmolie","huile de palme",
+          "coffee","koffie","café","cotton","katoen","coton"],"higher exposure to low-wage work, complex supply chains, migrant or seasonal labour, supplier pressure, audit limitations and worker-voice challenges"),
+ ("Medium",["automotive","auto-industrie","vehicle manufacturing","voertuigproductie","fabrication de véhicules",
+            "construction","bouwbedrijf","building contractor","aannemer","entrepreneur",
+            "dredging","baggerwerken","dragage","marine engineering","maritieme techniek","ingénierie maritime",
+            "real estate","vastgoed","immobilier","property management","vastgoedbeheer","gestion immobilière",
+            "property developer","projectontwikkelaar","promoteur immobilier",
+            "mining","mijnbouw","exploitation minière","metals","metalen","métaux",
+            "materials technology","materiaaltechnologie","technologie des matériaux",
+            "smelting","smelten","fonderie","recycling","recyclage",
+            "pharmaceutical","farmaceutisch","pharmaceutique","healthcare","gezondheidszorg","santé",
+            "medical","medisch","médical","nutrition","voeding",
+            "supplement","voedingssupplement","complément alimentaire",
+            "animal feed","diervoeding","alimentation animale","animal nutrition","dierenvoeding","nutrition animale",
+            "veterinary","dierenarts","vétérinaire",
+            "hospitality","horeca","hôtellerie","hotel","hôtel","tourism","toerisme","tourisme",
+            "leisure","vrije tijd","loisirs","cinema","bioscoop","cinéma",
+            "entertainment","amusement","divertissement",
+            "staffing","uitzendkrachten","intérim","recruitment","rekrutering","werving","recrutement",
+            "human resources services","hr-diensten","services rh","workforce solutions",
+            "waste management","afvalbeheer","gestion des déchets",
+            "environmental services","milieudiensten","services environnementaux",
+            "circular economy","circulaire economie","économie circulaire",
+            "agrochemical","agrochemie","agrochimie","crop protection","gewasbescherming","protection des cultures",
+            "pesticide","fertilizer","meststof","engrais",
+            "flavor","flavour","aroma","arôme","fragrance","geurstof","parfum","specialty ingredients",
+            "education","onderwijs","éducation","training provider","opleidingsverstrekker",
+            "bank","banque","finance","financiën","insurance","verzekering","assurance",
+            "telecom","télécom","digital","digitaal","numérique",
+            "aviation","luchtvaart","airline","luchtvaartmaatschappij","compagnie aérienne",
+            "transport","chemical","chemisch","chimique","energy","energie","énergie",
+            "infrastructure","infrastructuur",
+            "manufacturing","productie","fabricage","fabrication","industrial","industrieel","industriel",
+            "technology","technologie","utility","nutsvoorziening","service public","gas","gaz","logistics","logistiek","logistique"],"meaningful exposure to customer rights, contractor management, responsible procurement, safety, data/privacy or affected-community expectations"),
+ ("Low",["software","logiciel","consulting","advies","conseil",
+         "professional services","professionele diensten","services professionnels",
+         "agency","agentschap","agence","office services","kantoordiensten","services de bureau",
+         "media","publishing","uitgeverij","édition","broadcasting","omroep","diffusion"],"lower structural exposure, although broad people, customer or supply-chain claims still require evidence")
 ]
 # v93.14/v93.15: SECTOR_RULES above classifies a RISK TIER only (High/Medium/Low) -- it
 # was never meant to produce a human-readable industry label, and infer_company()
@@ -252,61 +295,113 @@ SECTOR_RULES=[
 # manufacturing (C), since the real companies this matches in practice (C&A, Zara) are
 # retailers; "textile"/"garment" (manufacturing-flavoured wording) stay under C.
 SECTOR_KEYWORD_NAMES={
- 'agriculture':'Agriculture, farming and animal production (NACE A)','farming':'Agriculture, farming and animal production (NACE A)',
- 'poultry':'Agriculture, farming and animal production (NACE A)','livestock':'Agriculture, farming and animal production (NACE A)',
- 'dairy farming':'Agriculture, farming and animal production (NACE A)','aquaculture':'Agriculture, farming and animal production (NACE A)',
- 'food manufacturing':'Food and beverage manufacturing (NACE C)','bakery':'Food and beverage manufacturing (NACE C)',
- 'brewery':'Food and beverage manufacturing (NACE C)','beverage':'Food and beverage manufacturing (NACE C)',
- 'confectionery':'Food and beverage manufacturing (NACE C)',
+ 'agriculture':'Agriculture, farming and animal production (NACE A)','landbouw':'Agriculture, farming and animal production (NACE A)',
+ 'farming':'Agriculture, farming and animal production (NACE A)','veeteelt':'Agriculture, farming and animal production (NACE A)',
+ 'élevage':'Agriculture, farming and animal production (NACE A)',
+ 'poultry':'Agriculture, farming and animal production (NACE A)','pluimvee':'Agriculture, farming and animal production (NACE A)',
+ 'volaille':'Agriculture, farming and animal production (NACE A)',
+ 'livestock':'Agriculture, farming and animal production (NACE A)','vee':'Agriculture, farming and animal production (NACE A)',
+ 'bétail':'Agriculture, farming and animal production (NACE A)',
+ 'dairy farming':'Agriculture, farming and animal production (NACE A)','melkveehouderij':'Agriculture, farming and animal production (NACE A)',
+ 'élevage laitier':'Agriculture, farming and animal production (NACE A)',
+ 'aquaculture':'Agriculture, farming and animal production (NACE A)','aquacultuur':'Agriculture, farming and animal production (NACE A)',
+ 'food manufacturing':'Food and beverage manufacturing (NACE C)','voedingsproductie':'Food and beverage manufacturing (NACE C)',
+ 'fabrication alimentaire':'Food and beverage manufacturing (NACE C)',
+ 'bakery':'Food and beverage manufacturing (NACE C)','bakkerij':'Food and beverage manufacturing (NACE C)','boulangerie':'Food and beverage manufacturing (NACE C)',
+ 'brewery':'Food and beverage manufacturing (NACE C)','brouwerij':'Food and beverage manufacturing (NACE C)','brasserie':'Food and beverage manufacturing (NACE C)',
+ 'beverage':'Food and beverage manufacturing (NACE C)','dranken':'Food and beverage manufacturing (NACE C)','boisson':'Food and beverage manufacturing (NACE C)',
+ 'confectionery':'Food and beverage manufacturing (NACE C)','banketbakkerij':'Food and beverage manufacturing (NACE C)','confiserie':'Food and beverage manufacturing (NACE C)',
  'fast fashion':'Fast fashion and apparel retail (NACE G)','apparel':'Fast fashion and apparel retail (NACE G)',
- 'textile':'Textile and apparel manufacturing (NACE C)','garment':'Textile and apparel manufacturing (NACE C)',
+ 'textile':'Textile and apparel manufacturing (NACE C)','textiel':'Textile and apparel manufacturing (NACE C)',
+ 'garment':'Textile and apparel manufacturing (NACE C)','kledingstuk':'Textile and apparel manufacturing (NACE C)','vêtement':'Textile and apparel manufacturing (NACE C)',
  'fashion':'Fast fashion and apparel retail (NACE G)','clothing':'Fast fashion and apparel retail (NACE G)',
- 'discount':'Discount retail (NACE G)','supermarket':'Food retail and supermarkets (NACE G)',
- 'grocery':'Food retail and supermarkets (NACE G)','food retail':'Food retail and supermarkets (NACE G)',
- 'catering':'Food service and catering (NACE I)','facilities':'Facilities and outsourced services (NACE N)',
- 'outsourced':'Facilities and outsourced services (NACE N)','delivery':'Transport and logistics (NACE H)',
- 'commodity':'Agricultural commodities and raw materials (NACE A)','cocoa':'Agricultural commodities and raw materials (NACE A)',
- 'palm oil':'Agricultural commodities and raw materials (NACE A)','coffee':'Agricultural commodities and raw materials (NACE A)',
- 'cotton':'Agricultural commodities and raw materials (NACE A)',
- 'automotive':'Automotive (NACE C)','vehicle manufacturing':'Automotive (NACE C)',
- 'construction':'Infrastructure and construction (NACE F)','building contractor':'Infrastructure and construction (NACE F)',
- 'dredging':'Infrastructure and construction (NACE F)','marine engineering':'Infrastructure and construction (NACE F)',
- 'real estate':'Real estate and property management (NACE L)','property management':'Real estate and property management (NACE L)',
- 'property developer':'Real estate and property management (NACE L)',
- 'mining':'Mining and quarrying (NACE B)',
- 'metals':'Metals and materials manufacturing (NACE C)','materials technology':'Metals and materials manufacturing (NACE C)',
- 'smelting':'Metals and materials manufacturing (NACE C)',
- 'recycling':'Waste management and environmental services (NACE E)',
- 'pharmaceutical':'Pharmaceuticals and nutrition manufacturing (NACE C)','nutrition':'Pharmaceuticals and nutrition manufacturing (NACE C)',
- 'supplement':'Pharmaceuticals and nutrition manufacturing (NACE C)','animal feed':'Pharmaceuticals and nutrition manufacturing (NACE C)',
- 'animal nutrition':'Pharmaceuticals and nutrition manufacturing (NACE C)',
- 'healthcare':'Human health and social work activities (NACE Q)','medical':'Human health and social work activities (NACE Q)',
- 'veterinary':'Veterinary activities (NACE M)',
- 'hospitality':'Accommodation and food service activities (NACE I)','hotel':'Accommodation and food service activities (NACE I)',
- 'tourism':'Accommodation and food service activities (NACE I)',
- 'cinema':'Media and entertainment services (NACE J)',
- 'leisure':'Arts, entertainment and recreation (NACE R)','entertainment':'Arts, entertainment and recreation (NACE R)',
- 'staffing':'Staffing and human resources services (NACE N)','recruitment':'Staffing and human resources services (NACE N)',
- 'human resources services':'Staffing and human resources services (NACE N)','workforce solutions':'Staffing and human resources services (NACE N)',
- 'waste management':'Waste management and environmental services (NACE E)','environmental services':'Waste management and environmental services (NACE E)',
- 'circular economy':'Waste management and environmental services (NACE E)',
- 'agrochemical':'Agrochemicals and crop protection (NACE C)','crop protection':'Agrochemicals and crop protection (NACE C)',
- 'pesticide':'Agrochemicals and crop protection (NACE C)','fertilizer':'Agrochemicals and crop protection (NACE C)',
+ 'kleding':'Fast fashion and apparel retail (NACE G)','vêtements':'Fast fashion and apparel retail (NACE G)','habillement':'Fast fashion and apparel retail (NACE G)',
+ 'discount':'Discount retail (NACE G)',
+ 'supermarket':'Food retail and supermarkets (NACE G)','supermarkt':'Food retail and supermarkets (NACE G)','supermarché':'Food retail and supermarkets (NACE G)',
+ 'grocery':'Food retail and supermarkets (NACE G)','kruidenier':'Food retail and supermarkets (NACE G)','épicerie':'Food retail and supermarkets (NACE G)',
+ 'food retail':'Food retail and supermarkets (NACE G)','voedingsdetailhandel':'Food retail and supermarkets (NACE G)','distribution alimentaire':'Food retail and supermarkets (NACE G)',
+ 'catering':'Food service and catering (NACE I)','horeca':'Food service and catering (NACE I)','restauration':'Food service and catering (NACE I)',
+ 'facilities':'Facilities and outsourced services (NACE N)','facilitaire diensten':'Facilities and outsourced services (NACE N)',
+ 'outsourced':'Facilities and outsourced services (NACE N)','uitbesteed':'Facilities and outsourced services (NACE N)','externalisé':'Facilities and outsourced services (NACE N)',
+ 'delivery':'Transport and logistics (NACE H)','bezorging':'Transport and logistics (NACE H)','livraison':'Transport and logistics (NACE H)',
+ 'commodity':'Agricultural commodities and raw materials (NACE A)','grondstof':'Agricultural commodities and raw materials (NACE A)',
+ 'matière première':'Agricultural commodities and raw materials (NACE A)',
+ 'cocoa':'Agricultural commodities and raw materials (NACE A)','cacao':'Agricultural commodities and raw materials (NACE A)',
+ 'palm oil':'Agricultural commodities and raw materials (NACE A)','palmolie':'Agricultural commodities and raw materials (NACE A)',
+ 'huile de palme':'Agricultural commodities and raw materials (NACE A)',
+ 'coffee':'Agricultural commodities and raw materials (NACE A)','koffie':'Agricultural commodities and raw materials (NACE A)','café':'Agricultural commodities and raw materials (NACE A)',
+ 'cotton':'Agricultural commodities and raw materials (NACE A)','katoen':'Agricultural commodities and raw materials (NACE A)','coton':'Agricultural commodities and raw materials (NACE A)',
+ 'automotive':'Automotive (NACE C)','auto-industrie':'Automotive (NACE C)',
+ 'vehicle manufacturing':'Automotive (NACE C)','voertuigproductie':'Automotive (NACE C)','fabrication de véhicules':'Automotive (NACE C)',
+ 'construction':'Infrastructure and construction (NACE F)','bouwbedrijf':'Infrastructure and construction (NACE F)',
+ 'building contractor':'Infrastructure and construction (NACE F)','aannemer':'Infrastructure and construction (NACE F)','entrepreneur':'Infrastructure and construction (NACE F)',
+ 'dredging':'Infrastructure and construction (NACE F)','baggerwerken':'Infrastructure and construction (NACE F)','dragage':'Infrastructure and construction (NACE F)',
+ 'marine engineering':'Infrastructure and construction (NACE F)','maritieme techniek':'Infrastructure and construction (NACE F)','ingénierie maritime':'Infrastructure and construction (NACE F)',
+ 'real estate':'Real estate and property management (NACE L)','vastgoed':'Real estate and property management (NACE L)','immobilier':'Real estate and property management (NACE L)',
+ 'property management':'Real estate and property management (NACE L)','vastgoedbeheer':'Real estate and property management (NACE L)','gestion immobilière':'Real estate and property management (NACE L)',
+ 'property developer':'Real estate and property management (NACE L)','projectontwikkelaar':'Real estate and property management (NACE L)','promoteur immobilier':'Real estate and property management (NACE L)',
+ 'mining':'Mining and quarrying (NACE B)','mijnbouw':'Mining and quarrying (NACE B)','exploitation minière':'Mining and quarrying (NACE B)',
+ 'metals':'Metals and materials manufacturing (NACE C)','metalen':'Metals and materials manufacturing (NACE C)','métaux':'Metals and materials manufacturing (NACE C)',
+ 'materials technology':'Metals and materials manufacturing (NACE C)','materiaaltechnologie':'Metals and materials manufacturing (NACE C)','technologie des matériaux':'Metals and materials manufacturing (NACE C)',
+ 'smelting':'Metals and materials manufacturing (NACE C)','smelten':'Metals and materials manufacturing (NACE C)','fonderie':'Metals and materials manufacturing (NACE C)',
+ 'recycling':'Waste management and environmental services (NACE E)','recyclage':'Waste management and environmental services (NACE E)',
+ 'pharmaceutical':'Pharmaceuticals and nutrition manufacturing (NACE C)','farmaceutisch':'Pharmaceuticals and nutrition manufacturing (NACE C)','pharmaceutique':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'nutrition':'Pharmaceuticals and nutrition manufacturing (NACE C)','voeding':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'supplement':'Pharmaceuticals and nutrition manufacturing (NACE C)','voedingssupplement':'Pharmaceuticals and nutrition manufacturing (NACE C)','complément alimentaire':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'animal feed':'Pharmaceuticals and nutrition manufacturing (NACE C)','diervoeding':'Pharmaceuticals and nutrition manufacturing (NACE C)','alimentation animale':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'animal nutrition':'Pharmaceuticals and nutrition manufacturing (NACE C)','dierenvoeding':'Pharmaceuticals and nutrition manufacturing (NACE C)','nutrition animale':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'healthcare':'Human health and social work activities (NACE Q)','gezondheidszorg':'Human health and social work activities (NACE Q)','santé':'Human health and social work activities (NACE Q)',
+ 'medical':'Human health and social work activities (NACE Q)','medisch':'Human health and social work activities (NACE Q)','médical':'Human health and social work activities (NACE Q)',
+ 'veterinary':'Veterinary activities (NACE M)','dierenarts':'Veterinary activities (NACE M)','vétérinaire':'Veterinary activities (NACE M)',
+ 'hospitality':'Accommodation and food service activities (NACE I)','hôtellerie':'Accommodation and food service activities (NACE I)',
+ 'hotel':'Accommodation and food service activities (NACE I)','hôtel':'Accommodation and food service activities (NACE I)',
+ 'tourism':'Accommodation and food service activities (NACE I)','toerisme':'Accommodation and food service activities (NACE I)','tourisme':'Accommodation and food service activities (NACE I)',
+ 'cinema':'Media and entertainment services (NACE J)','bioscoop':'Media and entertainment services (NACE J)','cinéma':'Media and entertainment services (NACE J)',
+ 'leisure':'Arts, entertainment and recreation (NACE R)','vrije tijd':'Arts, entertainment and recreation (NACE R)','loisirs':'Arts, entertainment and recreation (NACE R)',
+ 'entertainment':'Arts, entertainment and recreation (NACE R)','amusement':'Arts, entertainment and recreation (NACE R)','divertissement':'Arts, entertainment and recreation (NACE R)',
+ 'staffing':'Staffing and human resources services (NACE N)','uitzendkrachten':'Staffing and human resources services (NACE N)','intérim':'Staffing and human resources services (NACE N)',
+ 'recruitment':'Staffing and human resources services (NACE N)','rekrutering':'Staffing and human resources services (NACE N)',
+ 'werving':'Staffing and human resources services (NACE N)','recrutement':'Staffing and human resources services (NACE N)',
+ 'human resources services':'Staffing and human resources services (NACE N)','hr-diensten':'Staffing and human resources services (NACE N)','services rh':'Staffing and human resources services (NACE N)',
+ 'workforce solutions':'Staffing and human resources services (NACE N)',
+ 'waste management':'Waste management and environmental services (NACE E)','afvalbeheer':'Waste management and environmental services (NACE E)','gestion des déchets':'Waste management and environmental services (NACE E)',
+ 'environmental services':'Waste management and environmental services (NACE E)','milieudiensten':'Waste management and environmental services (NACE E)','services environnementaux':'Waste management and environmental services (NACE E)',
+ 'circular economy':'Waste management and environmental services (NACE E)','circulaire economie':'Waste management and environmental services (NACE E)','économie circulaire':'Waste management and environmental services (NACE E)',
+ 'agrochemical':'Agrochemicals and crop protection (NACE C)','agrochemie':'Agrochemicals and crop protection (NACE C)','agrochimie':'Agrochemicals and crop protection (NACE C)',
+ 'crop protection':'Agrochemicals and crop protection (NACE C)','gewasbescherming':'Agrochemicals and crop protection (NACE C)','protection des cultures':'Agrochemicals and crop protection (NACE C)',
+ 'pesticide':'Agrochemicals and crop protection (NACE C)',
+ 'fertilizer':'Agrochemicals and crop protection (NACE C)','meststof':'Agrochemicals and crop protection (NACE C)','engrais':'Agrochemicals and crop protection (NACE C)',
  'flavor':'Specialty ingredients, flavors and fragrances (NACE C)','flavour':'Specialty ingredients, flavors and fragrances (NACE C)',
- 'fragrance':'Specialty ingredients, flavors and fragrances (NACE C)','specialty ingredients':'Specialty ingredients, flavors and fragrances (NACE C)',
- 'education':'Education and training (NACE P)','training provider':'Education and training (NACE P)',
- 'bank':'Banking and financial services (NACE K)','finance':'Banking and financial services (NACE K)',
- 'insurance':'Insurance (NACE K)',
- 'telecom':'Digital and technology services (NACE J)','digital':'Digital and technology services (NACE J)',
- 'aviation':'Transport and logistics (NACE H)','airline':'Transport and logistics (NACE H)','transport':'Transport and logistics (NACE H)',
- 'chemical':'Chemicals manufacturing (NACE C)','energy':'Energy and utilities (NACE D)','infrastructure':'Infrastructure and construction (NACE F)',
- 'manufacturing':'Industrial manufacturing (NACE C)','industrial':'Industrial manufacturing (NACE C)',
- 'technology':'Digital and technology services (NACE J)','utility':'Energy and utilities (NACE D)','gas':'Energy and utilities (NACE D)',
- 'logistics':'Transport and logistics (NACE H)',
- 'software':'Digital and technology services (NACE J)','consulting':'Professional and business services (NACE M)',
- 'professional services':'Professional and business services (NACE M)','agency':'Professional and business services (NACE M)',
- 'office services':'Professional and business services (NACE M)',
- 'media':'Digital and technology services (NACE J)','publishing':'Digital and technology services (NACE J)','broadcasting':'Digital and technology services (NACE J)',
+ 'aroma':'Specialty ingredients, flavors and fragrances (NACE C)','arôme':'Specialty ingredients, flavors and fragrances (NACE C)',
+ 'fragrance':'Specialty ingredients, flavors and fragrances (NACE C)','geurstof':'Specialty ingredients, flavors and fragrances (NACE C)','parfum':'Specialty ingredients, flavors and fragrances (NACE C)',
+ 'specialty ingredients':'Specialty ingredients, flavors and fragrances (NACE C)',
+ 'education':'Education and training (NACE P)','onderwijs':'Education and training (NACE P)','éducation':'Education and training (NACE P)',
+ 'training provider':'Education and training (NACE P)','opleidingsverstrekker':'Education and training (NACE P)',
+ 'bank':'Banking and financial services (NACE K)','banque':'Banking and financial services (NACE K)',
+ 'finance':'Banking and financial services (NACE K)','financiën':'Banking and financial services (NACE K)',
+ 'insurance':'Insurance (NACE K)','verzekering':'Insurance (NACE K)','assurance':'Insurance (NACE K)',
+ 'telecom':'Digital and technology services (NACE J)','télécom':'Digital and technology services (NACE J)',
+ 'digital':'Digital and technology services (NACE J)','digitaal':'Digital and technology services (NACE J)','numérique':'Digital and technology services (NACE J)',
+ 'aviation':'Transport and logistics (NACE H)','luchtvaart':'Transport and logistics (NACE H)',
+ 'airline':'Transport and logistics (NACE H)','luchtvaartmaatschappij':'Transport and logistics (NACE H)','compagnie aérienne':'Transport and logistics (NACE H)',
+ 'transport':'Transport and logistics (NACE H)',
+ 'chemical':'Chemicals manufacturing (NACE C)','chemisch':'Chemicals manufacturing (NACE C)','chimique':'Chemicals manufacturing (NACE C)',
+ 'energy':'Energy and utilities (NACE D)','energie':'Energy and utilities (NACE D)','énergie':'Energy and utilities (NACE D)',
+ 'infrastructure':'Infrastructure and construction (NACE F)','infrastructuur':'Infrastructure and construction (NACE F)',
+ 'manufacturing':'Industrial manufacturing (NACE C)','productie':'Industrial manufacturing (NACE C)','fabricage':'Industrial manufacturing (NACE C)','fabrication':'Industrial manufacturing (NACE C)',
+ 'industrial':'Industrial manufacturing (NACE C)','industrieel':'Industrial manufacturing (NACE C)','industriel':'Industrial manufacturing (NACE C)',
+ 'technology':'Digital and technology services (NACE J)','technologie':'Digital and technology services (NACE J)',
+ 'utility':'Energy and utilities (NACE D)','nutsvoorziening':'Energy and utilities (NACE D)','service public':'Energy and utilities (NACE D)',
+ 'gas':'Energy and utilities (NACE D)','gaz':'Energy and utilities (NACE D)',
+ 'logistics':'Transport and logistics (NACE H)','logistiek':'Transport and logistics (NACE H)','logistique':'Transport and logistics (NACE H)',
+ 'software':'Digital and technology services (NACE J)','logiciel':'Digital and technology services (NACE J)',
+ 'consulting':'Professional and business services (NACE M)','advies':'Professional and business services (NACE M)','conseil':'Professional and business services (NACE M)',
+ 'professional services':'Professional and business services (NACE M)','professionele diensten':'Professional and business services (NACE M)','services professionnels':'Professional and business services (NACE M)',
+ 'agency':'Professional and business services (NACE M)','agentschap':'Professional and business services (NACE M)','agence':'Professional and business services (NACE M)',
+ 'office services':'Professional and business services (NACE M)','kantoordiensten':'Professional and business services (NACE M)','services de bureau':'Professional and business services (NACE M)',
+ 'media':'Digital and technology services (NACE J)',
+ 'publishing':'Digital and technology services (NACE J)','uitgeverij':'Digital and technology services (NACE J)','édition':'Digital and technology services (NACE J)',
+ 'broadcasting':'Digital and technology services (NACE J)','omroep':'Digital and technology services (NACE J)','diffusion':'Digital and technology services (NACE J)',
 }
 
 
@@ -4400,19 +4495,24 @@ def _v92_backfill_legacy_findings():
     return summary
 
 def _v92_backfill_sector_names():
-    """One-time correction of scan_history.sector for the 44-company batch scanned
-    before real sector-name detection existed (v93.14/v93.18) -- and for a handful whose
-    original scan hit the wrong domain entirely (e.g. Zabra's scan matched an unrelated
-    personal blog), where the name below was assigned from general knowledge of the real
-    company instead. Reads a small bundled fixture (data_sector_backfill.json) that was
-    hand-verified against each company's actual homepage content and classified against
-    NACE Rev. 2 sections -- naive keyword matching against the saved scan text produced
-    several wrong results (e.g. Colruyt Group matching "Real Estate" because that's an
-    internal division listed in their own nav menu, not their business; GLS Belgium, a
-    parcel courier, matching "Media and publishing"). Only updates rows still showing the
-    generic placeholder, so an already-correctly-named company (the hardcoded PROFILES
-    list, or a company already backfilled) is left untouched. Safe to run more than
-    once. Never raises -- returns a summary dict either way."""
+    """One-time correction of scan_history.sector AND sector_risk for the 44-company
+    batch scanned before real sector-name detection existed (v93.14/v93.18/v93.19) --
+    and for a handful whose original scan hit the wrong domain entirely (e.g. Zabra's
+    scan matched an unrelated personal blog), where both fields below were assigned from
+    general knowledge of the real company instead. Reads a small bundled fixture
+    (data_sector_backfill.json) that was hand-verified against each company's actual
+    homepage content and classified against NACE Rev. 2 sections -- naive keyword
+    matching against the saved scan text produced several wrong sector NAMES (e.g.
+    Colruyt Group matching "Real Estate" because that's an internal division listed in
+    their own nav menu, not their business), and separately, 41 of 44 companies'
+    sector_risk defaulted to "Medium" because the original classifier was English-only
+    against mostly Dutch/French homepage text -- re-running that same (now-multilingual,
+    see v93.19 SECTOR_RULES) classifier against these same short/noisy saved excerpts
+    still produced unreliable results, so both fields were assigned by hand instead of
+    automated re-inference. Only updates rows still showing the generic sector
+    placeholder, so an already-correctly-named company (the hardcoded PROFILES list, or
+    a company already backfilled) is left untouched. Safe to run more than once. Never
+    raises -- returns a summary dict either way."""
     summary={'updated_rows':0,'updated_companies':0,'not_found':[],'error':None}
     fixture_path=APP_DIR/'data_sector_backfill.json'
     if not fixture_path.exists():
@@ -4432,10 +4532,12 @@ def _v92_backfill_sector_names():
             summary['error']='Could not prepare tables.'
             return summary
         with conn.cursor() as cur:
-            for company,sector_name in fixture.items():
+            for company,info in fixture.items():
+                sector_name=info.get('sector') if isinstance(info,dict) else info
+                sector_risk=info.get('sector_risk') if isinstance(info,dict) else None
                 cur.execute(
-                    "UPDATE scan_history SET sector=%s WHERE company ILIKE %s AND sector = 'Sector not explicitly identified'",
-                    (sector_name,company))
+                    "UPDATE scan_history SET sector=%s, sector_risk=%s WHERE company ILIKE %s AND sector = 'Sector not explicitly identified'",
+                    (sector_name,sector_risk,company))
                 n=cur.rowcount
                 if n>0:
                     summary['updated_rows']+=n
@@ -4876,7 +4978,12 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             # by the always-computed sector risk level when known.
             sector_name=str(r.get('sector') or '')
             has_real_sector_name=bool(sector_name) and 'not explicitly identified' not in sector_name.lower()
-            sector_label=html_escape(sector_name) if has_real_sector_name else 'Sector not identified'
+            # v93.19: the stored sector value cites its NACE Rev. 2 section letter (e.g.
+            # "Automotive (NACE C)") for methodology traceability, but the /history table
+            # itself should read cleanly without it -- strip the "(NACE X)" suffix at
+            # display time only; CSV export and the raw column still carry the full label.
+            display_sector_name=re.sub(r'\s*\(NACE\s+[A-Z]\)\s*$','',sector_name)
+            sector_label=html_escape(display_sector_name) if has_real_sector_name else 'Sector not identified'
             sector_risk_level=str(r.get('sector_risk') or '')
             sector=f'{sector_label} &middot; Risk: {html_escape(sector_risk_level)}' if sector_risk_level else sector_label
             input_url=html_escape(str(r.get('input_url') or '')[:60])

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_18_nace_sector_classification'
+    assert app.APP_VERSION == 'hostable_v93_19_multilingual_sector_and_risk_backfill'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -278,6 +278,20 @@ def test_scan_history_table_falls_back_to_sector_risk(monkeypatch):
                'global_risk':'Low','green_score':12,'social_score':12,'findings_count':2}
     html2=app._v92_render_history_page([known_row],1,1,25,'')
     assert 'Banking and financial services &middot; Risk: Medium' in html2
+
+
+def test_scan_history_table_strips_nace_code_from_display(monkeypatch):
+    """v93.19: the stored sector value cites its NACE Rev. 2 section letter (e.g.
+    "Automotive (NACE C)") for methodology traceability, but per explicit user feedback
+    the /history table itself must show the plain name without it -- the "(NACE X)"
+    suffix must never appear in the rendered table."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'scanned_at':'2026-09-02T14:10','company':'Umicore','sector':'Metals and materials manufacturing (NACE C)',
+         'sector_risk':'Medium','input_url':'https://www.umicore.com','global_score':44,'global_risk':'Medium',
+         'green_score':40,'social_score':30,'findings_count':5}
+    html=app._v92_render_history_page([row],1,1,25,'')
+    assert 'Metals and materials manufacturing &middot; Risk: Medium' in html
+    assert 'NACE' not in html
 
 
 def test_scan_history_row_selection_markup(monkeypatch):
@@ -751,13 +765,15 @@ def test_backfill_sector_names_missing_fixture(monkeypatch, tmp_path):
 
 
 def test_backfill_sector_names_updates_not_found_and_skips_already_real(monkeypatch, tmp_path):
-    """v93.18: each fixture entry updates scan_history.sector ONLY for rows still showing
-    the generic placeholder (enforced by the UPDATE's own WHERE clause, not a separate
-    check) -- a company with no matching row at all is reported as not_found, while a
-    company that already has a real sector name (already backfilled, or a hardcoded
-    PROFILES company) is silently left alone, not reported as an error."""
-    fixture={'Acme':'Food retail and supermarkets (NACE G)','Ghost Co':'Banking and financial services (NACE K)',
-             'Already Named':'Automotive (NACE C)'}
+    """v93.19: each fixture entry updates scan_history.sector AND sector_risk ONLY for
+    rows still showing the generic placeholder (enforced by the UPDATE's own WHERE
+    clause, not a separate check) -- a company with no matching row at all is reported
+    as not_found, while a company that already has a real sector name (already
+    backfilled, or a hardcoded PROFILES company) is silently left alone, not reported as
+    an error."""
+    fixture={'Acme':{'sector':'Food retail and supermarkets (NACE G)','sector_risk':'High'},
+             'Ghost Co':{'sector':'Banking and financial services (NACE K)','sector_risk':'Medium'},
+             'Already Named':{'sector':'Automotive (NACE C)','sector_risk':'Medium'}}
     (tmp_path/'data_sector_backfill.json').write_text(json.dumps(fixture),encoding='utf-8')
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     monkeypatch.setattr(app,'APP_DIR',tmp_path)
@@ -787,6 +803,7 @@ def test_backfill_sector_names_updates_not_found_and_skips_already_real(monkeypa
     assert summary['updated_companies']==1 and summary['updated_rows']==1
     assert summary['not_found']==['Ghost Co']
     assert "sector = 'Sector not explicitly identified'" in executed[0][0]
+    assert executed[0][1]==('Food retail and supermarkets (NACE G)','High','Acme')
 
 
 def _sample_export_rows():
