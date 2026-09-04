@@ -77,8 +77,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_10_history_date_company_filters_and_select_all_btn"
-APP_RELEASE_LABEL="v93.10"
+APP_VERSION="hostable_v93_11_default_alpha_sort_and_always_clear_btn"
+APP_RELEASE_LABEL="v93.11"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4019,7 +4019,7 @@ def _v92_parse_min_filter(source,key):
     return max(0,min(100000,v))
 
 def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                             date_from=None,date_to=None,sort='date'):
+                             date_from=None,date_to=None,sort='company'):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -4247,7 +4247,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
         conn.close()
 
 def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                               date_from=None,date_to=None,sort='date'):
+                               date_from=None,date_to=None,sort='company'):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -4454,7 +4454,7 @@ def _v92_option(value,label,current):
 
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
-                              date_from=None,date_to=None,sort='date',distinct_scores=None,
+                              date_from=None,date_to=None,sort='company',distinct_scores=None,
                               distinct_companies=None,distinct_dates=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
@@ -4501,7 +4501,11 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 </div>'''
     else:
         top_claims_html=''
-    sort=sort if sort in _V92_SORT_SQL else 'date'
+    # v93.11: default sort is alphabetical by company (A-Z), not newest-first -- the
+    # earlier "newest first" default made the list look arbitrarily/reverse-alphabetically
+    # ordered whenever the most recently scanned companies happened to start with a
+    # late letter (e.g. a batch run that ended on "Zabra"), per explicit user feedback.
+    sort=sort if sort in _V92_SORT_SQL else 'company'
     distinct_scores=distinct_scores or {k:[] for k in _V92_DISTINCT_SCORE_COLUMNS}
     distinct_companies=distinct_companies or []
     distinct_dates=distinct_dates or []
@@ -4511,7 +4515,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     # not silently drop an already-active Global=41 or Company filter). `overrides`
     # replaces specific keys; a value of None removes that key from the URL entirely.
     _active={'q':search or None,'risk':risk or None,'period':period or None,
-             'sort':sort if sort!='date' else None,'min_global':min_global,'min_green':min_green,
+             'sort':sort if sort!='company' else None,'min_global':min_global,'min_green':min_green,
              'min_social':min_social,'min_findings':min_findings,'date_from':date_from,'date_to':date_to}
     def _filter_url(overrides=None):
         parts=dict(_active)
@@ -4610,7 +4614,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
               +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
               +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else '')
               +(f'&date_from={date_from_s}' if date_from_s else '')+(f'&date_to={date_to_s}' if date_to_s else '')
-              +(f'&sort={sort}' if sort!='date' else ''))
+              +(f'&sort={sort}' if sort!='company' else ''))
     # v92.6: an active ids selection-filter (from "View selected") is preserved across
     # pagination and the plain "Export CSV" link the same way search/risk/period already
     # are -- each id is its own repeated ?ids=N query param, matching exactly what the
@@ -4624,7 +4628,6 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         pager=f'<div class="pager">{prev}<span class="small" style="align-self:center">Page {page} of {total_pages} &middot; {total} scan(s)</span>{nxt}</div>'
     risk_options=''.join(_v92_option(v,v,risk) for v in _V92_RISK_LEVELS)
     period_options=''.join(_v92_option(k,l,period) for k,l in (('month','This month'),('30d','Last 30 days'),('90d','Last 90 days')))
-    has_filters=bool(search or risk or period or ids or min_global_s or min_green_s or min_social_s or min_findings_s or date_from_s or date_to_s)
     clear_selection_href='/history?'+extra_q.lstrip('&') if extra_q else '/history'
     selection_banner=(f'<div class="notice">Showing {len(ids)} selected scan(s). '
                        f'<a href="{clear_selection_href}">Clear selection</a></div>') if ids else ''
@@ -4654,7 +4657,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <select name="period"><option value="">All time</option>{period_options}</select>
 <input type="hidden" name="sort" value="{sort}">
 <button class="btn" type="submit">Filter</button>
-{'<a class="btn secondary" href="/history">Clear</a>' if has_filters else ''}
+<a class="btn secondary" href="/history">Clear</a>
 <a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
@@ -4869,7 +4872,7 @@ class Handler(BaseHTTPRequestHandler):
             min_findings=_v92_parse_min_filter(qs,'min_findings')
             date_from=_v92_parse_date_filter(qs,'date_from')
             date_to=_v92_parse_date_filter(qs,'date_to')
-            sort=(qs.get('sort',['date'])[0] or 'date').strip()
+            sort=(qs.get('sort',['company'])[0] or 'company').strip()
             try: page=max(1,int(qs.get('page',['1'])[0]))
             except Exception: page=1
             page_size=25
@@ -4899,7 +4902,7 @@ class Handler(BaseHTTPRequestHandler):
             min_findings=_v92_parse_min_filter(qs,'min_findings')
             date_from=_v92_parse_date_filter(qs,'date_from')
             date_to=_v92_parse_date_filter(qs,'date_to')
-            sort=(qs.get('sort',['date'])[0] or 'date').strip()
+            sort=(qs.get('sort',['company'])[0] or 'company').strip()
             rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings,
                 date_from,date_to,sort)
             csv_bytes=_v92_rows_to_csv(rows)
@@ -4961,7 +4964,7 @@ class Handler(BaseHTTPRequestHandler):
             min_findings=_v92_parse_min_filter(form,'min_findings')
             date_from=_v92_parse_date_filter(form,'date_from')
             date_to=_v92_parse_date_filter(form,'date_to')
-            sort=(form.get('sort',['date'])[0] or 'date').strip()
+            sort=(form.get('sort',['company'])[0] or 'company').strip()
             rows=_v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
                 date_from,date_to,sort)
         else:

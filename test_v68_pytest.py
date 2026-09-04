@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_10_history_date_company_filters_and_select_all_btn'
+    assert app.APP_VERSION == 'hostable_v93_11_default_alpha_sort_and_always_clear_btn'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -389,13 +389,14 @@ def test_scan_history_date_range_filter():
 
 
 def test_scan_history_sort_alphabetical(monkeypatch):
-    """v93.7: sorting by company must be an explicit opt-in ('company' -> alphabetical
-    A-Z), defaulting to the existing newest-first behaviour for any other/missing value.
+    """v93.7: 'company' sorts alphabetically A-Z; 'date' sorts newest-first.
     v93.8: sorting is triggered by clicking a column header (Date/Company/Global/Green/
     Social/Findings), not a separate dropdown -- the active column's header link must be
     marked (a down-arrow), and the currently-active sort must be carried into both the
     plain filter form (as a hidden field, so changing search/risk/period doesn't silently
-    reset it back to newest-first) and the select-all hidden form."""
+    reset it back to the default) and the select-all hidden form.
+    v93.11: 'company' (not 'date') is now the DEFAULT sort -- see
+    test_scan_history_default_sort_is_alphabetical_by_company below."""
     assert app._V92_SORT_SQL['date']=='scanned_at DESC'
     assert app._V92_SORT_SQL['company']=='company ASC, scanned_at DESC'
     assert app._V92_SORT_SQL['global']=='global_score DESC NULLS LAST, scanned_at DESC'
@@ -407,6 +408,42 @@ def test_scan_history_sort_alphabetical(monkeypatch):
     assert '<a href="/history?sort=company">Company &darr;</a>' in html
     assert '<a href="/history?sort=date">Date</a>' in html  # inactive column: no arrow
     assert html.count('name="sort" value="company"')==2  # filter form's hidden field + select-all form
+
+
+def test_scan_history_default_sort_is_alphabetical_by_company(monkeypatch):
+    """v93.11: the default view (no explicit ?sort=... in the URL) must list companies
+    alphabetically A-Z, not newest-scanned-first -- a "newest first" default made the list
+    look arbitrarily (or reverse-alphabetically) ordered whenever the most recently
+    scanned companies happened to start with a late letter. This must hold at both layers:
+    the SQL ORDER BY actually used when no sort is specified, and the invalid/garbage-sort
+    fallback in the page renderer."""
+    import inspect
+    sig=inspect.signature(app._v92_render_history_page)
+    assert sig.parameters['sort'].default=='company'
+    sig2=inspect.signature(app._v92_fetch_scan_history)
+    assert sig2.parameters['sort'].default=='company'
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Zabra','sector':'','sector_risk':'High',
+         'input_url':'https://zabra.org','global_score':41,'global_risk':'Medium','green_score':62,
+         'social_score':12,'findings_count':3}
+    # an invalid/garbage sort value must fall back to 'company', not 'date'
+    html=app._v92_render_history_page([row],1,1,25,'',sort='not-a-real-sort-key')
+    assert '<a href="/history?sort=company">Company &darr;</a>' in html
+
+
+def test_scan_history_clear_button_always_visible(monkeypatch):
+    """v93.11: the "Clear" button must always be rendered, even with no filter active --
+    it's the only way back to the clean default view once a sort (e.g. clicking a column
+    header) is active without any other filter, and the user explicitly reported it as
+    sometimes missing."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html_no_filters=app._v92_render_history_page([row],1,1,25,'')
+    assert '<a class="btn secondary" href="/history">Clear</a>' in html_no_filters
+    html_sorted_only=app._v92_render_history_page([row],1,1,25,'',sort='global')
+    assert '<a class="btn secondary" href="/history">Clear</a>' in html_sorted_only
 
 
 def test_scan_history_sortable_headers_cover_all_columns(monkeypatch):
