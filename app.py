@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_17_report_visual_redesign"
-APP_RELEASE_LABEL="v93.17"
+APP_VERSION="hostable_v93_18_nace_sector_classification"
+APP_RELEASE_LABEL="v93.18"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -232,58 +232,81 @@ SECTOR_RULES=[
 # name, so a specific term like "vehicle manufacturing" is placed before the generic
 # "manufacturing" it's a substring-superset of, so a car maker is named "Automotive"
 # rather than the less useful generic "Industrial manufacturing".
+# v93.18: every label now cites its NACE Rev. 2 section letter (the EU's official
+# statistical classification of economic activities, Regulation (EC) No 1893/2006) --
+# e.g. "Automotive (NACE C)" -- per explicit user request for a recognised standard
+# rather than ad-hoc category names. NACE has 21 sections (A-U); this keeps the
+# descriptive sub-label (more specific and more useful than the bare 21-way section name
+# alone -- "Manufacturing" covers everything from cars to chemicals to chocolate) while
+# grounding every label in the correct official section. Section reference used here:
+#   A Agriculture, forestry and fishing        J Information and communication
+#   B Mining and quarrying                     K Financial and insurance activities
+#   C Manufacturing                            L Real estate activities
+#   D Electricity, gas, steam & air con supply  M Professional, scientific & technical activities
+#   E Water supply; sewerage & waste mgmt      N Administrative and support service activities
+#   F Construction                             P Education
+#   G Wholesale/retail trade; vehicle repair    Q Human health and social work activities
+#   H Transportation and storage               R Arts, entertainment and recreation
+#   I Accommodation and food service activities
+# A "fashion"/"apparel"/"clothing" hit is classified as retail trade (G) rather than
+# manufacturing (C), since the real companies this matches in practice (C&A, Zara) are
+# retailers; "textile"/"garment" (manufacturing-flavoured wording) stay under C.
 SECTOR_KEYWORD_NAMES={
- 'agriculture':'Agriculture, farming and animal production','farming':'Agriculture, farming and animal production',
- 'poultry':'Agriculture, farming and animal production','livestock':'Agriculture, farming and animal production',
- 'dairy farming':'Agriculture, farming and animal production','aquaculture':'Agriculture, farming and animal production',
- 'food manufacturing':'Food and beverage manufacturing','bakery':'Food and beverage manufacturing',
- 'brewery':'Food and beverage manufacturing','beverage':'Food and beverage manufacturing',
- 'confectionery':'Food and beverage manufacturing',
- 'fast fashion':'Fast fashion and apparel retail','apparel':'Fast fashion and apparel retail',
- 'textile':'Textile and apparel manufacturing','garment':'Fast fashion and apparel retail',
- 'fashion':'Fast fashion and apparel retail','clothing':'Fast fashion and apparel retail',
- 'discount':'Discount retail','supermarket':'Food retail and supermarkets',
- 'grocery':'Food retail and supermarkets','food retail':'Food retail and supermarkets',
- 'catering':'Food service and catering','facilities':'Facilities and outsourced services',
- 'outsourced':'Facilities and outsourced services','delivery':'Delivery and logistics services',
- 'commodity':'Agricultural commodities and raw materials','cocoa':'Agricultural commodities and raw materials',
- 'palm oil':'Agricultural commodities and raw materials','coffee':'Agricultural commodities and raw materials',
- 'cotton':'Agricultural commodities and raw materials',
- 'automotive':'Automotive','vehicle manufacturing':'Automotive',
- 'construction':'Infrastructure and construction','building contractor':'Infrastructure and construction',
- 'dredging':'Infrastructure and construction','marine engineering':'Infrastructure and construction',
- 'real estate':'Real estate and property management','property management':'Real estate and property management',
- 'property developer':'Real estate and property management',
- 'metals':'Metals, mining and materials technology','mining':'Metals, mining and materials technology',
- 'materials technology':'Metals, mining and materials technology','smelting':'Metals, mining and materials technology',
- 'recycling':'Metals, mining and materials technology',
- 'pharmaceutical':'Healthcare, pharmaceuticals and nutrition','healthcare':'Healthcare, pharmaceuticals and nutrition',
- 'medical':'Healthcare, pharmaceuticals and nutrition','nutrition':'Healthcare, pharmaceuticals and nutrition',
- 'supplement':'Healthcare, pharmaceuticals and nutrition','animal feed':'Healthcare, pharmaceuticals and nutrition',
- 'animal nutrition':'Healthcare, pharmaceuticals and nutrition','veterinary':'Healthcare, pharmaceuticals and nutrition',
- 'hospitality':'Hospitality, leisure and entertainment','hotel':'Hospitality, leisure and entertainment',
- 'tourism':'Hospitality, leisure and entertainment','leisure':'Hospitality, leisure and entertainment',
- 'cinema':'Hospitality, leisure and entertainment','entertainment':'Hospitality, leisure and entertainment',
- 'staffing':'Staffing and human resources services','recruitment':'Staffing and human resources services',
- 'human resources services':'Staffing and human resources services','workforce solutions':'Staffing and human resources services',
- 'waste management':'Waste management and environmental services','environmental services':'Waste management and environmental services',
- 'circular economy':'Waste management and environmental services',
- 'agrochemical':'Agrochemicals and crop protection','crop protection':'Agrochemicals and crop protection',
- 'pesticide':'Agrochemicals and crop protection','fertilizer':'Agrochemicals and crop protection',
- 'flavor':'Specialty ingredients, flavors and fragrances','flavour':'Specialty ingredients, flavors and fragrances',
- 'fragrance':'Specialty ingredients, flavors and fragrances','specialty ingredients':'Specialty ingredients, flavors and fragrances',
- 'education':'Education and training','training provider':'Education and training',
- 'bank':'Banking and financial services','finance':'Banking and financial services',
- 'insurance':'Insurance','telecom':'Telecommunications','digital':'Digital and technology services',
- 'aviation':'Aviation and airlines','airline':'Aviation and airlines','transport':'Transport and logistics',
- 'chemical':'Chemicals manufacturing','energy':'Energy and utilities','infrastructure':'Infrastructure and construction',
- 'manufacturing':'Industrial manufacturing','industrial':'Industrial manufacturing',
- 'technology':'Technology services','utility':'Energy and utilities','gas':'Energy and utilities',
- 'logistics':'Transport and logistics',
- 'software':'Software and technology services','consulting':'Professional and business services',
- 'professional services':'Professional and business services','agency':'Professional and business services',
- 'office services':'Professional and business services',
- 'media':'Media and publishing','publishing':'Media and publishing','broadcasting':'Media and publishing',
+ 'agriculture':'Agriculture, farming and animal production (NACE A)','farming':'Agriculture, farming and animal production (NACE A)',
+ 'poultry':'Agriculture, farming and animal production (NACE A)','livestock':'Agriculture, farming and animal production (NACE A)',
+ 'dairy farming':'Agriculture, farming and animal production (NACE A)','aquaculture':'Agriculture, farming and animal production (NACE A)',
+ 'food manufacturing':'Food and beverage manufacturing (NACE C)','bakery':'Food and beverage manufacturing (NACE C)',
+ 'brewery':'Food and beverage manufacturing (NACE C)','beverage':'Food and beverage manufacturing (NACE C)',
+ 'confectionery':'Food and beverage manufacturing (NACE C)',
+ 'fast fashion':'Fast fashion and apparel retail (NACE G)','apparel':'Fast fashion and apparel retail (NACE G)',
+ 'textile':'Textile and apparel manufacturing (NACE C)','garment':'Textile and apparel manufacturing (NACE C)',
+ 'fashion':'Fast fashion and apparel retail (NACE G)','clothing':'Fast fashion and apparel retail (NACE G)',
+ 'discount':'Discount retail (NACE G)','supermarket':'Food retail and supermarkets (NACE G)',
+ 'grocery':'Food retail and supermarkets (NACE G)','food retail':'Food retail and supermarkets (NACE G)',
+ 'catering':'Food service and catering (NACE I)','facilities':'Facilities and outsourced services (NACE N)',
+ 'outsourced':'Facilities and outsourced services (NACE N)','delivery':'Transport and logistics (NACE H)',
+ 'commodity':'Agricultural commodities and raw materials (NACE A)','cocoa':'Agricultural commodities and raw materials (NACE A)',
+ 'palm oil':'Agricultural commodities and raw materials (NACE A)','coffee':'Agricultural commodities and raw materials (NACE A)',
+ 'cotton':'Agricultural commodities and raw materials (NACE A)',
+ 'automotive':'Automotive (NACE C)','vehicle manufacturing':'Automotive (NACE C)',
+ 'construction':'Infrastructure and construction (NACE F)','building contractor':'Infrastructure and construction (NACE F)',
+ 'dredging':'Infrastructure and construction (NACE F)','marine engineering':'Infrastructure and construction (NACE F)',
+ 'real estate':'Real estate and property management (NACE L)','property management':'Real estate and property management (NACE L)',
+ 'property developer':'Real estate and property management (NACE L)',
+ 'mining':'Mining and quarrying (NACE B)',
+ 'metals':'Metals and materials manufacturing (NACE C)','materials technology':'Metals and materials manufacturing (NACE C)',
+ 'smelting':'Metals and materials manufacturing (NACE C)',
+ 'recycling':'Waste management and environmental services (NACE E)',
+ 'pharmaceutical':'Pharmaceuticals and nutrition manufacturing (NACE C)','nutrition':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'supplement':'Pharmaceuticals and nutrition manufacturing (NACE C)','animal feed':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'animal nutrition':'Pharmaceuticals and nutrition manufacturing (NACE C)',
+ 'healthcare':'Human health and social work activities (NACE Q)','medical':'Human health and social work activities (NACE Q)',
+ 'veterinary':'Veterinary activities (NACE M)',
+ 'hospitality':'Accommodation and food service activities (NACE I)','hotel':'Accommodation and food service activities (NACE I)',
+ 'tourism':'Accommodation and food service activities (NACE I)',
+ 'cinema':'Media and entertainment services (NACE J)',
+ 'leisure':'Arts, entertainment and recreation (NACE R)','entertainment':'Arts, entertainment and recreation (NACE R)',
+ 'staffing':'Staffing and human resources services (NACE N)','recruitment':'Staffing and human resources services (NACE N)',
+ 'human resources services':'Staffing and human resources services (NACE N)','workforce solutions':'Staffing and human resources services (NACE N)',
+ 'waste management':'Waste management and environmental services (NACE E)','environmental services':'Waste management and environmental services (NACE E)',
+ 'circular economy':'Waste management and environmental services (NACE E)',
+ 'agrochemical':'Agrochemicals and crop protection (NACE C)','crop protection':'Agrochemicals and crop protection (NACE C)',
+ 'pesticide':'Agrochemicals and crop protection (NACE C)','fertilizer':'Agrochemicals and crop protection (NACE C)',
+ 'flavor':'Specialty ingredients, flavors and fragrances (NACE C)','flavour':'Specialty ingredients, flavors and fragrances (NACE C)',
+ 'fragrance':'Specialty ingredients, flavors and fragrances (NACE C)','specialty ingredients':'Specialty ingredients, flavors and fragrances (NACE C)',
+ 'education':'Education and training (NACE P)','training provider':'Education and training (NACE P)',
+ 'bank':'Banking and financial services (NACE K)','finance':'Banking and financial services (NACE K)',
+ 'insurance':'Insurance (NACE K)',
+ 'telecom':'Digital and technology services (NACE J)','digital':'Digital and technology services (NACE J)',
+ 'aviation':'Transport and logistics (NACE H)','airline':'Transport and logistics (NACE H)','transport':'Transport and logistics (NACE H)',
+ 'chemical':'Chemicals manufacturing (NACE C)','energy':'Energy and utilities (NACE D)','infrastructure':'Infrastructure and construction (NACE F)',
+ 'manufacturing':'Industrial manufacturing (NACE C)','industrial':'Industrial manufacturing (NACE C)',
+ 'technology':'Digital and technology services (NACE J)','utility':'Energy and utilities (NACE D)','gas':'Energy and utilities (NACE D)',
+ 'logistics':'Transport and logistics (NACE H)',
+ 'software':'Digital and technology services (NACE J)','consulting':'Professional and business services (NACE M)',
+ 'professional services':'Professional and business services (NACE M)','agency':'Professional and business services (NACE M)',
+ 'office services':'Professional and business services (NACE M)',
+ 'media':'Digital and technology services (NACE J)','publishing':'Digital and technology services (NACE J)','broadcasting':'Digital and technology services (NACE J)',
 }
 
 
@@ -4376,6 +4399,60 @@ def _v92_backfill_legacy_findings():
         conn.close()
     return summary
 
+def _v92_backfill_sector_names():
+    """One-time correction of scan_history.sector for the 44-company batch scanned
+    before real sector-name detection existed (v93.14/v93.18) -- and for a handful whose
+    original scan hit the wrong domain entirely (e.g. Zabra's scan matched an unrelated
+    personal blog), where the name below was assigned from general knowledge of the real
+    company instead. Reads a small bundled fixture (data_sector_backfill.json) that was
+    hand-verified against each company's actual homepage content and classified against
+    NACE Rev. 2 sections -- naive keyword matching against the saved scan text produced
+    several wrong results (e.g. Colruyt Group matching "Real Estate" because that's an
+    internal division listed in their own nav menu, not their business; GLS Belgium, a
+    parcel courier, matching "Media and publishing"). Only updates rows still showing the
+    generic placeholder, so an already-correctly-named company (the hardcoded PROFILES
+    list, or a company already backfilled) is left untouched. Safe to run more than
+    once. Never raises -- returns a summary dict either way."""
+    summary={'updated_rows':0,'updated_companies':0,'not_found':[],'error':None}
+    fixture_path=APP_DIR/'data_sector_backfill.json'
+    if not fixture_path.exists():
+        summary['error']='Fixture file not found.'
+        return summary
+    try:
+        fixture=json.loads(fixture_path.read_text(encoding='utf-8'))
+    except Exception as e:
+        summary['error']=f'Could not read fixture: {e}'
+        return summary
+    conn=_v92_db_connect()
+    if conn is None:
+        summary['error']='Database not configured.'
+        return summary
+    try:
+        if not _v92_ensure_table(conn):
+            summary['error']='Could not prepare tables.'
+            return summary
+        with conn.cursor() as cur:
+            for company,sector_name in fixture.items():
+                cur.execute(
+                    "UPDATE scan_history SET sector=%s WHERE company ILIKE %s AND sector = 'Sector not explicitly identified'",
+                    (sector_name,company))
+                n=cur.rowcount
+                if n>0:
+                    summary['updated_rows']+=n
+                    summary['updated_companies']+=1
+                else:
+                    cur.execute('SELECT COUNT(*) FROM scan_history WHERE company ILIKE %s',(company,))
+                    if cur.fetchone()[0]==0:
+                        summary['not_found'].append(company)
+        conn.commit()
+    except Exception as e:
+        summary['error']=str(e)
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        conn.close()
+    return summary
+
 def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
                       date_from=None,date_to=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
@@ -5143,6 +5220,16 @@ class Handler(BaseHTTPRequestHandler):
             if not _v92_valid_history_cookie(self.headers.get('Cookie')):
                 return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
             return self._json(_v92_backfill_legacy_findings())
+        if self.path=='/history/backfill_sector_names':
+            # v93.18: one-time, idempotent correction of scan_history.sector for the batch
+            # of companies scanned before real sector-name detection existed -- see
+            # _v92_backfill_sector_names(). Gated behind the same /history cookie auth;
+            # safe to visit more than once (already-named companies are left untouched).
+            if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+                return self._json({'error':'Scan history is not configured for this deployment.'},404)
+            if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+                return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+            return self._json(_v92_backfill_sector_names())
         return self._json({'error':'Not found'},404)
 
     def _handle_history_login(self):

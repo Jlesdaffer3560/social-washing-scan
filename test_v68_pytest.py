@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_17_report_visual_redesign'
+    assert app.APP_VERSION == 'hostable_v93_18_nace_sector_classification'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -740,6 +740,55 @@ def test_backfill_legacy_findings_skips_already_populated(monkeypatch, tmp_path)
     assert insert_log==[]
 
 
+def test_backfill_sector_names_missing_fixture(monkeypatch, tmp_path):
+    """v93.18: the sector-name backfill must report a clear error (not raise) when its
+    bundled fixture file isn't present -- same safety posture as the legacy-findings
+    backfill."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    summary=app._v92_backfill_sector_names()
+    assert summary['error']=='Fixture file not found.'
+
+
+def test_backfill_sector_names_updates_not_found_and_skips_already_real(monkeypatch, tmp_path):
+    """v93.18: each fixture entry updates scan_history.sector ONLY for rows still showing
+    the generic placeholder (enforced by the UPDATE's own WHERE clause, not a separate
+    check) -- a company with no matching row at all is reported as not_found, while a
+    company that already has a real sector name (already backfilled, or a hardcoded
+    PROFILES company) is silently left alone, not reported as an error."""
+    fixture={'Acme':'Food retail and supermarkets (NACE G)','Ghost Co':'Banking and financial services (NACE K)',
+             'Already Named':'Automotive (NACE C)'}
+    (tmp_path/'data_sector_backfill.json').write_text(json.dumps(fixture),encoding='utf-8')
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    # UPDATE rowcounts in fixture (dict, insertion-ordered) iteration order:
+    # Acme -> 1 row updated; Ghost Co -> 0 (no such company at all, COUNT confirms 0);
+    # Already Named -> 0 (exists but already real, COUNT confirms >0, so not "not_found").
+    update_rowcounts=[1,0,0]
+    count_results=[0,1]
+    class FakeCursor:
+        def __init__(self): self.rowcount=0
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None):
+            executed.append((sql,params))
+            if sql.strip().startswith('UPDATE'):
+                self.rowcount=update_rowcounts.pop(0)
+        def fetchone(self): return (count_results.pop(0),)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    summary=app._v92_backfill_sector_names()
+    assert summary['updated_companies']==1 and summary['updated_rows']==1
+    assert summary['not_found']==['Ghost Co']
+    assert "sector = 'Sector not explicitly identified'" in executed[0][0]
+
+
 def _sample_export_rows():
     return [
         {'scanned_at':'2026-09-03T18:04:00','scan_type':'url','company':'Zabra','sector':'','sector_risk':'Medium',
@@ -854,7 +903,7 @@ def test_infer_sector_derives_real_name_from_matched_keyword():
     # two distinct High-tier keywords ('supermarket', 'grocery') -- the High tier requires
     # >=2 hits before it can override Medium/Low (see infer_sector()'s own v86 comment).
     sec=app.infer_sector(comp,'We are a leading supermarket chain and grocery retailer serving thousands of customers.')
-    assert sec['name']=='Food retail and supermarkets'
+    assert sec['name']=='Food retail and supermarkets (NACE G)'
     assert sec['level']=='High'
 
 
@@ -882,11 +931,11 @@ def test_apply_sector_name_backfills_placeholder_only():
     the generic placeholder -- never overwrite an already-real sector name (e.g. a
     hardcoded PROFILES label), and be a no-op when infer_sector() found no name."""
     comp={'sector':'Sector not explicitly identified'}
-    app.apply_sector_name(comp,{'name':'Food retail and supermarkets'})
-    assert comp['sector']=='Food retail and supermarkets'
-    comp2={'sector':'Banking and financial services'}
-    app.apply_sector_name(comp2,{'name':'Food retail and supermarkets'})
-    assert comp2['sector']=='Banking and financial services'  # untouched, already a real name
+    app.apply_sector_name(comp,{'name':'Food retail and supermarkets (NACE G)'})
+    assert comp['sector']=='Food retail and supermarkets (NACE G)'
+    comp2={'sector':'Banking and financial services (NACE K)'}
+    app.apply_sector_name(comp2,{'name':'Food retail and supermarkets (NACE G)'})
+    assert comp2['sector']=='Banking and financial services (NACE K)'  # untouched, already a real name
     comp3={'sector':'Sector not explicitly identified'}
     app.apply_sector_name(comp3,{'name':''})
     assert comp3['sector']=='Sector not explicitly identified'  # no name found -> no change
@@ -899,17 +948,22 @@ def test_infer_sector_expanded_taxonomy_covers_more_industries():
     food/beverage manufacturing, automotive, real estate, metals/mining, healthcare/
     pharma/nutrition, hospitality, staffing, waste management, agrochemicals, specialty
     ingredients, education, media) covering common industries from the actual batch-scan
-    company list. Each must resolve to its specific name, not a generic fallback."""
+    company list. Each must resolve to its specific name, not a generic fallback.
+    v93.18: every name now also cites its NACE Rev. 2 section letter."""
     cases=[
-        ('Zabra is a leading poultry and egg producer supplying supermarkets across Belgium.','Agriculture, farming and animal production','High'),
-        ('Our vehicle manufacturing plants produce automotive parts for global brands.','Automotive','Medium'),
-        ('We are a leading real estate and property management company.','Real estate and property management','Medium'),
-        ('Umicore is a materials technology and recycling company specialising in metals.','Metals, mining and materials technology','Medium'),
-        ('Metagenics produces nutrition supplements and animal feed additives.','Healthcare, pharmaceuticals and nutrition','Medium'),
-        ('A leading hospitality and hotel group operating resorts across Europe.','Hospitality, leisure and entertainment','Medium'),
-        ('A staffing and recruitment agency providing workforce solutions.','Staffing and human resources services','Medium'),
-        ('We produce agrochemical crop protection products and pesticides for farmers.','Agrochemicals and crop protection','Medium'),
-        ('We create flavor and fragrance solutions for the food industry.','Specialty ingredients, flavors and fragrances','Medium'),
+        ('Zabra is a leading poultry and egg producer supplying supermarkets across Belgium.','Agriculture, farming and animal production (NACE A)','High'),
+        ('Our vehicle manufacturing plants produce automotive parts for global brands.','Automotive (NACE C)','Medium'),
+        ('We are a leading real estate and property management company.','Real estate and property management (NACE L)','Medium'),
+        ('Umicore is a materials technology and recycling company specialising in metals.','Metals and materials manufacturing (NACE C)','Medium'),
+        ('Metagenics produces nutrition supplements and animal feed additives.','Pharmaceuticals and nutrition manufacturing (NACE C)','Medium'),
+        ('A leading hospitality and hotel group operating resorts across Europe.','Accommodation and food service activities (NACE I)','Medium'),
+        ('A staffing and recruitment agency providing workforce solutions.','Staffing and human resources services (NACE N)','Medium'),
+        ('We produce agrochemical crop protection products and pesticides for farmers.','Agrochemicals and crop protection (NACE C)','Medium'),
+        ('We create flavor and fragrance solutions for the food industry.','Specialty ingredients, flavors and fragrances (NACE C)','Medium'),
+        ('A city zoo and amusement park offering leisure and entertainment for families.','Arts, entertainment and recreation (NACE R)','Medium'),
+        ('Our hospital and medical clinics provide healthcare services region-wide.','Human health and social work activities (NACE Q)','Medium'),
+        ('A veterinary and animal hospital clinic for pets and livestock veterinary care.','Veterinary activities (NACE M)','Medium'),
+        ('A mining and quarrying operation extracting raw minerals for mining clients.','Mining and quarrying (NACE B)','Medium'),
     ]
     for text,expected_name,expected_level in cases:
         comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
@@ -926,7 +980,7 @@ def test_infer_sector_new_specific_keyword_beats_generic_manufacturing():
     manufacturing fallback that would otherwise apply to almost any factory."""
     comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
     sec=app.infer_sector(comp,'Our vehicle manufacturing plant is one of the largest in the region.')
-    assert sec['name']=='Automotive'
+    assert sec['name']=='Automotive (NACE C)'
 
 
 def test_batch_report_analysis_text_mentions_top_company_and_top_claim():
