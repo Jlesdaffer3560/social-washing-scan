@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_15_expanded_sector_taxonomy'
+    assert app.APP_VERSION == 'hostable_v93_16_report_analysis_and_claims_data'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -778,11 +778,12 @@ def test_batch_report_aggregate_stats():
 
 
 def test_batch_report_pdf_generates_valid_multi_page_pdf():
-    """v93.12: build_batch_summary_report_pdf() must produce real, valid PDF bytes (not
-    just non-empty bytes) with the expected 2-page layout (cover/summary + company
-    table) for a normal selection, and must not crash on a row with every score field
-    None (a company outside the small hardcoded PROFILES list can still legitimately
-    have missing scores)."""
+    """v93.16: build_batch_summary_report_pdf() must produce real, valid PDF bytes (not
+    just non-empty bytes) with the expected 3-page layout (page 1: cards/executive
+    summary/analysis/risk chart; page 2: highest-risk chart (+ claims table if any); page
+    3: full company table) for a normal selection, and must not crash on a row with every
+    score field None (a company outside the small hardcoded PROFILES list can still
+    legitimately have missing scores)."""
     import pypdf
     import batch_report_pdf as brp
     rows=_sample_export_rows()+[{'scanned_at':'2026-09-01T10:00:00','scan_type':'url','company':'No Score Co',
@@ -793,7 +794,7 @@ def test_batch_report_pdf_generates_valid_multi_page_pdf():
     pdf_bytes=brp.build_batch_summary_report_pdf(rows,meta={'generated':'2026-09-04'})
     assert pdf_bytes.startswith(b'%PDF-')
     reader=pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes))
-    assert len(reader.pages)==2
+    assert len(reader.pages)==3
     page1_text=reader.pages[0].extract_text()
     assert 'Scan Summary Report' in page1_text
     assert '4 selected scan(s)' in page1_text  # 3 sample rows + the no-score row
@@ -926,3 +927,73 @@ def test_infer_sector_new_specific_keyword_beats_generic_manufacturing():
     comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
     sec=app.infer_sector(comp,'Our vehicle manufacturing plant is one of the largest in the region.')
     assert sec['name']=='Automotive'
+
+
+def test_batch_report_analysis_text_mentions_top_company_and_top_claim():
+    """v93.16: the report's "Analysis" section (distinct from the factual Executive
+    Summary) must name the actual highest-scoring company, the dominant sector-risk
+    level, and the top flagged claim by name -- not just repeat generic totals."""
+    import batch_report_pdf as brp
+    rows=_sample_export_rows()  # Lidl 61/High, Zabra 41/Medium, Home Invest 9/Low
+    agg=brp._aggregate(rows)
+    top_claims=[{'phrase':'carbon neutral','risk':'High','occurrences':9,'companies':5,'blacklisted':True}]
+    text=brp._analysis_text(agg,top_claims)
+    assert 'Lidl' in text and '61/100' in text
+    assert 'carbon neutral' in text
+    assert '9 time' in text and '5 compan' in text
+    assert 'blacklisted' in text.lower()
+    # no top_claims and a single-row selection -> no sector-dominance or claim sentence,
+    # but must still not crash and still name the top company
+    single=[r for r in rows if r['company']=='Zabra']
+    agg_single=brp._aggregate(single)
+    text_single=brp._analysis_text(agg_single,[])
+    assert 'Zabra' in text_single
+
+
+def test_batch_report_top_claims_table_renders_and_is_absent_when_empty():
+    """v93.16: the most-flagged-claims table must render one row per claim with the
+    phrase, colored risk level, EmpCo blacklist marker and counts -- and the whole
+    section must not appear (returns None) when there's no claims data for this
+    selection, so the report doesn't show an empty/misleading table."""
+    import batch_report_pdf as brp
+    assert brp._top_claims_table([]) is None
+    assert brp._top_claims_table(None) is None
+    top_claims=[{'phrase':'carbon neutral','risk':'High','occurrences':9,'companies':5,'blacklisted':True},
+                {'phrase':'eco-friendly','risk':'Medium','occurrences':3,'companies':2,'blacklisted':False}]
+    table=brp._top_claims_table(top_claims)
+    assert table is not None
+    # Table.__init__ stores the original row data on ._cellvalues
+    rendered_texts=[[getattr(cell,'text','') for cell in row] for row in table._cellvalues]
+    flat=' '.join(t for row in rendered_texts for t in row)
+    assert 'carbon neutral' in flat and 'eco-friendly' in flat
+
+
+def test_history_resolve_selected_scan_ids(monkeypatch):
+    """v93.16: _v92_resolve_selected_scan_ids() must return the explicit ids list as-is
+    when not in select_all mode, and must query the database for ids matching the active
+    filter (via the same _v92_build_filters() WHERE clause as everything else) when
+    select_all=1 -- this is what scopes the Create-report PDF's "most flagged claims"
+    section to exactly the selected scans."""
+    assert app._v92_resolve_selected_scan_ids({'ids':['5','9']})==[5,9]
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append((sql,params))
+        def fetchall(self): return [(1,),(2,),(3,)]
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    result=app._v92_resolve_selected_scan_ids({'select_all':['1'],'risk':['High']})
+    assert result==[1,2,3]
+    assert 'WHERE global_risk = %s' in executed[0][0]
+
+
+def test_v92_fetch_top_claims_for_scan_ids_empty_shortcircuit():
+    """v93.16: an empty scan_ids list must short-circuit to [] without ever touching the
+    database -- an empty selection (or a select_all filter matching nothing) shouldn't
+    issue a query that would trivially match nothing anyway."""
+    assert app._v92_fetch_top_claims_for_scan_ids([])==[]
+    assert app._v92_fetch_top_claims_for_scan_ids(None)==[]

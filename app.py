@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_15_expanded_sector_taxonomy"
-APP_RELEASE_LABEL="v93.15"
+APP_VERSION="hostable_v93_16_report_analysis_and_claims_data"
+APP_RELEASE_LABEL="v93.16"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4279,6 +4279,40 @@ def _v92_fetch_top_claims(limit=10):
     finally:
         conn.close()
 
+def _v92_fetch_top_claims_for_scan_ids(scan_ids,limit=10):
+    """Same ranking as _v92_fetch_top_claims(), scoped to an explicit set of scan ids --
+    feeds the "Create report" PDF's most-flagged-claims section with data from just the
+    companies actually selected on /history, not the whole deployment's history. Returns
+    [] immediately for an empty id list rather than issuing a query that would otherwise
+    (with an empty ANY(%s) array) simply match nothing anyway."""
+    if not scan_ids:
+        return []
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        with conn.cursor() as cur:
+            cur.execute(f'''
+                SELECT MIN(matched_phrase) AS phrase, COUNT(*) AS occurrences,
+                       COUNT(DISTINCT scan_id) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank,
+                       BOOL_OR(blacklisted) AS blacklisted
+                FROM scan_findings
+                WHERE scan_id = ANY(%s) AND matched_phrase IS NOT NULL AND matched_phrase <> ''
+                GROUP BY LOWER(matched_phrase)
+                HAVING MAX({_V92_RISK_RANK_SQL}) >= 2
+                ORDER BY occurrences DESC, companies DESC
+                LIMIT %s
+            ''',(list(scan_ids),limit))
+            return [{'phrase':r[0],'occurrences':r[1],'companies':r[2],'risk':_V92_RISK_RANK_LABEL.get(r[3],''),
+                     'blacklisted':bool(r[4])}
+                    for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
 def _v92_backfill_legacy_findings():
     """One-time import of scan_findings rows for scans logged BEFORE that table existed
     (v93.3) -- the 44-company batch scan run earlier the same day this feature shipped.
@@ -4414,6 +4448,39 @@ def _v92_resolve_selected_export_rows(form):
         return _v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
             date_from,date_to,sort)
     return _v92_fetch_all_for_export(ids=ids) if ids else []
+
+def _v92_resolve_selected_scan_ids(form):
+    """Same selection resolution as _v92_resolve_selected_export_rows(), returning just
+    the matching scan_history ids -- used to scope the Create-report PDF's "most flagged
+    claims" section (scan_findings) to exactly the selected scans, including a
+    select_all selection that could span many pages."""
+    ids=_v92_parse_ids(form)
+    select_all=(form.get('select_all',[''])[0]=='1')
+    if not select_all:
+        return ids
+    search=(form.get('q',[''])[0] or '').strip()[:200]
+    risk=(form.get('risk',[''])[0] or '').strip()
+    period=(form.get('period',[''])[0] or '').strip()
+    min_global=_v92_parse_min_filter(form,'min_global')
+    min_green=_v92_parse_min_filter(form,'min_green')
+    min_social=_v92_parse_min_filter(form,'min_social')
+    min_findings=_v92_parse_min_filter(form,'min_findings')
+    date_from=_v92_parse_date_filter(form,'date_from')
+    date_to=_v92_parse_date_filter(form,'date_to')
+    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to)
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT id FROM scan_history {where}',params)
+            return [r[0] for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
 
 def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None,
                            date_from=None,date_to=None):
@@ -5128,7 +5195,9 @@ class Handler(BaseHTTPRequestHandler):
         raw=self.rfile.read(n) if n>0 else b''
         form=parse_qs(raw.decode('utf-8','ignore'))
         rows=_v92_resolve_selected_export_rows(form)
-        try: pdf_bytes=build_fn(rows)
+        scan_ids=_v92_resolve_selected_scan_ids(form)
+        top_claims=_v92_fetch_top_claims_for_scan_ids(scan_ids)
+        try: pdf_bytes=build_fn(rows,meta={'top_claims':top_claims})
         except Exception as e: return self._json({'error':'Could not generate report PDF: '+str(e)},500)
         stamp=datetime.date.today().isoformat()
         return self._send(pdf_bytes,'application/pdf',200,
