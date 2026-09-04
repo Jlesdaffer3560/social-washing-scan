@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_13_consistent_sector_column"
-APP_RELEASE_LABEL="v93.13"
+APP_VERSION="hostable_v93_14_real_sector_name_detection"
+APP_RELEASE_LABEL="v93.14"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -200,6 +200,36 @@ SECTOR_RULES=[
  ("Medium",["bank","finance","insurance","telecom","digital","aviation","airline","transport","chemical","energy","infrastructure","manufacturing","industrial","technology","utility","gas","logistics"],"meaningful exposure to customer rights, contractor management, responsible procurement, safety, data/privacy or affected-community expectations"),
  ("Low",["software","consulting","professional services","agency","office services"],"lower structural exposure, although broad people, customer or supply-chain claims still require evidence")
 ]
+# v93.14: SECTOR_RULES above classifies a RISK TIER only (High/Medium/Low) -- it was never
+# meant to produce a human-readable industry label, and infer_company() otherwise only ever
+# names a sector for the small hardcoded PROFILES list above, leaving every other company
+# showing the uninformative "Sector not explicitly identified" placeholder. This maps each
+# individual SECTOR_RULES keyword to a specific, readable sector name; infer_sector() uses
+# whichever keyword actually matched (the same match that already determines the risk tier)
+# to backfill company['sector'] with a real label instead of the placeholder, without
+# changing the existing risk-tier assignment logic at all.
+SECTOR_KEYWORD_NAMES={
+ 'fast fashion':'Fast fashion and apparel retail','apparel':'Fast fashion and apparel retail',
+ 'textile':'Textile and apparel manufacturing','garment':'Fast fashion and apparel retail',
+ 'fashion':'Fast fashion and apparel retail','clothing':'Fast fashion and apparel retail',
+ 'discount':'Discount retail','supermarket':'Food retail and supermarkets',
+ 'grocery':'Food retail and supermarkets','food retail':'Food retail and supermarkets',
+ 'catering':'Food service and catering','facilities':'Facilities and outsourced services',
+ 'outsourced':'Facilities and outsourced services','delivery':'Delivery and logistics services',
+ 'commodity':'Agricultural commodities and raw materials','cocoa':'Agricultural commodities and raw materials',
+ 'palm oil':'Agricultural commodities and raw materials','coffee':'Agricultural commodities and raw materials',
+ 'cotton':'Agricultural commodities and raw materials',
+ 'bank':'Banking and financial services','finance':'Banking and financial services',
+ 'insurance':'Insurance','telecom':'Telecommunications','digital':'Digital and technology services',
+ 'aviation':'Aviation and airlines','airline':'Aviation and airlines','transport':'Transport and logistics',
+ 'chemical':'Chemicals manufacturing','energy':'Energy and utilities','infrastructure':'Infrastructure and construction',
+ 'manufacturing':'Industrial manufacturing','industrial':'Industrial manufacturing',
+ 'technology':'Technology services','utility':'Energy and utilities','gas':'Energy and utilities',
+ 'logistics':'Transport and logistics',
+ 'software':'Software and technology services','consulting':'Professional and business services',
+ 'professional services':'Professional and business services','agency':'Professional and business services',
+ 'office services':'Professional and business services',
+}
 
 
 SOCIAL_WASHING_TAXONOMY={
@@ -954,6 +984,12 @@ def _guess_company_from_text(text):
     return ''
 
 def infer_sector(company,text,page_segments=None,homepage_url=None):
+    # v93.14: sector_name is the real, human-readable industry label derived from whichever
+    # keyword actually matched below -- '' when the company is a hardcoded PROFILES entry
+    # (which already has its own real name) or when no rule matched at all (no signal to
+    # name a sector from). Callers backfill company['sector'] with this when it's still the
+    # generic "Sector not explicitly identified" placeholder.
+    sector_name=''
     if company.get("sector_risk"):
         level=company["sector_risk"]; basis="recognised company/sector profile"
     else:
@@ -991,9 +1027,21 @@ def infer_sector(company,text,page_segments=None,homepage_url=None):
         for lvl,terms,risks in SECTOR_RULES:
             hits=[t for t in terms if t in lower]
             if hits and (lvl!="High" or len(hits)>=2):
-                level=lvl; basis="matched terms: "+", ".join(hits[:5]); break
+                level=lvl; basis="matched terms: "+", ".join(hits[:5])
+                sector_name=SECTOR_KEYWORD_NAMES.get(hits[0],'')
+                break
     risks=next(r for lvl,terms,r in SECTOR_RULES if lvl==level)
-    return {"level":level,"basis":basis,"risks":risks}
+    return {"level":level,"basis":basis,"risks":risks,"name":sector_name}
+
+def apply_sector_name(comp,sec):
+    """If infer_sector() derived a real sector name from matched keywords, backfill
+    company['sector'] with it -- infer_company() only ever sets a real name for the small
+    hardcoded PROFILES list, leaving every other company with the generic "Sector not
+    explicitly identified" placeholder otherwise. Shared by both scan entry points
+    (website scan and uploaded-document scan) so /history, PDF reports and CSV export all
+    see the same real sector label instead of the placeholder."""
+    if sec.get('name') and 'not explicitly identified' in str(comp.get('sector','')).lower():
+        comp['sector']=sec['name']
 
 def google_search(query, max_results=5):
     """Google Custom Search JSON API fallback. Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX."""
@@ -2929,6 +2977,7 @@ def analyse_uploaded_document(filename, text, company_name_hint=''):
     green_targeted=[]
     exttext=''
     sec=infer_sector(comp,text,page_segments)
+    apply_sector_name(comp,sec)
     ctx=infer_context(comp,text,social_ext)
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""),audience,page_segments)
     green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext,text,audience,page_segments)
@@ -3014,6 +3063,7 @@ def analyse_url_v27(raw):
     green_ext=external_green(comp['company'], green_fs, pages)
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
     sec=infer_sector(comp,txt+'\n'+exttext,page_segments,url)
+    apply_sector_name(comp,sec)
     ctx=infer_context(comp,txt,social_ext)
     # v84: was capped at 5 -- this same capped list both fed the risk score AND was the only
     # thing ever eligible to reach the report/frontend, even though _v60_rank_dedupe below can

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_13_consistent_sector_column'
+    assert app.APP_VERSION == 'hostable_v93_14_real_sector_name_detection'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -842,3 +842,50 @@ def test_get_build_batch_summary_report_pdf_lazy_import():
     so this must succeed the same way _get_build_company_report_pdf() does)."""
     fn=app._get_build_batch_summary_report_pdf()
     assert fn is not None and callable(fn)
+
+
+def test_infer_sector_derives_real_name_from_matched_keyword():
+    """v93.14: for a company outside the hardcoded PROFILES list, infer_sector() must
+    return a real, human-readable sector name derived from whichever keyword actually
+    matched -- the same match that already determines the risk tier -- not just a bare
+    risk level with no name at all."""
+    comp={'company':'Some Retailer','sector':'Sector not explicitly identified','sector_risk':''}
+    # two distinct High-tier keywords ('supermarket', 'grocery') -- the High tier requires
+    # >=2 hits before it can override Medium/Low (see infer_sector()'s own v86 comment).
+    sec=app.infer_sector(comp,'We are a leading supermarket chain and grocery retailer serving thousands of customers.')
+    assert sec['name']=='Food retail and supermarkets'
+    assert sec['level']=='High'
+
+
+def test_infer_sector_no_name_for_profiles_company():
+    """v93.14: a hardcoded PROFILES company already has a real sector name from
+    infer_company() -- infer_sector() must not attempt to derive a second one (it takes
+    the fast 'recognised company/sector profile' path and never reaches the keyword
+    matching loop at all)."""
+    comp={'company':'Delhaize','sector':'Food retail and supermarkets','sector_risk':'High'}
+    sec=app.infer_sector(comp,'Any page text at all.')
+    assert sec['name']=='' and sec['level']=='High' and sec['basis']=='recognised company/sector profile'
+
+
+def test_infer_sector_no_name_when_nothing_matches():
+    """v93.14: when no SECTOR_RULES keyword matches at all, infer_sector() keeps the
+    existing default-Medium fallback behaviour unchanged and must not fabricate a sector
+    name with no real signal behind it."""
+    comp={'company':'Mystery Co','sector':'Sector not explicitly identified','sector_risk':''}
+    sec=app.infer_sector(comp,'Lorem ipsum dolor sit amet, nothing sector-specific here at all.')
+    assert sec['name']=='' and sec['level']=='Medium' and sec['basis']=='default medium exposure'
+
+
+def test_apply_sector_name_backfills_placeholder_only():
+    """v93.14: apply_sector_name() must backfill company['sector'] only when it's still
+    the generic placeholder -- never overwrite an already-real sector name (e.g. a
+    hardcoded PROFILES label), and be a no-op when infer_sector() found no name."""
+    comp={'sector':'Sector not explicitly identified'}
+    app.apply_sector_name(comp,{'name':'Food retail and supermarkets'})
+    assert comp['sector']=='Food retail and supermarkets'
+    comp2={'sector':'Banking and financial services'}
+    app.apply_sector_name(comp2,{'name':'Food retail and supermarkets'})
+    assert comp2['sector']=='Banking and financial services'  # untouched, already a real name
+    comp3={'sector':'Sector not explicitly identified'}
+    app.apply_sector_name(comp3,{'name':''})
+    assert comp3['sector']=='Sector not explicitly identified'  # no name found -> no change
