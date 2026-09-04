@@ -723,7 +723,7 @@ def external_panel(data, limit):
 def assessment_basis(data):
     meta = metadata(data)
     left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
-    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("EmpCo for consumer-facing environmental and selected social claims; Forced Labour Regulation as the forced-labour and supply-chain assurance lens.", ST["source"])]
+    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("The EU Empowering Consumers Directive (“EmpCo”, Directive (EU) 2024/825) for consumer-facing environmental and selected social claims; the EU Forced Labour Regulation (Regulation (EU) 2024/3015) as the forced-labour and supply-chain assurance lens.", ST["source"])]
     t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     return t

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_23_external_signals_column'
+    assert app.APP_VERSION == 'hostable_v93_24_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1062,6 +1062,61 @@ def test_infer_sector_new_specific_keyword_beats_generic_manufacturing():
     comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
     sec=app.infer_sector(comp,'Our vehicle manufacturing plant is one of the largest in the region.')
     assert sec['name']=='Automotive (NACE C)'
+
+
+def test_infer_sector_does_not_match_short_keyword_inside_unrelated_word():
+    """v93.24: infer_sector() used plain substring containment (`t in lower`) to detect
+    SECTOR_RULES matches -- reproduced two real false positives this way: "media" matched
+    inside "immediately" (classifying an unrelated company as Digital/tech), and "bank"
+    matched inside "embankment" (classifying it as Banking/financial). Neither sentence
+    has anything to do with either sector."""
+    comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
+    sec=app.infer_sector(dict(comp),'We will respond immediately to any customer inquiry.')
+    assert sec['name']==''
+    sec=app.infer_sector(dict(comp),'The embankment along the river was reinforced last year.')
+    assert sec['name']==''
+
+
+def test_infer_sector_word_boundary_fix_still_matches_plural_forms():
+    """v93.24: the word-boundary fix above must not break matching a keyword's plural
+    form -- "supermarket" must still match "supermarkets". This is the real batch-scan
+    case that first caught the regression: without plural tolerance, Zabra's "poultry and
+    ... supermarkets" text dropped from 2 High-tier hits to 1, falling below the >=2
+    threshold required for the High tier and losing its sector name entirely."""
+    comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
+    sec=app.infer_sector(comp,'Zabra is a leading poultry and egg producer supplying supermarkets across Belgium.')
+    assert sec['name']=='Agriculture, farming and animal production (NACE A)'
+    assert sec['level']=='High'
+
+
+def test_decode_uploaded_document_rejects_invalid_base64():
+    """v93.24: base64.b64decode() without validate=True silently discards non-alphabet
+    characters instead of failing, which could hand a corrupted/truncated document to the
+    claim analysis with no indication anything was wrong. Malformed input must now raise a
+    clear, specific error instead."""
+    try:
+        app.decode_uploaded_document('doc.txt','not-valid-base64!!! @@@','text/plain')
+        assert False, 'expected ValueError'
+    except ValueError as e:
+        assert 'not valid base64' in str(e).lower()
+
+
+def test_analyse_url_v27_prefers_kbo_official_website_over_name_resolution(monkeypatch):
+    """v93.24: when KBO has an official website on file for the given number, it must be
+    used directly instead of re-resolving via search/domain-guessing off the official
+    name -- a government-registered URL is more authoritative, and going through
+    name-based resolution at all is the exact step that mis-resolved "Gaasch Packaging"
+    to an unrelated site (gaasch.net) in the original reported case."""
+    kbo_info={'number':'0403.170.701','name':'Gaasch Packaging','address':'','website':'www.gaaschpack.eu','nace_activities':[]}
+    monkeypatch.setattr(app,'_v93_lookup_kbo_company',lambda n: kbo_info if n else None)
+    captured={}
+    def fake_resolve_scan_input(resolution_input):
+        captured['resolution_input']=resolution_input
+        return 'https://www.gaaschpack.eu', None
+    monkeypatch.setattr(app,'resolve_scan_input',fake_resolve_scan_input)
+    monkeypatch.setattr(app,'crawl_with_related_sites',lambda *a,**k: ('some text',['https://www.gaaschpack.eu'],[],[]))
+    app.analyse_url_v27('', 'BE0403170701')
+    assert captured['resolution_input']=='www.gaaschpack.eu'
 
 
 _KBO_SAMPLE_HTML='''<html><body><div id="table"><table>

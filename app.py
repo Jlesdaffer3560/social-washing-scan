@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_23_external_signals_column"
-APP_RELEASE_LABEL="v93.23"
+APP_VERSION="hostable_v93_24_review_fixes"
+APP_RELEASE_LABEL="v93.24"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1307,6 +1307,23 @@ def _guess_company_from_text(text):
             return name
     return ''
 
+_SECTOR_TERM_RE_CACHE={}
+
+def _sector_term_matches(term,low_text):
+    """Word-boundary match for a SECTOR_RULES term, tolerant of a trailing plural "s"
+    (e.g. "supermarket" must still match "supermarkets"). Reuses _trigger_present()'s
+    (?<![a-z0-9])...(?![a-z0-9]) boundary approach -- plain substring containment let
+    short terms match inside unrelated words: "media" inside "immediately" wrongly
+    classified an unrelated company as Digital/tech, and "bank" inside "embankment" as
+    Banking/financial (both reproduced live before this fix). A separate cache/function
+    from _trigger_present() (used for claim-wording triggers) rather than changing that
+    shared function's own matching behaviour, which is independently tuned and tested."""
+    rx=_SECTOR_TERM_RE_CACHE.get(term)
+    if rx is None:
+        rx=re.compile(r'(?<![a-z0-9])'+re.escape(term)+r's?(?![a-z0-9])')
+        _SECTOR_TERM_RE_CACHE[term]=rx
+    return rx.search(low_text) is not None
+
 def infer_sector(company,text,page_segments=None,homepage_url=None):
     # v93.14: sector_name is the real, human-readable industry label derived from whichever
     # keyword actually matched below -- '' when the company is a hardcoded PROFILES entry
@@ -1349,7 +1366,12 @@ def infer_sector(company,text,page_segments=None,homepage_url=None):
         lower=(company.get("sector","")+" "+(homepage_text[:8000] if homepage_text else text[:15000])).lower()
         level="Medium"; basis="default medium exposure"
         for lvl,terms,risks in SECTOR_RULES:
-            hits=[t for t in terms if t in lower]
+            # v93.24: was plain substring containment (`t in lower`) -- reproduced two real
+            # false positives this way: "We will respond immediately..." matched the "media"
+            # sector keyword (substring of "immediately"), classifying an unrelated company as
+            # Digital/tech; "The embankment along the river..." matched "bank" (substring of
+            # "embankment"), classifying it as Banking/financial. See _sector_term_matches().
+            hits=[t for t in terms if _sector_term_matches(t,lower)]
             if hits and (lvl!="High" or len(hits)>=2):
                 level=lvl; basis="matched terms: "+", ".join(hits[:5])
                 sector_name=SECTOR_KEYWORD_NAMES.get(hits[0],'')
@@ -2986,10 +3008,21 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
     s_top, s_top_val = dominant_driver(social_splits)
     client_facing='Client-facing' in audience.get('audience','') or 'Consumer-facing' in audience.get('audience','')
     g_ext_n=targeted_count(green_ext); s_ext_n=targeted_count(social_ext)
+    # v93.24: green_score received here is the FINAL score -- already floored to 75+ by
+    # _v93_apply_empco_blacklist_floor() when a retained claim matches the fixed EmpCo
+    # Annex I blacklist -- while green_splits/green_components (the four weighted inputs
+    # below) still reflect the pre-floor blended calculation. Without this line, a reader
+    # could see "Green risk is 75/100 (very high)" sitting next to driver inputs that look
+    # far more modest, with nothing here explaining the gap (the explanation exists
+    # elsewhere in the result -- green_conclusion, screening_conclusion, summary, and the
+    # empco_blacklist_floor_applied flag -- but not in this specific breakdown).
+    g_blacklisted=any(f.get('blacklisted_practice_indicator') for f in green_fs or [])
     if gnames:
         g_summary=f'Green risk is {green_score}/100 ({band(green_score)}). Main contribution: {g_top}.'
     else:
         g_summary=f'Green risk is {green_score}/100 ({band(green_score)}). No material green claim was retained.'
+    if g_blacklisted:
+        g_summary+=' Automatically floored to Very high because a retained claim matches the fixed EmpCo Annex I blacklist, regardless of the blended calculation below.'
     if snames:
         s_summary=f'Social risk is {social_score}/100 ({band(social_score)}). Main contribution: {s_top}.'
     else:
@@ -2999,6 +3032,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
             'score': green_score,
             'summary': g_summary,
             'key_drivers': [
+                *(['EmpCo Annex I blacklist match — automatically floors this score to Very high (75+), overriding the blended calculation below.'] if g_blacklisted else []),
                 f'Claim wording — {material_count(green_fs)} relevant occurrence(s) across {len(gnames)} claim type(s).',
                 f'Evidence support — {gap_label(green_splits.get("substantiation_risk",0))} visible evidence gap ({green_splits.get("substantiation_risk",0)}/100).',
                 f'External context — {external_line(g_ext_n)}',
@@ -3140,9 +3174,17 @@ def _extract_pdf_text_regex_fallback(data):
     return txt[:90000]
 
 def decode_uploaded_document(filename, content_base64, mime_type=''):
-    data=base64.b64decode(content_base64 or '')
+    # v93.24: validate=True makes malformed base64 (non-alphabet characters, e.g. a
+    # corrupted upload or a caller passing raw text instead of base64) fail cleanly with
+    # a clear error, instead of the default lenient decoder silently discarding the bad
+    # characters and returning a truncated/corrupted document with no indication anything
+    # went wrong.
+    try:
+        data=base64.b64decode(content_base64 or '',validate=True)
+    except ValueError as e:  # binascii.Error is itself a ValueError subclass
+        raise ValueError('Uploaded file content is not valid base64.') from e
     if len(data)>8_000_000:
-        raise ValueError('Uploaded document is too large for this hosted first-pass scan. Please upload an extract below 8 MB.')
+        raise ValueError('Uploaded document is too large for this hosted first-pass scan. Please upload an extract below 8 MB (the raw file size, before this upload step\'s base64 encoding).')
     name=(filename or 'uploaded_document').lower()
     if name.endswith('.docx') or 'wordprocessingml' in (mime_type or '').lower():
         txt=extract_docx_text(data)
@@ -3392,14 +3434,37 @@ def analyse_url_v27(raw, company_number=''):
     # website" message, which would otherwise read as if nothing at all had been entered.
     if not raw and company_number and not kbo_info:
         raise ValueError(f'The company number "{company_number}" could not be verified against the Belgian KBO/BCE public register (not found, or not a recognised Belgian enterprise-number format), and no company name or website was entered either. Please check the number or enter a company name/website.')
+    # v93.24: when KBO has an official website on file for this number, prefer it outright
+    # over resolving anything by name -- a government-registered URL is more authoritative
+    # than even the official NAME used as a fallback below (which still has to go through
+    # search/domain-guessing, the exact step that mis-resolved "Gaasch Packaging" to an
+    # unrelated site in the first place). Only takes priority when the user did not already
+    # give an explicit URL/domain of their own -- that is respected as-is, since they may
+    # deliberately want a specific sub-brand or regional site.
     # v93.20: when the input is a bare company name (not already a URL/domain) and a
     # company number was supplied and verified, resolve using the OFFICIAL registered
     # name rather than whatever free-text the user typed -- a legally exact name gives
     # search/domain-guessing a stronger, less ambiguous anchor than an informal brand
     # name that may collide with an unrelated same-name website (see the module comment
     # above _v93_normalize_be_company_number for the real case this was built for).
-    resolution_input=kbo_info['name'] if (kbo_info and not looks_like_domain_or_url(raw)) else raw
+    if kbo_info and kbo_info.get('website') and not looks_like_domain_or_url(raw):
+        resolution_input=kbo_info['website']
+    elif kbo_info and not looks_like_domain_or_url(raw):
+        resolution_input=kbo_info['name']
+    else:
+        resolution_input=raw
     original_url,resolution_note=resolve_scan_input(resolution_input); fallback_note=resolution_note or ''; related_notes=[]
+    # v93.24: the user gave their own explicit URL/domain AND KBO separately lists an
+    # official website for this number -- if they disagree, that is worth a visible note
+    # (not a hard error: a company can legitimately run several regional/sub-brand sites,
+    # and the KBO-listed address is sometimes itself stale or a generic holding address).
+    if kbo_info and kbo_info.get('website') and looks_like_domain_or_url(raw):
+        kbo_host=(urlparse(norm_url(kbo_info['website'])).hostname or '').lower().removeprefix('www.')
+        scanned_host=(urlparse(original_url).hostname or '').lower().removeprefix('www.')
+        if kbo_host and scanned_host and kbo_host!=scanned_host:
+            fallback_note=(fallback_note+' ' if fallback_note else '')+(
+                f'Note: the KBO/BCE register lists a different official website ({kbo_host}) for this company '
+                f'number than the one being scanned ({scanned_host}) -- verify which is the intended target.')
     company_name_hint=kbo_info['name'] if (kbo_info and kbo_info.get('name')) else _v65_scan_input_company_hint(raw, original_url)
     scan_deadline=time.time()+CRAWL_BUDGET_SECONDS
     try:

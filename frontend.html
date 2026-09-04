@@ -142,7 +142,7 @@
     <p class="muted" style="margin-bottom:10px">Assess sustainability claims for wording risk, evidence gaps, regulatory sensitivity and relevant public contradictions &mdash; not a broad ESG rating.</p>
     <details class="how-it-works">
       <summary>How the assessment works</summary>
-      <p class="muted" style="margin-top:10px">This is a claims-risk scan, not a broad ESG rating. It identifies sustainability wording that may be too broad, insufficiently evidenced, consumer-facing under EmpCo, may create forced-labour-related assurance risk, or may be contradicted by relevant external public-source context.</p>
+      <p class="muted" style="margin-top:10px">This is a claims-risk scan, not a broad ESG rating. It identifies sustainability wording that may be too broad, insufficiently evidenced, consumer-facing under the EU Empowering Consumers Directive ("EmpCo", Directive (EU) 2024/825), may create forced-labour-related assurance risk, or may be contradicted by relevant external public-source context.</p>
       <ol>
         <li><strong>Claim wording:</strong> broad, generic, absolute, future-oriented, comparative or label/icon-based claims.</li>
         <li><strong>Evidence gap:</strong> missing scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, traceability or due-diligence evidence.</li>
@@ -157,6 +157,7 @@
     <div class="grid">
       <div class="card">
         <h2>Website scan &mdash; public sources</h2>
+        <p id="scanModeNote" class="small hidden" style="margin:-4px 0 8px;font-weight:600"></p>
         <p class="muted">Enter a company name or website (e.g. <strong>Inditex</strong>, <strong>inditex.com</strong>). The scan finds the official site and reviews its public pages &mdash; sustainability, policies, product/campaign pages, press and investor pages &mdash; plus public external signals (media, NGO, regulator, union) when configured. Only public material is checked.</p>
         <label for="url">Company name or website</label>
         <input id="url" type="text" autocomplete="organization" spellcheck="false" placeholder="e.g. Inditex, inditex.com or www.inditex.com" />
@@ -260,10 +261,29 @@ const $=id=>document.getElementById(id);
 const PROBLEM_TERMS=['environmentally friendly','climate neutral','carbon neutral','co2 neutral','co₂ neutral','net zero','carbon positive','climate positive','offsetting','offset','climate compensated','reduced climate impact','better for the planet','greener than','more sustainable than','lowest emissions','lower emissions','reduced emissions','best environmental','sustainability label','self-declared label','eco-friendly','ecological','green','eco','natural','sustainable','recyclable','recycled','circular','renewable','biodegradable','energy efficient','water efficient','ethical','fair','responsible','socially responsible','trusted','human rights','labour rights','labor rights','forced labour','forced labor','child labour','child labor','modern slavery','living wage','supply chain','supplier','responsible sourcing','ethical sourcing','traceable','certified','audited','diversity','inclusion','inclusive','safe workplace','well-being','accessibility','vulnerable customers','for all','all suppliers','all employees','100%','always','never','guarantee','fully','zero'];
 function riskClass(r){r=(r||'').toLowerCase().replace(/\s+/g,'-');return r||'low'}
 function legalBasisCategory(x){return x.legal_basis_category==='prohibited'?'prohibited':'problematic'}
-function legalBasisBadgeLabel(x){return legalBasisCategory(x)==='prohibited'?'Potentially Prohibited (Annex I)':'Problematic (case-by-case)'}
+function legalBasisBadgeLabel(x){return x.legal_basis_label || (legalBasisCategory(x)==='prohibited'?'Potentially Prohibited (EmpCo Annex I)':'Problematic, not automatically prohibited (case-by-case)')}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function arr(x){return Array.isArray(x)?x:(x?[x]:[])}
 function setStatus(msg,type='notice'){const el=$('status'); if(!el)return; el.className=type; el.innerHTML=msg}
+// v93.24: proactively show whether external public-source search (media/NGO/regulator
+// signals) is actually configured on this deployment, BEFORE the user runs a scan --
+// previously this only surfaced reactively, as a reliability warning attached to a
+// completed scan result, which could read as "the scan found nothing" rather than "this
+// layer never ran". Best-effort: a fetch failure here just leaves the note hidden.
+(async function(){
+  try{
+    let r=await fetch('/api/health'); if(!r.ok) return; let j=await r.json();
+    let el=$('scanModeNote'); if(!el) return;
+    if(j.external_search_configured){
+      el.textContent='Full mode: website content + external public-source signals (media, NGO, regulator, union).';
+      el.style.color='#205b31';
+    } else {
+      el.textContent='Limited mode: website content only — no external search provider is configured on this deployment, so the public-contradiction layer is not available.';
+      el.style.color='#8a6100';
+    }
+    el.classList.remove('hidden');
+  }catch(e){}
+})();
 $('chooseFile')?.addEventListener('click',()=>$('file').click());
 $('file')?.addEventListener('change',()=>{$('fileName').textContent=$('file').files[0]?.name||'No file selected'});
 async function scanUrl(){let url=$('url').value.trim(); let companyNumber=$('companyNumber').value.trim(); if(!url&&!companyNumber){setStatus('Please enter a company name, website, or company number.','notice warning');return} await runScan('/api/scan/url',{url,company_number:companyNumber});}
