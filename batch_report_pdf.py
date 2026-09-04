@@ -1,4 +1,4 @@
-"""Durably scan-history batch summary report (v93.16).
+"""Durably scan-history batch summary report (v93.17).
 
 Builds a single PDF summarising a set of selected /history scans -- executive
 summary cards, a written analysis, a risk-distribution chart, a highest-risk-
@@ -6,6 +6,10 @@ companies chart, a most-frequently-flagged-claims table, and the full ranked
 company data table. Reuses the color palette, typography and footer
 conventions from report_pdf.py (the per-company report) so both PDF types
 read as one product, without duplicating that styling.
+
+Charts and risk badges are hand-drawn with reportlab.graphics.shapes (rounded
+bars, pill badges) rather than the stock reportlab chart widgets, which read
+as dated/spreadsheet-like out of the box -- see _rounded_bar()/_pill().
 
 Input rows are exactly what app.py's _v92_fetch_all_for_export() returns: a
 list of dicts keyed by _V92_EXPORT_COLUMNS (company, sector, global_score,
@@ -21,16 +25,15 @@ from __future__ import annotations
 
 import io
 
-from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
-from reportlab.graphics.shapes import Drawing
-from reportlab.lib import colors
+from reportlab.graphics.shapes import Drawing, Line, Rect, String
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from report_pdf import (
-    CONTENT_W, GREY_100, GREY_300, GREY_500, GREY_700, MARGIN_BOTTOM, MARGIN_TOP, MARGIN_X,
-    NAVY, PAGE_W, RED, ST, TEAL_DARK, WHITE, bounded_text, clean_text, esc, risk_color,
+    CONTENT_W, GREY_100, GREY_300, GREY_500, GREY_700, GREY_900, MARGIN_BOTTOM, MARGIN_TOP,
+    MARGIN_X, NAVY, PAGE_W, RED, ST, TEAL_DARK, WHITE, bounded_text, clean_text, esc,
+    risk_color, risk_soft,
 )
 
 _RISK_ORDER = ['Low', 'Medium', 'High', 'Very high']
@@ -47,6 +50,7 @@ def _aggregate(rows):
     scores = {'global': [], 'green': [], 'social': []}
     risk_counts = {k: 0 for k in _RISK_ORDER}
     sector_risk_counts = {}
+    findings_counts = []
     blacklisted_companies = 0
     high_risk_findings = 0
     dates = []
@@ -62,6 +66,9 @@ def _aggregate(rows):
         if (r.get('empco_blacklisted_count') or 0) > 0:
             blacklisted_companies += 1
         high_risk_findings += r.get('high_risk_findings_count') or 0
+        fc = r.get('findings_count')
+        if isinstance(fc, (int, float)):
+            findings_counts.append(fc)
         d = clean_text(r.get('scanned_at'))
         if d:
             dates.append(d[:10])
@@ -69,10 +76,9 @@ def _aggregate(rows):
     def avg(xs):
         return round(sum(xs) / len(xs), 1) if xs else None
 
-    top_company = None
     scored = [r for r in rows if isinstance(r.get('global_score'), (int, float))]
-    if scored:
-        top_company = max(scored, key=lambda r: r['global_score'])
+    top_company = max(scored, key=lambda r: r['global_score']) if scored else None
+    bottom_company = min(scored, key=lambda r: r['global_score']) if len(scored) > 1 else None
 
     dominant_sector_risk = None
     if sector_risk_counts:
@@ -84,14 +90,112 @@ def _aggregate(rows):
         'avg_global': avg(scores['global']),
         'avg_green': avg(scores['green']),
         'avg_social': avg(scores['social']),
+        'avg_findings': avg(findings_counts),
         'risk_counts': risk_counts,
         'high_plus': risk_counts['High'] + risk_counts['Very high'],
         'blacklisted_companies': blacklisted_companies,
         'high_risk_findings': high_risk_findings,
         'date_range': (min(dates), max(dates)) if dates else (None, None),
         'top_company': top_company,
+        'bottom_company': bottom_company,
         'dominant_sector_risk': dominant_sector_risk,
     }
+
+
+# ---------------------------------------------------------------------------
+# Hand-drawn primitives -- rounded bars and pill badges read as a modern
+# dashboard rather than a 1990s spreadsheet chart, which the stock reportlab
+# chart widgets (VerticalBarChart/HorizontalBarChart) unavoidably look like.
+# ---------------------------------------------------------------------------
+
+def _pill(text, bg, fg, width=64, height=15, font_size=7.6):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=height / 2, ry=height / 2, fillColor=bg, strokeColor=None))
+    d.add(String(width / 2, height / 2 - font_size * .34, text, textAnchor='middle',
+                  fontName='Helvetica-Bold', fontSize=font_size, fillColor=fg))
+    return d
+
+
+def _risk_pill(risk, width=64):
+    risk = clean_text(risk)
+    if not risk:
+        return Paragraph('&mdash;', ST['table'])
+    return _pill(risk, risk_soft(risk), risk_color(risk), width=width)
+
+
+def _yes_no_pill(flag, width=40):
+    if not flag:
+        return Paragraph('&mdash;', ST['table'])
+    return _pill('Yes', risk_soft('High'), risk_color('High'), width=width)
+
+
+def _risk_distribution_chart(risk_counts, width, height=140):
+    """A hand-drawn, rounded-top vertical bar chart -- one bar per risk tier, the value
+    printed above the bar and the tier name below it, no axis/gridlines clutter."""
+    d = Drawing(width, height)
+    margin_l, margin_r = 14, 14
+    margin_b, margin_t = 20, 26
+    plot_w = width - margin_l - margin_r
+    plot_h = height - margin_b - margin_t
+    n = len(_RISK_ORDER)
+    slot_w = plot_w / n
+    bar_w = slot_w * 0.5
+    max_val = max(risk_counts.values()) if risk_counts else 0
+    d.add(Line(margin_l, margin_b, width - margin_r, margin_b, strokeColor=GREY_300, strokeWidth=0.75))
+    for i, cat in enumerate(_RISK_ORDER):
+        val = risk_counts.get(cat, 0)
+        cx = margin_l + slot_w * i + slot_w / 2
+        bar_h = (val / max_val) * plot_h if max_val else 0
+        color = risk_color(cat)
+        if val > 0:
+            r = min(bar_w / 2, 6)
+            d.add(Rect(cx - bar_w / 2, margin_b, bar_w, max(bar_h, r), rx=r, ry=r,
+                        fillColor=color, strokeColor=None))
+        d.add(String(cx, margin_b + bar_h + 6, str(val), textAnchor='middle',
+                      fontName='Helvetica-Bold', fontSize=11, fillColor=NAVY))
+        d.add(String(cx, margin_b - 13, cat, textAnchor='middle',
+                      fontName='Helvetica-Bold', fontSize=8.5, fillColor=GREY_700))
+    return d
+
+
+def _top_companies_chart(rows, width, top_n=10, row_h=22):
+    """A hand-drawn horizontal 'leaderboard' -- capsule-shaped bars scaled to a fixed
+    0-100 axis, company name right-aligned to the left of the bar, score printed at the
+    bar's end, with a faint alternating row background for readability."""
+    scored = [r for r in rows if isinstance(r.get('global_score'), (int, float))]
+    if not scored:
+        return None
+    ranked = sorted(scored, key=lambda r: r['global_score'], reverse=True)[:top_n]
+    n = len(ranked)
+    height = n * row_h + 10
+    name_w = 108
+    value_w = 42
+    bar_area_w = width - name_w - value_w - 12
+    d = Drawing(width, height)
+    for i, r in enumerate(ranked):
+        y_top = height - 6 - i * row_h
+        y_bot = y_top - row_h
+        if i % 2 == 0:
+            d.add(Rect(0, y_bot, width, row_h, fillColor=GREY_100, strokeColor=None))
+        name = bounded_text(r.get('company') or '—', 20)
+        d.add(String(name_w - 8, y_bot + row_h / 2 - 3, name, textAnchor='end',
+                      fontName='Helvetica-Bold', fontSize=8.3, fillColor=GREY_900))
+        score = r.get('global_score') or 0
+        bar_w = max(2, (score / 100) * bar_area_w)
+        bar_h = row_h - 10
+        bar_y = y_bot + (row_h - bar_h) / 2
+        color = risk_color(r.get('global_risk'))
+        # Light guide ticks at 25/50/75/100 behind the bars, drawn once (only on the
+        # first/top row) so they read as a shared scale rather than per-row clutter.
+        if i == 0:
+            for frac in (0.25, 0.5, 0.75, 1.0):
+                gx = name_w + frac * bar_area_w
+                d.add(Line(gx, 4, gx, height - 4, strokeColor=GREY_300, strokeWidth=0.5))
+        d.add(Rect(name_w, bar_y, bar_w, bar_h, rx=bar_h / 2, ry=bar_h / 2,
+                    fillColor=color, strokeColor=None))
+        d.add(String(name_w + bar_w + 6, y_bot + row_h / 2 - 3, f'{score}/100',
+                      fontName='Helvetica-Bold', fontSize=8.3, fillColor=NAVY))
+    return d
 
 
 def _metric_card(label, value, accent, note='', card_width=None):
@@ -105,10 +209,10 @@ def _metric_card(label, value, accent, note='', card_width=None):
     inner.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
                                 ('TOPPADDING', (0, 0), (-1, -1), 1), ('BOTTOMPADDING', (0, 0), (-1, -1), 1)]))
     card = Table([[inner]], colWidths=[card_width])
-    card.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), .6, GREY_300), ('LINEBEFORE', (0, 0), (0, 0), 2.6, accent),
+    card.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), .6, GREY_300), ('LINEBEFORE', (0, 0), (0, 0), 3, accent),
                                ('BACKGROUND', (0, 0), (-1, -1), GREY_100),
-                               ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
-                               ('TOPPADDING', (0, 0), (-1, -1), 7), ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+                               ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                               ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
                                ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
     return card
 
@@ -126,87 +230,9 @@ def _cards_row(agg):
         _metric_card('EmpCo blacklisted', blacklisted, RED if blacklisted else risk_color('Low')),
     ]
     t = Table([cards], colWidths=[CONTENT_W * .25] * 4)
-    t.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    t.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
                             ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
     return t
-
-
-def _risk_distribution_chart(risk_counts, width, height=100):
-    d = Drawing(width, height)
-    chart = VerticalBarChart()
-    chart.x = 35
-    chart.y = 14
-    chart.width = width - 55
-    chart.height = height - 34
-    chart.data = [[risk_counts[k] for k in _RISK_ORDER]]
-    chart.categoryAxis.categoryNames = _RISK_ORDER
-    chart.categoryAxis.labels.fontSize = 8.5
-    chart.categoryAxis.labels.fontName = 'Helvetica-Bold'
-    chart.categoryAxis.labels.fillColor = GREY_700
-    chart.valueAxis.valueMin = 0
-    max_count = max(risk_counts.values()) if risk_counts else 0
-    chart.valueAxis.valueMax = max(1, max_count + 1)
-    chart.valueAxis.labels.fontSize = 7.5
-    chart.valueAxis.labels.fillColor = GREY_500
-    chart.valueAxis.visibleGrid = True
-    chart.valueAxis.gridStrokeColor = GREY_300
-    chart.valueAxis.gridStrokeWidth = 0.4
-    chart.bars.strokeColor = None
-    chart.barWidth = 0.55
-    chart.groupSpacing = 12
-    # Value-on-top-of-bar labels -- a nicer, more informative chart than bare bars with
-    # only an axis to read the count from.
-    chart.barLabelFormat = '%d'
-    chart.barLabels.fontName = 'Helvetica-Bold'
-    chart.barLabels.fontSize = 9
-    chart.barLabels.fillColor = NAVY
-    chart.barLabels.dy = 4
-    palette = [risk_color(k) for k in _RISK_ORDER]
-    for i, c in enumerate(palette):
-        chart.bars[(0, i)].fillColor = c
-    d.add(chart)
-    return d
-
-
-def _top_companies_chart(rows, width, height=185, top_n=10):
-    scored = [r for r in rows if isinstance(r.get('global_score'), (int, float))]
-    if not scored:
-        return None
-    ranked = sorted(scored, key=lambda r: r['global_score'], reverse=True)[:top_n]
-    ranked = list(reversed(ranked))  # highest bar drawn at the top
-    names = [bounded_text(r.get('company') or '—', 24) for r in ranked]
-    values = [r['global_score'] for r in ranked]
-    palette = [risk_color(r.get('global_risk')) for r in ranked]
-    d = Drawing(width, height)
-    chart = HorizontalBarChart()
-    chart.x = 95
-    chart.y = 10
-    chart.width = width - 150
-    chart.height = height - 20
-    chart.data = [values]
-    chart.categoryAxis.categoryNames = names
-    chart.categoryAxis.labels.fontSize = 8
-    chart.categoryAxis.labels.fontName = 'Helvetica-Bold'
-    chart.categoryAxis.labels.fillColor = GREY_700
-    chart.valueAxis.valueMin = 0
-    chart.valueAxis.valueMax = 100
-    chart.valueAxis.labels.fontSize = 7.5
-    chart.valueAxis.labels.fillColor = GREY_500
-    chart.valueAxis.visibleGrid = True
-    chart.valueAxis.gridStrokeColor = GREY_300
-    chart.valueAxis.gridStrokeWidth = 0.4
-    chart.bars.strokeColor = None
-    chart.barWidth = 7
-    chart.barLabelFormat = '%d/100'
-    chart.barLabels.fontName = 'Helvetica-Bold'
-    chart.barLabels.fontSize = 8
-    chart.barLabels.fillColor = NAVY
-    chart.barLabels.dx = 4
-    chart.barLabels.boxAnchor = 'w'
-    for i, c in enumerate(palette):
-        chart.bars[(0, i)].fillColor = c
-    d.add(chart)
-    return d
 
 
 def _executive_summary_text(agg):
@@ -232,6 +258,10 @@ def _executive_summary_text(agg):
 
 
 def _analysis_text(agg, top_claims):
+    """A somewhat more extensive narrative than the factual Executive Summary: names the
+    highest- and lowest-scoring companies for contrast, the dominant sector-risk pattern,
+    average findings per company, and the top flagged claim -- whatever data is actually
+    available for this selection (each sentence is independently optional)."""
     if not agg['total']:
         return ''
     parts = []
@@ -240,10 +270,17 @@ def _analysis_text(agg, top_claims):
         parts.append(f'{esc(clean_text(top.get("company")) or "The top-scoring company")} carries the highest Global '
                       f'score in this selection, at {top.get("global_score")}/100'
                       + (f' ({esc(clean_text(top.get("global_risk")))})' if top.get('global_risk') else '') + '.')
+    bottom = agg.get('bottom_company')
+    if bottom and top and bottom is not top:
+        parts.append(f'By contrast, {esc(clean_text(bottom.get("company")) or "the lowest-scoring company")} shows the '
+                      f'lowest claim risk at {bottom.get("global_score")}/100'
+                      + (f' ({esc(clean_text(bottom.get("global_risk")))})' if bottom.get('global_risk') else '') + '.')
     dom = agg.get('dominant_sector_risk')
     if dom and agg['total'] > 1:
         parts.append(f'{dom["count"]} of {agg["total"]} companies operate in a sector classified as '
                       f'{esc(dom["level"])} structural risk.')
+    if agg.get('avg_findings') is not None:
+        parts.append(f'On average, {agg["avg_findings"]} flagged claim(s) were retained per company.')
     if top_claims:
         tc = top_claims[0]
         phrase = esc(clean_text(tc.get('phrase')))
@@ -252,6 +289,9 @@ def _analysis_text(agg, top_claims):
         parts.append(f'The most frequently flagged wording across this selection is &ldquo;{phrase}&rdquo;, '
                       f'appearing {occ} time{"s" if occ != 1 else ""} across {comps} compan{"y" if comps == 1 else "ies"}'
                       + (', which also matches a fixed EmpCo blacklisted practice' if tc.get('blacklisted') else '') + '.')
+        if len(top_claims) > 1:
+            others = ', '.join(f'&ldquo;{esc(clean_text(c.get("phrase")))}&rdquo;' for c in top_claims[1:4])
+            parts.append(f'Other recurring wording includes {others}.')
     if not parts:
         return 'No additional pattern stood out beyond what the executive summary above already covers.'
     return ' '.join(parts)
@@ -260,17 +300,14 @@ def _analysis_text(agg, top_claims):
 def _top_claims_table(top_claims):
     if not top_claims:
         return None
-    yes_badge = f'<font color="{RED.hexval()}"><b>Yes</b></font>'
     header = ['#', 'Phrase', 'Risk level', 'EmpCo blacklist', 'Occurrences', 'Companies']
     data = [[Paragraph(esc(h), ST['table_head']) for h in header]]
     for i, c in enumerate(top_claims):
-        risk = c.get('risk') or ''
-        risk_cell = f'<font color="{risk_color(risk).hexval()}"><b>{esc(risk)}</b></font>' if risk else '—'
         data.append([
             Paragraph(str(i + 1), ST['table']),
-            Paragraph(esc(bounded_text(c.get('phrase') or '—', 60)), ST['table_dark']),
-            Paragraph(risk_cell, ST['table']),
-            Paragraph(yes_badge if c.get('blacklisted') else '&mdash;', ST['table']),
+            Paragraph(esc(bounded_text(c.get('phrase') or '—', 58)), ST['table_dark']),
+            _risk_pill(c.get('risk')),
+            _yes_no_pill(c.get('blacklisted')),
             Paragraph(esc(c.get('occurrences') if c.get('occurrences') is not None else '—'), ST['table']),
             Paragraph(esc(c.get('companies') if c.get('companies') is not None else '—'), ST['table']),
         ])
@@ -283,8 +320,9 @@ def _top_claims_table(top_claims):
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, GREY_100]),
         ('LINEBELOW', (0, 1), (-1, -1), .4, GREY_300),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('ALIGN', (2, 1), (3, -1), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
     ]))
     return t
 
@@ -297,20 +335,23 @@ def _company_table(rows):
     for r in ranked:
         gscore = r.get('global_score')
         grisk = r.get('global_risk')
-        gcell = esc(gscore if gscore is not None else '—')
-        if grisk:
-            gcell += f' <font color="{risk_color(grisk).hexval()}"><b>{esc(grisk)}</b></font>'
+        gcell = Table([[Paragraph(esc(gscore if gscore is not None else '—'), ST['table_dark']),
+                        _risk_pill(grisk, width=56) if grisk else Paragraph('', ST['table'])]],
+                      colWidths=[18, 58])
+        gcell.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                                    ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
         data.append([
             Paragraph(esc(bounded_text(r.get('company') or '—', 42)), ST['table_dark']),
-            Paragraph(esc(bounded_text(r.get('sector') or '—', 28)), ST['table']),
-            Paragraph(gcell, ST['table']),
+            Paragraph(esc(bounded_text(r.get('sector') or '—', 26)), ST['table']),
+            gcell,
             Paragraph(esc(r.get('green_score') if r.get('green_score') is not None else '—'), ST['table']),
             Paragraph(esc(r.get('social_score') if r.get('social_score') is not None else '—'), ST['table']),
             Paragraph(esc(r.get('findings_count') if r.get('findings_count') is not None else '—'), ST['table']),
             Paragraph(esc(clean_text(r.get('scanned_at'))[:10] or '—'), ST['table']),
         ])
-    col_widths = [CONTENT_W * .25, CONTENT_W * .17, CONTENT_W * .15, CONTENT_W * .09,
-                  CONTENT_W * .09, CONTENT_W * .12, CONTENT_W * .13]
+    col_widths = [CONTENT_W * .24, CONTENT_W * .17, CONTENT_W * .18, CONTENT_W * .09,
+                  CONTENT_W * .09, CONTENT_W * .10, CONTENT_W * .13]
     t = Table(data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), NAVY),
@@ -318,8 +359,8 @@ def _company_table(rows):
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, GREY_100]),
         ('LINEBELOW', (0, 1), (-1, -1), .4, GREY_300),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
     ]))
     return t
 
@@ -374,13 +415,13 @@ def build_batch_summary_report_pdf(rows, meta=None):
         doc.build(flow, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
         return buf.getvalue()
     flow.append(_cards_row(agg))
-    flow.append(Spacer(1, 4 * mm))
+    flow.append(Spacer(1, 5 * mm))
     flow.append(_section_title('Executive summary'))
     flow.append(Paragraph(esc(_executive_summary_text(agg)), ST['body_dark']))
-    flow.append(Spacer(1, 3 * mm))
+    flow.append(Spacer(1, 3.5 * mm))
     flow.append(_section_title('Analysis'))
     flow.append(Paragraph(_analysis_text(agg, top_claims), ST['body_dark']))
-    flow.append(Spacer(1, 4 * mm))
+    flow.append(Spacer(1, 5 * mm))
     flow.append(_section_title('Risk distribution'))
     flow.append(_risk_distribution_chart(agg['risk_counts'], CONTENT_W))
     flow.append(PageBreak())
@@ -388,17 +429,18 @@ def build_batch_summary_report_pdf(rows, meta=None):
     top_chart = _top_companies_chart(rows, CONTENT_W)
     if top_chart is not None:
         flow.append(_section_title('Highest-risk companies (top 10 by global score)'))
+        flow.append(Spacer(1, 1 * mm))
         flow.append(top_chart)
-        flow.append(Spacer(1, 3 * mm))
+        flow.append(Spacer(1, 4 * mm))
     claims_table = _top_claims_table(top_claims)
     if claims_table is not None:
         flow.append(_section_title(f'Top {len(top_claims)} most frequently flagged claims/words'))
         flow.append(Paragraph('Across the scans in this selection only.', ST['small']))
-        flow.append(Spacer(1, 1 * mm))
+        flow.append(Spacer(1, 1.5 * mm))
         flow.append(claims_table)
     flow.append(PageBreak())
     flow.append(_section_title(f'All {agg["total"]} companies · sorted by global score (highest first)'))
-    flow.append(Spacer(1, 1.5 * mm))
+    flow.append(Spacer(1, 2 * mm))
     flow.append(_company_table(rows))
     doc.build(flow, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     return buf.getvalue()

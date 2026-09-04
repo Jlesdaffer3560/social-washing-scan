@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_16_report_analysis_and_claims_data'
+    assert app.APP_VERSION == 'hostable_v93_17_report_visual_redesign'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -948,6 +948,50 @@ def test_batch_report_analysis_text_mentions_top_company_and_top_claim():
     agg_single=brp._aggregate(single)
     text_single=brp._analysis_text(agg_single,[])
     assert 'Zabra' in text_single
+
+
+def test_batch_report_analysis_text_contrasts_top_and_bottom_company():
+    """v93.17: per the user's explicit request for "iets uitgebreidere analyse" (a
+    somewhat more extensive analysis), the Analysis section must also name the
+    LOWEST-scoring company for contrast, state the average findings-per-company, and
+    list additional recurring claim wording beyond just the single top phrase -- but
+    only when there's more than one company (a 1-company selection has no meaningful
+    "by contrast" comparison)."""
+    import batch_report_pdf as brp
+    rows=_sample_export_rows()  # Lidl 61/High, Zabra 41/Medium, Home Invest 9/Low
+    agg=brp._aggregate(rows)
+    top_claims=[
+        {'phrase':'carbon neutral','risk':'High','occurrences':9,'companies':5,'blacklisted':True},
+        {'phrase':'eco-friendly','risk':'Medium','occurrences':3,'companies':2,'blacklisted':False},
+        {'phrase':'net zero','risk':'Medium','occurrences':2,'companies':1,'blacklisted':False},
+    ]
+    text=brp._analysis_text(agg,top_claims)
+    assert 'By contrast' in text and 'Home Invest' in text and '9/100' in text
+    assert 'flagged claim(s) were retained per company' in text
+    assert 'eco-friendly' in text and 'net zero' in text
+    single=[r for r in rows if r['company']=='Zabra']
+    agg_single=brp._aggregate(single)
+    text_single=brp._analysis_text(agg_single,[])
+    assert 'By contrast' not in text_single
+
+
+def test_batch_report_pill_badges():
+    """v93.17: risk and blacklist values must render as rounded pill badges (a hand-drawn
+    Drawing with a soft-tinted background and colored bold text), matching the same
+    visual convention already used on the /history HTML page's risk badges -- not plain
+    inline-colored text, which the user reported as looking unprofessional. An
+    empty/unset risk or a False blacklist flag must fall back to a plain dash, not an
+    empty-looking badge."""
+    import batch_report_pdf as brp
+    from reportlab.graphics.shapes import Drawing
+    high_pill=brp._risk_pill('High')
+    assert isinstance(high_pill,Drawing)
+    empty_pill=brp._risk_pill('')
+    assert not isinstance(empty_pill,Drawing)  # falls back to a plain Paragraph dash
+    yes_pill=brp._yes_no_pill(True)
+    assert isinstance(yes_pill,Drawing)
+    no_pill=brp._yes_no_pill(False)
+    assert not isinstance(no_pill,Drawing)
 
 
 def test_batch_report_top_claims_table_renders_and_is_absent_when_empty():
