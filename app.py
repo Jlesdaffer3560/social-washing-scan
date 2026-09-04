@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_12_history_create_report_pdf"
-APP_RELEASE_LABEL="v93.12"
+APP_VERSION="hostable_v93_13_consistent_sector_column"
+APP_RELEASE_LABEL="v93.13"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4616,18 +4616,20 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         for r in rows:
             when=html_escape(str(r.get('scanned_at') or '')[:16].replace('T',' '))
             company=html_escape(str(r.get('company') or '—'))
-            # v92.4: company['sector'] is a real descriptive label only for the small
-            # hardcoded PROFILES list (KBC, Delhaize...) -- otherwise it's the generic
-            # placeholder "Sector not explicitly identified", which told the viewer
-            # nothing. Fall back to the always-computed sector RISK level (Low/Medium/
-            # High, from infer_sector()) when the name itself isn't a real label.
+            # v92.4/v93.13: company['sector'] is a real descriptive label only for the
+            # small hardcoded PROFILES list (KBC, Delhaize...) -- otherwise it's the
+            # generic placeholder "Sector not explicitly identified". Showing the real
+            # name for some rows and only "Sector risk: X" for others made the column
+            # read as inconsistent data (reported: Delhaize shows a name, most others
+            # show a risk level instead, no visible common structure). Every row now
+            # renders the SAME two-part shape -- a name (real label, or an explicit
+            # "Sector not identified" placeholder instead of leaving it blank) followed
+            # by the always-computed sector risk level when known.
             sector_name=str(r.get('sector') or '')
-            if sector_name and 'not explicitly identified' not in sector_name.lower():
-                sector=html_escape(sector_name)
-            elif r.get('sector_risk'):
-                sector=f'Sector risk: {html_escape(str(r.get("sector_risk")))}'
-            else:
-                sector=''
+            has_real_sector_name=bool(sector_name) and 'not explicitly identified' not in sector_name.lower()
+            sector_label=html_escape(sector_name) if has_real_sector_name else 'Sector not identified'
+            sector_risk_level=str(r.get('sector_risk') or '')
+            sector=f'{sector_label} &middot; Risk: {html_escape(sector_risk_level)}' if sector_risk_level else sector_label
             input_url=html_escape(str(r.get('input_url') or '')[:60])
             # v92.5: row id, needed so "Export selected" knows exactly which rows were
             # checked -- not part of any display value, so no escaping concern (it's an

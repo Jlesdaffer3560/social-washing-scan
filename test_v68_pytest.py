@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_12_history_create_report_pdf'
+    assert app.APP_VERSION == 'hostable_v93_13_consistent_sector_column'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -260,22 +260,24 @@ def test_scan_history_sector_risk_uses_computed_level():
 
 
 def test_scan_history_table_falls_back_to_sector_risk(monkeypatch):
-    """v92.4: the visible /history table must not show the uninformative "Sector not
-    explicitly identified" placeholder -- it should fall back to the computed sector-risk
-    level instead, while a company that DOES have a real descriptive sector name (the
-    small hardcoded PROFILES list) keeps showing that name unchanged."""
+    """v92.4/v93.13: the visible /history table must not show the uninformative "Sector
+    not explicitly identified" placeholder -- and every row must render the SAME
+    two-part shape (name-or-placeholder, then risk level) regardless of whether the
+    company has a real descriptive sector name (the small hardcoded PROFILES list) or
+    not, per explicit user feedback that inconsistent formatting between rows (a name for
+    Delhaize, only a risk level for most others) read as inconsistent data."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     unknown_row={'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Sector not explicitly identified',
                  'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
                  'green_score':57,'social_score':50,'findings_count':14}
     html=app._v92_render_history_page([unknown_row],1,1,25,'')
     assert 'Sector not explicitly identified' not in html
-    assert 'Sector risk: High' in html
+    assert 'Sector not identified &middot; Risk: High' in html
     known_row={'scanned_at':'2026-09-02T13:40','company':'KBC','sector':'Banking and financial services',
                'sector_risk':'Medium','input_url':'https://careers.kbc-group.com','global_score':12,
                'global_risk':'Low','green_score':12,'social_score':12,'findings_count':2}
     html2=app._v92_render_history_page([known_row],1,1,25,'')
-    assert 'Banking and financial services' in html2 and 'Sector risk: Medium' not in html2
+    assert 'Banking and financial services &middot; Risk: Medium' in html2
 
 
 def test_scan_history_row_selection_markup(monkeypatch):
