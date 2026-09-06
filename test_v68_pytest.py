@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_24_review_fixes'
+    assert app.APP_VERSION == 'hostable_v93_25_history_sort_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -429,7 +429,7 @@ def test_scan_history_sort_alphabetical(monkeypatch):
     v93.11: 'company' (not 'date') is now the DEFAULT sort -- see
     test_scan_history_default_sort_is_alphabetical_by_company below."""
     assert app._V92_SORT_SQL['date']=='scanned_at DESC'
-    assert app._V92_SORT_SQL['company']=='company ASC, scanned_at DESC'
+    assert app._V92_SORT_SQL['company']=='LOWER(company) ASC, scanned_at DESC'
     assert app._V92_SORT_SQL['global']=='global_score DESC NULLS LAST, scanned_at DESC'
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
@@ -460,6 +460,18 @@ def test_scan_history_default_sort_is_alphabetical_by_company(monkeypatch):
     # an invalid/garbage sort value must fall back to 'company', not 'date'
     html=app._v92_render_history_page([row],1,1,25,'',sort='not-a-real-sort-key')
     assert '<a href="/history?sort=company">Company &darr;</a>' in html
+
+
+def test_scan_history_company_sort_is_case_insensitive():
+    """v93.25: 'company ASC' alone is PostgreSQL's default (case-sensitive) collation,
+    which sorts every uppercase-starting name before any lowercase-starting one -- so a
+    company scanned with a lowercase input (e.g. "shein") landed dead last, after "Zabra",
+    instead of alphabetically between "S" and "Z". Both the main listing's ORDER BY and the
+    company-filter dropdown's DISTINCT query must use LOWER(company) to sort correctly."""
+    assert app._V92_SORT_SQL['company']=='LOWER(company) ASC, scanned_at DESC'
+    import inspect
+    src=inspect.getsource(app._v92_fetch_distinct_companies)
+    assert 'ORDER BY LOWER(company) ASC' in src
 
 
 def test_scan_history_clear_button_always_visible(monkeypatch):

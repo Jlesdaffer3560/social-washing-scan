@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_24_review_fixes"
-APP_RELEASE_LABEL="v93.24"
+APP_VERSION="hostable_v93_25_history_sort_fix"
+APP_RELEASE_LABEL="v93.25"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4546,7 +4546,7 @@ def _v92_parse_date_filter(source,key):
         return None
     return raw
 
-_V92_SORT_SQL={'date':'scanned_at DESC','company':'company ASC, scanned_at DESC',
+_V92_SORT_SQL={'date':'scanned_at DESC','company':'LOWER(company) ASC, scanned_at DESC',
                'global':'global_score DESC NULLS LAST, scanned_at DESC','green':'green_score DESC NULLS LAST, scanned_at DESC',
                'social':'social_score DESC NULLS LAST, scanned_at DESC','findings':'findings_count DESC NULLS LAST, scanned_at DESC',
                'external':f'{_V92_EXTERNAL_SIGNALS_EXPR} DESC NULLS LAST, scanned_at DESC'}
@@ -4644,7 +4644,7 @@ def _v92_fetch_distinct_companies():
         if not _v92_ensure_table(conn):
             return []
         with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT company FROM scan_history WHERE company IS NOT NULL AND company <> '' ORDER BY company ASC")
+            cur.execute("SELECT DISTINCT company FROM scan_history WHERE company IS NOT NULL AND company <> '' ORDER BY LOWER(company) ASC")
             return [r[0] for r in cur.fetchall()]
     except Exception:
         return []
