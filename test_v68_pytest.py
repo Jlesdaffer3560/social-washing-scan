@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_38_severity_first_selection_and_wording_distribution'
+    assert app.APP_VERSION == 'hostable_v93_40_plain_language_report_readability_pass'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1974,6 +1974,32 @@ def test_occurrence_count_label_is_a_plain_count_not_a_wording_verdict():
     assert labels['Generic environmental claim']==' · 3 occurrences'
 
 
+def test_wording_distribution_text_compact_form_never_leaves_a_dangling_fragment():
+    """v93.39: the "Top risk drivers" table's FLAGGED WORDING column is bounded_text()-
+    truncated to ~42 chars. The full "phrase N · phrase N · + N other wordings" form used on
+    the detail card routinely got cut mid-phrase there, leaving a dangling, meaningless "+."
+    or "+ 1." -- reported live on a real Delhaize scan. compact=True must produce a short,
+    safe form (single top phrase + a short "+N more" count) that fits comfortably and never
+    truncates into a bare "+"."""
+    import report_pdf as rp
+    findings=(
+        [_pdf_finding(i,'Generic environmental claim','High','Claim about ecologisch wording.',68,source=f'p{i}') for i in range(6)]
+        +[_pdf_finding(10+i,'Generic environmental claim','High','Claim about duurzame producten wording.',68,source=f'q{i}') for i in range(3)]
+        +[_pdf_finding(20,'Generic environmental claim','High','Claim about a third wording entirely.',68,source='r0')]
+    )
+    for f in findings[:6]: f['matched_phrase']='ecologisch'
+    for f in findings[6:9]: f['matched_phrase']='duurzame producten'
+    findings[9]['matched_phrase']='third wording'
+    cluster=rp.cluster_claims({'claim_inventory':findings})[0]
+    text=rp.wording_distribution_text(cluster, compact=True)
+    assert text.startswith('ecologisch')
+    assert '+2 more' in text
+    assert not text.rstrip().endswith('+') and not text.rstrip().endswith('+.')
+    # the rendered, bounded_text()-truncated table cell must also never end on a bare "+"
+    truncated = rp.bounded_text(text, 42)
+    assert not truncated.rstrip('.').rstrip().endswith('+')
+
+
 def test_wording_distribution_text_shows_tied_wordings_not_one_dominant_phrase():
     """v93.38: a second reviewer caught a real bug in the v93.36/37 "dominant trigger phrase"
     design -- when two or more wordings are TIED for most common, collapsing them into a
@@ -2111,10 +2137,10 @@ def test_dimension_balance_swap_requires_a_materiality_floor():
     data_low=_pdf_test_data(green+low_social)
     pdf_low=rp.build_company_report_pdf(data_low)
     text_low=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_low)).pages)
-    # The Low-severity social finding legitimately still appears in the Full claim inventory
+    # The Low-severity social finding legitimately still appears in the Full list of findings
     # appendix (which lists everything) -- only the NARRATIVE section (before that appendix)
     # must not force it into a detail card.
-    narrative_low=text_low.split('FULL CLAIM INVENTORY')[0]
+    narrative_low=text_low.split('FULL LIST OF FINDINGS')[0]
     assert 'Low-severity social note' not in narrative_low, 'a Low-risk-only missing dimension must not be force-inserted into a detail card'
 
     medium_social=[_pdf_finding(200+i,'Human-rights / labour-rights claim','Medium',f'Medium-severity social claim {i} about labour conditions and practices.',50,dim='social',source=f'sM{i}') for i in range(2)]
@@ -2139,9 +2165,9 @@ def _pdf_test_data(claims):
 
 
 def test_build_company_report_pdf_keeps_full_inventory_even_past_four_pages():
-    """v93.35: per explicit product decision, the "Full claim inventory" appendix is always
+    """v93.35: per explicit product decision, the "Full list of findings" appendix is always
     complete -- a mailed/downloaded PDF is often the recipient's only lasting record of the
-    scan, so silently showing only 40 of 60 retained findings under a "Full claim inventory"
+    scan, so silently showing only 40 of 60 retained findings under a "Full list of findings"
     heading (as the v93.34 auto-shrink ladder did) is misleading. The CORE narrative still
     targets a concise page budget, but the total PDF may legitimately exceed 4 pages when a
     scan retains many distinct findings -- that must no longer be treated as something to
@@ -2155,7 +2181,7 @@ def test_build_company_report_pdf_keeps_full_inventory_even_past_four_pages():
     assert pdf_bytes.startswith(b'%PDF-')
     pages=pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages
     full_text=' '.join(p.extract_text() for p in pages)
-    assert 'FULL CLAIM INVENTORY' in full_text.upper()
+    assert 'FULL LIST OF FINDINGS' in full_text.upper()
     # every one of the 60 findings must appear in the inventory -- not a silently truncated subset
     for i in range(60):
         assert f'wording number {i} about' in full_text, f'finding {i} missing from the full inventory'
@@ -2178,7 +2204,7 @@ def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
     page_count=len(pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
     assert page_count<=4
     full_text=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
-    assert 'FULL CLAIM INVENTORY' in full_text.upper()
+    assert 'FULL LIST OF FINDINGS' in full_text.upper()
     assert 'occurrences' in full_text and 'milieuvriendelijk' in full_text
 
 

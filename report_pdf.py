@@ -441,17 +441,28 @@ def occurrence_count_label(cluster, compact=False):
     return f" · {count} occurrences{source_note}"
 
 
-def wording_distribution_text(cluster, max_terms=5):
+def wording_distribution_text(cluster, max_terms=5, compact=False):
     """v93.38: shows the cluster's actual wording DISTRIBUTION ("ecologisch 6 · duurzaam 6 ·
     milieuvriendelijk 2") instead of collapsing it to one "dominant" phrase -- a second
     reviewer caught a real tied-count case in our own worked example (two wordings tied at 6
     occurrences each) that a single dominant-phrase label would have arbitrarily resolved to
     just one, silently hiding the tie. Shows at most max_terms, with a "+ N other wordings"
     tail for the rest; the full per-occurrence breakdown remains in the Full claim inventory
-    appendix."""
+    appendix.
+
+    v93.39: compact=True is for the "Top risk drivers" table, whose FLAGGED WORDING column is
+    bounded_text()-truncated to ~42 chars -- the "+ N other wordings" tail routinely got cut
+    mid-phrase there, leaving a dangling, meaningless "+." or "+ 1." Reported live. compact
+    mode drops that fragile tail entirely and shows only a single term, so there is nothing
+    left that can be truncated into nonsense; the full distribution is always on the detail
+    card below."""
     dist = cluster["representative"].get("_wording_distribution") or []
     if not dist:
         return ""
+    if compact:
+        phrase, count = dist[0]
+        more = len(dist) - 1
+        return f"{phrase} ({count}/{sum(c for _, c in dist)})" + (f" +{more} more" if more > 0 else "")
     shown = dist[:max_terms]
     text = " · ".join(f"{phrase} {count}" for phrase, count in shown)
     remaining = len(dist) - len(shown)
@@ -647,12 +658,33 @@ def section_title(text):
     return Paragraph(esc(text.upper()), ST["section"])
 
 
+def _joined_areas(types):
+    if not types:
+        return ""
+    if len(types) == 1:
+        return types[0]
+    if len(types) == 2:
+        return f"{types[0]} and {types[1]}"
+    return ", ".join(types[:-1]) + f" and {types[-1]}"
+
+
 def summary_box(data, clusters):
+    # v93.40: lead with a short, plain-language conclusion an executive reader can act on in
+    # the time it takes to read three sentences, per explicit user/reviewer feedback -- the
+    # score used to come first, which foregrounds a number ("74/100") ahead of what it means.
+    # The score is still shown, but as a supporting line under the conclusion, not the opener.
     global_score = data.get("global_score", data.get("overall_score", "—"))
     global_risk = data.get("global_risk", data.get("overall_risk", "Not assessed"))
     types = [claim_title(c["representative"]) for c in clusters[:3]]
-    summary = "The main retained claim areas are " + ", ".join(types) + "." if types else "No material claim signal was retained."
-    left = Paragraph(f'<b>Overall result: {esc(global_score)}/100 — {esc(global_risk)} claim risk.</b> {esc(summary)}', ST["body_dark"])
+    if types:
+        conclusion = (f"We found sustainability claims that need clearer wording or stronger evidence. "
+                      f"The main areas of concern are {_joined_areas(types)}. "
+                      f"Review this wording and its supporting evidence before it is reused.")
+    else:
+        conclusion = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
+    score_line = (f'Overall score: {esc(global_score)}/100 — {esc(global_risk)} claim risk. '
+                  f'This reflects the wording and evidence gaps found, not a share of unlawful claims.')
+    left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#52616A" size="8">{score_line}</font>', ST["body_dark"])
     note = Paragraph(esc(bounded_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on the result.", 170)), ST["small"])
     t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (0, 0), AMBER_SOFT), ("LINEBEFORE", (0, 0), (0, 0), 2.8, AMBER), ("BACKGROUND", (1, 0), (1, 0), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
@@ -710,17 +742,21 @@ def reliability_panel(data):
 
 
 def risk_driver_table(clusters):
-    headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("FLAGGED WORDING", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
+    headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("WORDING FOUND", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
     rows = [headers]
     for idx, c in enumerate(clusters[:3], 1):
         claim = c["representative"]
         title = claim_title(claim) + occurrence_count_label(c, compact=True)
         sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
-        # v93.36/v93.38: was trigger_phrase(claim) -- the REPRESENTATIVE occurrence's own
-        # matched phrase only, not the cluster's actual wording distribution, which can have
-        # two or more wordings tied for most common (see wording_distribution_text()). Shows
-        # at most 2 terms here to fit the column; the full distribution is on the detail card.
-        flagged_wording = wording_distribution_text(c, max_terms=2) or trigger_phrase(claim) or "Review retained wording"
+        # v93.36/v93.38/v93.39: was trigger_phrase(claim) -- the REPRESENTATIVE occurrence's
+        # own matched phrase only, not the cluster's actual wording distribution, which can
+        # have two or more wordings tied for most common (see wording_distribution_text()).
+        # compact=True shows only the single top phrase plus a short "+N more" count instead
+        # of the full "phrase N · phrase N · + N other wordings" form used on the detail card
+        # -- that longer form routinely got cut mid-phrase by this column's ~42-char budget,
+        # leaving a dangling, meaningless "+." or "+ 1." (reported live). The full distribution
+        # is always shown in full on the detail card below.
+        flagged_wording = wording_distribution_text(c, compact=True) or trigger_phrase(claim) or "Review retained wording"
         rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
@@ -873,7 +909,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # group (see cluster_claims()'s selection order: severity first, then verifiability, then
     # frequency, then a fixed tiebreak).
     dist_text = wording_distribution_text(cluster)
-    dist_row = [Paragraph(f'<font color="#7A8A93">Wordings:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
+    dist_row = [Paragraph(f'<font color="#7A8A93">Common phrases:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
     reason = claim.get("_selection_reason")
@@ -890,15 +926,21 @@ def claim_card(cluster, excerpt_chars=220, material=False):
                    + '</font>', ST["source"])]
         for occ in other_occurrence_excerpts(cluster, max_items=extra_max_items, max_chars=extra_max_chars)
     ]
-    why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
-    gap = Paragraph(f'<b>EVIDENCE GAP</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
+    # v93.40: "EVIDENCE GAP"/"RECOMMENDED IMPROVEMENT"/"READY-TO-USE REWRITE" renamed to plain
+    # questions/instructions ("WHAT'S MISSING"/"WHAT TO DO") per explicit user/reviewer
+    # feedback -- the report must read fluently for executives, not just compliance readers.
+    # The rewrite example is also relabelled to make clear it is a starting point to verify and
+    # complete, not a ready, fact-checked replacement claim (a second reviewer's point: a tidy
+    # example sentence must not read as a new, unsubstantiated promise).
+    why = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
+    gap = Paragraph(f'<b>WHAT\'S MISSING</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
     grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
     grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
+    rec = Paragraph(f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
     rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[grid], [rec]]
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
-        rows.append([Paragraph(f'<b>READY-TO-USE REWRITE</b><br/><font face="Courier">{esc(ready_rewrite)}</font>', ST["small_dark"])])
+        rows.append([Paragraph(f'<b>EXAMPLE WORDING — VERIFY AND COMPLETE BEFORE USE</b><br/><font face="Courier">{esc(ready_rewrite)}</font>', ST["small_dark"])])
     inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
@@ -996,7 +1038,7 @@ def external_panel(data, limit):
 def assessment_basis(data):
     meta = metadata(data)
     left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
-    right = [Paragraph("<b>REGULATORY LENS</b>", ST["card_label"]), Paragraph("The EU Empowering Consumers Directive (“EmpCo”, Directive (EU) 2024/825) for consumer-facing environmental and selected social claims; the EU Forced Labour Regulation (Regulation (EU) 2024/3015) as the forced-labour and supply-chain assurance lens.", ST["source"])]
+    right = [Paragraph("<b>RELEVANT REGULATIONS</b>", ST["card_label"]), Paragraph("The EU Empowering Consumers Directive (“EmpCo”, Directive (EU) 2024/825) for consumer-facing environmental and selected social claims; the EU Forced Labour Regulation (Regulation (EU) 2024/3015) as the forced-labour and supply-chain assurance lens.", ST["source"])]
     t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     return t
@@ -1022,7 +1064,7 @@ def coverage_sources_methodology(data, limit=5):
           Paragraph(esc(count_line),ST["small_dark"]),
           Paragraph("<br/>".join(f'• {esc(x)}' for x in source_lines) if source_lines else "Source list not available.",ST["source"])]
     right=[Paragraph("<b>METHODOLOGY</b>",ST["card_label"]),
-           Paragraph("The online source register distinguishes fully analysed, partially analysed, limited-text and failed sources. Only text that entered the analysis can support findings. EmpCo, Forced Labour Regulation and Durably claim-risk methodology apply. See the detailed methodology PDF on the scan homepage.",ST["source"])]
+           Paragraph("Not every page or document could always be read in full — some were only partially accessible, and a few could not be reached at all; only the text actually reviewed supports the findings above. This scan applies the EU's EmpCo Directive, the Forced Labour Regulation and Durably's own claim-risk methodology — see the full methodology PDF for details.",ST["source"])]
     t=Table([[left,right]],colWidths=[CONTENT_W*.58,CONTENT_W*.42])
     t.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.6,GREY_300),("LINEBEFORE",(1,0),(1,0),.4,GREY_300),("BACKGROUND",(0,0),(-1,-1),BLUE_SOFT),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
     return t
@@ -1103,7 +1145,7 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     rp = reliability_panel(data)
     if rp is not None:
         flow.append(rp); flow.append(Spacer(1, 2.2*mm))
-    flow.append(section_title("Top risk drivers"))
+    flow.append(section_title("What needs attention"))
     # v93.37/v93.38: added per explicit user request -- readers otherwise couldn't tell why
     # one specific claim group and wording example was shown in detail (here, and in "Most
     # material finding"/"Additional material findings" below) while others weren't. States
@@ -1111,24 +1153,31 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # (see above), "the 3 highest-ranked groups" is no longer strictly true, so the wording
     # must say so -- a second reviewer caught that the original fixed sentence overclaimed in
     # that case.
-    selection_note = ("Findings are grouped by claim type and ranked by risk severity. "
-        + ("The detail selection below also accounts for differences between findings and for representing both green and social risks, not severity ranking alone. "
+    # v93.39: rewritten for plain-language readability -- the previous wording ("ranked by
+    # risk severity... chosen for severity first, then for how clearly it can be checked...")
+    # was accurate but too dense and technical for a report reader, per explicit user
+    # feedback.
+    # v93.40: "material finding(s)" (audit/materiality jargon) and "claim inventory" renamed
+    # to plain English per explicit user feedback -- the whole report must read fluently for
+    # executives and other non-specialist stakeholders, not just compliance/legal readers.
+    selection_note = ("Similar claims are grouped together, and the most serious groups are explained in detail below"
+        + (", making sure both green and social risks are represented rather than only the highest-scoring group. "
            if dimension_balanced else
-           "The 3 highest-ranked groups are detailed below (1 shown here as “Most material finding”, 2 more under “Additional material findings”). ")
-        + "Within each group, the example shown is chosen for severity first, then for how clearly it can be checked (exact passage and source), then for how common that wording is -- not simply the first one found. Every retained finding, including groups not detailed here, is listed in the Full claim inventory appendix.")
+           ": one as “Most serious finding” and two more under “Additional serious findings”. ")
+        + "For each group, we show the clearest example we found — first by how serious it is, then by how easy it is to check (an exact quote with its source), and only then by how common that wording is. Nothing is left out: every finding, including groups not detailed here, is listed in full in the Full list of findings at the end of this report.")
     flow.append(Paragraph(selection_note, ST["small"]))
     flow.append(Spacer(1, 1.2*mm))
     flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
-    flow.append(section_title("Most material finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
+    flow.append(section_title("Most serious finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
     flow.append(assessment_basis(data)); flow.append(PageBreak())
     flow += header_block(data, "Company claim-risk report · Context and response")
-    flow.append(section_title("Additional material findings"))
+    flow.append(section_title("Additional serious findings"))
     if additional:
         for c in additional:
             flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 1.7*mm))
     else:
-        flow.append(Paragraph("No additional material claim group is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
-    flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("External public-source signals")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
+        flow.append(Paragraph("No additional finding is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
+    flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("What external sources say")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
     flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.6*mm))
     if include_inventory:
         # v93.34/v93.35: option 4 -- the narrative above only ever details the top 3 claim
@@ -1140,10 +1189,10 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         # only for a scan with an implausible number of findings. include_inventory=False is
         # used solely to probe how many pages the CORE narrative needs (see
         # build_company_report_pdf) -- the real, returned PDF always includes this section.
-        flow.append(section_title("Full claim inventory"))
+        flow.append(section_title("Full list of findings"))
         flow += full_claim_inventory_table(data, max_rows=inventory_limit)
         flow.append(Spacer(1, 1.6*mm))
-    flow.append(section_title("Assessment coverage")); flow.append(coverage_sources_methodology(data, source_limit))
+    flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
 

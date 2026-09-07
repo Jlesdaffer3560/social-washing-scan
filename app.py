@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_38_severity_first_selection_and_wording_distribution"
-APP_RELEASE_LABEL="v93.38"
+APP_VERSION="hostable_v93_40_plain_language_report_readability_pass"
+APP_RELEASE_LABEL="v93.40"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -6760,9 +6760,17 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
             continue
         seen.add(sig)
         # v57g: name the exact phrase that triggered detection explicitly, separate from the
-        # generic category description in `issue`. Reviewers should never have to guess which
-        # words in a longer excerpt caused the flag.
-        why_flagged=f'This passage was flagged because it contains the wording "{trig}", matching the "{typ}" pattern.'
+        # generic category description in `issue`.
+        # v93.40: the v57g wording ("This passage was flagged because it contains the wording
+        # X, matching the Y pattern") describes the SCANNER'S internal mechanics -- which
+        # trigger string matched which internal category -- not anything about the claim
+        # itself. A report reader (executive, marketer, compliance reviewer) has no use for
+        # "trigger"/"pattern matching" framing; they need to know what is actually wrong with
+        # the wording. `issue` already holds that substantive explanation (the EmpCo/UCPD risk
+        # in plain terms), and the exact matched wording is already shown separately and
+        # highlighted in the quoted excerpt, so nothing about traceability is lost by leading
+        # with the substance instead of the detection mechanism.
+        why_flagged=issue or f'The wording "{trig}" needs claim-specific substantiation and audience review.'
         if dimension == 'green':
             f={'dimension':'green','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
                'matched_phrase':trig,'why_flagged':why_flagged,
