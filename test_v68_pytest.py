@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_27_pdf_fallback_artifact_fix'
+    assert app.APP_VERSION == 'hostable_v93_28_crawl_and_detection_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1132,6 +1132,124 @@ def test_pdf_extraction_strips_unresolved_glyph_octal_artifacts(monkeypatch):
     txt=app.extract_pdf_text_best_effort(b'%PDF-fake')
     assert '\\036' not in txt and '\\227' not in txt
     assert 'o\\036er' not in txt and '\\227 enables' not in txt
+
+
+def test_ssrf_redirect_guard_is_actually_wired_into_used_requests():
+    """v93.28: urlopen(req, context=...) -- the pattern every real request in this file
+    used -- makes Python build its own one-off opener internally and ignore the
+    process-wide installed opener, per cpython's urllib/request.py. install_opener() with
+    _SSRFSafeRedirectHandler therefore never actually applied to a real request: a scanned
+    site could 30x-redirect the crawler to a private/link-local address (cloud metadata,
+    an internal service) with no re-validation. Confirms the fix two ways: the shared
+    opener actually carries the SSRF-safe redirect handler, and it is the opener Python
+    resolves urlopen() to when no context is passed at the call site."""
+    import urllib.request
+    assert any(isinstance(h,app._SSRFSafeRedirectHandler) for h in app._SAFE_OPENER.handlers)
+    assert urllib.request._opener is app._SAFE_OPENER
+
+
+def test_open_public_url_routes_through_the_safe_opener(monkeypatch):
+    """v93.28: _open_public_url must call the shared _SAFE_OPENER.open(...), not a bare
+    urlopen(..., context=...) that would silently bypass it -- that mistake is exactly what
+    left the SSRF redirect guard dead code despite being installed."""
+    calls=[]
+    class FakeResponse:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def read(self,n=None): return b'hello world'
+        headers={'content-type':'text/html'}
+        def geturl(self): return 'https://example.com/'
+    def fake_open(req,timeout=None):
+        calls.append(req.full_url)
+        return FakeResponse()
+    monkeypatch.setattr(app._SAFE_OPENER,'open',fake_open)
+    data,ctype,final_url=app._open_public_url('https://example.com/')
+    assert calls and calls[0]=='https://example.com/'
+    assert data==b'hello world'
+
+
+def test_html_parser_keeps_short_negation_words():
+    """v93.28: handle_data() dropped every text node of 1-2 characters (`if len(t)>2`),
+    which silently deleted exactly the short qualifier/negation words that can invert a
+    claim's actual meaning. "<p>We emit <strong>no</strong> carbon.</p>" extracted as
+    "We emit carbon." -- the opposite of what the page says -- because the isolated "no"
+    text node inside <strong> was 2 characters long."""
+    html='<p>We emit <strong>no</strong> carbon.</p>'
+    text,_,_=app.parse_html(html)
+    assert 'no' in text.split()
+    assert 'we emit carbon' not in text.lower()
+
+
+def test_canonical_url_preserves_non_default_port():
+    """v93.28: netloc=host alone dropped a non-default port (urlparse().hostname never
+    includes it), so "https://example.com:8443/x" canonicalised to a different origin,
+    "https://example.com/x" -- and crawl() then actually fetched that wrong origin, since
+    add_candidate() uses the canonical form as the real fetch target, not just a dedup key."""
+    assert app._canonical_url('https://example.com:8443/sustainability') == 'https://example.com:8443/sustainability'
+    assert app._canonical_url('https://example.com/sustainability') == 'https://example.com/sustainability'
+
+
+def test_link_resolution_base_prefers_final_url_and_base_href():
+    """v93.28: relative links on a page must resolve against where the page actually ended
+    up (after redirects) and any <base href> it declares -- not the originally requested
+    URL. A site redirecting "/sustainability" to "/en/sustainability/" was resolving that
+    page's relative links (e.g. href="report.pdf") against the pre-redirect path, producing
+    a wrong candidate URL."""
+    base=app._link_resolution_base('https://example.com/sustainability','https://example.com/en/sustainability/',None)
+    assert base=='https://example.com/en/sustainability/'
+    resolved=app.urljoin(base,'report.pdf')
+    assert resolved=='https://example.com/en/sustainability/report.pdf'
+    # An explicit <base href> takes precedence over the final URL's own path.
+    base2=app._link_resolution_base('https://example.com/x','https://example.com/x','/assets/')
+    assert base2=='https://example.com/assets/'
+
+
+def test_fetch_page_content_returns_final_url_based_link_base(monkeypatch):
+    """v93.28: fetch_page_content() must surface the link-resolution base (final URL, not
+    the requested one) as its 5th return value so crawl() can resolve that page's relative
+    links correctly."""
+    html='<html><body><a href="report.pdf">Report</a></body></html>' + 'x'*200
+    def fake_open(url,timeout=8,max_bytes=None,**k):
+        return html.encode(),'text/html','https://example.com/en/sustainability/'
+    monkeypatch.setattr(app,'_open_public_url',fake_open)
+    text,kind,method,links,link_base=app.fetch_page_content('https://example.com/sustainability')
+    assert link_base=='https://example.com/en/sustainability/'
+    assert links==['report.pdf']
+
+
+def test_distribute_text_budget_gives_every_source_a_nonzero_share():
+    """v93.28: crawl() used to concatenate every fetched source then hard-truncate the
+    combined blob to a fixed budget -- whichever sources landed first (as_completed() order,
+    i.e. whichever responded fastest) could consume the entire budget, leaving later sources
+    with zero analysed characters despite being listed as fetched/reviewed. Reproduced live:
+    9 fetched sources, 6 ended up with zero analysed characters. Every chunk must now get a
+    guaranteed non-zero share instead of being silently truncated away by earlier ones."""
+    chunks=['A'*100000,'B'*500,'C'*500,'D'*500,'E'*500,'F'*500,'G'*500,'H'*500,'I'*500]
+    result=app._distribute_text_budget(chunks,150000)
+    assert len(result)==len(chunks)
+    assert all(len(c)>0 for c in result)
+    # the short sources are well under their fair share and so remain fully intact
+    assert result[1]=='B'*500 and result[-1]=='I'*500
+    # the very long source is capped down to its fair share, not zeroed by later sources
+    assert 0<len(result[0])<=150000//len(chunks)
+
+
+def test_claim_detection_finds_later_occurrence_when_first_is_rejected():
+    """v93.28: _v55_add_finding() only ever looked at the FIRST sentence containing a
+    trigger phrase. A conditional/explanatory sentence using "carbon neutral" that fails
+    the claim-context check (a hypothetical "should we become X, we would be proud" is
+    correctly rejected as not asserting a current claim) made the function give up on the
+    "carbon neutral" trigger entirely -- even though a later sentence in the SAME text makes
+    a concrete, affirmative "our product line is carbon neutral" claim using the exact same
+    phrase. That later, genuinely material claim must now be found instead of silently
+    dropped."""
+    text=('Should we become carbon neutral, we would be very proud of that milestone one day. '
+          'Our new product line is carbon neutral, verified by an independent auditor every year.')
+    findings=app.detect_green_claims(text)
+    matches=[f for f in findings if f.get('type')=='Climate-neutrality or offsetting claim']
+    assert matches, 'expected the later, concrete carbon-neutral claim to be detected'
+    assert 'independent auditor' in matches[0]['claim'].lower()
+    assert 'would be very proud' not in matches[0]['claim'].lower()
 
 
 def test_pdf_regex_fallback_also_strips_octal_escape_artifacts():

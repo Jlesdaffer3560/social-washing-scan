@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, urljoin, quote, parse_qs
-from urllib.request import Request, urlopen, HTTPRedirectHandler, build_opener, install_opener
+from urllib.request import Request, urlopen, HTTPRedirectHandler, HTTPSHandler, build_opener, install_opener
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from html import escape as html_escape, unescape as html_unescape
@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_27_pdf_fallback_artifact_fix"
-APP_RELEASE_LABEL="v93.27"
+APP_VERSION="hostable_v93_28_crawl_and_detection_review_fixes"
+APP_RELEASE_LABEL="v93.28"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -528,9 +528,16 @@ def _dedupe_similar_sources(items):
 
 class Parser(HTMLParser):
     def __init__(self):
-        super().__init__(); self.skip_depth=0; self.parts=[]; self.links=[]; self.skip_tags={"script","style","noscript","svg","canvas","form"}
+        super().__init__(); self.skip_depth=0; self.parts=[]; self.links=[]; self.base_href=None; self.skip_tags={"script","style","noscript","svg","canvas","form"}
     def handle_starttag(self,tag,attrs):
         tag_l=tag.lower()
+        # v93.28: an HTML <base href="..."> changes what relative links/hrefs on this page
+        # actually resolve against, per spec -- without capturing it, a page served under
+        # e.g. a CMS preview path but declaring a different canonical base would have its
+        # relative links resolved against the wrong path. Only the first <base> counts.
+        if tag_l=='base' and self.base_href is None:
+            for k,v in attrs:
+                if k.lower()=='href' and v: self.base_href=v; break
         # v86: a single boolean flipped to False the moment ANY skip-tag closed, even a nested
         # one -- "<form><svg>...</svg>text after svg but still inside form</form>" incorrectly
         # let "text after svg" back into the scanned text once </svg> closed, despite the <form>
@@ -556,14 +563,20 @@ class Parser(HTMLParser):
     def handle_data(self,data):
         if not self.skip_depth:
             t=" ".join(data.split())
-            if len(t)>2: self.parts.append(t)
+            # v93.28: was `if len(t)>2`, which silently dropped every text node of 1-2
+            # characters -- including exactly the short qualifier/negation words (e.g. an
+            # inline "<strong>no</strong>" in "We emit no carbon.") that can flip a claim's
+            # actual meaning, plus standalone numbers/percentages. `" ".join(data.split())`
+            # already collapses a whitespace-only node to "", so `if t:` is the correct,
+            # equally-cheap emptiness check.
+            if t: self.parts.append(t)
 
 def parse_html(html):
     p=Parser(); p.feed(html); seen=set(); out=[]
     for t in p.parts:
         l=t.lower()
         if l not in seen: out.append(t); seen.add(l)
-    return "\n".join(out), p.links
+    return "\n".join(out), p.links, p.base_href
 def norm_url(u):
     u=u.strip()
     if not u: raise ValueError("Please enter a company website URL.")
@@ -799,7 +812,12 @@ def _canonical_url(url):
             continue
         query_parts.append(part)
     query='&'.join(query_parts)
-    return p._replace(scheme=scheme,netloc=host,path=path,query=query,fragment='').geturl()
+    # v93.28: netloc=host alone silently drops a non-default port -- urlparse's .hostname
+    # never includes it by design -- so "https://example.com:8443/x" canonicalised (and, via
+    # crawl()'s add_candidate(), was then actually FETCHED) as "https://example.com/x": a
+    # different origin/service, not just a cosmetic normalisation.
+    netloc=host+(f':{p.port}' if p.port else '')
+    return p._replace(scheme=scheme,netloc=netloc,path=path,query=query,fragment='').geturl()
 
 
 def _browser_headers(url, accept='text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8', user_agent=None):
@@ -830,7 +848,7 @@ def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,app
     for idx,ua in enumerate(BROWSER_USER_AGENTS):
         try:
             req=Request(url,headers=_browser_headers(url,accept,user_agent=ua))
-            with urlopen(req,timeout=max(2,timeout),context=ssl.create_default_context()) as r:
+            with _SAFE_OPENER.open(req,timeout=max(2,timeout)) as r:
                 return r.read(max_bytes), r.headers.get('content-type','').lower(), r.geturl()
         except HTTPError as e:
             last_error=e
@@ -884,7 +902,7 @@ def fetch_reader_text(url,timeout=9):
         headers['Authorization']='Bearer '+JINA_API_KEY
     req=Request(_reader_url(url),headers=headers)
     try:
-        with urlopen(req,timeout=max(3,timeout),context=ssl.create_default_context()) as r:
+        with _SAFE_OPENER.open(req,timeout=max(3,timeout)) as r:
             raw=r.read(2500000).decode('utf-8',errors='ignore')
     except HTTPError as e:
         # Without JINA_API_KEY the Reader proxy runs on its shared anonymous tier, which can
@@ -893,7 +911,7 @@ def fetch_reader_text(url,timeout=9):
         # these transient hits without materially eating into the overall crawl budget.
         if e.code in (403,429):
             time.sleep(1.2)
-            with urlopen(req,timeout=max(3,timeout),context=ssl.create_default_context()) as r:
+            with _SAFE_OPENER.open(req,timeout=max(3,timeout)) as r:
                 raw=r.read(2500000).decode('utf-8',errors='ignore')
         else:
             raise
@@ -954,41 +972,70 @@ class _SSRFSafeRedirectHandler(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-install_opener(build_opener(_SSRFSafeRedirectHandler()))
+# v93.28: urlopen(req, context=...) -- the pattern used at every call site below -- makes
+# Python build its OWN one-off opener internally whenever a context is supplied, bypassing
+# the process-wide installed opener entirely (confirmed against cpython's urllib/request.py:
+# urlopen() only consults the installed/default opener when context is None). The
+# install_opener() call above therefore never actually applied _SSRFSafeRedirectHandler to
+# any real request in this app -- a scanned site could 302/301-redirect the crawler to a
+# private/link-local address (e.g. a cloud metadata endpoint) with no re-validation,
+# defeating the SSRF guard it looks like this file has. Build ONE explicit opener that
+# carries both the TLS context and the safe-redirect handler, and use its .open() at every
+# call site instead of the bare urlopen(..., context=...) pattern.
+_SAFE_OPENER=build_opener(HTTPSHandler(context=ssl.create_default_context()), _SSRFSafeRedirectHandler())
+install_opener(_SAFE_OPENER)
 
 
 def fetch_html(url,timeout=7):
-    data,ctype,_=_open_public_url(url,timeout=timeout,accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',max_bytes=2500000)
+    data,ctype,final_url=_open_public_url(url,timeout=timeout,accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',max_bytes=2500000)
     if 'html' not in ctype:
         raise ValueError('URL does not return an HTML page.')
-    return data.decode('utf-8',errors='ignore')
+    return data.decode('utf-8',errors='ignore'),final_url
+
+
+def _link_resolution_base(requested_url,final_url,base_href):
+    """v93.28: a page's relative links/hrefs must resolve against the URL it actually ended
+    up at after redirects (a site 30x-redirecting "/sustainability" to "/en/sustainability/"
+    was resolving relative links against the pre-redirect path, silently producing wrong
+    candidate URLs), and against an explicit <base href> when the page declares one -- both
+    were previously discarded, and every caller resolved links against requested_url."""
+    base=final_url or requested_url
+    if base_href:
+        try: base=urljoin(base,base_href)
+        except Exception: pass
+    return base
 
 
 def fetch_page_content(url,timeout=7):
     """Retrieve an HTML/PDF page, with an optional Reader fallback for blocked or
-    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method, links).
+    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method, links, link_base).
 
     ``links`` carries the hrefs found on a directly-fetched HTML page (empty for PDFs and
     for Reader-fallback text, which has no reliable link list) so the caller can discover
     pages one hop beyond the initial candidate set -- e.g. a PDF sustainability report that
-    is only linked from a "Sustainability" hub page, not from the homepage or the sitemap."""
+    is only linked from a "Sustainability" hub page, not from the homepage or the sitemap.
+    ``link_base`` is the URL those relative ``links`` must be joined against -- the page's
+    final URL after redirects, or its <base href> when present -- not necessarily ``url``."""
     direct_error=None
     direct_short_links=[]
+    direct_short_base=url
     try:
-        data,ctype,_=_open_public_url(url,timeout=timeout,max_bytes=5000000)
+        data,ctype,final_url=_open_public_url(url,timeout=timeout,max_bytes=5000000)
         if 'pdf' in ctype or url.lower().split('?')[0].endswith('.pdf'):
             text=extract_pdf_text_best_effort(data)
             if len(text)>=80:
-                return text,'pdf','direct',[]
+                return text,'pdf','direct',[],final_url
             direct_error=ValueError('PDF text extraction returned insufficient content.')
         elif 'html' in ctype:
             raw=data.decode('utf-8',errors='ignore')
-            text,page_links=parse_html(raw)
+            text,page_links,base_href=parse_html(raw)
+            link_base=_link_resolution_base(url,final_url,base_href)
             if len(text)>=THIN_CONTENT_CHARS:
-                return text,'html','direct',page_links
+                return text,'html','direct',page_links,link_base
             # Keep usable short text, but first try to enrich a likely JS shell via Reader.
             direct_short=text
             direct_short_links=page_links
+            direct_short_base=link_base
             direct_error=ValueError('Direct HTML retrieval returned a thin page shell.')
         else:
             direct_error=ValueError('URL does not return an HTML or PDF document.')
@@ -997,11 +1044,11 @@ def fetch_page_content(url,timeout=7):
         direct_short=''
     if ENABLE_READER_FALLBACK and not url.lower().split('?')[0].endswith(('.xml','.txt')):
         try:
-            return fetch_reader_text(url,timeout=max(5,min(10,timeout+2))), 'reader', 'reader_fallback', []
+            return fetch_reader_text(url,timeout=max(5,min(10,timeout+2))), 'reader', 'reader_fallback', [], url
         except Exception:
             pass
     if 'direct_short' in locals() and len(direct_short)>=120:
-        return direct_short,'html','direct_thin',direct_short_links
+        return direct_short,'html','direct_thin',direct_short_links,direct_short_base
     raise direct_error or ValueError('The page could not be retrieved.')
 
 
@@ -1172,6 +1219,23 @@ def _candidate_score(item):
     return -score,len(url)
 
 
+def _distribute_text_budget(chunks,total_budget,floor_chars=4000):
+    """v93.28: crawl() and crawl_with_related_sites() used to concatenate every fetched
+    source and then hard-truncate the COMBINED blob to a fixed character budget. Sources
+    are fetched in as_completed() order (whichever responds fastest), so a slow-but-small
+    homepage plus one very long report could already fill the whole budget before later
+    sources contributed a single character to what actually gets analysed -- while the
+    source register still listed those later sources as "Retrieved and analysed" with
+    their own full per-page character count, and build_confidence() still counted them via
+    len(pages). Confirmed live: 9 sources fetched, only 2 survived the truncation, 6 got
+    zero analysed characters. Give every source a fair, guaranteed share of the total
+    budget instead -- capped individually, not truncated away entirely by earlier sources."""
+    n=len(chunks)
+    if n==0: return chunks
+    share=max(floor_chars,total_budget//n)
+    return [c[:share] for c in chunks]
+
+
 def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
     """Crawl the homepage and continue through a ranked candidate queue until the target
     number of usable extra pages is reached. Individual failures no longer consume the whole
@@ -1183,10 +1247,11 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
 
     # Homepage: direct HTML first so internal links can be discovered; Reader fallback if the
     # direct request is blocked. Reader text cannot provide a reliable link list.
-    homepage_method='direct'; links=[]
+    homepage_method='direct'; links=[]; homepage_link_base=url
     try:
-        html=fetch_html(url,timeout=min(7,remaining()))
-        text,links=parse_html(html)
+        html,homepage_final_url=fetch_html(url,timeout=min(7,remaining()))
+        text,links,base_href=parse_html(html)
+        homepage_link_base=_link_resolution_base(url,homepage_final_url,base_href)
         if len(text)<THIN_CONTENT_CHARS and ENABLE_READER_FALLBACK and remaining()>4:
             try:
                 reader_text=fetch_reader_text(url,timeout=min(9,remaining()))
@@ -1216,7 +1281,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         seen.add(candidate); candidates.append((candidate,source))
 
     for href in links:
-        full=urljoin(url,href)
+        full=urljoin(homepage_link_base,href)
         is_pdf=full.lower().split('?')[0].endswith('.pdf')
         # A report PDF is very often hosted off the company's own domain -- on a CMS/asset
         # CDN (e.g. cdn.sanity.io, Cloudinary, an S3/CloudFront bucket) rather than the site
@@ -1267,7 +1332,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             for future in as_completed(futures):
                 link,source=futures[future]
                 try:
-                    t,kind,method,page_links=future.result()
+                    t,kind,method,page_links,link_base=future.result()
                     min_chars=80 if kind=='pdf' else 120
                     if len(t)>min_chars:
                         _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
@@ -1276,7 +1341,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                             chunks.append('\n\n'+label+link+'\n'+t)
                             pages.append(link); successful+=1
                         for href in page_links:
-                            full=urljoin(link,href)
+                            full=urljoin(link_base,href)
                             is_pdf=full.lower().split('?')[0].endswith('.pdf')
                             if relevant(full) or is_pdf:
                                 cand=_canonical_url(full.split('#')[0])
@@ -1289,7 +1354,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         if discovered:
             discovered.sort(key=_candidate_score)
             candidates[cursor:cursor]=discovered[:max(0,max_attempts-attempts)]
-    return '\n\n'.join(chunks)[:150000], pages
+    return '\n\n'.join(_distribute_text_budget(chunks,150000)), pages
 
 COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
 _NAME_CAP=r'A-ZÀ-ÖØ-Þ'
@@ -3209,7 +3274,7 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     else:
         txt=data.decode('utf-8',errors='ignore')
         if '<html' in txt[:500].lower() or '<body' in txt[:1000].lower():
-            txt,_=parse_html(txt)
+            txt,_,_=parse_html(txt)
     txt=re.sub(r'[ \t]+',' ',txt or '')
     txt=re.sub(r'[ \t]*\n[ \t]*','\n',txt)
     txt=re.sub(r'\n{2,}','\n',txt).strip()
@@ -3222,7 +3287,7 @@ def fetch_document_text(url):
     if p.scheme not in ('http','https') or not p.hostname or is_private(p.hostname):
         return ''
     req=Request(url,headers={'User-Agent':CRAWLER_USER_AGENT,'Accept':'text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'},method='GET')
-    with urlopen(req,timeout=10,context=ssl.create_default_context()) as r:
+    with _SAFE_OPENER.open(req,timeout=10) as r:
         ctype=(r.headers.get('content-type','') or '').lower()
         data=r.read(2500000)
     try:
@@ -4150,7 +4215,7 @@ def send_report_pdf_email(to_email,pdf_bytes,company_name,stamp):
     req=Request('https://api.brevo.com/v3/smtp/email',data=json.dumps(payload).encode(),method='POST',
                 headers={'Content-Type':'application/json','Accept':'application/json','api-key':BREVO_API_KEY})
     try:
-        with urlopen(req,timeout=20,context=ssl.create_default_context()) as r:
+        with _SAFE_OPENER.open(req,timeout=20) as r:
             r.read()
     except HTTPError as e:
         # Brevo's error body (e.g. unverified sender, invalid API key) is safe to surface --
@@ -6458,21 +6523,44 @@ def enrich_social_finding(f, trigger=''):
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
-def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score):
-    excerpt=_v55_sentence_list(text, trig)
-    # v57n: "VISUAL CLAIM CUE: " is an internal marker prepended during HTML parsing to feed
-    # image alt-text / aria-label / CSS-class values (e.g. a leaf icon's alt text) into claim
-    # detection. It is a useful detection signal but was leaking verbatim into the "exact claim
-    # passage" shown to reviewers, reading like a raw debug artifact rather than quoted page
-    # content. Strip it from the displayed excerpt; the underlying detected wording is unaffected.
-    if 'VISUAL CLAIM CUE: ' in excerpt:
-        excerpt=re.sub(r'\s*VISUAL CLAIM CUE:\s*', ' ', excerpt).strip()
-        excerpt=re.sub(r'\s+', ' ', excerpt)
-    if not _v55_claim_context_ok(excerpt, trig, dimension):
-        return
+def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score, extra_check=None):
+    """Returns True if a finding was actually added, False otherwise -- callers must only
+    count a trigger phrase towards their per-type hit budget when this returns True (see
+    v93.28 note at the GREEN_CLAIMS/CLAIMS loops: counting attempts rather than successes let
+    3 rejected candidates silently exhaust the whole budget for a type with zero findings).
+
+    `extra_check(excerpt)`, when given, is an additional type-specific qualifier (e.g. "does
+    this actually read as a future-performance claim") applied on top of the general
+    _v55_claim_context_ok() check below -- both must pass for a given candidate excerpt."""
+    # v93.28: only the FIRST sentence containing `trig` used to be considered at all. If that
+    # first occurrence read as generic/explanatory (e.g. "we define carbon neutral as...") and
+    # failed the claim-context check below, the function gave up on this trigger phrase
+    # entirely -- even when a later, clearly concrete claim used the exact same phrase further
+    # down the page. Reproduced live: an explanatory sentence before a real product claim made
+    # the real claim invisible to detection. Try every occurrence in order and use the first
+    # one that actually qualifies, instead of only ever looking at the first.
+    excerpt=None
+    for candidate in _v55_all_matches_sentences(text, trig):
+        # v57n: "VISUAL CLAIM CUE: " is an internal marker prepended during HTML parsing to
+        # feed image alt-text / aria-label / CSS-class values (e.g. a leaf icon's alt text)
+        # into claim detection. It is a useful detection signal but was leaking verbatim into
+        # the "exact claim passage" shown to reviewers, reading like a raw debug artifact
+        # rather than quoted page content. Strip it from the displayed excerpt; the underlying
+        # detected wording is unaffected.
+        cleaned=candidate
+        if 'VISUAL CLAIM CUE: ' in cleaned:
+            cleaned=re.sub(r'\s*VISUAL CLAIM CUE:\s*', ' ', cleaned).strip()
+            cleaned=re.sub(r'\s+', ' ', cleaned)
+        if extra_check is not None and not extra_check(cleaned):
+            continue
+        if _v55_claim_context_ok(cleaned, trig, dimension):
+            excerpt=cleaned
+            break
+    if excerpt is None:
+        return False
     sig=(typ, excerpt[:160].lower())
     if sig in seen:
-        return
+        return False
     seen.add(sig)
     # v57g: name the exact phrase that triggered detection explicitly, separate from the
     # generic category description in `issue`. Reviewers should never have to guess which
@@ -6491,30 +6579,34 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
            'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
            'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
         fs.append(enrich_social_finding(f,trig))
+    return True
 
 def detect_green_claims(text):
     low=_normalize_apostrophes((text or '').lower()); fs=[]; seen=set()
     # 1) direct / high-priority taxonomy from previous versions
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
         hits=0
+        extra_check=_looks_like_future_environmental_claim if typ=='Future environmental-performance claim' else None
         for trig in triggers:
             if _trigger_present(trig, low):
-                excerpt=_v55_sentence_list(text,trig)
-                if typ=='Future environmental-performance claim' and not _looks_like_future_environmental_claim(excerpt):
-                    continue
                 score=74 if typ in ['Climate-neutrality or offsetting claim','Sustainability label / certification claim','Generic environmental claim','Legal requirement presented as green benefit'] else (68 if risk=='High' else 40)
-                _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', score)
-                hits += 1
-                if hits >= 3: break
+                # v93.28: only count this trigger towards the per-type hit budget if a finding
+                # was actually added -- see _v55_add_finding's docstring. Previously incremented
+                # unconditionally, so 3 rejected candidates could exhaust the whole budget for a
+                # type while it retained zero findings, leaving later (possibly valid) triggers
+                # in `triggers` untried.
+                if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', score, extra_check=extra_check):
+                    hits += 1
+                    if hits >= 3: break
     # 2) additional claim-like patterns that are often missed by exact blacklist terms
     for typ,risk,triggers,issue,rewrite in V55_GREEN_EXTRA_PATTERNS:
         hits=0
         for trig in triggers:
             if _trigger_present(trig, low):
                 score=62 if risk=='Medium' else 68
-                _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', score)
-                hits += 1
-                if hits >= 3: break
+                if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', score):
+                    hits += 1
+                    if hits >= 3: break
     # 3) v73: percentage-based recycled-content claims ("made with 50% recycled plastic",
     # "contains 30% recycled content") use an arbitrary number, so a fixed trigger phrase can
     # never match them -- a small regex catches the pattern regardless of the exact percentage.
@@ -6522,11 +6614,11 @@ def detect_green_claims(text):
     for rx in (_PERCENT_RECYCLED_RE, _PERCENT_RECYCLED_NL_RE, _PERCENT_RECYCLED_FR_RE):
         for m in rx.finditer(text or ''):
             if hits >= 3: break
-            _v55_add_finding(fs, seen, text, m.group(0), 'Recycled / recyclable material claim', 'Medium',
+            if _v55_add_finding(fs, seen, text, m.group(0), 'Recycled / recyclable material claim', 'Medium',
                               'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
                               'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.',
-                              'green', 62)
-            hits += 1
+                              'green', 62):
+                hits += 1
     fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:12]
     if not fs:
         fs.append(enrich_green_finding({'dimension':'green','type':'No material problematic green claim retained','risk':'Low','claim':'No exact problematic green claim was retained from the reviewed material.','issue':'The scan did not retain a direct EmpCo blacklisted-practice indicator or high-sensitivity environmental claim. General sustainability context is not scored as a problematic claim unless it contains specific claim wording.','rewrite':'No rewrite is needed unless the company wants to make a specific environmental claim.','claim_score':8,'standards':['General green-claim quality review'],'action':'Keep environmental claims specific, scoped and evidence-backed.','problematic_terms':[]},''))
@@ -6538,21 +6630,19 @@ def detect_claims(text):
         hits=0
         for trig in triggers:
             if _trigger_present(trig, low):
-                excerpt=_v55_sentence_list(text,trig)
-                if not _social_claim_context(excerpt, typ, trig, text):
-                    continue
                 score=76 if typ=='Forced-labour product or supply-chain claim' else (62 if risk=='High' else 40)
-                _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score)
-                hits += 1
-                if hits >= 3: break
+                extra_check=lambda c,_typ=typ,_trig=trig: _social_claim_context(c,_typ,_trig,text)
+                if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score, extra_check=extra_check):
+                    hits += 1
+                    if hits >= 3: break
     for typ,risk,triggers,issue,rewrite in V55_SOCIAL_EXTRA_PATTERNS:
         hits=0
         for trig in triggers:
             if _trigger_present(trig, low):
                 score=74 if 'Forced-labour' in typ else (62 if risk=='High' else 38)
-                _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score)
-                hits += 1
-                if hits >= 3: break
+                if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score):
+                    hits += 1
+                    if hits >= 3: break
     fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:12]
     if not fs:
         fs.append({'dimension':'social','type':'No material problematic social claim retained','risk':'Low','claim':'No exact problematic social claim was retained from the reviewed material.','issue':'The scan did not retain a material high-risk social claim. Neutral references to suppliers, people, communities or employees are not scored unless they imply assurance, control, full coverage, certification, traceability, due diligence, forced-labour assurance or other high-stakes social performance.','rewrite':'No rewrite is needed unless the company wants to make a specific social-performance claim.','claim_score':8,'standards':['General claim-quality review'],'action':'Keep any future social claims specific, scoped and evidenced.','problematic_terms':[]})
@@ -6595,12 +6685,18 @@ def _recalibrated_score(material, substantiation, evidence_notes, external_score
 # Override excerpt extraction with a sentence-segmentation approach to avoid mixing several claims.
 
 # Final excerpt refinement: keep only the claim sentence when it is readable.
-def _v55_sentence_list(text, trigger, window=850):
+def _v55_all_matches_sentences(text, trigger):
+    """Same sentence-selection and fragment/context-pulling logic as _v55_sentence_list(),
+    but returns an excerpt for EVERY occurrence of trigger in text, in order, instead of only
+    the first. Used so a later, more concrete occurrence of the same trigger phrase is not
+    silently missed just because an earlier occurrence (e.g. a generic explanatory sentence)
+    fails a claim-context check."""
     raw=' '.join((text or '').replace('\r',' ').replace('\n','. ').split())
     trig=(trigger or '').lower()
     if not raw or not trig:
-        return raw[:620]
+        return [raw[:620]] if raw else []
     parts=[p.strip() for p in re.split(r'(?<=[.!?])\s+', raw) if p.strip()]
+    out_list=[]
     for idx,p in enumerate(parts):
         if trig in p.lower():
             out=p
@@ -6623,11 +6719,18 @@ def _v55_sentence_list(text, trigger, window=850):
             # v57n: joining sentence fragments can leave a doubled sentence-ending punctuation
             # mark (e.g. "...conventional practices.." or "...forward..") -- collapse to one.
             out=re.sub(r'([.!?])\1+', r'\1', out)
-            return out[:620]
+            out_list.append(out[:620])
+    if out_list:
+        return out_list
     i=raw.lower().find(trig)
     if i < 0:
-        return raw[:620]
-    return raw[max(0,i-180):min(len(raw),i+300)][:620]
+        return [raw[:620]] if raw else []
+    return [raw[max(0,i-180):min(len(raw),i+300)][:620]]
+
+
+def _v55_sentence_list(text, trigger, window=850):
+    matches=_v55_all_matches_sentences(text, trigger)
+    return matches[0] if matches else ''
 
 
 # -----------------------------
@@ -7872,7 +7975,7 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             pass
     if not all_text:
         raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
-    return '\n\n'.join(all_text)[:180000],all_pages[:16],source_notes,crawl_log
+    return '\n\n'.join(_distribute_text_budget(all_text,180000,floor_chars=8000)),all_pages[:16],source_notes,crawl_log
 
 
 
