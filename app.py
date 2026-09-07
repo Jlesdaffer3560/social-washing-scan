@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_37_consistent_representative_and_selection_transparency"
-APP_RELEASE_LABEL="v93.37"
+APP_VERSION="hostable_v93_38_severity_first_selection_and_wording_distribution"
+APP_RELEASE_LABEL="v93.38"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))

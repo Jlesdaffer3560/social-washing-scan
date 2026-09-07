@@ -331,6 +331,21 @@ def ready_to_use_rewrite_text(claim, max_chars=220):
     return bounded_text(raw, max_chars) if raw else ""
 
 
+def _is_verifiable_occurrence(occ):
+    """v93.38: has a real, non-generic source AND enough quoted context to actually show
+    subject/scope -- a cheap, honest proxy for "can a reader check this", not a claim about
+    the text being especially well-written. Deliberately does NOT reward raw length or the
+    presence of "100%"/absolute wording -- a second reviewer correctly flagged that neither
+    makes an example more representative, just longer or more emphatic."""
+    source_ok = claim_source(occ) not in ("", "Reviewed material")
+    text_ok = len(clean_text(claim_excerpt(occ, 4000))) >= 40
+    return source_ok and text_ok
+
+
+def _occurrence_severity_key(occ):
+    return (risk_rank(occ), float(occ.get("claim_score") or 0))
+
+
 def cluster_claims(data):
     rows = list(data.get("claim_inventory") or data.get("findings") or [])
     if not rows:
@@ -341,40 +356,59 @@ def cluster_claims(data):
             continue
         item = dict(raw)
         key = claim_title(item).lower()
-        if key not in clusters:
-            clusters[key] = {"representative": item, "occurrences": [item]}
-        else:
-            c = clusters[key]
-            c["occurrences"].append(item)
-            old = c["representative"]
-            if (risk_rank(item), float(item.get("claim_score") or 0)) > (risk_rank(old), float(old.get("claim_score") or 0)):
-                c["representative"] = item
+        clusters.setdefault(key, {"occurrences": []})["occurrences"].append(item)
     out = list(clusters.values())
     for c in out:
-        # v93.37: EVERY occurrence of a given claim TYPE gets the same fixed claim_score (e.g.
-        # 74 for "Generic environmental claim" -- see GREEN_CLAIMS in app.py), so the
-        # (risk_rank, claim_score) comparison above is tied for every occurrence within a
-        # cluster. Since a tie never replaces the current representative, "representative" was
-        # actually just "whichever occurrence happened to be found FIRST while crawling" --
-        # not chosen for being the most severe, most illustrative, or most common wording.
-        # Reported live: a Delhaize cluster of 14 "Generic environmental claim" occurrences
-        # picked an example using "milieuvriendelijk" (2 occurrences) as its representative,
-        # while "ecologisch" (6 occurrences) -- the cluster's actual dominant wording, shown
-        # separately in the summary table -- was a completely different word, so the detail
-        # card's own "WHY IT MATTERS" text described a different trigger than the table above
-        # it implied. Compute the dominant phrase FIRST, then prefer an occurrence that
-        # actually uses it as the shown representative, so the two agree.
-        phrase_counts = Counter(trigger_phrase(x) for x in c["occurrences"] if trigger_phrase(x))
-        dominant = phrase_counts.most_common(1)[0][0] if phrase_counts else ""
-        if dominant and trigger_phrase(c["representative"]) != dominant:
-            matching = [x for x in c["occurrences"] if trigger_phrase(x) == dominant]
-            if matching:
-                c["representative"] = max(matching, key=lambda x: (risk_rank(x), float(x.get("claim_score") or 0)))
-        c["representative"]["_dominant_trigger_phrase"] = dominant
-    out.sort(key=lambda c: (risk_rank(c["representative"]), float(c["representative"].get("claim_score") or 0)), reverse=True)
+        occs = c["occurrences"]
+        # v93.38: a second review correctly identified that ranking the GROUP by whatever
+        # occurrence ends up chosen as the representative lets the choice of example silently
+        # decide the group's priority -- a rare but severe occurrence could lose to a common,
+        # milder one and never surface at all if the group itself then ranked too low to make
+        # the top 3. Group priority must be the group's own WORST (highest-severity) member,
+        # computed independently of which occurrence is picked to illustrate it.
+        c["group_priority"] = max(_occurrence_severity_key(x) for x in occs)
+        # v93.37/v93.38: frequency of a WORDING is not the same thing as the severity of a
+        # CLAIM, and picking the representative by "most common wording" first can hide a
+        # rarer but more serious claim behind a frequently repeated mild one. Order instead
+        # by: (1) severity of the occurrence itself: EVERY occurrence of a given claim TYPE
+        # gets the same fixed claim_score by default (see GREEN_CLAIMS in app.py) UNLESS a
+        # later per-occurrence adjustment (e.g. the named-certification-scheme risk downgrade)
+        # changed it, so this now genuinely discriminates when it matters; (2) verifiability
+        # (real source + enough quoted context); (3) how common that occurrence's own TRIGGER
+        # PHRASE is within the cluster (matching what wording_distribution_text() actually
+        # displays -- not full-sentence frequency, which is near-always 1 per occurrence since
+        # sentences differ in surrounding detail even when they share the same trigger),
+        # purely as a tiebreaker; (4) a fixed, content-derived tiebreak (source, text) so
+        # crawl order can never decide.
+        phrase_counts = Counter(trigger_phrase(x) for x in occs if trigger_phrase(x))
+        def _selection_key(x, _pc=phrase_counts):
+            return (_occurrence_severity_key(x), int(_is_verifiable_occurrence(x)), _pc.get(trigger_phrase(x), 0),
+                    claim_source(x), clean_text(claim_excerpt(x, 4000)).lower())
+        rep = max(occs, key=_selection_key)
+        # v93.38: a plain-language reason a reader can see on the card, matching whichever
+        # criterion actually decided -- not a blanket "highest severity" claim when severity
+        # was tied and verifiability or frequency actually broke the tie.
+        rep_key = _selection_key(rep)
+        if all(_occurrence_severity_key(x) == rep_key[0] for x in occs):
+            if all(int(_is_verifiable_occurrence(x)) == rep_key[1] for x in occs):
+                reason = "most common wording in this group" if len(occs) > 1 else "the only retained occurrence in this group"
+            else:
+                reason = "clearest sourced example in this group (exact passage and known source)"
+        else:
+            reason = "most severe occurrence in this group"
+        rep["_selection_reason"] = reason
+        c["representative"] = rep
+        # v93.37/v93.38: "one dominant trigger phrase" is itself a false simplification when
+        # two or more wordings are tied for most common -- a second reviewer caught this
+        # exact case in our own worked example ("ecologisch" and "duurzaam" both occurred 6
+        # times, "milieuvriendelijk" only 2, yet the cluster reported a single "dominant"
+        # word). Keep the full distribution instead of collapsing it to one phrase.
+        rep["_wording_distribution"] = phrase_counts.most_common()
+    out.sort(key=lambda c: c["group_priority"], reverse=True)
     for c in out:
-        c["representative"]["_occurrence_count"] = len(c["occurrences"])
-        c["representative"]["_occurrence_sources"] = list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))
+        rep = c["representative"]; occs = c["occurrences"]
+        rep["_occurrence_count"] = len(occs)
+        rep["_occurrence_sources"] = list(dict.fromkeys(claim_source(x) for x in occs))
         # v93.35: was truncated to the first ~120 chars before comparing, so two occurrences
         # sharing a long identical lead-in but differing later -- e.g. a different product, a
         # different percentage, or a negation added past the 120-char mark ("Product A is
@@ -382,36 +416,48 @@ def cluster_claims(data):
         # the same wording, hiding exactly the kind of difference (a negation) this exists to
         # surface. Compare the full normalised claim text instead (already capped at 4000
         # chars by claim_excerpt, so this stays bounded).
-        wordings = {clean_text(claim_excerpt(x, 4000)).lower() for x in c["occurrences"]}
-        c["representative"]["_unique_wording_count"] = len(wordings)
-        c["representative"]["_unique_source_count"] = len(c["representative"]["_occurrence_sources"])
-        # _dominant_trigger_phrase was already computed and used to pick the representative
-        # itself in the loop above; nothing further to do with it here.
+        wordings = {clean_text(claim_excerpt(x, 4000)).lower() for x in occs}
+        rep["_unique_wording_count"] = len(wordings)
+        rep["_unique_source_count"] = len(rep["_occurrence_sources"])
     return out
 
 
 def occurrence_count_label(cluster, compact=False):
-    """v93.34/v93.35: renders the count suffix used next to a claim title, distinguishing a
-    single wording repeated across sources from genuinely distinct claim variants (see
-    cluster_claims). Never says "pages" -- that conflated occurrence count with distinct
-    SOURCE count (two occurrences sharing one source_url are not two pages), so it now always
-    reports the actual unique-source count as its own separate number instead.
-
-    compact=True drops the source-count clause for the "Top risk drivers" summary table,
-    whose CLAIM AREA column is bounded_text()-truncated to ~62 chars total (title + suffix);
-    the full title + full-length suffix routinely exceeded that, cutting mid-word ("same
-    wording, 5."). The detailed claim cards still get the full breakdown."""
+    """v93.34/v93.35/v93.38: renders the count suffix used next to a claim title. Earlier
+    versions tried to also characterise HOW distinct the occurrences were ("same wording" /
+    "N distinct claims") in this one short suffix -- but collapsing an entire wording
+    distribution into either "all the same" or "all different" is itself misleading whenever
+    wordings are tied or partially overlapping (see wording_distribution_text(), which now
+    carries that detail properly on its own line in the claim card instead). This suffix is
+    now just the plain count plus, where it differs, the unique-source count -- never "pages",
+    since two occurrences can share one source_url without being two separate pages."""
     count = len(cluster["occurrences"])
     if count <= 1:
         return ""
+    if compact:
+        return f" · {count} occurrences"
     sources = cluster["representative"].get("_unique_source_count", count)
-    source_note = "" if compact else (f", {sources} source{'s' if sources != 1 else ''}" if sources and sources != count else "")
-    unique = cluster["representative"].get("_unique_wording_count", count)
-    if unique <= 1:
-        return f" · same wording ×{count}" if compact else f" · same wording, {count} occurrences{source_note}"
-    if unique < count:
-        return f" · {unique} wordings ×{count}" if compact else f" · {unique} wordings, {count} occurrences{source_note}"
-    return f" · {count} distinct claims{source_note}"
+    source_note = f", {sources} source{'s' if sources != 1 else ''}" if sources and sources != count else ""
+    return f" · {count} occurrences{source_note}"
+
+
+def wording_distribution_text(cluster, max_terms=5):
+    """v93.38: shows the cluster's actual wording DISTRIBUTION ("ecologisch 6 · duurzaam 6 ·
+    milieuvriendelijk 2") instead of collapsing it to one "dominant" phrase -- a second
+    reviewer caught a real tied-count case in our own worked example (two wordings tied at 6
+    occurrences each) that a single dominant-phrase label would have arbitrarily resolved to
+    just one, silently hiding the tie. Shows at most max_terms, with a "+ N other wordings"
+    tail for the rest; the full per-occurrence breakdown remains in the Full claim inventory
+    appendix."""
+    dist = cluster["representative"].get("_wording_distribution") or []
+    if not dist:
+        return ""
+    shown = dist[:max_terms]
+    text = " · ".join(f"{phrase} {count}" for phrase, count in shown)
+    remaining = len(dist) - len(shown)
+    if remaining > 0:
+        text += f" · + {remaining} other wording{'s' if remaining != 1 else ''}"
+    return text
 
 
 def company_name(data):
@@ -670,10 +716,11 @@ def risk_driver_table(clusters):
         claim = c["representative"]
         title = claim_title(claim) + occurrence_count_label(c, compact=True)
         sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
-        # v93.36: was trigger_phrase(claim) -- the REPRESENTATIVE occurrence's own matched
-        # phrase only, not necessarily what actually dominates the cluster (see the
-        # _dominant_trigger_phrase note in cluster_claims()).
-        flagged_wording = claim.get("_dominant_trigger_phrase") or trigger_phrase(claim) or "Review retained wording"
+        # v93.36/v93.38: was trigger_phrase(claim) -- the REPRESENTATIVE occurrence's own
+        # matched phrase only, not the cluster's actual wording distribution, which can have
+        # two or more wordings tied for most common (see wording_distribution_text()). Shows
+        # at most 2 terms here to fit the column; the full distribution is on the detail card.
+        flagged_wording = wording_distribution_text(c, max_terms=2) or trigger_phrase(claim) or "Review retained wording"
         rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
@@ -732,10 +779,19 @@ def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
     quote adds no information (see occurrence_count_label's "same wording" case instead).
     v93.35: compares the FULL normalised claim text (previously truncated to ~120 chars,
     which could treat two occurrences sharing a long identical lead-in but differing later --
-    e.g. a negation added past that point -- as the same wording)."""
+    e.g. a negation added past that point -- as the same wording).
+    v93.38: a second reviewer pointed out that "Also:" candidates should be chosen for what
+    they ADD -- a different wording, product/company context, legal classification, or a
+    qualification the main example lacks -- not just any different sentence, and that a
+    candidate's own risk/legal-basis assessment must not silently inherit the representative's
+    if it actually differs (e.g. one occurrence downgraded by the named-certification-scheme
+    check while others in the cluster were not). Candidates whose risk or legal-basis category
+    differ from the representative's are surfaced first, since that is the clearest, most
+    checkable kind of "adds something new"."""
     rep = cluster["representative"]
+    rep_class = (claim_risk(rep), str(rep.get("legal_basis_category") or "").lower())
     seen = {clean_text(claim_excerpt(rep, 4000)).lower()}
-    out = []
+    candidates = []
     for occ in cluster["occurrences"]:
         if occ is rep:
             continue
@@ -743,10 +799,9 @@ def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
         if norm in seen:
             continue
         seen.add(norm)
-        out.append(occ)
-        if len(out) >= max_items:
-            break
-    return out
+        candidates.append(occ)
+    candidates.sort(key=lambda occ: (claim_risk(occ), str(occ.get("legal_basis_category") or "").lower()) == rep_class)
+    return candidates[:max_items]
 
 
 def claim_card(cluster, excerpt_chars=220, material=False):
@@ -812,8 +867,17 @@ def claim_card(cluster, excerpt_chars=220, material=False):
         ("TOPPADDING", (1, 0), (1, 0), 0),
         ("BOTTOMPADDING", (1, 0), (1, 0), 0),
     ]))
+    # v93.38: shows the cluster's actual wording distribution ("ecologisch 6 · duurzaam 6 ·
+    # milieuvriendelijk 2") and, when more than one occurrence exists, a plain-language reason
+    # for why THIS occurrence -- not the most common wording -- was chosen to illustrate the
+    # group (see cluster_claims()'s selection order: severity first, then verifiability, then
+    # frequency, then a fixed tiebreak).
+    dist_text = wording_distribution_text(cluster)
+    dist_row = [Paragraph(f'<font color="#7A8A93">Wordings:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
+    reason = claim.get("_selection_reason")
+    reason_row = [Paragraph(f'<font color="#7A8A93">Why this example:</font> {esc(reason)}', ST["source"])] if reason and len(cluster["occurrences"]) > 1 else None
     # v93.34: option 1 -- a couple of the OTHER distinct wordings in this cluster, so a
     # double-digit occurrence count isn't represented by only one example. Fewer/shorter for
     # non-material cards to keep the page budget in check (see build_company_report_pdf).
@@ -821,7 +885,9 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     extra_max_chars = 130 if material else 95
     extra_rows = [
         [Paragraph(f'<font color="#7A8A93">Also:</font> {highlighted_excerpt(occ, extra_max_chars)} '
-                   f'<font color="#7A8A93">&mdash; {esc(claim_source(occ))}</font>', ST["source"])]
+                   f'<font color="#7A8A93">&mdash; {esc(claim_source(occ))}'
+                   + (f' · {esc(claim_risk(occ))}, {esc(legal_basis_label(occ)[0])}' if (claim_risk(occ), str(occ.get("legal_basis_category") or "").lower()) != (claim_risk(claim), str(claim.get("legal_basis_category") or "").lower()) else '')
+                   + '</font>', ST["source"])]
         for occ in other_occurrence_excerpts(cluster, max_items=extra_max_items, max_chars=extra_max_chars)
     ]
     why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
@@ -829,7 +895,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
     grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
-    rows = [[head], [source], [quote]] + extra_rows + [[grid], [rec]]
+    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[grid], [rec]]
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
         rows.append([Paragraph(f'<b>READY-TO-USE REWRITE</b><br/><font face="Courier">{esc(ready_rewrite)}</font>', ST["small_dark"])])
@@ -1013,6 +1079,12 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # social was the more material risk. If the finding shown as "most material" leaves the
     # OTHER dimension completely unrepresented, swap the lowest-ranked additional slot for the
     # best-ranked cluster of that missing dimension (only when there's room to do so).
+    # v93.38: an UNCONDITIONAL swap could shove in a trivial/Low-risk finding from the missing
+    # dimension purely to tick a "both dimensions shown" box, displacing a genuinely more
+    # urgent group -- a second reviewer flagged this. Only substitute when the candidate
+    # itself clears an absolute materiality floor (Medium or above); a Low-risk-only missing
+    # dimension is instead just named in a short note rather than forced into a detail slot.
+    dimension_balanced = False
     if additional:
         shown_dims = {str((material.get("representative") or {}).get("dimension","")).lower()}
         shown_dims |= {str(c.get("representative",{}).get("dimension","")).lower() for c in additional}
@@ -1020,8 +1092,10 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         if other_dim:
             shown_ids = {id(material)} | {id(c) for c in additional}
             candidate = next((c for c in clusters if str(c.get("representative",{}).get("dimension","")).lower()==other_dim and id(c) not in shown_ids), None)
-            if candidate:
+            MATERIALITY_FLOOR = 2  # risk_rank: 1=Low, 2=Medium, 3=High, 4=Very high
+            if candidate and candidate["group_priority"][0] >= MATERIALITY_FLOOR:
                 additional[-1] = candidate
+                dimension_balanced = True
     flow = []
     flow += header_block(data, "Company claim-risk report · Assessment overview")
     flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))
@@ -1030,13 +1104,19 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     if rp is not None:
         flow.append(rp); flow.append(Spacer(1, 2.2*mm))
     flow.append(section_title("Top risk drivers"))
-    # v93.37: added per explicit user request -- readers otherwise couldn't tell why one
-    # specific claim group and wording example was shown in detail (here, and in "Most
+    # v93.37/v93.38: added per explicit user request -- readers otherwise couldn't tell why
+    # one specific claim group and wording example was shown in detail (here, and in "Most
     # material finding"/"Additional material findings" below) while others weren't. States
-    # the actual selection method plainly: claims are grouped by type, ranked by severity, and
-    # only the top 3 groups get a detailed example -- everything retained is still listed in
-    # the Full claim inventory appendix.
-    flow.append(Paragraph("Findings are grouped by claim type and ranked by risk severity. The 3 highest-ranked groups are detailed below (1 shown here as “Most material finding”, 2 more under “Additional material findings”); each detail card quotes the occurrence that best matches that group's most common wording, not necessarily the first one found. Every retained finding, including groups not detailed here, is listed in the Full claim inventory appendix.", ST["small"]))
+    # the actual selection method plainly. Once a dimension-balance substitution has happened
+    # (see above), "the 3 highest-ranked groups" is no longer strictly true, so the wording
+    # must say so -- a second reviewer caught that the original fixed sentence overclaimed in
+    # that case.
+    selection_note = ("Findings are grouped by claim type and ranked by risk severity. "
+        + ("The detail selection below also accounts for differences between findings and for representing both green and social risks, not severity ranking alone. "
+           if dimension_balanced else
+           "The 3 highest-ranked groups are detailed below (1 shown here as “Most material finding”, 2 more under “Additional material findings”). ")
+        + "Within each group, the example shown is chosen for severity first, then for how clearly it can be checked (exact passage and source), then for how common that wording is -- not simply the first one found. Every retained finding, including groups not detailed here, is listed in the Full claim inventory appendix.")
+    flow.append(Paragraph(selection_note, ST["small"]))
     flow.append(Spacer(1, 1.2*mm))
     flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
     flow.append(section_title("Most material finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))

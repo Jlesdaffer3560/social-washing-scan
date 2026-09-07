@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_37_consistent_representative_and_selection_transparency'
+    assert app.APP_VERSION == 'hostable_v93_38_severity_first_selection_and_wording_distribution'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1957,11 +1957,12 @@ def _pdf_finding(i,typ,risk,claim,score,dim='green',source=None):
         'legal_basis_category':'prohibited','legal_basis_label':'Potentially Prohibited (EmpCo Annex I)'}
 
 
-def test_occurrence_count_label_distinguishes_repeated_vs_distinct_wording():
-    """v93.34: option 2 -- "N occurrences" is ambiguous between the same sentence repeated
-    across N pages (one reused template) and N genuinely different claim wordings. Reported
-    live: a Delhaize cluster showed "14 occurrences" with only one example ever shown, giving
-    no indication of which case it was."""
+def test_occurrence_count_label_is_a_plain_count_not_a_wording_verdict():
+    """v93.38: earlier versions tried to characterise HOW distinct the occurrences were
+    ("same wording" / "N distinct claims") in this one short title suffix -- but collapsing
+    an entire wording distribution into either "all the same" or "all different" is itself
+    misleading whenever wordings are tied or partially overlapping. That detail now lives in
+    its own line via wording_distribution_text(); this suffix is just the plain count."""
     import report_pdf as rp
     same=[_pdf_finding(i,'Human-rights claim','High','We garanderen een leefbaar loon.',62,source=f's{i}') for i in range(5)]
     distinct=[_pdf_finding(i,'Generic environmental claim','High',f'Ons assortiment {p} is milieuvriendelijk.',68,source=f's{i}')
@@ -1969,49 +1970,64 @@ def test_occurrence_count_label_distinguishes_repeated_vs_distinct_wording():
     data={'claim_inventory':same+distinct}
     clusters=rp.cluster_claims(data)
     labels={rp.claim_title(c['representative']):rp.occurrence_count_label(c) for c in clusters}
-    assert labels['Human-rights claim']==' · same wording, 5 occurrences'
-    assert labels['Generic environmental claim']==' · 3 distinct claims'
+    assert labels['Human-rights claim']==' · 5 occurrences'
+    assert labels['Generic environmental claim']==' · 3 occurrences'
 
 
-def test_risk_driver_table_shows_the_cluster_dominant_trigger_not_just_the_representative():
-    """v93.36: "FLAGGED WORDING" showed trigger_phrase() of the single REPRESENTATIVE
-    occurrence only (whichever happened to score highest), not necessarily the phrase that
-    actually dominates the cluster. Reported live on Delhaize: a "Generic environmental
-    claim" cluster of 14 occurrences showed "milieuvriendelijk" (2 occurrences) while
-    "ecologisch" (6 occurrences) -- the cluster's actual most common trigger -- was never
-    mentioned. cluster_claims() must surface the dominant phrase across ALL occurrences."""
+def test_wording_distribution_text_shows_tied_wordings_not_one_dominant_phrase():
+    """v93.38: a second reviewer caught a real bug in the v93.36/37 "dominant trigger phrase"
+    design -- when two or more wordings are TIED for most common, collapsing them into a
+    single "dominant" phrase arbitrarily picks one and hides the tie. Reported against our own
+    worked example: "ecologisch" and "duurzaam" both occurred 6 times, "milieuvriendelijk"
+    only 2 -- wording_distribution_text() must show the full breakdown, not just one phrase."""
     import report_pdf as rp
     findings=(
         [_pdf_finding(i,'Generic environmental claim','High',f'Claim {i} using milieuvriendelijk wording.',68,source=f'p{i}') for i in range(2)]
         +[_pdf_finding(10+i,'Generic environmental claim','High',f'Claim {i} using ecologisch wording instead.',68,source=f'q{i}') for i in range(6)]
-    )
-    for f,phrase in zip(findings[:2],['milieuvriendelijk']*2): f['matched_phrase']=phrase
-    for f in findings[2:]: f['matched_phrase']='ecologisch'
-    cluster=rp.cluster_claims({'claim_inventory':findings})[0]
-    assert cluster['representative']['_dominant_trigger_phrase']=='ecologisch'
-
-
-def test_cluster_representative_matches_the_dominant_trigger_it_reports():
-    """v93.37: fixing the "FLAGGED WORDING" column to show the cluster's dominant trigger
-    (v93.36) exposed a further inconsistency the user caught by reading the actual PDF: the
-    DETAIL card below that table still quoted and explained the representative occurrence's
-    OWN trigger, which need not be the dominant one -- e.g. the table said "ecologisch" while
-    the card's "WHY IT MATTERS" text explained "milieuvriendelijk" instead. Root cause: every
-    occurrence of a claim TYPE gets the same fixed claim_score, so the tie-break that picks
-    the "representative" is really just "whichever occurrence was found first while
-    crawling" -- not chosen for matching the dominant wording. The representative must now be
-    an occurrence that actually uses the dominant phrase, so the table and the card agree."""
-    import report_pdf as rp
-    findings=(
-        [_pdf_finding(i,'Generic environmental claim','High',f'Claim {i} using milieuvriendelijk wording.',68,source=f'p{i}') for i in range(2)]
-        +[_pdf_finding(10+i,'Generic environmental claim','High',f'Claim {i} using ecologisch wording instead.',68,source=f'q{i}') for i in range(6)]
+        +[_pdf_finding(20+i,'Generic environmental claim','High',f'Claim {i} using duurzaam wording as well.',68,source=f'r{i}') for i in range(6)]
     )
     for f in findings[:2]: f['matched_phrase']='milieuvriendelijk'
-    for f in findings[2:]: f['matched_phrase']='ecologisch'
+    for f in findings[2:8]: f['matched_phrase']='ecologisch'
+    for f in findings[8:]: f['matched_phrase']='duurzaam'
     cluster=rp.cluster_claims({'claim_inventory':findings})[0]
+    text=rp.wording_distribution_text(cluster)
+    assert 'ecologisch 6' in text and 'duurzaam 6' in text and 'milieuvriendelijk 2' in text
+
+
+def test_cluster_representative_is_chosen_by_severity_before_frequency():
+    """v93.38: per external review, frequency of a wording must NOT be the primary selection
+    criterion for a risk report's representative example -- a rare but more severe claim
+    should not be hidden behind a common, milder one. Severity comes first; frequency is only
+    used as a later tiebreaker among occurrences of otherwise-equal severity. Also verifies
+    group ranking uses the group's own worst member (group_priority), independent of which
+    occurrence ends up as the representative."""
+    import report_pdf as rp
+    # 6 occurrences of a MEDIUM-severity, common wording; 1 RARE but HIGH-severity occurrence.
+    common=[_pdf_finding(i,'Generic environmental claim','Medium',f'Claim {i} using ecologisch wording, common case.',40,source=f'p{i}') for i in range(6)]
+    rare=_pdf_finding(99,'Generic environmental claim','High','A rare but severe claim using ecologisch wording too.',74,source='rare-page')
+    cluster=rp.cluster_claims({'claim_inventory':common+[rare]})[0]
     rep=cluster['representative']
-    assert rp.trigger_phrase(rep)==rep['_dominant_trigger_phrase']=='ecologisch'
-    assert 'ecologisch' in rep['claim_text'].lower()
+    # cluster_claims() copies each item into a new dict, so compare by content, not identity.
+    assert rep['claim_text']==rare['claim_text'], 'the rare, more severe occurrence must be chosen over the common, milder one'
+    assert cluster['group_priority']==rp._occurrence_severity_key(rare)
+    assert 'severe' in rep['_selection_reason'].lower()
+
+
+def test_also_line_surfaces_a_differently_classified_occurrence_first():
+    """v93.38: an "Also:" candidate that differs from the representative in risk or legal
+    classification (e.g. one occurrence downgraded by the named-certification-scheme check
+    while others were not) is a clearer, more checkable "adds something new" than an
+    arbitrary different sentence, and must be surfaced first among the extra examples shown."""
+    import report_pdf as rp
+    rep=_pdf_finding(0,'Sustainability label / certification claim','High','Generic self-declared label claim about our products.',74,source='p0')
+    rep['legal_basis_category']='prohibited'
+    plain_other=_pdf_finding(1,'Sustainability label / certification claim','High','Another generic self-declared label claim about other products.',74,source='p1')
+    plain_other['legal_basis_category']='prohibited'
+    downgraded=_pdf_finding(2,'Sustainability label / certification claim','Medium','Claim naming Fairtrade certification for these products.',74,source='p2')
+    downgraded['legal_basis_category']='problematic'
+    cluster={'representative':rep,'occurrences':[rep,plain_other,downgraded]}
+    extra=rp.other_occurrence_excerpts(cluster,max_items=2)
+    assert extra[0] is downgraded
 
 
 def test_cluster_claims_does_not_merge_wordings_differing_only_after_120_chars():
@@ -2078,6 +2094,37 @@ def test_full_claim_inventory_table_includes_findings_beyond_top_three_clusters(
     assert len(table._cellvalues)==1+len(findings)  # header row + one row per finding
 
 
+def test_dimension_balance_swap_requires_a_materiality_floor():
+    """v93.38: per external review, an UNCONDITIONAL swap-in for the missing green/social
+    dimension could displace a genuinely more urgent finding just to tick a "both dimensions
+    shown" box. The swap must only happen when the missing dimension's best candidate clears
+    an absolute materiality floor (Medium or above) -- a Low-risk-only missing dimension
+    should not be force-inserted into a detail slot."""
+    import report_pdf as rp
+    # Three distinct, High-severity green claim types occupy the natural top 3.
+    green=(
+        [_pdf_finding(i,'Generic environmental claim','High',f'Green claim A number {i} about our products and impact.',74,source=f'gA{i}') for i in range(3)]
+        +[_pdf_finding(10+i,'Recycled / recyclable material claim','High',f'Green claim B number {i} about recycled materials used.',74,source=f'gB{i}') for i in range(3)]
+        +[_pdf_finding(20+i,'Climate-neutrality or offsetting claim','High',f'Green claim C number {i} about carbon neutrality goals.',74,source=f'gC{i}') for i in range(3)]
+    )
+    low_social=[_pdf_finding(100+i,'Human-rights / labour-rights claim','Low',f'Low-severity social note {i} about general practices.',20,dim='social',source=f'sL{i}') for i in range(2)]
+    data_low=_pdf_test_data(green+low_social)
+    pdf_low=rp.build_company_report_pdf(data_low)
+    text_low=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_low)).pages)
+    # The Low-severity social finding legitimately still appears in the Full claim inventory
+    # appendix (which lists everything) -- only the NARRATIVE section (before that appendix)
+    # must not force it into a detail card.
+    narrative_low=text_low.split('FULL CLAIM INVENTORY')[0]
+    assert 'Low-severity social note' not in narrative_low, 'a Low-risk-only missing dimension must not be force-inserted into a detail card'
+
+    medium_social=[_pdf_finding(200+i,'Human-rights / labour-rights claim','Medium',f'Medium-severity social claim {i} about labour conditions and practices.',50,dim='social',source=f'sM{i}') for i in range(2)]
+    data_medium=_pdf_test_data(green+medium_social)
+    pdf_medium=rp.build_company_report_pdf(data_medium)
+    text_medium=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_medium)).pages)
+    assert 'Medium-severity social claim' in text_medium, 'a Medium-or-above missing dimension should still get a place'
+    assert 'both green and social' in text_medium.lower(), 'intro text must reflect that a balance substitution happened'
+
+
 def _pdf_test_data(claims):
     return {'version':'test','company':{'company':'Test Co','sector':'Food retail'},'source_label':'https://example.com',
         'original_url':'https://example.com','analysis_date':'2026-09-07','global_score':75,'global_risk':'Very high',
@@ -2132,7 +2179,7 @@ def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
     assert page_count<=4
     full_text=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
     assert 'FULL CLAIM INVENTORY' in full_text.upper()
-    assert 'distinct claims' in full_text or 'same wording,' in full_text
+    assert 'occurrences' in full_text and 'milieuvriendelijk' in full_text
 
 
 def test_external_panel_renders_more_than_two_signals():
