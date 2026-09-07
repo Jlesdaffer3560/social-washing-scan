@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_32_brevo_ip_error_message"
-APP_RELEASE_LABEL="v93.32"
+APP_VERSION="hostable_v93_33_named_certification_scheme_exemption"
+APP_RELEASE_LABEL="v93.33"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -2692,6 +2692,35 @@ def green_claim_module(claim_type):
     if 'absolute' in t or 'purity' in t: return 'Absolute Claim Check'
     return 'Green Claim Quality Check'
 
+# v93.33: EmpCo Annex I point 2a specifically targets a SELF-DECLARED sustainability label
+# -- one NOT based on a genuine third-party certification scheme or a public-authority label.
+# A claim that explicitly names a real, independent certifier does not match that specific
+# practice, even though it may still need scope/evidence/validity-period substantiation under
+# general UCPD rules -- the same "condition not established from the wording alone" pattern
+# already used for the offsetting-based climate-neutrality branch below. Reported live on
+# Delhaize: "100% duurzaam gecertificeerd door Fairtade of Rainforest Alliance" was flagged as
+# EmpCo Annex I "Potentially Prohibited" despite naming two real, independent certifiers in
+# the same sentence. Not exhaustive -- a scheme absent from this list still falls back to the
+# blacklisted-practice-indicator branch, which is the safer default for an unrecognised name.
+_RECOGNIZED_CERTIFICATION_SCHEMES=(
+    'fairtrade','fairtade','fair trade','rainforest alliance','utz certified','utz-certified',
+    'forest stewardship council',' fsc ','fsc-certified','fsc certified',
+    'programme for the endorsement of forest certification','pefc',
+    'global organic textile standard','gots','oeko-tex','oeko tex','bluesign','cradle to cradle',
+    'fair wear foundation','global recycled standard',' grs ',
+    'eu ecolabel','ecolabel europeen','ecolabel européen','eu-ecolabel','ecolabel-eu',
+    'nordic swan','nordic ecolabel','blauer engel','blue angel','green seal','energy star',
+    'b corp','b corporation','marine stewardship council',' msc ','msc-certified','msc certified',
+    'aquaculture stewardship council',' asc certified','globalg.a.p','globalgap',
+    'demeter','usda organic','eu organic','eu-bio-logo','biogarantie','ecocert','soil association',
+    'carbon trust standard','leed certified','breeam certified','cotton made in africa',
+    'better cotton initiative','bci cotton','iso 14001','higg index',
+)
+
+def _names_recognized_certification_scheme(claim_text):
+    c=' '+(claim_text or '').lower()+' '
+    return any(scheme in c for scheme in _RECOGNIZED_CERTIFICATION_SCHEMES)
+
 def green_blacklisted_indicator(claim_type, trigger, claim_text):
     t=(claim_type or '').lower(); c=(claim_text or '').lower(); trig=(trigger or '').lower()
     # v57o: EmpCo (Directive (EU) 2024/825) is not yet applicable -- it applies from 27 September
@@ -2711,6 +2740,10 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
                 'specifically targets product-level neutral/reduced/positive climate-impact claims based on greenhouse-gas offsetting; '
                 'this passage should be reviewed case-by-case under the general UCPD misleading-claims test unless an offset basis is confirmed.')
     if 'label' in t or 'certification' in t:
+        if _names_recognized_certification_scheme(c):
+            return ('Potential Annex I relevance -- a named, independent certification scheme is present in the retained '
+                     'wording, so this does not automatically match the self-declared-label practice (Annex I point 2a). '
+                     'Still review the exact scope, criteria, audit basis and validity period under general UCPD rules.')
         return 'Potential EmpCo blacklisted-practice indicator if the label/badge is not based on a qualifying certification scheme or not established by public authorities.'+date_note
     if 'generic environmental' in t:
         return 'Potential EmpCo blacklisted-practice indicator if the generic claim is not clearly specified on the same medium and not backed by recognised excellent environmental performance.'+date_note

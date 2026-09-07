@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_32_brevo_ip_error_message'
+    assert app.APP_VERSION == 'hostable_v93_33_named_certification_scheme_exemption'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1412,6 +1412,24 @@ def test_uploaded_document_analysis_separates_full_inventory_from_display_cap():
     green_in_inventory=[c for c in result['findings'] if c.get('dimension')=='Green']
     assert len(green_in_inventory)>12, (
         f"expected the full claim inventory to keep more than 12 green claims, got {len(green_in_inventory)}")
+
+
+def test_named_certification_scheme_is_not_automatically_prohibited():
+    """v93.33: EmpCo Annex I point 2a targets a SELF-DECLARED sustainability label -- one NOT
+    based on a genuine third-party certification scheme. green_blacklisted_indicator()'s
+    "label"/"certification" branch always returned the blacklisted-practice-indicator message
+    regardless of whether a real, independent certifier was actually named in the claim.
+    Reported live on Delhaize: "100% duurzaam gecertificeerd door Fairtade of Rainforest
+    Alliance" was flagged "Potentially Prohibited (EmpCo Annex I)" despite naming two real
+    certifiers in the same sentence. Also covers the exact "Fairtade" typo/spelling found in
+    that live extracted text."""
+    named=app.green_blacklisted_indicator('Sustainability label / certification claim','duurzaam gecertificeerd',
+        'Daarom zijn de thee, koffie en cacao referenties 100% duurzaam gecertificeerd door Fairtade of Rainforest Alliance.')
+    assert 'blacklisted-practice indicator' not in named.lower()
+    # a genuinely self-declared label, naming no real certifier, must still be flagged
+    unnamed=app.green_blacklisted_indicator('Sustainability label / certification claim','eco label',
+        'Our product proudly carries our own eco label, showing our commitment to the planet.')
+    assert 'blacklisted-practice indicator' in unnamed.lower()
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
