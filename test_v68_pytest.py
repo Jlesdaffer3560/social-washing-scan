@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_33_named_certification_scheme_exemption'
+    assert app.APP_VERSION == 'hostable_v93_34_pdf_report_occurrence_detail'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1902,3 +1902,105 @@ def test_v92_fetch_top_claims_for_scan_ids_empty_shortcircuit():
     issue a query that would trivially match nothing anyway."""
     assert app._v92_fetch_top_claims_for_scan_ids([])==[]
     assert app._v92_fetch_top_claims_for_scan_ids(None)==[]
+
+
+def _pdf_finding(i,typ,risk,claim,score,dim='green',source=None):
+    if source is None: source=f'page{i}'
+    return {'dimension':dim,'claim_type':typ,'risk_level':risk,'claim_score':score,
+        'claim_text':claim,'why_flagged':f'Flagged because it contains generic wording (item {i}).',
+        'issue':'Evidence gap present.','evidence_needed':['scope','method','period'],
+        'rewrite':'Use precise, evidence-backed wording.','suggested_rewrite':'Be specific.',
+        'ready_to_use_rewrite':'"[Specific claim], based on [method], covering [scope]."',
+        'matched_phrase':'milieuvriendelijk','source_label':source,'source_url':f'https://example.com/{source}',
+        'legal_basis_category':'prohibited','legal_basis_label':'Potentially Prohibited (EmpCo Annex I)'}
+
+
+def test_occurrence_count_label_distinguishes_repeated_vs_distinct_wording():
+    """v93.34: option 2 -- "N occurrences" is ambiguous between the same sentence repeated
+    across N pages (one reused template) and N genuinely different claim wordings. Reported
+    live: a Delhaize cluster showed "14 occurrences" with only one example ever shown, giving
+    no indication of which case it was."""
+    import report_pdf as rp
+    same=[_pdf_finding(i,'Human-rights claim','High','We garanderen een leefbaar loon.',62,source=f's{i}') for i in range(5)]
+    distinct=[_pdf_finding(i,'Generic environmental claim','High',f'Ons assortiment {p} is milieuvriendelijk.',68,source=f's{i}')
+              for i,p in enumerate(['vis','groenten','vlees'])]
+    data={'claim_inventory':same+distinct}
+    clusters=rp.cluster_claims(data)
+    labels={rp.claim_title(c['representative']):rp.occurrence_count_label(c) for c in clusters}
+    assert labels['Human-rights claim']==' · same wording on 5 pages'
+    assert labels['Generic environmental claim']==' · 3 distinct claims'
+
+
+def test_claim_card_shows_additional_distinct_occurrence_excerpts():
+    """v93.34: option 1 -- a claim card should surface a couple of the OTHER distinct
+    wordings behind its occurrence count, not just the single representative excerpt, so a
+    double-digit count isn't represented by one example alone."""
+    import report_pdf as rp
+    findings=[_pdf_finding(i,'Generic environmental claim','High',f'Ons assortiment {p} is milieuvriendelijk.',68,source=f's{i}')
+              for i,p in enumerate(['vis','groenten','vlees','fruit'])]
+    cluster=rp.cluster_claims({'claim_inventory':findings})[0]
+    extra=rp.other_occurrence_excerpts(cluster,max_items=2)
+    assert len(extra)==2
+    assert all(occ is not cluster['representative'] for occ in extra)
+    # repeated-wording cluster: no "other" excerpt is worth showing (would just repeat itself)
+    same=[_pdf_finding(i,'Human-rights claim','High','We garanderen een leefbaar loon.',62,source=f's{i}') for i in range(4)]
+    same_cluster=rp.cluster_claims({'claim_inventory':same})[0]
+    assert rp.other_occurrence_excerpts(same_cluster,max_items=2)==[]
+
+
+def test_full_claim_inventory_table_includes_findings_beyond_top_three_clusters():
+    """v93.34: option 4 -- the narrative pages only ever detail the top 3 claim clusters;
+    every other retained finding was previously invisible in the PDF. The appendix table
+    must list every materially retained finding, not just those already shown above."""
+    import report_pdf as rp
+    findings=[_pdf_finding(i,f'Claim type {i}','Medium',f'Distinct claim wording number {i} about our products.',40)
+              for i in range(10)]
+    data={'claim_inventory':findings}
+    flowables=rp.full_claim_inventory_table(data,max_rows=60)
+    table=flowables[0]
+    assert len(table._cellvalues)==1+len(findings)  # header row + one row per finding
+
+
+def test_build_company_report_pdf_stays_within_four_pages_with_many_findings():
+    """v93.34: raised the accepted page budget from 3 to 4 pages to make room for the
+    option-4 full-claim-inventory appendix on a scan with many distinct findings, while the
+    auto-shrink ladder must still keep the PDF within that new budget rather than growing
+    unbounded."""
+    import pypdf
+    import report_pdf as rp
+    products=['vis','groenten','vlees','zuivel','bakkerij','dranken','snacks','fruit','kaas','ontbijt','soep','sauzen','diepvries','conserven']
+    green=[_pdf_finding(i,'Generic environmental claim','High',f'Al jarenlang biedt ons een assortiment {p} dat zeer milieuvriendelijk is.',68,source=f'planet/{p}')
+           for i,p in enumerate(products)]
+    social=[_pdf_finding(100+i,'Human-rights / labour-rights claim','High','We garanderen een leefbaar loon voor al onze medewerkers wereldwijd.',62,dim='social',source='people') for i in range(5)]
+    labels=[_pdf_finding(200+i,'Sustainability label / certification claim','Medium',f'Product {i} is 100% duurzaam gecertificeerd door een onafhankelijk keurmerk.',55,source='labels') for i in range(3)]
+    claims=green+social+labels
+    data={'version':'test','company':{'company':'Test Co','sector':'Food retail'},'source_label':'https://example.com',
+        'original_url':'https://example.com','analysis_date':'2026-09-07','global_score':75,'global_risk':'Very high',
+        'green_score':75,'green_risk':'Very high','social_score':62,'social_risk':'High','overall_score':75,
+        'overall_risk':'Very high','screening_conclusion':'Global: Very high','methodology':'Test methodology.',
+        'claim_inventory':claims,'findings':claims,
+        'green_findings':[c for c in claims if c['dimension']=='green'][:12],
+        'social_findings':[c for c in claims if c['dimension']=='social'][:12],
+        'documents_checked':[],'scan_inventory':{'website_pages':[],'documents':[],'failed_fetches':[],'domains':['example.com'],'summary':{}},
+        'external_research':{'green':{'enabled':False,'results':[]},'social':{'enabled':False,'results':[]}},
+        'company_action_plan':[],'stakeholder_red_flags':[],'confidence':{'level':'Medium','reasons':[]}}
+    pdf_bytes=rp.build_company_report_pdf(data)
+    assert pdf_bytes.startswith(b'%PDF-')
+    page_count=len(pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
+    assert page_count<=4
+    full_text=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
+    assert 'FULL CLAIM INVENTORY' in full_text.upper()
+    assert 'distinct claims' in full_text or 'same wording on' in full_text
+
+
+def test_legal_basis_label_prefers_the_stored_backend_label():
+    """v93.34: legal_basis_label() always re-derived a hardcoded label from
+    legal_basis_category ("Potentially Prohibited (Annex I)"), diverging from the backend's
+    actual stored legal_basis_label ("Potentially Prohibited (EmpCo Annex I)") -- the same
+    divergence already fixed once in the frontend's legalBasisBadgeLabel()."""
+    import report_pdf as rp
+    text,_color=rp.legal_basis_label({'legal_basis_category':'prohibited','legal_basis_label':'Potentially Prohibited (EmpCo Annex I)'})
+    assert text=='Potentially Prohibited (EmpCo Annex I)'
+    # falls back to a derived label when the stored one is absent (e.g. an older cached result)
+    text2,_color2=rp.legal_basis_label({'legal_basis_category':'prohibited'})
+    assert text2=='Potentially Prohibited (EmpCo Annex I)'

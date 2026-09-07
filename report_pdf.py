@@ -3,7 +3,8 @@
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
 uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
 reducing the amount of detail rather than shrinking fonts; content that still doesn't
-fit spills to a 3rd page (see the pagination note further down) instead of being cut.
+fit spills to a 3rd or, for a scan with many findings, a 4th page (see the pagination
+note further down) instead of being cut.
 """
 from __future__ import annotations
 
@@ -197,9 +198,18 @@ def claim_risk(claim):
 
 
 def legal_basis_label(claim):
+    # v93.34: this always re-derived a hardcoded label from legal_basis_category, diverging
+    # from the backend's actual stored legal_basis_label ("Potentially Prohibited (EmpCo
+    # Annex I)" / "Problematic, not automatically prohibited (case-by-case)") -- the same
+    # divergence already fixed in the frontend's legalBasisBadgeLabel(). Prefer the stored
+    # label; only fall back to a derived one when it is absent (e.g. an older cached result).
+    stored = clean_text(claim.get("legal_basis_label") or "")
+    if stored:
+        color = RED if str(claim.get("legal_basis_category") or "").lower() == "prohibited" else AMBER
+        return stored, color
     if str(claim.get("legal_basis_category") or "").lower() == "prohibited":
-        return "Potentially Prohibited (Annex I)", RED
-    return "Problematic (case-by-case)", AMBER
+        return "Potentially Prohibited (EmpCo Annex I)", RED
+    return "Problematic, not automatically prohibited (case-by-case)", AMBER
 
 
 def claim_source(claim):
@@ -321,7 +331,28 @@ def cluster_claims(data):
     for c in out:
         c["representative"]["_occurrence_count"] = len(c["occurrences"])
         c["representative"]["_occurrence_sources"] = list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))
+        # v93.34: "14 occurrences" reads very differently depending on whether that is the
+        # SAME sentence repeated on 14 pages (one template reused site-wide) or 14 genuinely
+        # different claim wordings -- distinguish the two instead of collapsing them into one
+        # ambiguous count. Normalise on the first ~120 chars of the claim text: excerpts this
+        # long matching exactly is a reused/templated passage, not coincidence.
+        wordings = {clean_text(claim_excerpt(x, 4000)).lower()[:120] for x in c["occurrences"]}
+        c["representative"]["_unique_wording_count"] = len(wordings)
     return out
+
+
+def occurrence_count_label(cluster):
+    """v93.34: renders the count suffix used next to a claim title, distinguishing a single
+    wording repeated across pages from genuinely distinct claim variants (see cluster_claims)."""
+    count = len(cluster["occurrences"])
+    if count <= 1:
+        return ""
+    unique = cluster["representative"].get("_unique_wording_count", count)
+    if unique <= 1:
+        return f" · same wording on {count} pages"
+    if unique < count:
+        return f" · {unique} distinct variants ({count} occurrences)"
+    return f" · {count} distinct claims"
 
 
 def company_name(data):
@@ -578,8 +609,7 @@ def risk_driver_table(clusters):
     rows = [headers]
     for idx, c in enumerate(clusters[:3], 1):
         claim = c["representative"]
-        count = len(c["occurrences"])
-        title = claim_title(claim) + (f" · {count} occurrences" if count > 1 else "")
+        title = claim_title(claim) + occurrence_count_label(c)
         sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
         rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(trigger_phrase(claim) or "Review retained wording", 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
     if len(rows) == 1:
@@ -589,10 +619,66 @@ def risk_driver_table(clusters):
     return t
 
 
+def full_claim_inventory_table(data, max_rows=60):
+    """v93.34: option 4 -- the narrative pages only ever detail the top 3 claim clusters, one
+    representative example each; every other retained finding was previously invisible in the
+    PDF (only present in the online scan's full list). A compact appendix table lists every
+    materially retained finding for full traceability, without repeating the full why/gap/
+    rewrite commentary already given for the top clusters above. max_rows is a pathological-
+    input safety bound (a scan with hundreds of findings would otherwise blow the page budget
+    in build_company_report_pdf's auto-shrink ladder); it is not expected to bind in practice."""
+    rows_data = [r for r in (data.get("claim_inventory") or data.get("findings") or []) if isinstance(r, dict) and is_material(r)]
+    if not rows_data:
+        rows_data = [r for r in (list(data.get("green_findings") or []) + list(data.get("social_findings") or [])) if isinstance(r, dict) and is_material(r)]
+    rows_data.sort(key=lambda c: (risk_rank(c), float(c.get("claim_score") or 0)), reverse=True)
+    total_count = len(rows_data)
+    truncated = total_count > max_rows
+    rows_data = rows_data[:max_rows]
+    headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("EXCERPT", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
+    rows = [headers]
+    for idx, claim in enumerate(rows_data, 1):
+        area = f'<b>{esc(bounded_text(claim_title(claim), 44))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>'
+        rows.append([
+            Paragraph(str(idx), ST["table"]),
+            Paragraph(area, ST["table_dark"]),
+            Paragraph(esc(bounded_text(claim_excerpt(claim, 4000), 100)), ST["table"]),
+            Paragraph(esc(bounded_text(claim_source(claim), 40)), ST["table"]),
+        ])
+    if len(rows) == 1:
+        rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
+    t = Table(rows, colWidths=[8*mm, 50*mm, CONTENT_W-8*mm-50*mm-38*mm, 38*mm], repeatRows=1)
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE), ("BOX", (0, 0), (-1, -1), .55, GREY_300), ("INNERGRID", (0, 0), (-1, -1), .4, GREY_300), ("BACKGROUND", (0, 1), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5)]))
+    if not truncated:
+        return [t]
+    note = Paragraph(f"Showing the {max_rows} highest-risk of {total_count} retained findings; the full list remains available in the online scan.", ST["small"])
+    return [t, Spacer(1, 1*mm), note]
+
+
+def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
+    """v93.34: show a couple of the OTHER distinct claim wordings within this cluster, not
+    just the single representative excerpt, so the reader sees the actual spread of evidence
+    behind a double-digit occurrence count instead of one example standing in for all of it.
+    Returns nothing when every occurrence shares the same wording -- repeating an identical
+    quote adds no information (see occurrence_count_label's "same wording" case instead)."""
+    rep = cluster["representative"]
+    seen = {clean_text(claim_excerpt(rep, 4000)).lower()[:120]}
+    out = []
+    for occ in cluster["occurrences"]:
+        if occ is rep:
+            continue
+        norm = clean_text(claim_excerpt(occ, 4000)).lower()[:120]
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(occ)
+        if len(out) >= max_items:
+            break
+    return out
+
+
 def claim_card(cluster, excerpt_chars=220, material=False):
     claim = cluster["representative"]
-    count = len(cluster["occurrences"])
-    title = claim_title(claim) + (f" · {count} occurrences" if count > 1 else "")
+    title = claim_title(claim) + occurrence_count_label(cluster)
     sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in cluster["occurrences"]))[:2])
     # The risk level is deliberately rendered as a fixed-width badge on the LEFT
     # of the title. Earlier versions placed a right-aligned risk label at the outer
@@ -628,12 +714,22 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     ]))
     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
+    # v93.34: option 1 -- a couple of the OTHER distinct wordings in this cluster, so a
+    # double-digit occurrence count isn't represented by only one example. Fewer/shorter for
+    # non-material cards to keep the page budget in check (see build_company_report_pdf).
+    extra_max_items = 2 if material else 1
+    extra_max_chars = 130 if material else 95
+    extra_rows = [
+        [Paragraph(f'<font color="#7A8A93">Also:</font> {highlighted_excerpt(occ, extra_max_chars)} '
+                   f'<font color="#7A8A93">&mdash; {esc(claim_source(occ))}</font>', ST["source"])]
+        for occ in other_occurrence_excerpts(cluster, max_items=extra_max_items, max_chars=extra_max_chars)
+    ]
     why = Paragraph(f'<b>WHY IT MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
     gap = Paragraph(f'<b>EVIDENCE GAP</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
     grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
     grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     rec = Paragraph(f'<b>RECOMMENDED IMPROVEMENT</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
-    rows = [[head], [source], [quote], [grid], [rec]]
+    rows = [[head], [source], [quote]] + extra_rows + [[grid], [rec]]
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
         rows.append([Paragraph(f'<b>READY-TO-USE REWRITE</b><br/><font face="Courier">{esc(ready_rewrite)}</font>', ST["small_dark"])])
@@ -792,7 +888,7 @@ def draw_footer(canvas, doc):
     canvas.restoreState()
 
 
-def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5, total_pages=None):
+def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5, total_pages=None, inventory_limit=60):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
     doc.report_data = data
@@ -834,6 +930,15 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         flow.append(Paragraph("No additional material claim group is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
     flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("External public-source signals")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
     flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.6*mm))
+    if inventory_limit > 0:
+        # v93.34: option 4 -- the narrative above only ever details the top 3 claim clusters
+        # (one example each); this compact appendix lists every materially retained finding
+        # for full traceability. inventory_limit is 0 in the most aggressive auto-shrink
+        # variants (build_company_report_pdf) so a scan with many findings drops this
+        # supplementary section before the core narrative is cut any further.
+        flow.append(section_title("Full claim inventory"))
+        flow += full_claim_inventory_table(data, max_rows=inventory_limit)
+        flow.append(Spacer(1, 1.6*mm))
     flow.append(section_title("Assessment coverage")); flow.append(coverage_sources_methodology(data, source_limit))
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
@@ -848,27 +953,30 @@ def _page_count(pdf_bytes):
 
 
 def build_company_report_pdf(data: dict) -> bytes:
-    """Build a two- or three-page PDF without reducing font sizes.
+    """Build a two-, three- or four-page PDF without reducing font sizes.
 
-    Three pages is now an accepted outcome (the ready-to-use rewrite text needs the room), not
-    just a two-page target. If content would still spill past three pages, the generator
-    progressively limits the number of additional findings/external signals and shortens
-    excerpts. Detailed content remains available in the online scan. Once a variant fits, the
-    PDF is rebuilt once more with the known final page count so the footer can read "Page X of
-    N" correctly instead of the two-page assumption baked into earlier drafts.
+    Three pages is an accepted outcome (the ready-to-use rewrite text needs the room), and a
+    4th is now accepted too when a scan retained enough distinct findings for the option-4
+    full-claim-inventory appendix to be worth the extra page (v93.34). If content would still
+    spill past four pages, the generator progressively limits the number of additional
+    findings/external signals/inventory rows and shortens excerpts -- the supplementary
+    inventory appendix is the first thing dropped, before the core "most material"/"additional
+    material" narrative is cut any further. Detailed content always remains available in the
+    online scan. Once a variant fits, the PDF is rebuilt once more with the known final page
+    count so the footer can read "Page X of N" correctly instead of an earlier guess.
     """
     # v84: external_limit's top tier was 2 -- combined across BOTH green and social, so
     # up to 8 genuinely retained, filtered negative sources (now that targeted_negative_sources
     # allows up to 10 per dimension) could exist and still show at most 2 in the PDF. Raised the
     # starting tiers; the existing auto-shrink ladder below already handles the case where a
-    # scan has too many findings/sources to fit 3 pages, same as it always has for
+    # scan has too many findings/sources to fit the page budget, same as it always has for
     # additional_limit/source_limit.
     variants = [
-        dict(additional_limit=2, external_limit=6, excerpt_chars=220, source_limit=6),
-        dict(additional_limit=2, external_limit=4, excerpt_chars=200, source_limit=5),
-        dict(additional_limit=1, external_limit=3, excerpt_chars=180, source_limit=4),
-        dict(additional_limit=1, external_limit=2, excerpt_chars=165, source_limit=3),
-        dict(additional_limit=0, external_limit=1, excerpt_chars=150, source_limit=3),
+        dict(additional_limit=2, external_limit=6, excerpt_chars=220, source_limit=6, inventory_limit=60),
+        dict(additional_limit=2, external_limit=4, excerpt_chars=200, source_limit=5, inventory_limit=40),
+        dict(additional_limit=1, external_limit=3, excerpt_chars=180, source_limit=4, inventory_limit=25),
+        dict(additional_limit=1, external_limit=2, excerpt_chars=165, source_limit=3, inventory_limit=15),
+        dict(additional_limit=0, external_limit=1, excerpt_chars=150, source_limit=3, inventory_limit=0),
     ]
     last = b""
     for variant in variants:
@@ -876,7 +984,7 @@ def build_company_report_pdf(data: dict) -> bytes:
         count = _page_count(probe)
         if count is None:
             return probe
-        if count <= 3:
+        if count <= 4:
             return _build_once(deepcopy(data), total_pages=count, **variant)
         last = probe
     return last
