@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_35_pdf_report_accuracy_fixes"
-APP_RELEASE_LABEL="v93.35"
+APP_VERSION="hostable_v93_36_named_scheme_risk_downgrade_and_dominant_trigger"
+APP_RELEASE_LABEL="v93.36"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -2934,6 +2934,16 @@ def enrich_green_finding(f, trigger=''):
     # fixed list and remains a case-by-case UCPD assessment instead.
     if f['blacklisted_practice_indicator'] and ('climate' in t_low or 'offset' in t_low) and _is_corporate_level_claim(f.get('claim','')):
         f['blacklisted_practice_indicator']=False
+    # v93.36: fixing the Annex I misclassification (v93.33) for a label/certification claim
+    # that names a real, independent certifier only touched the legal-basis category -- the
+    # risk BADGE stayed at the type's default "High" regardless, so a claim naming Fairtrade
+    # and Rainforest Alliance in the same sentence still displayed identically to a bare
+    # self-declared label with zero substantiation. Reported live on Delhaize. A named,
+    # checkable third-party anchor doesn't clear the claim (scope/audit-basis/validity-period
+    # questions remain, hence still "Problematic, case-by-case" not a free pass) but it is a
+    # meaningfully different, lower-severity situation than no evidence at all.
+    if f.get('risk')=='High' and 'certification scheme is present' in f['regulatory_signal'].lower():
+        f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
     f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''))
@@ -6684,6 +6694,20 @@ def enrich_social_finding(f, trigger=''):
     # (unlike the specific environmental practices in points 2a/4a/4b/4c/10a) -- they are always
     # assessed case-by-case under general UCPD rules, so this is explicitly False here.
     f['blacklisted_practice_indicator']=False
+    # v93.36: mirrors the green-claim risk downgrade above for a named certification scheme.
+    # Reported live on Delhaize: a human-rights claim naming Fairtrade-certified bananas in the
+    # same sentence still displayed as "High" risk, identically to a claim with no named
+    # evidence at all. Deliberately narrower than the green check -- it only fires when one of
+    # the SAME small set of internationally recognised, independently audited certification
+    # schemes (Fairtrade, GOTS, B Corp, ...) is named, not for an arbitrary named partner,
+    # NGO or company-specific "commitment": unlike that closed, standardised list, social
+    # partnership names are heterogeneous and self-defined, so a bare partner/programme name
+    # is not by itself the same kind of externally-verifiable anchor a recognised scheme is.
+    # The claim still needs scope/KPI/verification evidence either way -- this only reflects
+    # that a named, independently-audited scheme is a materially different starting point than
+    # zero named evidence.
+    if f.get('risk')=='High' and _names_recognized_certification_scheme(f.get('claim','')):
+        f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), f.get('claim',''))
     f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''))

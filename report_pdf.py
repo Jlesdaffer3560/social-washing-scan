@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from copy import deepcopy
 from html import escape as _escape
 from urllib.parse import urlparse
@@ -363,6 +364,14 @@ def cluster_claims(data):
         wordings = {clean_text(claim_excerpt(x, 4000)).lower() for x in c["occurrences"]}
         c["representative"]["_unique_wording_count"] = len(wordings)
         c["representative"]["_unique_source_count"] = len(c["representative"]["_occurrence_sources"])
+        # v93.36: the "FLAGGED WORDING" column showed trigger_phrase() of the REPRESENTATIVE
+        # occurrence only (whichever single occurrence happened to score highest) -- not
+        # necessarily the phrase that actually dominates the cluster. Reported live on
+        # Delhaize: a "Generic environmental claim" cluster of 14 occurrences showed
+        # "milieuvriendelijk" (2 occurrences) while "ecologisch"/"ecologische" (6 occurrences)
+        # -- the actual most common trigger in that same cluster -- was never mentioned at all.
+        phrase_counts = Counter(trigger_phrase(x) for x in c["occurrences"] if trigger_phrase(x))
+        c["representative"]["_dominant_trigger_phrase"] = phrase_counts.most_common(1)[0][0] if phrase_counts else ""
     return out
 
 
@@ -646,7 +655,11 @@ def risk_driver_table(clusters):
         claim = c["representative"]
         title = claim_title(claim) + occurrence_count_label(c, compact=True)
         sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
-        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(trigger_phrase(claim) or "Review retained wording", 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
+        # v93.36: was trigger_phrase(claim) -- the REPRESENTATIVE occurrence's own matched
+        # phrase only, not necessarily what actually dominates the cluster (see the
+        # _dominant_trigger_phrase note in cluster_claims()).
+        flagged_wording = claim.get("_dominant_trigger_phrase") or trigger_phrase(claim) or "Review retained wording"
+        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
     t = Table(rows, colWidths=[9*mm, 67*mm, 47*mm, CONTENT_W-123*mm], repeatRows=1)

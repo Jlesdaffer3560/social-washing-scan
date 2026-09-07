@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_35_pdf_report_accuracy_fixes'
+    assert app.APP_VERSION == 'hostable_v93_36_named_scheme_risk_downgrade_and_dominant_trigger'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1432,6 +1432,48 @@ def test_named_certification_scheme_is_not_automatically_prohibited():
     assert 'blacklisted-practice indicator' in unnamed.lower()
 
 
+def test_named_certification_scheme_also_downgrades_risk_not_just_legal_basis():
+    """v93.36: v93.33 fixed the legal-basis MISCLASSIFICATION (Potentially Prohibited ->
+    Problematic, case-by-case) for a claim naming a real certifier, but the risk BADGE stayed
+    at the type's default "High" regardless -- so the claim still displayed identically to a
+    bare self-declared label with zero substantiation. Reported live: a Delhaize claim naming
+    Fairtrade and Rainforest Alliance in the same sentence still showed "High" risk. A named,
+    checkable third-party anchor is a materially different, lower-severity situation than no
+    evidence at all (though evidence gaps like scope/audit-basis/validity-period still remain,
+    hence still flagged, just not at "High")."""
+    f={'type':'Sustainability label / certification claim','risk':'High',
+       'claim':'Daarom zijn de thee, koffie en cacao referenties 100% duurzaam gecertificeerd door Fairtade of Rainforest Alliance.'}
+    result=app.enrich_green_finding(dict(f),'duurzaam gecertificeerd')
+    assert result['risk']=='Medium'
+    assert result['legal_basis_label']=='Problematic, not automatically prohibited (case-by-case)'
+    # an unnamed, self-declared label must still be High -- this is not a blanket downgrade
+    f2={'type':'Sustainability label / certification claim','risk':'High',
+        'claim':'Our product proudly carries our own eco label, showing our commitment to the planet.'}
+    result2=app.enrich_green_finding(dict(f2),'eco label')
+    assert result2['risk']=='High'
+
+
+def test_named_certification_scheme_downgrades_social_claim_risk_too():
+    """v93.36: mirrors the green-claim fix above for social claims. Reported live: a
+    human-rights claim naming Fairtrade-certified bananas in the same sentence
+    ("...een pionier in de import van Fairtrade-bananen") still showed "High" risk, identical
+    to a claim with no named evidence. Deliberately narrower than the green check -- it only
+    fires for the same small set of internationally recognised certification schemes already
+    used for green claims (Fairtrade, GOTS, B Corp, ...), not for an arbitrary named partner
+    or company-specific "commitment" (e.g. "AgroFair" or "Banana Living Wage Commitment"
+    alone would NOT trigger this -- those are not a closed, standardised, independently
+    audited list the way recognised certification schemes are)."""
+    f={'type':'Human-rights / labour-rights claim','risk':'High',
+       'claim':'Delhaize is een trotse partner van het Banana living wage Commitment en werkt daarvoor ondermeer samen met de Europese importeur AgroFair, een pionier in de import van Fairtrade-bananen.'}
+    result=app.enrich_social_finding(dict(f),'living wage')
+    assert result['risk']=='Medium'
+    # a claim naming only a company-specific partner/programme (no recognised scheme) stays High
+    f2={'type':'Human-rights / labour-rights claim','risk':'High',
+        'claim':'Delhaize is een trotse partner van het Banana Living Wage Commitment en werkt samen met de importeur AgroFair.'}
+    result2=app.enrich_social_finding(dict(f2),'living wage')
+    assert result2['risk']=='High'
+
+
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
     """v93.32: Brevo's "unrecognised IP address" error is an ACCOUNT-level security setting
     (Settings -> Security -> Authorised IPs) firing whenever the deployment's outbound IP
@@ -1929,6 +1971,24 @@ def test_occurrence_count_label_distinguishes_repeated_vs_distinct_wording():
     labels={rp.claim_title(c['representative']):rp.occurrence_count_label(c) for c in clusters}
     assert labels['Human-rights claim']==' · same wording, 5 occurrences'
     assert labels['Generic environmental claim']==' · 3 distinct claims'
+
+
+def test_risk_driver_table_shows_the_cluster_dominant_trigger_not_just_the_representative():
+    """v93.36: "FLAGGED WORDING" showed trigger_phrase() of the single REPRESENTATIVE
+    occurrence only (whichever happened to score highest), not necessarily the phrase that
+    actually dominates the cluster. Reported live on Delhaize: a "Generic environmental
+    claim" cluster of 14 occurrences showed "milieuvriendelijk" (2 occurrences) while
+    "ecologisch" (6 occurrences) -- the cluster's actual most common trigger -- was never
+    mentioned. cluster_claims() must surface the dominant phrase across ALL occurrences."""
+    import report_pdf as rp
+    findings=(
+        [_pdf_finding(i,'Generic environmental claim','High',f'Claim {i} using milieuvriendelijk wording.',68,source=f'p{i}') for i in range(2)]
+        +[_pdf_finding(10+i,'Generic environmental claim','High',f'Claim {i} using ecologisch wording instead.',68,source=f'q{i}') for i in range(6)]
+    )
+    for f,phrase in zip(findings[:2],['milieuvriendelijk']*2): f['matched_phrase']=phrase
+    for f in findings[2:]: f['matched_phrase']='ecologisch'
+    cluster=rp.cluster_claims({'claim_inventory':findings})[0]
+    assert cluster['representative']['_dominant_trigger_phrase']=='ecologisch'
 
 
 def test_cluster_claims_does_not_merge_wordings_differing_only_after_120_chars():
