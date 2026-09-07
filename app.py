@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_30_followup_review_fixes"
-APP_RELEASE_LABEL="v93.30"
+APP_VERSION="hostable_v93_31_second_followup_review_fixes"
+APP_RELEASE_LABEL="v93.31"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -146,6 +146,14 @@ BROWSER_USER_AGENTS=[
 # brand's own hostname (e.g. zara.com's real sustainability/CSR reporting lives mainly
 # under the parent group's own domain, not under zara.<tld>). Extend this map as more
 # gaps are found; it is deliberately conservative (kept in sync with PROFILES aliases).
+def _host_has_brand_label(host, brand):
+    """True if `brand` is an exact dot-delimited label of `host` (e.g. "zara" matches
+    "www.zara.com" and "zara.com" but not "zaragoza.com" or "bazaar-outlet.com"). v93.31:
+    both KNOWN_GROUP_DOMAINS lookups below used a bare substring test ("brand in host"),
+    which can false-positive on an unrelated domain that merely contains the brand word."""
+    labels=(host or '').lower().split('.')
+    return (brand or '').lower() in labels
+
 KNOWN_GROUP_DOMAINS={
     "zara":["https://www.inditex.com"],
     "inditex":["https://www.zara.com"],
@@ -527,8 +535,29 @@ def _dedupe_similar_sources(items):
 
 
 class Parser(HTMLParser):
+    # v93.31: every tag transition used to flush handle_data() straight to self.parts as its
+    # own separate fragment, with no distinction between an INLINE element (<strong>, <b>,
+    # <span>, <em>, <a>, ...) and a real block boundary (<p>, <div>, <li>, a heading, ...).
+    # parse_html() joins self.parts with "\n", and downstream sentence-splitting
+    # (_v55_all_matches_sentences) turns every "\n" into ". " -- so "<p>Our products are
+    # <strong>not</strong> carbon neutral.</p>" produced THREE fake "sentences" ("Our products
+    # are.", "not.", "carbon neutral."). That is not just cosmetic: _v55_claim_context_ok()'s
+    # negation check only looks in a short window before the trigger, cut off at the nearest
+    # clause boundary -- with "not" isolated into its own fake sentence by an artificial
+    # period, the negation window no longer reaches "not" at all, so "not carbon neutral"
+    # could be scored as an ordinary affirmative "carbon neutral" claim. Buffer inline text and
+    # only flush it into a new self.parts entry at an actual block boundary.
+    _BLOCK_TAGS={"p","div","li","h1","h2","h3","h4","h5","h6","tr","td","th","br",
+                 "section","article","header","footer","blockquote","ul","ol","table",
+                 "figcaption","dd","dt","pre","address","main","nav","aside","figure",
+                 "form","fieldset","details","summary"}
     def __init__(self):
-        super().__init__(); self.skip_depth=0; self.parts=[]; self.links=[]; self.base_href=None; self.skip_tags={"script","style","noscript","svg","canvas","form"}
+        super().__init__(); self.skip_depth=0; self.parts=[]; self.buffer=[]; self.links=[]; self.base_href=None; self.skip_tags={"script","style","noscript","svg","canvas","form"}
+    def _flush(self):
+        if self.buffer:
+            joined=" ".join(self.buffer)
+            if joined: self.parts.append(joined)
+            self.buffer=[]
     def handle_starttag(self,tag,attrs):
         tag_l=tag.lower()
         # v93.28: an HTML <base href="..."> changes what relative links/hrefs on this page
@@ -538,6 +567,7 @@ class Parser(HTMLParser):
         if tag_l=='base' and self.base_href is None:
             for k,v in attrs:
                 if k.lower()=='href' and v: self.base_href=v; break
+        if tag_l in self._BLOCK_TAGS: self._flush()
         # v86: a single boolean flipped to False the moment ANY skip-tag closed, even a nested
         # one -- "<form><svg>...</svg>text after svg but still inside form</form>" incorrectly
         # let "text after svg" back into the scanned text once </svg> closed, despite the <form>
@@ -554,12 +584,17 @@ class Parser(HTMLParser):
                 if val and any(t in val.lower() for t in ["green","eco","leaf","tree","planet","earth","recycl","sustain","carbon","climate","water-drop","waterdrop","badge","label"]):
                     cues.append(val)
             if cues:
+                # A visual-cue marker is a synthetic signal, not running prose -- keep it out
+                # of whatever inline sentence buffer is in progress rather than splicing it in.
+                self._flush()
                 self.parts.append("VISUAL CLAIM CUE: "+" | ".join(cues)[:240])
         if tag_l=="a":
             for k,v in attrs:
                 if k.lower()=="href" and v: self.links.append(v)
     def handle_endtag(self,tag):
-        if tag.lower() in self.skip_tags and self.skip_depth>0: self.skip_depth-=1
+        tag_l=tag.lower()
+        if tag_l in self.skip_tags and self.skip_depth>0: self.skip_depth-=1
+        if tag_l in self._BLOCK_TAGS: self._flush()
     def handle_data(self,data):
         if not self.skip_depth:
             t=" ".join(data.split())
@@ -569,7 +604,7 @@ class Parser(HTMLParser):
             # actual meaning, plus standalone numbers/percentages. `" ".join(data.split())`
             # already collapses a whitespace-only node to "", so `if t:` is the correct,
             # equally-cheap emptiness check.
-            if t: self.parts.append(t)
+            if t: self.buffer.append(t)
 
 def parse_html(html):
     # v93.30: whole-page distinct-value dedup ("if l not in seen") dropped ANY text fragment
@@ -583,7 +618,7 @@ def parse_html(html):
     # right next to its own sr-only/aria-hidden accessibility duplicate, or a doubled node from
     # malformed markup) without ever deleting a legitimately repeated word or sentence elsewhere
     # on the page.
-    p=Parser(); p.feed(html); out=[]; prev=None
+    p=Parser(); p.feed(html); p._flush(); out=[]; prev=None
     for t in p.parts:
         l=t.lower()
         if l==prev:
@@ -797,7 +832,7 @@ def related_group_sites(url, max_sites=2):
     host=(urlparse(url).hostname or '').lower()
     out=[]
     for brand,domains in KNOWN_GROUP_DOMAINS.items():
-        if brand in host:
+        if _host_has_brand_label(host,brand):
             for d in domains:
                 if (urlparse(d).hostname or '') != host and d not in out:
                     out.append(d)
@@ -960,12 +995,18 @@ def replace_tld_with_be(url):
 
 
 def is_private(host):
+    """SSRF guard: True means "do not fetch this host". v93.31: a DNS/resolution failure
+    used to return False (treated as safe/public), the wrong default for a security check --
+    if we cannot determine that a host is safe, the safe default is to treat it as unsafe
+    and block it, not to let the request through. (This does not by itself close a
+    DNS-rebinding gap -- a name that resolves to a public IP here and a private one at actual
+    connection time -- which needs a separate, pinned-IP connection to fix properly.)"""
     if host in {'localhost','127.0.0.1','0.0.0.0'}: return True
     try:
         for r in socket.getaddrinfo(host,None):
             ip=ipaddress.ip_address(r[4][0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved: return True
-    except Exception: return False
+    except Exception: return True
     return False
 
 
@@ -1277,11 +1318,19 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
 
     # Homepage: direct HTML first so internal links can be discovered; Reader fallback if the
     # direct request is blocked. Reader text cannot provide a reliable link list.
-    homepage_method='direct'; links=[]; homepage_link_base=url
+    homepage_method='direct'; links=[]; homepage_link_base=url; homepage_trusted_host_base=url
     try:
         html,homepage_final_url=fetch_html(url,timeout=min(7,remaining()))
         text,links,base_href=parse_html(html)
         homepage_link_base=_link_resolution_base(url,homepage_final_url,base_href)
+        # v93.31: the domain-TRUST boundary (host, used below for same_domain() checks,
+        # sitemap discovery and common-path guesses) must come only from the real HTTP-level
+        # redirect target, never from an in-page <base href> -- that is page-author-controlled
+        # content, and trusting it here would let a page declare e.g. <base href="https://
+        # evil.example/"> and have the crawler treat an entirely different domain as if it
+        # were the same site. homepage_link_base (which DOES fold in <base href>, correctly,
+        # for resolving this page's own relative links) stays separate from this.
+        homepage_trusted_host_base=homepage_final_url or url
         if len(text)<THIN_CONTENT_CHARS and ENABLE_READER_FALLBACK and remaining()>4:
             try:
                 reader_text=fetch_reader_text(url,timeout=min(9,remaining()))
@@ -1300,7 +1349,17 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             _log_fetch_failure(log,url,direct_error,source='homepage')
             raise
     _log_fetch_success(log,url,len(text),method=homepage_method,source='homepage',content_kind='html')
-    host=urlparse(url).hostname or ''
+    # v93.31: host was derived from the ORIGINALLY REQUESTED url, not where the homepage
+    # actually ended up after a redirect. homepage_link_base already resolves to the final
+    # URL (falling back to the requested one when no redirect/reader-fallback info is
+    # available), so add_candidate()'s same_domain() check, sitemap discovery and the
+    # COMMON_PUBLIC_PATHS guesses below must all be anchored on it too -- otherwise a site
+    # that redirects to a different domain (old.example -> new.example/en/) has every one of
+    # its own same-domain links, sitemap entries and common-path guesses rejected as
+    # "cross-domain", even though the correctly-resolved candidate URL is exactly where the
+    # crawl is actually reading from. Confirmed live: 0 follow-up pages fetched after such a
+    # redirect, despite the link itself resolving to the correct address.
+    host=urlparse(homepage_trusted_host_base).hostname or urlparse(url).hostname or ''
     pages=[url]; chunks=[text]
 
     candidates=[]; seen={_canonical_url(url)}
@@ -1333,12 +1392,12 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             # Cap discovery to a bounded slice of whatever time is left so the page-fetch
             # loop always keeps a guaranteed share of the budget.
             sitemap_deadline=min(deadline,time.time()+max(4,min(10,remaining()*0.5)))
-            for u in discover_sitemap_urls(url,deadline=sitemap_deadline):
+            for u in discover_sitemap_urls(homepage_trusted_host_base,deadline=sitemap_deadline):
                 add_candidate(u,'sitemap')
         except Exception:
             pass
 
-    scheme=urlparse(url).scheme or 'https'
+    scheme=urlparse(homepage_trusted_host_base).scheme or urlparse(url).scheme or 'https'
     for path in COMMON_PUBLIC_PATHS:
         add_candidate(f'{scheme}://{host}{path}','common_path')
 
@@ -1384,7 +1443,13 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         if discovered:
             discovered.sort(key=_candidate_score)
             candidates[cursor:cursor]=discovered[:max(0,max_attempts-attempts)]
-    return '\n\n'.join(_distribute_text_budget(chunks,150000)), pages
+    # v93.31: also return the raw per-page chunks (chunks[i] always corresponds to pages[i] --
+    # both are appended together, nowhere separately) alongside the already-distributed,
+    # joined `text`, so a caller crawling MULTIPLE sites (crawl_with_related_sites()) can
+    # flatten every page from every site into one shared budget distribution instead of
+    # distributing this site's already-fairly-shared text as a single opaque unit against
+    # other sites' text -- which could truncate this site's own last page(s) all over again.
+    return '\n\n'.join(_distribute_text_budget(chunks,150000)), pages, chunks
 
 COMPANY_SUFFIXES=r'(?:Corp\.?|Inc\.?|Ltd\.?|LLC|LLP|PLC|N\.?V\.?|S\.?A\.?|B\.?V\.?|GmbH|AG|SE|Group|Holdings?|Company|Co\.?|Limited)'
 _NAME_CAP=r'A-ZÀ-ÖØ-Þ'
@@ -3515,13 +3580,16 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs)
     if empco_blacklist_floor:
         green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
+    # v93.31: green_fs/social_fs are the FULL analysis lists -- only the
+    # 'green_findings'/'social_findings' keys below get a display-only top-12 selection.
+    green_findings_display=green_fs[:12]; social_findings_display=social_fs[:12]
     methodology='Sustainability Claims Risk Scan. This is a separate internal-document scan. The uploaded file is assessed on its own and is not combined with website content or external public-source search. Internal documents are assessed mainly for claim wording, substantiation gaps, governance evidence, consistency risks and potential future reuse in client-facing communication. Scores use a continuous calibrated calculation method: claim wording, evidence gap, retained external stakeholder context, sector/channel sensitivity and direct EmpCo or Forced Labour Regulation indicators.'
     summary=(f"The scan reviewed the uploaded document for {comp['company']} and identified a {level(overall).lower()} "
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
              "evidence available to support it. This is an initial screening result, not a legal finding.")
     return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','company_identity_check':company_identity_check,'empco_blacklist_floor_applied':empco_blacklist_floor,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
     """Turns a raw fetch exception into a clear, non-technical explanation."""
@@ -3719,6 +3787,12 @@ def analyse_url_v27(raw, company_number=''):
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
+    # v93.31: green_fs/social_fs are the FULL analysis lists (scoring, red flags, the action
+    # plan, regulatory summary and source attribution above all already used the complete
+    # picture) -- only the 'green_findings'/'social_findings' keys actually rendered as the
+    # report's "Key sustainability claim signals" table get a display-only top-12 selection,
+    # already sorted by severity from detect_green_claims()/detect_claims().
+    green_findings_display=green_fs[:12]; social_findings_display=social_fs[:12]
     return {'version':APP_VERSION,'source_label':url,'original_url':original_url,'fallback_note':fallback_note,'company_identity_check':company_identity_check,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
         'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),
         'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,
@@ -3728,7 +3802,7 @@ def analyse_url_v27(raw, company_number=''):
         'data_reliability_warning':reliability_warning,
         'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'pages_retrieved_via_fallback':len([e for e in crawl_log if e.get('ok') and e.get('method')=='reader_fallback']),'detail':crawl_log},
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
-        'findings':all_claims,'green_findings':green_fs,'social_findings':social_fs,
+        'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,
         'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':channel_analysis,'related_source_notes':related_notes,
         'report':{'summary':summary,'rationale':methodology+' '+audience['note'],'rewrite_guidance':'Make green and social claims specific, scoped, evidenced, audience-appropriate and consistent with public information. For forced-labour or modern-slavery wording, avoid implying product/supply-chain assurance unless traceability, risk assessment, remediation and response evidence is available.','pages_reviewed':pages,'standards_overview':EMPCO_LENS+STANDARDS},
         'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,
@@ -6674,7 +6748,19 @@ def detect_green_claims(text):
                               'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.',
                               'green', 62):
                 hits += 1
-    fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:12]
+    # v93.31: this used to cap at 12 here, inside the analysis function itself -- so every
+    # downstream consumer (scoring, source/page attribution, red flags, the action plan,
+    # regulatory summary) only ever saw the top 12 findings, not just the report's displayed
+    # table. An independent reviewer's test with 20 distinct product claims confirmed only
+    # 12 survived into the analysis. _score_cap()/_recalibrated_score() already saturate the
+    # count-based scoring contribution at len(material)>=6 (count_factor capped at 20), so
+    # returning the full list here does not let more scanned pages inflate the score further
+    # -- it only makes source attribution, red flags and the action plan complete. The
+    # generous ceiling below is a pathological-input safety bound only (e.g. a product
+    # catalogue page with hundreds of near-identical listings), not a display limit; the
+    # report's own display-only top-12 selection is applied separately, right before the
+    # API response is built.
+    fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:200]
     if not fs:
         fs.append(enrich_green_finding({'dimension':'green','type':'No material problematic green claim retained','risk':'Low','claim':'No exact problematic green claim was retained from the reviewed material.','issue':'The scan did not retain a direct EmpCo blacklisted-practice indicator or high-sensitivity environmental claim. General sustainability context is not scored as a problematic claim unless it contains specific claim wording.','rewrite':'No rewrite is needed unless the company wants to make a specific environmental claim.','claim_score':8,'standards':['General green-claim quality review'],'action':'Keep environmental claims specific, scoped and evidence-backed.','problematic_terms':[]},''))
     return fs
@@ -6698,7 +6784,10 @@ def detect_claims(text):
                 if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score):
                     hits += 1
                     if hits >= 3: break
-    fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:12]
+    # v93.31: see the matching note in detect_green_claims() -- this cap moved out of the
+    # analysis layer. The 200 ceiling here is a pathological-input safety bound, not a
+    # display limit; the report's display-only top-12 selection happens separately.
+    fs=sorted(fs,key=lambda f:f.get('claim_score',0), reverse=True)[:200]
     if not fs:
         fs.append({'dimension':'social','type':'No material problematic social claim retained','risk':'Low','claim':'No exact problematic social claim was retained from the reviewed material.','issue':'The scan did not retain a material high-risk social claim. Neutral references to suppliers, people, communities or employees are not scored unless they imply assurance, control, full coverage, certification, traceability, due diligence, forced-labour assurance or other high-stakes social performance.','rewrite':'No rewrite is needed unless the company wants to make a specific social-performance claim.','claim_score':8,'standards':['General claim-quality review'],'action':'Keep any future social claims specific, scoped and evidenced.','problematic_terms':[]})
     return fs
@@ -7991,19 +8080,32 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
     """Generic multi-domain official crawl with a protected primary-site budget."""
     if overall_deadline is None:
         overall_deadline=time.time()+CRAWL_BUDGET_SECONDS
-    crawl_log=[]; source_notes=[]; all_text=[]; all_pages=[]; primary_error=None
+    # v93.31: this used to collect one already-joined, already-internally-distributed text
+    # blob PER SITE into all_text, then apply _distribute_text_budget() again across those
+    # whole-site blobs as opaque units. A site's own pages are already fairly shared within
+    # ITS OWN crawl() call, but that outer distribution could still truncate the TAIL of an
+    # already-fair blob when merging in a related site -- silently zeroing that site's own
+    # last page(s) all over again. Confirmed by an independent reviewer: primary homepage
+    # 49000 chars, first subpage 40959, but the SECOND subpage 0, purely from this
+    # per-site-blob truncation, despite crawl()'s own per-page fix working correctly within
+    # a single site. Collect a FLAT list of per-page chunks across every site instead, and
+    # distribute the budget once across that whole flat list.
+    crawl_log=[]; source_notes=[]; all_chunks=[]; all_pages=[]; primary_error=None
     host=(urlparse(original_url).hostname or '').lower()
     hint=company_name_hint or _v65_scan_input_company_hint('',original_url)
     known=[]
     for brand,domains in KNOWN_GROUP_DOMAINS.items():
-        if brand in host:
+        if _host_has_brand_label(host,brand):
             known.extend(domains)
     reserve=8 if known else 0
     primary_deadline=max(time.time()+6,overall_deadline-reserve) if reserve else overall_deadline
     try:
-        txt,pages=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,deadline=primary_deadline,log=crawl_log)
+        txt,pages,chunks=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,deadline=primary_deadline,log=crawl_log)
         if txt.strip():
-            all_text.append(txt); all_pages.extend(pages)
+            # chunks[0] (the primary homepage) is intentionally left unmarked -- it is the
+            # overall first segment of the final combined text, matching what
+            # extract_page_segments() already assumes for its very first segment.
+            all_chunks.extend(chunks); all_pages.extend(pages)
     except Exception as exc:
         primary_error=exc
     # v93.28: `known` (a curated static mapping) and _v65_discover_related_official_sites()
@@ -8015,7 +8117,7 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
     # company site", silently attributing a different company's claims to this scan. Track
     # which candidates actually need a post-fetch identity check.
     candidates=[(c,True) for c in dict.fromkeys(known)]
-    limited=(len(all_pages)<4 or sum(len(x) for x in all_text)<3500)
+    limited=(len(all_pages)<4 or sum(len(c) for c in all_chunks)<3500)
     seen_candidates={c for c,_ in candidates}
     if limited and time.time()<overall_deadline-5:
         for c in _v65_discover_related_official_sites(hint,original_url,limit=2):
@@ -8030,7 +8132,7 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             break
         try:
             remaining_slots=max(2,min(4,CRAWL_TARGET_EXTRA_PAGES-max(0,len(all_pages)-1)))
-            rt,rpages=crawl(candidate,max_extra_pages=remaining_slots,deadline=overall_deadline,log=crawl_log,candidate_source='related_domain')
+            rt,rpages,rchunks=crawl(candidate,max_extra_pages=remaining_slots,deadline=overall_deadline,log=crawl_log,candidate_source='related_domain')
             if len(rt)<=300:
                 continue
             if not pre_verified:
@@ -8046,14 +8148,25 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
                 if mention_count<2 or not has_relation_term:
                     # Too weak to trust as the same legal entity -- do not merge its content in.
                     continue
-            all_text.append('\n\nRELATED OFFICIAL COMPANY SITE: '+candidate+'\n'+rt)
+            # v93.31: rchunks[0] (this related site's own homepage) is bare/unmarked from
+            # crawl()'s perspective -- fine when it is the very first segment of the whole
+            # combined text, but it is NOT that here, so it needs its own "PAGE: url" marker
+            # like every other page, or it would silently glue onto whatever chunk precedes
+            # it once everything is flattened and re-joined below. rchunks[1:] already carry
+            # their own PAGE:/REPORT (PDF): markers from crawl() itself.
+            if rchunks:
+                all_chunks.append('\n\nPAGE: '+candidate+'\n'+rchunks[0])
+                all_chunks.extend(rchunks[1:])
             all_pages.extend([p for p in rpages if p not in all_pages])
             source_notes.append(f'Official related company site also checked: {candidate}')
         except Exception:
             pass
-    if not all_text:
+    if not all_chunks:
         raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
-    return '\n\n'.join(_distribute_text_budget(all_text,180000,floor_chars=8000)),all_pages[:16],source_notes,crawl_log
+    # v93.31: distribute the budget once across every page from every site, flat -- not per
+    # site as an opaque unit (see the long comment above `all_chunks=[]`). floor_chars matches
+    # crawl()'s own per-page floor now that the unit here is a page, not a whole site.
+    return '\n\n'.join(_distribute_text_budget(all_chunks,180000,floor_chars=4000)),all_pages[:16],source_notes,crawl_log
 
 
 

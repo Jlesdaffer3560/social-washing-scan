@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_30_followup_review_fixes'
+    assert app.APP_VERSION == 'hostable_v93_31_second_followup_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1163,6 +1163,10 @@ def test_open_public_url_routes_through_the_safe_opener(monkeypatch):
         calls.append(req.full_url)
         return FakeResponse()
     monkeypatch.setattr(app._SAFE_OPENER,'open',fake_open)
+    # This sandbox may have no real DNS/network access, under which is_private()'s v93.31
+    # fail-closed-on-resolution-error behaviour would (correctly, for a real unresolvable
+    # host) block the request -- irrelevant to what this test actually checks, so isolate it.
+    monkeypatch.setattr(app,'is_private',lambda host: False)
     data,ctype,final_url=app._open_public_url('https://example.com/')
     assert calls and calls[0]=='https://example.com/'
     assert data==b'hello world'
@@ -1193,9 +1197,14 @@ def test_html_parser_does_not_drop_repeated_words_in_unrelated_sentences():
     text,_,_=app.parse_html(html)
     words=text.lower().split()
     assert words.count('not')==2, f'expected both negations to survive, got: {text!r}'
-    # a genuinely duplicated adjacent node (e.g. a visible span right next to its own
-    # sr-only/aria-hidden duplicate) must still collapse to one occurrence
-    html2='<span>Home</span><span>Home</span><p>Real content follows here with more words.</p>'
+    # a genuinely duplicated adjacent BLOCK (e.g. a paragraph doubled by malformed markup, or
+    # a visible/sr-only accessibility pair each wrapped in its own block) must still collapse
+    # to one occurrence. Two adjacent identical INLINE spans (e.g. <span>Home</span><span>Home
+    # </span>) are a separate case: v93.31 now buffers inline content within its enclosing
+    # block instead of splitting on every inline tag (see the negation-preservation fix
+    # above), so they merge into one "Home Home" block entry rather than two separate parts
+    # to compare -- a harmless redundancy, not a meaning-loss bug.
+    html2='<p>Home</p><p>Home</p><p>Real content follows here with more words.</p>'
     text2,_,_=app.parse_html(html2)
     assert text2.lower().split('\n').count('home')==1
 
@@ -1300,6 +1309,58 @@ def test_claim_detection_captures_multiple_distinct_claims_sharing_a_trigger():
     assert 'bakery' in claims_lower and 'dairy' in claims_lower
 
 
+def test_crawl_follows_links_after_a_cross_domain_redirect(monkeypatch):
+    """v93.31: crawl() resolved a page's relative links against the correct final URL
+    (v93.28), but the domain-TRUST check (add_candidate()'s same_domain(candidate, host))
+    still compared against the ORIGINALLY REQUESTED domain, not where the homepage actually
+    ended up. A homepage redirecting old.example -> new.example/en/ had its own correctly-
+    resolved relative link ("sustainability" -> https://new.example/en/sustainability)
+    rejected as "cross-domain", fetching zero follow-up pages. host, sitemap discovery and
+    the common-path guesses must all be anchored on the real post-redirect domain."""
+    monkeypatch.setattr(app,'CRAWL_MAX_PAGE_ATTEMPTS',30)
+    html=('<html><body><a href="sustainability">Our sustainability approach</a></body></html>'
+          +'x'*200)
+    def fake_fetch_html(url,timeout=7):
+        assert url=='https://old.example'
+        return html,'https://new.example/en/'
+    fetched_pages=[]
+    def fake_fetch_page_content(url,timeout=7):
+        fetched_pages.append(url)
+        if url=='https://new.example/en/sustainability':
+            return 'Real sustainability content here, plenty of usable text.'*10,'html','direct',[],url
+        raise ValueError('not found')
+    monkeypatch.setattr(app,'fetch_html',fake_fetch_html)
+    monkeypatch.setattr(app,'fetch_page_content',fake_fetch_page_content)
+    monkeypatch.setattr(app,'discover_sitemap_urls',lambda *a,**k: [])
+    txt,pages,chunks=app.crawl('https://old.example',max_extra_pages=5)
+    assert 'https://new.example/en/sustainability' in pages
+    assert 'Real sustainability content' in txt
+
+
+def test_crawl_base_href_does_not_expand_the_trusted_domain(monkeypatch):
+    """v93.31: the domain-trust boundary (host) must come only from the real HTTP-level
+    redirect target, never from an in-page <base href> -- that is page-author-controlled
+    content. A page declaring <base href="https://evil.example/"> must not make the crawler
+    treat evil.example as the same trusted site; a relative link resolved through that base
+    must still be rejected as cross-domain, exactly like any other unrelated external link."""
+    html=('<html><head><base href="https://evil.example/"></head>'
+          '<body><a href="sustainability">Our sustainability approach</a></body></html>'
+          +'x'*200)
+    def fake_fetch_html(url,timeout=7):
+        assert url=='https://real-company.example'
+        return html,'https://real-company.example'  # no HTTP redirect happened
+    fetched_pages=[]
+    def fake_fetch_page_content(url,timeout=7):
+        fetched_pages.append(url)
+        return 'Should never be fetched.'*10,'html','direct',[],url
+    monkeypatch.setattr(app,'fetch_html',fake_fetch_html)
+    monkeypatch.setattr(app,'fetch_page_content',fake_fetch_page_content)
+    monkeypatch.setattr(app,'discover_sitemap_urls',lambda *a,**k: [])
+    txt,pages,chunks=app.crawl('https://real-company.example',max_extra_pages=5)
+    assert not any('evil.example' in p for p in fetched_pages)
+    assert not any('evil.example' in p for p in pages)
+
+
 def test_related_company_sites_requires_company_name_in_fetched_content(monkeypatch):
     """v93.28: related_company_sites() is a bare same-brand-string TLD swap (lidl.be ->
     lidl.com/.eu/.nl/.fr/.de) with no ownership check at all -- an unrelated company that
@@ -1313,12 +1374,117 @@ def test_related_company_sites_requires_company_name_in_fetched_content(monkeypa
     monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: ['https://unrelatedbrand.com'])
     def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
         if 'unrelatedbrand' in url:
-            return 'A completely unrelated business with no mention of the target company at all. '*20,[url]
-        return 'Acme Corp is a real company with a thin primary site.',[url]
+            text='A completely unrelated business with no mention of the target company at all. '*20
+            return text,[url],[text]
+        text='Acme Corp is a real company with a thin primary site.'
+        return text,[url],[text]
     monkeypatch.setattr(app,'crawl',fake_crawl)
     txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
     assert not any('unrelatedbrand' in n for n in notes)
     assert 'unrelated business' not in txt.lower()
+
+
+def test_detect_green_claims_keeps_more_than_twelve_distinct_claims():
+    """v93.31: detect_green_claims()/detect_claims() used to cap the returned list at 12
+    INSIDE the analysis function itself, so every downstream consumer -- scoring, source
+    attribution, red flags, the action plan, regulatory summary -- only ever saw the top 12,
+    not just the report's displayed table. An independent reviewer's test with 20 distinct
+    product claims confirmed only 12 survived into the analysis. _score_cap() already
+    saturates its count-based scoring contribution well below 12 findings, so keeping the
+    full list here does not let more scanned pages inflate the score -- it only makes
+    analysis and source attribution complete. A generous pathological-input safety ceiling
+    (200) replaces the old display-oriented cap of 12."""
+    sentences=[f'Our product line {i} is eco-friendly, certified by an independent auditor {i}.' for i in range(1,21)]
+    text=' '.join(sentences)
+    findings=app.detect_green_claims(text)
+    assert len(findings)>12, f'expected more than 12 distinct claims to survive analysis, got {len(findings)}'
+
+
+def test_uploaded_document_analysis_separates_full_inventory_from_display_cap():
+    """v93.31: the report's 'green_findings'/'social_findings' keys (the displayed "Key
+    sustainability claim signals" table) should still show a bounded top-12 selection for
+    readability, but the full claim inventory ('findings'/'claim_inventory', used for source
+    attribution and further review) must not be silently cut to the same 12."""
+    sentences=[f'Our product line {i} is eco-friendly, certified by an independent auditor {i}.' for i in range(1,21)]
+    text=' '.join(sentences)
+    result=app.analyse_uploaded_document('claims.txt',text,company_name_hint='Acme Corp')
+    assert len(result['green_findings'])<=12
+    green_in_inventory=[c for c in result['findings'] if c.get('dimension')=='Green']
+    assert len(green_in_inventory)>12, (
+        f"expected the full claim inventory to keep more than 12 green claims, got {len(green_in_inventory)}")
+
+
+def test_inline_markup_does_not_break_negation_detection():
+    """v93.31: every tag transition used to flush handle_data() as its own separate
+    self.parts fragment, with no distinction between an inline element (<strong>, <b>,
+    <span>) and a real block boundary (<p>, <div>, <li>). parse_html() joins fragments with
+    "\\n", and sentence-splitting turns every "\\n" into ". " -- so "<p>Our products are
+    <strong>not</strong> carbon neutral.</p>" produced three fake "sentences" ("Our products
+    are.", "not.", "carbon neutral."), isolating "not" into its own fragment. This is not
+    just cosmetic: _v55_claim_context_ok()'s negation check only looks in a short window
+    before the trigger, cut off at the nearest clause boundary -- with "not" isolated by an
+    artificial period, the negation window no longer reached it, so a page saying "NOT carbon
+    neutral" could be scored as an ordinary affirmative "carbon neutral" claim."""
+    html='<p>Our products are <strong>not</strong> carbon neutral.</p>'
+    text,_,_=app.parse_html(html)
+    assert text=='Our products are not carbon neutral.'
+    excerpt=app._v55_sentence_list(text,'carbon neutral')
+    assert app._v55_claim_context_ok(excerpt,'carbon neutral','green') is False, (
+        f'negation should be detected, but claim_context_ok accepted: {excerpt!r}')
+
+
+def test_is_private_fails_closed_on_resolution_error(monkeypatch):
+    """v93.31: is_private() is an SSRF guard -- True means "block this host". It used to
+    return False (treated as safe/public) when DNS resolution itself raised, the wrong
+    default for a security check: if we cannot determine a host is safe, the safe default is
+    to block it, not let the request through."""
+    def raising_getaddrinfo(host,port):
+        raise OSError('simulated DNS failure')
+    monkeypatch.setattr(app.socket,'getaddrinfo',raising_getaddrinfo)
+    assert app.is_private('some-host-that-fails-to-resolve.example') is True
+
+
+def test_host_has_brand_label_rejects_substring_false_positives():
+    """v93.31: KNOWN_GROUP_DOMAINS lookups used a bare substring test ("brand in host"),
+    which can false-positive on an unrelated domain that merely contains the brand word as
+    part of a longer label (e.g. "zara" inside "zaragoza.com")."""
+    assert app._host_has_brand_label('www.zara.com','zara') is True
+    assert app._host_has_brand_label('zara.com','zara') is True
+    assert app._host_has_brand_label('shop.zara.com','zara') is True
+    assert app._host_has_brand_label('zaragoza.com','zara') is False
+    assert app._host_has_brand_label('bazaar-outlet.com','zara') is False
+
+
+def test_crawl_with_related_sites_does_not_zero_out_a_full_subpage(monkeypatch):
+    """v93.31: crawl_with_related_sites() distributed the budget across whole-SITE blobs
+    (each already internally distributed by crawl() itself), not across individual pages --
+    so merging in a related site's blob could truncate the TAIL of the primary site's
+    already-fair blob, zeroing a full subpage all over again. Reproduced by an independent
+    reviewer: primary homepage 49000 chars, first subpage 40959, but the SECOND subpage 0.
+    Every page from every site must get a non-zero share once the budget is distributed as
+    one flat list."""
+    monkeypatch.setattr(app,'KNOWN_GROUP_DOMAINS',{})
+    monkeypatch.setattr(app,'_v65_discover_related_official_sites',lambda *a,**k: [
+        'https://related.example'])
+    monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: [])
+    primary_home='H'*49000
+    primary_sub1='\n\nPAGE: https://primary.example/sub1\n'+'S'*49000
+    primary_sub2='\n\nPAGE: https://primary.example/sub2\n'+'T'*49000
+    related_home='R'*89949
+    def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        if 'related.example' in url:
+            chunks=[related_home]
+            pages=['https://related.example']
+            return '\n\n'.join(chunks),pages,chunks
+        chunks=[primary_home,primary_sub1,primary_sub2]
+        pages=['https://primary.example','https://primary.example/sub1','https://primary.example/sub2']
+        return '\n\n'.join(chunks),pages,chunks
+    monkeypatch.setattr(app,'crawl',fake_crawl)
+    txt,pages,notes,log=app.crawl_with_related_sites('https://primary.example',company_name_hint='Primary Co')
+    # Every one of the four pages' distinctive filler character must survive into the final
+    # combined text -- none may be truncated down to zero.
+    for marker,label in [('H','primary homepage'),('S','primary sub1'),('T','primary sub2'),('R','related homepage')]:
+        assert marker in txt, f'{label} was truncated to zero characters'
 
 
 def test_build_confidence_uses_actually_analysed_page_count():
@@ -1354,9 +1520,11 @@ def test_related_company_sites_rejects_single_mention_without_relation_signal(mo
         if 'acmecorp.eu' in url:
             # Mentions "Acme Corp" exactly once, in passing, with no official/corporate/
             # sustainability-reporting signal anywhere -- e.g. a reseller comparing prices.
-            return ('Our shop stocks products from many brands including Acme Corp and others. '
-                     'Check out our weekly deals and free shipping offers today.')*3,[url]
-        return 'Acme Corp is a real company with a thin primary site.',[url]
+            text=('Our shop stocks products from many brands including Acme Corp and others. '
+                     'Check out our weekly deals and free shipping offers today.')*3
+            return text,[url],[text]
+        text='Acme Corp is a real company with a thin primary site.'
+        return text,[url],[text]
     monkeypatch.setattr(app,'crawl',fake_crawl)
     txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
     assert not any('acmecorp.eu' in n for n in notes)
