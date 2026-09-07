@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_25_history_sort_fix"
-APP_RELEASE_LABEL="v93.25"
+APP_VERSION="hostable_v93_26_pdf_ligature_artifact_fix"
+APP_RELEASE_LABEL="v93.26"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3122,6 +3122,13 @@ def extract_pdf_text_best_effort(data, max_pages=60):
                 if sum(len(p) for p in parts) > 200000:
                     break
             txt=' '.join(parts)
+            # pypdf emits a literal "\NNN" octal-escape placeholder (four printable
+            # characters, not an actual control byte) for glyphs it cannot resolve via a
+            # font's /Differences or ToUnicode map -- observed in practice as a lost "ff"
+            # ligature (e.g. "offer" -> "o\036er") in subset-encoded corporate PDF fonts.
+            # Strip these before they surface as visible gibberish in quoted claim text,
+            # reports and emails.
+            txt=re.sub(r'\\[0-7]{1,3}', '', txt)
             txt=re.sub(r'\s+', ' ', txt).strip()
             if len(txt) >= 80:
                 return txt[:90000]

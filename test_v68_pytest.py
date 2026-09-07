@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_25_history_sort_fix'
+    assert app.APP_VERSION == 'hostable_v93_26_pdf_ligature_artifact_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1111,6 +1111,27 @@ def test_decode_uploaded_document_rejects_invalid_base64():
         assert False, 'expected ValueError'
     except ValueError as e:
         assert 'not valid base64' in str(e).lower()
+
+
+def test_pdf_extraction_strips_unresolved_glyph_octal_artifacts(monkeypatch):
+    """v93.26: pypdf emits a literal "\\NNN" placeholder (four printable characters, not
+    an actual control byte) for a glyph it cannot resolve via a subset-encoded PDF font's
+    /Differences or ToUnicode map. Reproduced live on Colruyt Group's annual report PDF,
+    where a lost "ff" ligature surfaced verbatim as 'o\\036er' inside a quoted claim on the
+    scan results page -- visibly broken text in a client-facing report. These artifacts
+    must be stripped, not shown to the reader."""
+    class FakePage:
+        def extract_text(self):
+            return ('What we o\\036er sustainable sourcing and innovative farming to our own '
+                     'local production \\227 enables us to build long-term trust with every '
+                     'supplier and customer we work with across our operations.')
+    class FakeReader:
+        def __init__(self,data): self.pages=[FakePage()]
+    fake_pypdf=type('FakePypdfModule',(),{'PdfReader':FakeReader})
+    monkeypatch.setattr(app,'_get_pypdf',lambda: fake_pypdf)
+    txt=app.extract_pdf_text_best_effort(b'%PDF-fake')
+    assert '\\036' not in txt and '\\227' not in txt
+    assert 'o\\036er' not in txt and '\\227 enables' not in txt
 
 
 def test_analyse_url_v27_prefers_kbo_official_website_over_name_resolution(monkeypatch):
