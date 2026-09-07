@@ -1,9 +1,20 @@
 import importlib.util
+import sys
+import urllib.request
 from pathlib import Path
 
 APP=Path(__file__).with_name('app.py')
 spec=importlib.util.spec_from_file_location('durably_app_v60',APP)
 mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+# Loading app.py under a separate module name re-runs its module-level
+# urllib.request.install_opener(_SAFE_OPENER) with a NEW opener object, silently replacing the
+# process-wide opener the canonical `app` module (if already imported elsewhere in the same
+# pytest session) installed -- e.g. breaking test_v68_pytest.py's
+# test_ssrf_redirect_guard_is_actually_wired_into_used_requests, which checks
+# urllib.request._opener is app._SAFE_OPENER. Restore the canonical module's opener (if it's
+# already loaded) so this file's own module reload doesn't leak into later test files.
+if 'app' in sys.modules and hasattr(sys.modules['app'],'_SAFE_OPENER'):
+    urllib.request.install_opener(sys.modules['app']._SAFE_OPENER)
 
 RESULTS=[
  {'title':'Investigation launched against Shein for possible misleading environmental claims','url':'https://en.agcm.it/en/media/press-releases/2024/9/PS12709','content':'The Italian Competition Authority opened an investigation into possible misleading environmental claims by Shein.','score':0.95,'provider':'Tavily'},
@@ -29,14 +40,20 @@ assert not any('sheingroup.com' in u for u in surls), social
 ext_article=RESULTS[-1]
 assert not mod.is_company_owned_source(ext_article,'Shein',['https://www.sheingroup.com'])
 assert mod.is_company_owned_source(RESULTS[4],'Shein',['https://www.sheingroup.com'])
-assert mod.APP_VERSION=='hostable_v60_external_signal_recall_precision'
+# Dropped the APP_VERSION=='hostable_v60_...' pin: it only ever recorded what version existed
+# when this test was written, not anything about the external-signal logic this test actually
+# exercises, and it goes stale on every release -- this file has been failing on that line
+# alone (not on any real regression) since long before this cleanup.
 print('green retained',len(green),[x['category'] for x in green])
 print('social retained',len(social),[x['category'] for x in social])
 print('V60 external-signal tests passed')
 
 # Query orchestration regression: generic searches must run even when claim-specific findings are sparse.
 mod.TAVILY_API_KEY='test-key'
-def fake_search(query,max_results=6):
+# search_public_sources() gained topic/include_domains/exclude_domains/search_depth keyword
+# arguments (app.py:search_public_sources) since this test was written -- accept and ignore
+# them here rather than pinning the mock to an exact, ever-drifting call signature.
+def fake_search(query,max_results=6,**kwargs):
     # Return a different fixture depending on the query family.
     if 'greenwashing' in query or 'environmental claims' in query or 'sustainability claims' in query:
         return RESULTS[:2]+[RESULTS[-1]],[{'provider':'Mock','status':'ok','results':3}]

@@ -92,11 +92,17 @@ finally:
 # 9. The actual related-site crawler must preserve budget and append corporate claims.
 orig_crawl=app.crawl
 calls=[]
+# v93.31: crawl() gained a third return value (per-page chunks, chunks[i] corresponding to
+# pages[i]) since this mock was written -- crawl_with_related_sites() now unpacks 3 values
+# and raised ValueError with only 2. Return a chunks list matching each page's own text.
 def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
     calls.append((url,candidate_source))
     if 'sheingroup.com' in url:
-        return company_text*2,['https://www.sheingroup.com','https://www.sheingroup.com/sustainability']
-    return 'SHEIN fashion storefront and product catalogue.',['https://www.shein.com']
+        pages=['https://www.sheingroup.com','https://www.sheingroup.com/sustainability']
+        return company_text*2,pages,[company_text*2]*len(pages)
+    pages=['https://www.shein.com']
+    text='SHEIN fashion storefront and product catalogue.'
+    return text,pages,[text]*len(pages)
 app.crawl=fake_crawl
 try:
     text,pages,notes,log=app.crawl_with_related_sites('https://www.shein.com',overall_deadline=app.time.time()+20)

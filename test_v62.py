@@ -2,6 +2,8 @@
 import importlib.util
 import io
 import json
+import sys
+import urllib.request
 from pathlib import Path
 from pypdf import PdfReader
 
@@ -15,8 +17,20 @@ def load(name, path):
 
 app = load("app_v62", ROOT / "app.py")
 report = load("report_v62", ROOT / "report_pdf.py")
+# Loading app.py under a separate module name ("app_v62", shadowed here by the local `app`
+# variable above) re-runs its module-level urllib.request.install_opener(_SAFE_OPENER) with a
+# NEW opener object, silently replacing the process-wide opener the CANONICAL `app` module (if
+# already imported elsewhere in the same pytest session, under sys.modules['app']) installed --
+# e.g. breaking test_v68_pytest.py's test_ssrf_redirect_guard_is_actually_wired_into_used_requests,
+# which checks urllib.request._opener is app._SAFE_OPENER. Restore the canonical module's opener
+# (if it's already loaded) so this file's own module reload doesn't leak into later test files.
+if 'app' in sys.modules and hasattr(sys.modules['app'],'_SAFE_OPENER'):
+    urllib.request.install_opener(sys.modules['app']._SAFE_OPENER)
 
-assert app.APP_VERSION == "hostable_v72_legal_basis_classification"
+# Dropped the APP_VERSION pin: it only ever recorded what version existed when this test was
+# last touched (already drifted once, from v62 to v72, and now far past that too), not
+# anything about the logic actually exercised below -- it goes stale on every release.
+assert app.APP_VERSION
 
 positive = {
     "title": "Company achieves carbon-neutral operations",
@@ -66,7 +80,10 @@ sample = {
 
 pdf = report.build_company_report_pdf(sample)
 reader = PdfReader(io.BytesIO(pdf))
-assert len(reader.pages) == 2
+# v93.41: the report now separates into dedicated pages by reason for reading (overview /
+# detailed evidence / external context / appendix) instead of packing as much as fits before
+# each page break, so even a small scan like this one no longer fits in 2 pages.
+assert len(reader.pages) >= 3, len(reader.pages)
 text = "\n".join(page.extract_text() or "" for page in reader.pages)
 assert "DATA RELIABILITY" in text
 assert "A low risk score from this scan may reflect limited access" in text
