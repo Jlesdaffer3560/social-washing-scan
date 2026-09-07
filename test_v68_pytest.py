@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_28_crawl_and_detection_review_fixes'
+    assert app.APP_VERSION == 'hostable_v93_29_related_site_identity_check'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1250,6 +1250,27 @@ def test_claim_detection_finds_later_occurrence_when_first_is_rejected():
     assert matches, 'expected the later, concrete carbon-neutral claim to be detected'
     assert 'independent auditor' in matches[0]['claim'].lower()
     assert 'would be very proud' not in matches[0]['claim'].lower()
+
+
+def test_related_company_sites_requires_company_name_in_fetched_content(monkeypatch):
+    """v93.28: related_company_sites() is a bare same-brand-string TLD swap (lidl.be ->
+    lidl.com/.eu/.nl/.fr/.de) with no ownership check at all -- an unrelated company that
+    happens to share a common brand word under a different country TLD could be pulled in
+    and labelled "Official related company site" in crawl_with_related_sites(), silently
+    attributing a different company's claims to this scan. A candidate discovered only via
+    that unverified path must now actually mention the target company/brand in its own
+    fetched content before being merged in."""
+    monkeypatch.setattr(app,'KNOWN_GROUP_DOMAINS',{})
+    monkeypatch.setattr(app,'_v65_discover_related_official_sites',lambda *a,**k: [])
+    monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: ['https://unrelatedbrand.com'])
+    def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        if 'unrelatedbrand' in url:
+            return 'A completely unrelated business with no mention of the target company at all. '*20,[url]
+        return 'Acme Corp is a real company with a thin primary site.',[url]
+    monkeypatch.setattr(app,'crawl',fake_crawl)
+    txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
+    assert not any('unrelatedbrand' in n for n in notes)
+    assert 'unrelated business' not in txt.lower()
 
 
 def test_pdf_regex_fallback_also_strips_octal_escape_artifacts():

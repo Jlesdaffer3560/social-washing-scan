@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_28_crawl_and_detection_review_fixes"
-APP_RELEASE_LABEL="v93.28"
+APP_VERSION="hostable_v93_29_related_site_identity_check"
+APP_RELEASE_LABEL="v93.29"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -7951,26 +7951,43 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             all_text.append(txt); all_pages.extend(pages)
     except Exception as exc:
         primary_error=exc
-    candidates=list(dict.fromkeys(known))
+    # v93.28: `known` (a curated static mapping) and _v65_discover_related_official_sites()
+    # (which already requires brand-alias/relation-term evidence in search results before
+    # returning a candidate) are reasonably trustworthy. related_company_sites() below is not
+    # -- it is a bare same-brand-string TLD swap (lidl.be -> lidl.com/.eu/.nl/.fr/.de) with NO
+    # ownership check at all, so an unrelated company that happens to share a common brand
+    # word across a different country/TLD could be pulled in and labelled "Official related
+    # company site", silently attributing a different company's claims to this scan. Track
+    # which candidates actually need a post-fetch identity check.
+    candidates=[(c,True) for c in dict.fromkeys(known)]
     limited=(len(all_pages)<4 or sum(len(x) for x in all_text)<3500)
+    seen_candidates={c for c,_ in candidates}
     if limited and time.time()<overall_deadline-5:
         for c in _v65_discover_related_official_sites(hint,original_url,limit=2):
-            if c not in candidates:
-                candidates.append(c)
+            if c not in seen_candidates:
+                candidates.append((c,True)); seen_candidates.add(c)
     if len(all_pages)<3:
         for c in related_company_sites(original_url,max_sites=1):
-            if c not in candidates:
-                candidates.append(c)
-    for candidate in candidates:
+            if c not in seen_candidates:
+                candidates.append((c,False)); seen_candidates.add(c)
+    for candidate,pre_verified in candidates:
         if time.time()>=overall_deadline-2:
             break
         try:
             remaining_slots=max(2,min(4,CRAWL_TARGET_EXTRA_PAGES-max(0,len(all_pages)-1)))
             rt,rpages=crawl(candidate,max_extra_pages=remaining_slots,deadline=overall_deadline,log=crawl_log,candidate_source='related_domain')
-            if len(rt)>300:
-                all_text.append('\n\nRELATED OFFICIAL COMPANY SITE: '+candidate+'\n'+rt)
-                all_pages.extend([p for p in rpages if p not in all_pages])
-                source_notes.append(f'Official related company site also checked: {candidate}')
+            if len(rt)<=300:
+                continue
+            if not pre_verified:
+                aliases=_v65_brand_aliases(hint,[original_url]) if hint else []
+                if not aliases or _v64_alias_occurrences(rt,aliases)[0]==0:
+                    # The candidate's own content never mentions the target company by name
+                    # or brand -- almost certainly an unrelated business that happens to share
+                    # a same-spelled brand under a different TLD. Do not merge its content in.
+                    continue
+            all_text.append('\n\nRELATED OFFICIAL COMPANY SITE: '+candidate+'\n'+rt)
+            all_pages.extend([p for p in rpages if p not in all_pages])
+            source_notes.append(f'Official related company site also checked: {candidate}')
         except Exception:
             pass
     if not all_text:
