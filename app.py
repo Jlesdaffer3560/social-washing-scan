@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_29_related_site_identity_check"
-APP_RELEASE_LABEL="v93.29"
+APP_VERSION="hostable_v93_30_followup_review_fixes"
+APP_RELEASE_LABEL="v93.30"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -572,10 +572,23 @@ class Parser(HTMLParser):
             if t: self.parts.append(t)
 
 def parse_html(html):
-    p=Parser(); p.feed(html); seen=set(); out=[]
+    # v93.30: whole-page distinct-value dedup ("if l not in seen") dropped ANY text fragment
+    # that repeated ANYWHERE earlier on the page -- including a short, meaning-critical word
+    # like "not" appearing in two unrelated sentences. Confirmed live:
+    # "<p>We are <b>not</b> carbon neutral.</p><p>Our products are <b>not</b> climate neutral.</p>"
+    # extracted with the SECOND "not" silently deleted, inverting that sentence's meaning too --
+    # this was NOT fixed by the earlier len(t)>2 -> if t fix (A), since "not" is 3 characters.
+    # Only drop a fragment when it is IDENTICAL to the one immediately before it -- that still
+    # catches the actual target (a genuinely duplicated adjacent DOM node, e.g. a visible span
+    # right next to its own sr-only/aria-hidden accessibility duplicate, or a doubled node from
+    # malformed markup) without ever deleting a legitimately repeated word or sentence elsewhere
+    # on the page.
+    p=Parser(); p.feed(html); out=[]; prev=None
     for t in p.parts:
         l=t.lower()
-        if l not in seen: out.append(t); seen.add(l)
+        if l==prev:
+            continue
+        out.append(t); prev=l
     return "\n".join(out), p.links, p.base_href
 def norm_url(u):
     u=u.strip()
@@ -1220,20 +1233,37 @@ def _candidate_score(item):
 
 
 def _distribute_text_budget(chunks,total_budget,floor_chars=4000):
-    """v93.28: crawl() and crawl_with_related_sites() used to concatenate every fetched
-    source and then hard-truncate the COMBINED blob to a fixed character budget. Sources
-    are fetched in as_completed() order (whichever responds fastest), so a slow-but-small
-    homepage plus one very long report could already fill the whole budget before later
-    sources contributed a single character to what actually gets analysed -- while the
-    source register still listed those later sources as "Retrieved and analysed" with
-    their own full per-page character count, and build_confidence() still counted them via
-    len(pages). Confirmed live: 9 sources fetched, only 2 survived the truncation, 6 got
-    zero analysed characters. Give every source a fair, guaranteed share of the total
-    budget instead -- capped individually, not truncated away entirely by earlier sources."""
+    """v93.28/v93.30: crawl() and crawl_with_related_sites() used to concatenate every
+    fetched source and then hard-truncate the COMBINED blob to a fixed character budget.
+    Sources are fetched in as_completed() order (whichever responds fastest), so a
+    slow-but-small homepage plus one very long report could already fill the whole budget
+    before later sources contributed a single character to what actually gets analysed --
+    while the source register still listed those later sources as "Retrieved and analysed"
+    with their own full per-page character count, and build_confidence() still counted them
+    via len(pages). Confirmed live: 9 sources fetched, only 2 survived the truncation, 6 got
+    zero analysed characters.
+
+    v93.30: an equal fixed share per source (total_budget // n) wastes budget whenever a
+    short source needs less than its share -- that leftover simply vanished instead of
+    letting a longer, more substantive source (e.g. an annual report) use it. Water-fill
+    instead: process sources shortest-first, giving each the larger of the floor or an equal
+    share of what is STILL left across the sources not yet processed; a short source's
+    unused capacity increases every remaining source's share. No source is truncated below
+    what a naive equal split would have given it, and a short source is never truncated at
+    all if the total budget allows every source to fit in full."""
     n=len(chunks)
     if n==0: return chunks
-    share=max(floor_chars,total_budget//n)
-    return [c[:share] for c in chunks]
+    order=sorted(range(n),key=lambda i:len(chunks[i]))
+    caps=[0]*n
+    budget_left=max(total_budget,floor_chars*n)
+    remaining_n=n
+    for i in order:
+        share=max(floor_chars,budget_left//remaining_n)
+        cap=min(len(chunks[i]),share)
+        caps[i]=cap
+        budget_left-=cap
+        remaining_n-=1
+    return [c[:caps[i]] for i,c in enumerate(chunks)]
 
 
 def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
@@ -1836,10 +1866,20 @@ def build_engagement_questions(findings,ext):
         if q not in out: out.append(q)
     return out[:6]
 
-def build_confidence(pages,ext,findings,crawl_log=None):
+def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None):
+    # v93.30: every check below that reasons about "how many pages were reviewed" used
+    # len(pages) -- the count of pages the crawler successfully FETCHED, not how many
+    # actually contributed real text to the analysed document (build_scan_inventory()
+    # already tracks that distinction per page via analysed_by_url, classifying a page as
+    # "Retrieved but not analysed due to budget" when it fetched fine but its text did not
+    # survive the crawl's text-budget cut). A scan whose pages were mostly fetched-but-
+    # unanalysed should not read as equally confident as one where they were all genuinely
+    # analysed. Callers that already have that per-page figure should pass it in;
+    # analysed_page_count defaults to len(pages) for backward compatibility.
+    n_pages=len(pages) if analysed_page_count is None else analysed_page_count
     pts=0; reasons=[]
-    if len(pages)>=3: pts+=2; reasons.append("several company pages were reviewed")
-    elif len(pages)>=1: pts+=1; reasons.append("at least the main company page was reviewed")
+    if n_pages>=3: pts+=2; reasons.append("several company pages were reviewed")
+    elif n_pages>=1: pts+=1; reasons.append("at least the main company page was reviewed")
     ext_search_failed=bool(ext.get("search_failed"))
     if ext.get("enabled") and len(ext.get("results",[]))>=5: pts+=2; reasons.append("external public-source search returned several results")
     elif ext.get("enabled") and not ext_search_failed: pts+=1; reasons.append("external public-source search was active")
@@ -1866,7 +1906,7 @@ def build_confidence(pages,ext,findings,crawl_log=None):
     reliability_warning=None
     if attempted:
         failure_ratio=len(blocked)/attempted
-        if failure_ratio>0.25 or (len(pages)<3 and blocked):
+        if failure_ratio>0.25 or (n_pages<3 and blocked):
             pts=max(0,pts-(2 if failure_ratio>=0.5 else 1))
             reliability_warning=(f"{len(blocked)} of {attempted} page fetches failed (e.g. HTTP 403/blocked or unreachable). "
                                   "A low risk score from this scan may reflect limited access to the site's content, "
@@ -1881,9 +1921,9 @@ def build_confidence(pages,ext,findings,crawl_log=None):
             reliability_warning=(f"{len(fallback_pages)} reviewed page(s) required a public text-extraction fallback. "
                                   "A low risk score from this scan may reflect limited access to the site's content, "
                                   "not necessarily a genuine absence of risky claims.")
-        elif len(pages)<3:
+        elif n_pages<3:
             pts=max(0,pts-1)
-            reliability_warning=(f"Only {len(pages)} relevant company page(s) could be reviewed. "
+            reliability_warning=(f"Only {n_pages} relevant company page(s) could be reviewed. "
                                   "A low risk score from this scan may reflect limited access to the site's content, "
                                   "not necessarily a genuine absence of risky claims.")
     if ext_search_failed:
@@ -1899,7 +1939,7 @@ def build_confidence(pages,ext,findings,crawl_log=None):
     # can also mean a small, genuinely reachable site with little to say; "Insufficient coverage"
     # specifically flags that most of the crawl failed outright, so there usually isn't enough
     # material to draw ANY conclusion from, favourable or not.
-    if attempted and len(blocked)/attempted >= 0.75 and len(pages) <= 1:
+    if attempted and len(blocked)/attempted >= 0.75 and n_pages <= 1:
         level_str="Insufficient coverage"
     else:
         level_str="High" if pts>=5 else "Medium" if pts>=3 else "Low"
@@ -3644,8 +3684,16 @@ def analyse_url_v27(raw, company_number=''):
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
+    # v93.30: build_confidence() used to reason about coverage purely via len(pages) -- how
+    # many pages the crawler successfully FETCHED, regardless of whether their text actually
+    # survived the crawl's text-budget cut. scan_inventory already tracks that distinction
+    # per page (a page fetched but reduced to zero analysed characters is classified
+    # "Retrieved but not analysed due to budget"), so derive the count of pages that actually
+    # contributed real text instead of re-using the raw fetch count.
+    _inv_summary=scan_inventory.get('summary',{}) if isinstance(scan_inventory,dict) else {}
+    analysed_page_count=max(0,_inv_summary.get('reviewed_total',len(pages))-_inv_summary.get('retrieved_not_analysed',0))
     methodology='Sustainability Claims Risk Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
-    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log)
+    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log,analysed_page_count=analysed_page_count)
     reliability_warning=confidence_result.get('reliability_warning')
     # Use the same expected-guess-filtered counts the warning text itself is based on (see
     # build_confidence), so the "(X/Y pages failed)" prefix never disagrees with the warning
@@ -6524,22 +6572,30 @@ def enrich_social_finding(f, trigger=''):
     return f
 
 def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score, extra_check=None):
-    """Returns True if a finding was actually added, False otherwise -- callers must only
-    count a trigger phrase towards their per-type hit budget when this returns True (see
-    v93.28 note at the GREEN_CLAIMS/CLAIMS loops: counting attempts rather than successes let
-    3 rejected candidates silently exhaust the whole budget for a type with zero findings).
+    """Returns the number of findings actually added for this trigger (0 if none) --
+    callers must only count a trigger phrase towards their per-type hit budget when this is
+    truthy (see v93.28 note at the GREEN_CLAIMS/CLAIMS loops: counting attempts rather than
+    successes let 3 rejected candidates silently exhaust the whole budget for a type with
+    zero findings).
 
     `extra_check(excerpt)`, when given, is an additional type-specific qualifier (e.g. "does
     this actually read as a future-performance claim") applied on top of the general
-    _v55_claim_context_ok() check below -- both must pass for a given candidate excerpt."""
-    # v93.28: only the FIRST sentence containing `trig` used to be considered at all. If that
-    # first occurrence read as generic/explanatory (e.g. "we define carbon neutral as...") and
-    # failed the claim-context check below, the function gave up on this trigger phrase
-    # entirely -- even when a later, clearly concrete claim used the exact same phrase further
-    # down the page. Reproduced live: an explanatory sentence before a real product claim made
-    # the real claim invisible to detection. Try every occurrence in order and use the first
-    # one that actually qualifies, instead of only ever looking at the first.
-    excerpt=None
+    _v55_claim_context_ok() check below -- both must pass for a given candidate excerpt.
+
+    v93.28: only the FIRST sentence containing `trig` used to be considered at all. If that
+    first occurrence read as generic/explanatory (e.g. "we define carbon neutral as...") and
+    failed the claim-context check below, the function gave up on this trigger phrase
+    entirely -- even when a later, clearly concrete claim used the exact same phrase further
+    down the page. Reproduced live: an explanatory sentence before a real product claim made
+    the real claim invisible to detection.
+
+    v93.30: stopping at the first QUALIFYING occurrence (as the v93.28 fix did) still misses
+    a second, genuinely distinct claim further down the page that happens to use the same
+    trigger phrase -- e.g. two different products each described with "carbon neutral" in
+    their own sentence. Add every distinct qualifying occurrence found, not just the first;
+    the existing per-type hit budget (3 distinct trigger phrases) and the final top-12
+    display cap in detect_claims()/detect_green_claims() still bound what is actually shown."""
+    added=0
     for candidate in _v55_all_matches_sentences(text, trig):
         # v57n: "VISUAL CLAIM CUE: " is an internal marker prepended during HTML parsing to
         # feed image alt-text / aria-label / CSS-class values (e.g. a leaf icon's alt text)
@@ -6553,33 +6609,32 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
             cleaned=re.sub(r'\s+', ' ', cleaned)
         if extra_check is not None and not extra_check(cleaned):
             continue
-        if _v55_claim_context_ok(cleaned, trig, dimension):
-            excerpt=cleaned
-            break
-    if excerpt is None:
-        return False
-    sig=(typ, excerpt[:160].lower())
-    if sig in seen:
-        return False
-    seen.add(sig)
-    # v57g: name the exact phrase that triggered detection explicitly, separate from the
-    # generic category description in `issue`. Reviewers should never have to guess which
-    # words in a longer excerpt caused the flag.
-    why_flagged=f'This passage was flagged because it contains the wording "{trig}", matching the "{typ}" pattern.'
-    if dimension == 'green':
-        f={'dimension':'green','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
-           'matched_phrase':trig,'why_flagged':why_flagged,
-           'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
-           'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
-           'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
-        fs.append(enrich_green_finding(f,trig))
-    else:
-        f={'dimension':'social','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
-           'matched_phrase':trig,'why_flagged':why_flagged,
-           'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
-           'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
-        fs.append(enrich_social_finding(f,trig))
-    return True
+        if not _v55_claim_context_ok(cleaned, trig, dimension):
+            continue
+        excerpt=cleaned
+        sig=(typ, excerpt[:160].lower())
+        if sig in seen:
+            continue
+        seen.add(sig)
+        # v57g: name the exact phrase that triggered detection explicitly, separate from the
+        # generic category description in `issue`. Reviewers should never have to guess which
+        # words in a longer excerpt caused the flag.
+        why_flagged=f'This passage was flagged because it contains the wording "{trig}", matching the "{typ}" pattern.'
+        if dimension == 'green':
+            f={'dimension':'green','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+               'matched_phrase':trig,'why_flagged':why_flagged,
+               'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
+               'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
+               'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
+            fs.append(enrich_green_finding(f,trig))
+        else:
+            f={'dimension':'social','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+               'matched_phrase':trig,'why_flagged':why_flagged,
+               'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
+               'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
+            fs.append(enrich_social_finding(f,trig))
+        added+=1
+    return added
 
 def detect_green_claims(text):
     low=_normalize_apostrophes((text or '').lower()); fs=[]; seen=set()
@@ -7979,11 +8034,17 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             if len(rt)<=300:
                 continue
             if not pre_verified:
+                # v93.30: a single brand/name mention is too weak a bar -- a reseller, news
+                # article, competitor or an unrelated same-named business can just as easily
+                # mention the target company once. Require the SAME evidence bar already used
+                # by the more careful _v65_discover_related_official_sites() for search-based
+                # candidates: several mentions AND an explicit official/corporate/group/
+                # sustainability-reporting signal somewhere in the page, not brand mention alone.
                 aliases=_v65_brand_aliases(hint,[original_url]) if hint else []
-                if not aliases or _v64_alias_occurrences(rt,aliases)[0]==0:
-                    # The candidate's own content never mentions the target company by name
-                    # or brand -- almost certainly an unrelated business that happens to share
-                    # a same-spelled brand under a different TLD. Do not merge its content in.
+                mention_count=_v64_alias_occurrences(rt,aliases)[0] if aliases else 0
+                has_relation_term=any(term in rt.lower() for term in V65_RELATED_TERMS)
+                if mention_count<2 or not has_relation_term:
+                    # Too weak to trust as the same legal entity -- do not merge its content in.
                     continue
             all_text.append('\n\nRELATED OFFICIAL COMPANY SITE: '+candidate+'\n'+rt)
             all_pages.extend([p for p in rpages if p not in all_pages])

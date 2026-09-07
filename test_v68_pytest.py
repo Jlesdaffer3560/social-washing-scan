@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_29_related_site_identity_check'
+    assert app.APP_VERSION == 'hostable_v93_30_followup_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1180,6 +1180,26 @@ def test_html_parser_keeps_short_negation_words():
     assert 'we emit carbon' not in text.lower()
 
 
+def test_html_parser_does_not_drop_repeated_words_in_unrelated_sentences():
+    """v93.30: parse_html() deduplicated ANY text fragment that repeated ANYWHERE earlier
+    on the page (whole-page distinct-value set), not just genuinely duplicated adjacent DOM
+    nodes. "<p>We are <b>not</b> carbon neutral.</p><p>Our products are <b>not</b> climate
+    neutral.</p>" silently deleted the SECOND "not" because the identical 3-character
+    fragment had already been seen once -- inverting that sentence's meaning too. This is a
+    distinct bug from the len(t)>2 fix (A): "not" is 3 characters, so that fix alone did not
+    catch it. Only an identical fragment immediately adjacent to the previous one (a real
+    duplicated DOM node, e.g. a visible/sr-only accessibility pair) may now be collapsed."""
+    html='<p>We are <b>not</b> carbon neutral.</p><p>Our products are <b>not</b> climate neutral.</p>'
+    text,_,_=app.parse_html(html)
+    words=text.lower().split()
+    assert words.count('not')==2, f'expected both negations to survive, got: {text!r}'
+    # a genuinely duplicated adjacent node (e.g. a visible span right next to its own
+    # sr-only/aria-hidden duplicate) must still collapse to one occurrence
+    html2='<span>Home</span><span>Home</span><p>Real content follows here with more words.</p>'
+    text2,_,_=app.parse_html(html2)
+    assert text2.lower().split('\n').count('home')==1
+
+
 def test_canonical_url_preserves_non_default_port():
     """v93.28: netloc=host alone dropped a non-default port (urlparse().hostname never
     includes it), so "https://example.com:8443/x" canonicalised to a different origin,
@@ -1230,8 +1250,22 @@ def test_distribute_text_budget_gives_every_source_a_nonzero_share():
     assert all(len(c)>0 for c in result)
     # the short sources are well under their fair share and so remain fully intact
     assert result[1]=='B'*500 and result[-1]=='I'*500
-    # the very long source is capped down to its fair share, not zeroed by later sources
-    assert 0<len(result[0])<=150000//len(chunks)
+    # the very long source is capped, but not below what a naive equal split would give it
+    assert 0<len(result[0])<=150000
+
+
+def test_distribute_text_budget_returns_unused_share_to_longer_sources():
+    """v93.30: an equal fixed share per source wasted budget whenever a short source needed
+    less than its share -- that leftover used to simply vanish instead of letting a longer,
+    more substantive source (e.g. an annual report) use it. 8 short sources here only need
+    500 chars each (4000 total) out of a 150000 budget; the 9th, much longer source must get
+    to use essentially all of what they left unused, not be capped to a naive 150000/9 share."""
+    chunks=['A'*100000]+['B'*500]*8
+    result=app._distribute_text_budget(chunks,150000)
+    naive_equal_share=150000//len(chunks)
+    assert len(result[0])>naive_equal_share
+    assert len(result[0])==100000  # small enough that the redistributed budget covers it in full
+    assert all(len(c)==500 for c in result[1:])
 
 
 def test_claim_detection_finds_later_occurrence_when_first_is_rejected():
@@ -1250,6 +1284,20 @@ def test_claim_detection_finds_later_occurrence_when_first_is_rejected():
     assert matches, 'expected the later, concrete carbon-neutral claim to be detected'
     assert 'independent auditor' in matches[0]['claim'].lower()
     assert 'would be very proud' not in matches[0]['claim'].lower()
+
+
+def test_claim_detection_captures_multiple_distinct_claims_sharing_a_trigger():
+    """v93.30: stopping at the first QUALIFYING occurrence of a trigger phrase (the v93.28
+    fix) still missed a second, genuinely distinct claim further down the page using the
+    same trigger -- e.g. two different products each independently described as "carbon
+    neutral". Both must now be captured as separate findings, not just the first."""
+    text=('Our bakery product line has been carbon neutral since last year, certified by TUV. '
+          'Separately, our dairy product range is also carbon neutral, verified annually by SGS.')
+    findings=app.detect_green_claims(text)
+    matches=[f for f in findings if f.get('type')=='Climate-neutrality or offsetting claim']
+    assert len(matches)>=2, f'expected both distinct carbon-neutral claims, got {len(matches)}: {[m["claim"] for m in matches]}'
+    claims_lower=' '.join(m['claim'].lower() for m in matches)
+    assert 'bakery' in claims_lower and 'dairy' in claims_lower
 
 
 def test_related_company_sites_requires_company_name_in_fetched_content(monkeypatch):
@@ -1271,6 +1319,48 @@ def test_related_company_sites_requires_company_name_in_fetched_content(monkeypa
     txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
     assert not any('unrelatedbrand' in n for n in notes)
     assert 'unrelated business' not in txt.lower()
+
+
+def test_build_confidence_uses_actually_analysed_page_count():
+    """v93.30: build_confidence() reasoned about coverage via len(pages) -- how many pages
+    were successfully FETCHED -- even though a fetched page's text could have been entirely
+    cut by the crawl's text budget and never actually analysed. Passing analysed_page_count
+    must change the confidence level/warnings from what the raw fetched-page count alone
+    would produce, when most fetched pages contributed no real text."""
+    pages=['https://x.example/a','https://x.example/b','https://x.example/c','https://x.example/d']
+    ext={'enabled':False}
+    findings=[{'type':'Some real finding'}]
+    # Using the raw fetch count (4 pages, no analysed_page_count given): should read as
+    # "several company pages were reviewed".
+    result_raw=app.build_confidence(pages,ext,findings,crawl_log=[])
+    assert 'several company pages were reviewed' in result_raw['reasons']
+    # Only 1 of those 4 pages actually contributed analysed text (the other 3 were fetched
+    # but cut entirely by the text budget) -- confidence must reflect that, not the raw count.
+    result_analysed=app.build_confidence(pages,ext,findings,crawl_log=[],analysed_page_count=1)
+    assert 'several company pages were reviewed' not in result_analysed['reasons']
+    assert 'at least the main company page was reviewed' in result_analysed['reasons']
+
+
+def test_related_company_sites_rejects_single_mention_without_relation_signal(monkeypatch):
+    """v93.30: a single brand mention is too weak a bar -- a reseller, news article,
+    competitor, or an unrelated same-named business can just as easily mention the target
+    company's name once without being the same legal entity. Require the same bar the more
+    careful _v65_discover_related_official_sites() already applies to search-based
+    candidates: several mentions AND an explicit official/corporate/relation signal."""
+    monkeypatch.setattr(app,'KNOWN_GROUP_DOMAINS',{})
+    monkeypatch.setattr(app,'_v65_discover_related_official_sites',lambda *a,**k: [])
+    monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: ['https://acmecorp.eu'])
+    def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        if 'acmecorp.eu' in url:
+            # Mentions "Acme Corp" exactly once, in passing, with no official/corporate/
+            # sustainability-reporting signal anywhere -- e.g. a reseller comparing prices.
+            return ('Our shop stocks products from many brands including Acme Corp and others. '
+                     'Check out our weekly deals and free shipping offers today.')*3,[url]
+        return 'Acme Corp is a real company with a thin primary site.',[url]
+    monkeypatch.setattr(app,'crawl',fake_crawl)
+    txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
+    assert not any('acmecorp.eu' in n for n in notes)
+    assert 'weekly deals' not in txt.lower()
 
 
 def test_pdf_regex_fallback_also_strips_octal_escape_artifacts():
