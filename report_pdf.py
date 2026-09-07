@@ -350,6 +350,27 @@ def cluster_claims(data):
             if (risk_rank(item), float(item.get("claim_score") or 0)) > (risk_rank(old), float(old.get("claim_score") or 0)):
                 c["representative"] = item
     out = list(clusters.values())
+    for c in out:
+        # v93.37: EVERY occurrence of a given claim TYPE gets the same fixed claim_score (e.g.
+        # 74 for "Generic environmental claim" -- see GREEN_CLAIMS in app.py), so the
+        # (risk_rank, claim_score) comparison above is tied for every occurrence within a
+        # cluster. Since a tie never replaces the current representative, "representative" was
+        # actually just "whichever occurrence happened to be found FIRST while crawling" --
+        # not chosen for being the most severe, most illustrative, or most common wording.
+        # Reported live: a Delhaize cluster of 14 "Generic environmental claim" occurrences
+        # picked an example using "milieuvriendelijk" (2 occurrences) as its representative,
+        # while "ecologisch" (6 occurrences) -- the cluster's actual dominant wording, shown
+        # separately in the summary table -- was a completely different word, so the detail
+        # card's own "WHY IT MATTERS" text described a different trigger than the table above
+        # it implied. Compute the dominant phrase FIRST, then prefer an occurrence that
+        # actually uses it as the shown representative, so the two agree.
+        phrase_counts = Counter(trigger_phrase(x) for x in c["occurrences"] if trigger_phrase(x))
+        dominant = phrase_counts.most_common(1)[0][0] if phrase_counts else ""
+        if dominant and trigger_phrase(c["representative"]) != dominant:
+            matching = [x for x in c["occurrences"] if trigger_phrase(x) == dominant]
+            if matching:
+                c["representative"] = max(matching, key=lambda x: (risk_rank(x), float(x.get("claim_score") or 0)))
+        c["representative"]["_dominant_trigger_phrase"] = dominant
     out.sort(key=lambda c: (risk_rank(c["representative"]), float(c["representative"].get("claim_score") or 0)), reverse=True)
     for c in out:
         c["representative"]["_occurrence_count"] = len(c["occurrences"])
@@ -364,14 +385,8 @@ def cluster_claims(data):
         wordings = {clean_text(claim_excerpt(x, 4000)).lower() for x in c["occurrences"]}
         c["representative"]["_unique_wording_count"] = len(wordings)
         c["representative"]["_unique_source_count"] = len(c["representative"]["_occurrence_sources"])
-        # v93.36: the "FLAGGED WORDING" column showed trigger_phrase() of the REPRESENTATIVE
-        # occurrence only (whichever single occurrence happened to score highest) -- not
-        # necessarily the phrase that actually dominates the cluster. Reported live on
-        # Delhaize: a "Generic environmental claim" cluster of 14 occurrences showed
-        # "milieuvriendelijk" (2 occurrences) while "ecologisch"/"ecologische" (6 occurrences)
-        # -- the actual most common trigger in that same cluster -- was never mentioned at all.
-        phrase_counts = Counter(trigger_phrase(x) for x in c["occurrences"] if trigger_phrase(x))
-        c["representative"]["_dominant_trigger_phrase"] = phrase_counts.most_common(1)[0][0] if phrase_counts else ""
+        # _dominant_trigger_phrase was already computed and used to pick the representative
+        # itself in the loop above; nothing further to do with it here.
     return out
 
 
@@ -1014,7 +1029,16 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     rp = reliability_panel(data)
     if rp is not None:
         flow.append(rp); flow.append(Spacer(1, 2.2*mm))
-    flow.append(section_title("Top risk drivers")); flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
+    flow.append(section_title("Top risk drivers"))
+    # v93.37: added per explicit user request -- readers otherwise couldn't tell why one
+    # specific claim group and wording example was shown in detail (here, and in "Most
+    # material finding"/"Additional material findings" below) while others weren't. States
+    # the actual selection method plainly: claims are grouped by type, ranked by severity, and
+    # only the top 3 groups get a detailed example -- everything retained is still listed in
+    # the Full claim inventory appendix.
+    flow.append(Paragraph("Findings are grouped by claim type and ranked by risk severity. The 3 highest-ranked groups are detailed below (1 shown here as “Most material finding”, 2 more under “Additional material findings”); each detail card quotes the occurrence that best matches that group's most common wording, not necessarily the first one found. Every retained finding, including groups not detailed here, is listed in the Full claim inventory appendix.", ST["small"]))
+    flow.append(Spacer(1, 1.2*mm))
+    flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
     flow.append(section_title("Most material finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
     flow.append(assessment_basis(data)); flow.append(PageBreak())
     flow += header_block(data, "Company claim-risk report · Context and response")

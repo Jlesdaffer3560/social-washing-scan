@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_36_named_scheme_risk_downgrade_and_dominant_trigger'
+    assert app.APP_VERSION == 'hostable_v93_37_consistent_representative_and_selection_transparency'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1989,6 +1989,29 @@ def test_risk_driver_table_shows_the_cluster_dominant_trigger_not_just_the_repre
     for f in findings[2:]: f['matched_phrase']='ecologisch'
     cluster=rp.cluster_claims({'claim_inventory':findings})[0]
     assert cluster['representative']['_dominant_trigger_phrase']=='ecologisch'
+
+
+def test_cluster_representative_matches_the_dominant_trigger_it_reports():
+    """v93.37: fixing the "FLAGGED WORDING" column to show the cluster's dominant trigger
+    (v93.36) exposed a further inconsistency the user caught by reading the actual PDF: the
+    DETAIL card below that table still quoted and explained the representative occurrence's
+    OWN trigger, which need not be the dominant one -- e.g. the table said "ecologisch" while
+    the card's "WHY IT MATTERS" text explained "milieuvriendelijk" instead. Root cause: every
+    occurrence of a claim TYPE gets the same fixed claim_score, so the tie-break that picks
+    the "representative" is really just "whichever occurrence was found first while
+    crawling" -- not chosen for matching the dominant wording. The representative must now be
+    an occurrence that actually uses the dominant phrase, so the table and the card agree."""
+    import report_pdf as rp
+    findings=(
+        [_pdf_finding(i,'Generic environmental claim','High',f'Claim {i} using milieuvriendelijk wording.',68,source=f'p{i}') for i in range(2)]
+        +[_pdf_finding(10+i,'Generic environmental claim','High',f'Claim {i} using ecologisch wording instead.',68,source=f'q{i}') for i in range(6)]
+    )
+    for f in findings[:2]: f['matched_phrase']='milieuvriendelijk'
+    for f in findings[2:]: f['matched_phrase']='ecologisch'
+    cluster=rp.cluster_claims({'claim_inventory':findings})[0]
+    rep=cluster['representative']
+    assert rp.trigger_phrase(rep)==rep['_dominant_trigger_phrase']=='ecologisch'
+    assert 'ecologisch' in rep['claim_text'].lower()
 
 
 def test_cluster_claims_does_not_merge_wordings_differing_only_after_120_chars():
