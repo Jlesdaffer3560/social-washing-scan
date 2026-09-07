@@ -1,10 +1,13 @@
 """Readable native Durably company claim-risk report (v93).
 
-The live /api/report/pdf endpoint calls build_company_report_pdf(data). The report
-uses a minimum body size of 9 pt and targets 2 pages, protecting that target by
-reducing the amount of detail rather than shrinking fonts; content that still doesn't
-fit spills to a 3rd or, for a scan with many findings, a 4th page (see the pagination
-note further down) instead of being cut.
+The live /api/report/pdf endpoint calls build_company_report_pdf(data). Main body text is
+9 pt; several secondary elements (source lines, legal-basis badges, table/appendix text,
+the footer) are intentionally smaller, down to 6.5 pt, and are not covered by that figure.
+The report's CORE narrative targets 2-4 pages, protected by reducing the amount of detail
+rather than shrinking fonts (see the pagination note on build_company_report_pdf further
+down); the full claim-inventory appendix is then always added IN FULL on top of that, so
+a scan with many distinct findings can legitimately produce a longer PDF -- this is
+expected, not a bug.
 """
 from __future__ import annotations
 
@@ -161,12 +164,22 @@ def first_sentence(value, max_chars=190) -> str:
     return bounded_text(text, max_chars)
 
 
+def _is_unassessed(text):
+    return any(x in text for x in ("not assessed", "unassessed", "unknown", "not available", "n/a"))
+
+
 def risk_color(risk):
     text = str(risk or "").lower()
     if "high" in text:
         return RED
     if "medium" in text or "elev" in text or "mod" in text:
         return AMBER
+    # v93.35: falling straight through to GREEN made an unassessed/unknown value ("Entity
+    # context: Not assessed") render with the same colour as a genuine low-risk result --
+    # visually indistinguishable from "we checked and it's fine". Grey reads as neutral/no
+    # data, not as reassurance.
+    if _is_unassessed(text):
+        return GREY_500
     return GREEN
 
 
@@ -176,6 +189,8 @@ def risk_soft(risk):
         return RED_SOFT
     if "medium" in text or "elev" in text or "mod" in text:
         return AMBER_SOFT
+    if _is_unassessed(text):
+        return GREY_100
     return GREEN_SOFT
 
 
@@ -203,6 +218,13 @@ def legal_basis_label(claim):
     # Annex I)" / "Problematic, not automatically prohibited (case-by-case)") -- the same
     # divergence already fixed in the frontend's legalBasisBadgeLabel(). Prefer the stored
     # label; only fall back to a derived one when it is absent (e.g. an older cached result).
+    # v93.35: the "no material claim retained" placeholder (_build_once's fallback `material`
+    # dict when a scan has zero findings) has no legal_basis_category/label at all, so this
+    # fell through to the "Problematic, not automatically prohibited (case-by-case)" default
+    # -- a direct contradiction next to "No material claim signal retained" on the same card.
+    # A claim that isn't material has no legal-basis category to report at all.
+    if not is_material(claim):
+        return "", None
     stored = clean_text(claim.get("legal_basis_label") or "")
     if stored:
         color = RED if str(claim.get("legal_basis_category") or "").lower() == "prohibited" else AMBER
@@ -331,28 +353,41 @@ def cluster_claims(data):
     for c in out:
         c["representative"]["_occurrence_count"] = len(c["occurrences"])
         c["representative"]["_occurrence_sources"] = list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))
-        # v93.34: "14 occurrences" reads very differently depending on whether that is the
-        # SAME sentence repeated on 14 pages (one template reused site-wide) or 14 genuinely
-        # different claim wordings -- distinguish the two instead of collapsing them into one
-        # ambiguous count. Normalise on the first ~120 chars of the claim text: excerpts this
-        # long matching exactly is a reused/templated passage, not coincidence.
-        wordings = {clean_text(claim_excerpt(x, 4000)).lower()[:120] for x in c["occurrences"]}
+        # v93.35: was truncated to the first ~120 chars before comparing, so two occurrences
+        # sharing a long identical lead-in but differing later -- e.g. a different product, a
+        # different percentage, or a negation added past the 120-char mark ("Product A is
+        # carbon neutral." vs "Product B is NOT carbon neutral.") -- were wrongly treated as
+        # the same wording, hiding exactly the kind of difference (a negation) this exists to
+        # surface. Compare the full normalised claim text instead (already capped at 4000
+        # chars by claim_excerpt, so this stays bounded).
+        wordings = {clean_text(claim_excerpt(x, 4000)).lower() for x in c["occurrences"]}
         c["representative"]["_unique_wording_count"] = len(wordings)
+        c["representative"]["_unique_source_count"] = len(c["representative"]["_occurrence_sources"])
     return out
 
 
-def occurrence_count_label(cluster):
-    """v93.34: renders the count suffix used next to a claim title, distinguishing a single
-    wording repeated across pages from genuinely distinct claim variants (see cluster_claims)."""
+def occurrence_count_label(cluster, compact=False):
+    """v93.34/v93.35: renders the count suffix used next to a claim title, distinguishing a
+    single wording repeated across sources from genuinely distinct claim variants (see
+    cluster_claims). Never says "pages" -- that conflated occurrence count with distinct
+    SOURCE count (two occurrences sharing one source_url are not two pages), so it now always
+    reports the actual unique-source count as its own separate number instead.
+
+    compact=True drops the source-count clause for the "Top risk drivers" summary table,
+    whose CLAIM AREA column is bounded_text()-truncated to ~62 chars total (title + suffix);
+    the full title + full-length suffix routinely exceeded that, cutting mid-word ("same
+    wording, 5."). The detailed claim cards still get the full breakdown."""
     count = len(cluster["occurrences"])
     if count <= 1:
         return ""
+    sources = cluster["representative"].get("_unique_source_count", count)
+    source_note = "" if compact else (f", {sources} source{'s' if sources != 1 else ''}" if sources and sources != count else "")
     unique = cluster["representative"].get("_unique_wording_count", count)
     if unique <= 1:
-        return f" · same wording on {count} pages"
+        return f" · same wording ×{count}" if compact else f" · same wording, {count} occurrences{source_note}"
     if unique < count:
-        return f" · {unique} distinct variants ({count} occurrences)"
-    return f" · {count} distinct claims"
+        return f" · {unique} wordings ×{count}" if compact else f" · {unique} wordings, {count} occurrences{source_note}"
+    return f" · {count} distinct claims{source_note}"
 
 
 def company_name(data):
@@ -609,7 +644,7 @@ def risk_driver_table(clusters):
     rows = [headers]
     for idx, c in enumerate(clusters[:3], 1):
         claim = c["representative"]
-        title = claim_title(claim) + occurrence_count_label(c)
+        title = claim_title(claim) + occurrence_count_label(c, compact=True)
         sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
         rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(trigger_phrase(claim) or "Review retained wording", 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
     if len(rows) == 1:
@@ -638,10 +673,17 @@ def full_claim_inventory_table(data, max_rows=60):
     rows = [headers]
     for idx, claim in enumerate(rows_data, 1):
         area = f'<b>{esc(bounded_text(claim_title(claim), 44))}</b><br/><font color="#7A8A93">{esc(claim_risk(claim))}</font>'
+        # v93.35: was bounded_text(claim_excerpt(claim, 4000), 100) -- claim_excerpt(claim,
+        # 4000) returns the claim near-verbatim (well under 4000 chars), then bounded_text
+        # blindly cuts the first ~100 chars from the START. For a claim with a long lead-in,
+        # that can cut off the actual trigger wording or a qualifying negation entirely,
+        # leaving a risk-labelled row whose shown text doesn't explain the label at all.
+        # claim_excerpt(claim, 100) does its own trigger-centred windowing when it must cut;
+        # highlighted_excerpt() also bolds the matched phrase, same as the detailed cards.
         rows.append([
             Paragraph(str(idx), ST["table"]),
             Paragraph(area, ST["table_dark"]),
-            Paragraph(esc(bounded_text(claim_excerpt(claim, 4000), 100)), ST["table"]),
+            Paragraph(highlighted_excerpt(claim, 100), ST["table"]),
             Paragraph(esc(bounded_text(claim_source(claim), 40)), ST["table"]),
         ])
     if len(rows) == 1:
@@ -659,14 +701,17 @@ def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
     just the single representative excerpt, so the reader sees the actual spread of evidence
     behind a double-digit occurrence count instead of one example standing in for all of it.
     Returns nothing when every occurrence shares the same wording -- repeating an identical
-    quote adds no information (see occurrence_count_label's "same wording" case instead)."""
+    quote adds no information (see occurrence_count_label's "same wording" case instead).
+    v93.35: compares the FULL normalised claim text (previously truncated to ~120 chars,
+    which could treat two occurrences sharing a long identical lead-in but differing later --
+    e.g. a negation added past that point -- as the same wording)."""
     rep = cluster["representative"]
-    seen = {clean_text(claim_excerpt(rep, 4000)).lower()[:120]}
+    seen = {clean_text(claim_excerpt(rep, 4000)).lower()}
     out = []
     for occ in cluster["occurrences"]:
         if occ is rep:
             continue
-        norm = clean_text(claim_excerpt(occ, 4000)).lower()[:120]
+        norm = clean_text(claim_excerpt(occ, 4000)).lower()
         if norm in seen:
             continue
         seen.add(norm)
@@ -678,6 +723,31 @@ def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
 
 def claim_card(cluster, excerpt_chars=220, material=False):
     claim = cluster["representative"]
+    # v93.35: a scan with zero retained findings renders this placeholder as `material` --
+    # it previously went through the exact same legal-basis/evidence-gap/rewrite pipeline as
+    # a genuine finding, producing a direct on-card contradiction ("No material claim signal
+    # retained" next to a "Problematic, not automatically prohibited" legal-basis badge, and
+    # an "EVIDENCE GAP"/"RECOMMENDED IMPROVEMENT" framing implying a concrete deficiency was
+    # found). Render a distinctly simpler, neutral card instead: no legal-basis badge, no
+    # source/quote/evidence-gap/rewrite sections that don't apply when nothing was retained.
+    if not is_material(claim):
+        title = claim_title(claim)
+        risk_badge = Paragraph(esc(claim_risk(claim)), ST["claim_risk_badge"])
+        outer_padding = 8
+        safety_gutter = 2 * mm
+        inner_width = CONTENT_W - (2 * outer_padding) - safety_gutter
+        risk_width = 25 * mm
+        head = Table([[risk_badge, Paragraph(esc(title), ST["claim_title"])]], colWidths=[risk_width, inner_width - risk_width], hAlign="LEFT")
+        head.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, 0), risk_color(claim_risk(claim))), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (0, 0), 4), ("RIGHTPADDING", (0, 0), (0, 0), 4), ("TOPPADDING", (0, 0), (0, 0), 3), ("BOTTOMPADDING", (0, 0), (0, 0), 3),
+            ("LEFTPADDING", (1, 0), (1, 0), 6), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (1, 0), (1, 0), 0), ("BOTTOMPADDING", (1, 0), (1, 0), 0)]))
+        note = Paragraph(esc(clean_text(claim.get("claim_text") or claim.get("why_flagged") or "No material sustainability claim was retained in the reviewed material.")), ST["small_dark"])
+        inner = Table([[head], [note]], colWidths=[inner_width])
+        inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+        card = Table([[inner]], colWidths=[CONTENT_W])
+        card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("BOX", (0, 0), (-1, -1), .7, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 3, GREY_300),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+        return card
     title = claim_title(claim) + occurrence_count_label(cluster)
     sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in cluster["occurrences"]))[:2])
     # The risk level is deliberately rendered as a fixed-width badge on the LEFT
@@ -694,7 +764,9 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     risk_value = claim_risk(claim)
     risk_badge = Paragraph(esc(risk_value), ST["claim_risk_badge"])
     lb_text, lb_color = legal_basis_label(claim)
-    title_html = f'{esc(title)} <font size="7" color="{lb_color.hexval()}"><b>&nbsp;&nbsp;{esc(lb_text)}</b></font>'
+    # v93.35: legal_basis_label() returns ("", None) for a non-material placeholder (no
+    # legal-basis category applies when there is no retained claim) -- render the title alone.
+    title_html = f'{esc(title)} <font size="7" color="{lb_color.hexval()}"><b>&nbsp;&nbsp;{esc(lb_text)}</b></font>' if lb_text else esc(title)
     head = Table(
         [[risk_badge, Paragraph(title_html, ST["claim_title"])]],
         colWidths=[risk_width, title_width],
@@ -806,11 +878,22 @@ def external_panel(data, limit):
     elif len(signals) == 1:
         cards = external_signal_card(signals[0], CONTENT_W)
     else:
+        # v93.35: this hardcoded signals[0]/signals[1] regardless of how many signals were
+        # actually passed in (up to `limit`, which build_company_report_pdf's auto-shrink
+        # ladder varies up to 6) -- raising external_limit above 2 had no visible effect at
+        # all. Render every retained signal, two per row.
         half_width = CONTENT_W * .5
         # Each outer cell adds a 3 pt gutter, so the card itself must be narrower
         # than the nominal half-page column.
-        cards = Table([[external_signal_card(signals[0], half_width-3), external_signal_card(signals[1], half_width-3)]], colWidths=[half_width, half_width])
-        cards.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 3), ("LEFTPADDING", (1, 0), (1, 0), 3), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        grid_rows = []
+        for i in range(0, len(signals), 2):
+            pair = signals[i:i+2]
+            if len(pair) == 2:
+                grid_rows.append([external_signal_card(pair[0], half_width-3), external_signal_card(pair[1], half_width-3)])
+            else:
+                grid_rows.append([external_signal_card(pair[0], half_width-3), ""])
+        cards = Table(grid_rows, colWidths=[half_width, half_width])
+        cards.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 3), ("LEFTPADDING", (1, 0), (1, -1), 3), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
     wrap = Table([[note], [cards]], colWidths=[CONTENT_W])
     wrap.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, 1), (-1, 1), 0)]))
     return wrap
@@ -888,7 +971,7 @@ def draw_footer(canvas, doc):
     canvas.restoreState()
 
 
-def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5, total_pages=None, inventory_limit=60):
+def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5, total_pages=None, inventory_limit=300, include_inventory=True):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
     doc.report_data = data
@@ -930,12 +1013,16 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         flow.append(Paragraph("No additional material claim group is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
     flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("External public-source signals")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
     flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.6*mm))
-    if inventory_limit > 0:
-        # v93.34: option 4 -- the narrative above only ever details the top 3 claim clusters
-        # (one example each); this compact appendix lists every materially retained finding
-        # for full traceability. inventory_limit is 0 in the most aggressive auto-shrink
-        # variants (build_company_report_pdf) so a scan with many findings drops this
-        # supplementary section before the core narrative is cut any further.
+    if include_inventory:
+        # v93.34/v93.35: option 4 -- the narrative above only ever details the top 3 claim
+        # clusters (one example each); this appendix lists every materially retained finding
+        # for full traceability. Per explicit product decision, this is the FULL inventory,
+        # not a page-budget-limited slice -- "the rest is online" is not good enough for a
+        # mailed/downloaded PDF that may be the recipient's only lasting record of the scan.
+        # inventory_limit (300) is a pathological-input safety bound only, expected to bind
+        # only for a scan with an implausible number of findings. include_inventory=False is
+        # used solely to probe how many pages the CORE narrative needs (see
+        # build_company_report_pdf) -- the real, returned PDF always includes this section.
         flow.append(section_title("Full claim inventory"))
         flow += full_claim_inventory_table(data, max_rows=inventory_limit)
         flow.append(Spacer(1, 1.6*mm))
@@ -953,16 +1040,19 @@ def _page_count(pdf_bytes):
 
 
 def build_company_report_pdf(data: dict) -> bytes:
-    """Build a two-, three- or four-page PDF without reducing font sizes.
+    """Build the company claim-risk report PDF.
 
-    Three pages is an accepted outcome (the ready-to-use rewrite text needs the room), and a
-    4th is now accepted too when a scan retained enough distinct findings for the option-4
-    full-claim-inventory appendix to be worth the extra page (v93.34). If content would still
-    spill past four pages, the generator progressively limits the number of additional
-    findings/external signals/inventory rows and shortens excerpts -- the supplementary
-    inventory appendix is the first thing dropped, before the core "most material"/"additional
-    material" narrative is cut any further. Detailed content always remains available in the
-    online scan. Once a variant fits, the PDF is rebuilt once more with the known final page
+    The CORE narrative (score overview, most material finding, additional material findings,
+    external signals, priority actions) targets a concise 2-4 pages, protected by the
+    auto-shrink ladder below rather than by cutting content that matters. The "Full claim
+    inventory" appendix (v93.34) is then always appended IN FULL -- per explicit product
+    decision, a mailed/downloaded PDF is often the recipient's only lasting record of the
+    scan, so "the rest remains available online" is not an adequate substitute for a claim
+    that was actually retained. A scan with many distinct findings can therefore legitimately
+    produce a PDF longer than 4 pages; that is expected, not a bug. The narrative-fitting probe
+    below builds without the appendix (include_inventory=False) purely to measure how many
+    pages the core narrative itself needs; the returned PDF always has the full appendix.
+    Once the narrative variant is chosen, the PDF is built once more with the known final page
     count so the footer can read "Page X of N" correctly instead of an earlier guess.
     """
     # v84: external_limit's top tier was 2 -- combined across BOTH green and social, so
@@ -972,22 +1062,28 @@ def build_company_report_pdf(data: dict) -> bytes:
     # scan has too many findings/sources to fit the page budget, same as it always has for
     # additional_limit/source_limit.
     variants = [
-        dict(additional_limit=2, external_limit=6, excerpt_chars=220, source_limit=6, inventory_limit=60),
-        dict(additional_limit=2, external_limit=4, excerpt_chars=200, source_limit=5, inventory_limit=40),
-        dict(additional_limit=1, external_limit=3, excerpt_chars=180, source_limit=4, inventory_limit=25),
-        dict(additional_limit=1, external_limit=2, excerpt_chars=165, source_limit=3, inventory_limit=15),
-        dict(additional_limit=0, external_limit=1, excerpt_chars=150, source_limit=3, inventory_limit=0),
+        dict(additional_limit=2, external_limit=6, excerpt_chars=220, source_limit=6),
+        dict(additional_limit=2, external_limit=4, excerpt_chars=200, source_limit=5),
+        dict(additional_limit=1, external_limit=3, excerpt_chars=180, source_limit=4),
+        dict(additional_limit=1, external_limit=2, excerpt_chars=165, source_limit=3),
+        dict(additional_limit=0, external_limit=1, excerpt_chars=150, source_limit=3),
     ]
-    last = b""
+    chosen = variants[-1]
     for variant in variants:
-        probe = _build_once(deepcopy(data), **variant)
+        probe = _build_once(deepcopy(data), include_inventory=False, **variant)
         count = _page_count(probe)
         if count is None:
-            return probe
+            # Page count couldn't be measured (pypdf unavailable) -- build the real,
+            # full-appendix PDF directly with the most generous variant rather than guessing.
+            return _build_once(deepcopy(data), **variants[0])
+        chosen = variant
         if count <= 4:
-            return _build_once(deepcopy(data), total_pages=count, **variant)
-        last = probe
-    return last
+            break
+    final_probe = _build_once(deepcopy(data), **chosen)
+    final_count = _page_count(final_probe)
+    if final_count is None:
+        return final_probe
+    return _build_once(deepcopy(data), total_pages=final_count, **chosen)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_34_pdf_report_occurrence_detail'
+    assert app.APP_VERSION == 'hostable_v93_35_pdf_report_accuracy_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1927,8 +1927,42 @@ def test_occurrence_count_label_distinguishes_repeated_vs_distinct_wording():
     data={'claim_inventory':same+distinct}
     clusters=rp.cluster_claims(data)
     labels={rp.claim_title(c['representative']):rp.occurrence_count_label(c) for c in clusters}
-    assert labels['Human-rights claim']==' · same wording on 5 pages'
+    assert labels['Human-rights claim']==' · same wording, 5 occurrences'
     assert labels['Generic environmental claim']==' · 3 distinct claims'
+
+
+def test_cluster_claims_does_not_merge_wordings_differing_only_after_120_chars():
+    """v93.35: cluster_claims()/other_occurrence_excerpts() compared only the first ~120
+    chars of each occurrence's claim text, so two passages sharing a long identical lead-in
+    but differing later -- e.g. a different product, percentage, or a NEGATION added past
+    that point -- were wrongly treated as the same wording. Reproduced: a long shared intro
+    followed by "Product A is carbon neutral." vs "Product B is NOT carbon neutral." must be
+    recognised as genuinely different claims, not collapsed into "same wording"."""
+    import report_pdf as rp
+    intro='This is a long shared introduction sentence that goes on for well over one hundred and twenty characters before the actual product-specific claim begins. '
+    a=_pdf_finding(0,'Climate claim','High',intro+'Product A is carbon neutral.',68,source='pageA')
+    b=_pdf_finding(1,'Climate claim','High',intro+'Product B is NOT carbon neutral.',68,source='pageB')
+    cluster=rp.cluster_claims({'claim_inventory':[a,b]})[0]
+    assert cluster['representative'].get('_unique_wording_count')==2
+    label=rp.occurrence_count_label(cluster)
+    assert 'same wording' not in label
+    extra=rp.other_occurrence_excerpts(cluster,max_items=2)
+    assert len(extra)==1  # the other, genuinely different occurrence must be surfaced
+
+
+def test_occurrence_count_label_reports_source_count_separately_from_occurrences(monkeypatch):
+    """v93.35: "same wording on N pages" was derived from the raw occurrence count, not the
+    number of unique SOURCE pages -- two findings sharing the exact same source_url (e.g. two
+    paragraphs repeating a claim on one page) were shown as "2 pages", which is wrong and
+    especially confusing for a PDF. Source count must be reported as its own separate number,
+    and the word "pages" must never be used unless that is genuinely what was counted."""
+    import report_pdf as rp
+    two_on_one_page=[_pdf_finding(0,'Human-rights claim','High','We garanderen een leefbaar loon.',62,source='same-page'),
+                      _pdf_finding(1,'Human-rights claim','High','We garanderen een leefbaar loon.',62,source='same-page')]
+    cluster=rp.cluster_claims({'claim_inventory':two_on_one_page})[0]
+    label=rp.occurrence_count_label(cluster)
+    assert 'pages' not in label
+    assert '2 occurrences' in label and '1 source' in label
 
 
 def test_claim_card_shows_additional_distinct_occurrence_excerpts():
@@ -1961,20 +1995,8 @@ def test_full_claim_inventory_table_includes_findings_beyond_top_three_clusters(
     assert len(table._cellvalues)==1+len(findings)  # header row + one row per finding
 
 
-def test_build_company_report_pdf_stays_within_four_pages_with_many_findings():
-    """v93.34: raised the accepted page budget from 3 to 4 pages to make room for the
-    option-4 full-claim-inventory appendix on a scan with many distinct findings, while the
-    auto-shrink ladder must still keep the PDF within that new budget rather than growing
-    unbounded."""
-    import pypdf
-    import report_pdf as rp
-    products=['vis','groenten','vlees','zuivel','bakkerij','dranken','snacks','fruit','kaas','ontbijt','soep','sauzen','diepvries','conserven']
-    green=[_pdf_finding(i,'Generic environmental claim','High',f'Al jarenlang biedt ons een assortiment {p} dat zeer milieuvriendelijk is.',68,source=f'planet/{p}')
-           for i,p in enumerate(products)]
-    social=[_pdf_finding(100+i,'Human-rights / labour-rights claim','High','We garanderen een leefbaar loon voor al onze medewerkers wereldwijd.',62,dim='social',source='people') for i in range(5)]
-    labels=[_pdf_finding(200+i,'Sustainability label / certification claim','Medium',f'Product {i} is 100% duurzaam gecertificeerd door een onafhankelijk keurmerk.',55,source='labels') for i in range(3)]
-    claims=green+social+labels
-    data={'version':'test','company':{'company':'Test Co','sector':'Food retail'},'source_label':'https://example.com',
+def _pdf_test_data(claims):
+    return {'version':'test','company':{'company':'Test Co','sector':'Food retail'},'source_label':'https://example.com',
         'original_url':'https://example.com','analysis_date':'2026-09-07','global_score':75,'global_risk':'Very high',
         'green_score':75,'green_risk':'Very high','social_score':62,'social_risk':'High','overall_score':75,
         'overall_risk':'Very high','screening_conclusion':'Global: Very high','methodology':'Test methodology.',
@@ -1984,13 +2006,102 @@ def test_build_company_report_pdf_stays_within_four_pages_with_many_findings():
         'documents_checked':[],'scan_inventory':{'website_pages':[],'documents':[],'failed_fetches':[],'domains':['example.com'],'summary':{}},
         'external_research':{'green':{'enabled':False,'results':[]},'social':{'enabled':False,'results':[]}},
         'company_action_plan':[],'stakeholder_red_flags':[],'confidence':{'level':'Medium','reasons':[]}}
+
+
+def test_build_company_report_pdf_keeps_full_inventory_even_past_four_pages():
+    """v93.35: per explicit product decision, the "Full claim inventory" appendix is always
+    complete -- a mailed/downloaded PDF is often the recipient's only lasting record of the
+    scan, so silently showing only 40 of 60 retained findings under a "Full claim inventory"
+    heading (as the v93.34 auto-shrink ladder did) is misleading. The CORE narrative still
+    targets a concise page budget, but the total PDF may legitimately exceed 4 pages when a
+    scan retains many distinct findings -- that must no longer be treated as something to
+    avoid at the cost of truncating the inventory."""
+    import pypdf
+    import report_pdf as rp
+    many_findings=[_pdf_finding(i,f'Claim type {i}','Medium',f'Distinct claim wording number {i} about our products, with enough length to be realistic.',40,source=f'page{i}')
+                   for i in range(60)]
+    data=_pdf_test_data(many_findings)
+    pdf_bytes=rp.build_company_report_pdf(data)
+    assert pdf_bytes.startswith(b'%PDF-')
+    pages=pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages
+    full_text=' '.join(p.extract_text() for p in pages)
+    assert 'FULL CLAIM INVENTORY' in full_text.upper()
+    # every one of the 60 findings must appear in the inventory -- not a silently truncated subset
+    for i in range(60):
+        assert f'wording number {i} about' in full_text, f'finding {i} missing from the full inventory'
+
+
+def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
+    """v93.34/v93.35: a scan with a normal, modest number of findings should still produce a
+    concise report -- the "always include the full inventory" decision must not make an
+    ordinary scan's report needlessly long when there is little to append."""
+    import pypdf
+    import report_pdf as rp
+    products=['vis','groenten','vlees','zuivel','bakkerij','dranken','snacks','fruit','kaas','ontbijt','soep','sauzen','diepvries','conserven']
+    green=[_pdf_finding(i,'Generic environmental claim','High',f'Al jarenlang biedt ons een assortiment {p} dat zeer milieuvriendelijk is.',68,source=f'planet/{p}')
+           for i,p in enumerate(products)]
+    social=[_pdf_finding(100+i,'Human-rights / labour-rights claim','High','We garanderen een leefbaar loon voor al onze medewerkers wereldwijd.',62,dim='social',source='people') for i in range(5)]
+    labels=[_pdf_finding(200+i,'Sustainability label / certification claim','Medium',f'Product {i} is 100% duurzaam gecertificeerd door een onafhankelijk keurmerk.',55,source='labels') for i in range(3)]
+    data=_pdf_test_data(green+social+labels)
     pdf_bytes=rp.build_company_report_pdf(data)
     assert pdf_bytes.startswith(b'%PDF-')
     page_count=len(pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
     assert page_count<=4
     full_text=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
     assert 'FULL CLAIM INVENTORY' in full_text.upper()
-    assert 'distinct claims' in full_text or 'same wording on' in full_text
+    assert 'distinct claims' in full_text or 'same wording,' in full_text
+
+
+def test_external_panel_renders_more_than_two_signals():
+    """v93.35: external_panel() hardcoded signals[0]/signals[1] regardless of how many
+    signals were actually passed in (up to external_limit, which the auto-shrink ladder
+    varies up to 6) -- raising external_limit above 2 had no visible effect. All retained
+    signals must render, not just the first two."""
+    import report_pdf as rp
+    signals=[{'green':{'targeted_negative_sources':[
+        {'title':f'Negative signal {i}','url':f'https://news.example/{i}','polarity':'negative','status':'Retained','review_status':'Retained'}
+        for i in range(6)]},'social':{'targeted_negative_sources':[]}}]
+    data={'external_research':signals[0]}
+    panel=rp.external_panel(data,6)
+    # the panel is a wrapper Table([[note],[cards]]) -- cards is itself a grid Table when
+    # there is more than one signal; count how many signal titles actually made it in by
+    # rendering to a probe PDF page and checking the extracted text.
+    from reportlab.platypus import SimpleDocTemplate
+    import io as _io
+    buf=_io.BytesIO()
+    doc=SimpleDocTemplate(buf,pagesize=rp.A4)
+    doc.build([panel])
+    import pypdf
+    text=pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    for i in range(6):
+        assert f'Negative signal {i}' in text, f'signal {i} missing from the external panel'
+
+
+def test_zero_findings_placeholder_shows_no_legal_basis_contradiction():
+    """v93.35: the "no material claim retained" placeholder (_build_once's fallback when a
+    scan has zero findings) went through the same legal-basis routine as a genuine claim,
+    producing a direct on-card contradiction: "No material claim signal retained" next to a
+    "Problematic, not automatically prohibited (case-by-case)" legal-basis badge. A claim
+    that isn't material has no legal-basis category to report."""
+    import report_pdf as rp
+    placeholder={'claim_type':'No material claim signal retained','risk':'Low',
+        'claim_text':'No material sustainability claim was retained in the reviewed material.'}
+    text,color=rp.legal_basis_label(placeholder)
+    assert text=='' and color is None
+    data=_pdf_test_data([])
+    pdf_bytes=rp.build_company_report_pdf(data)
+    full_text=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
+    assert 'Problematic' not in full_text
+    assert 'No material claim signal retained' in full_text
+
+
+def test_risk_color_treats_not_assessed_as_neutral_not_low_risk():
+    """v93.35: risk_color()'s default fallthrough returned GREEN for anything that wasn't
+    "high"/"medium" -- including "Not assessed", which then rendered identically to a
+    genuine low-risk result (visually indistinguishable from "we checked and it's fine")."""
+    import report_pdf as rp
+    assert rp.risk_color('Not assessed') != rp.GREEN
+    assert rp.risk_color('Low') == rp.GREEN
 
 
 def test_legal_basis_label_prefers_the_stored_backend_label():
