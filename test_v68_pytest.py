@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_41_dedicated_pages_three_block_cards_calmer_palette'
+    assert app.APP_VERSION == 'hostable_v93_42_soften_serious_finding_wording'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)

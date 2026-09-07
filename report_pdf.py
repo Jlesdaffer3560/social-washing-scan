@@ -1189,10 +1189,14 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # v93.40: "material finding(s)" (audit/materiality jargon) and "claim inventory" renamed
     # to plain English per explicit user feedback -- the whole report must read fluently for
     # executives and other non-specialist stakeholders, not just compliance/legal readers.
-    selection_note = ("Similar claims are grouped together, and the most serious groups are explained in detail below"
+    # v93.42: "Most/Additional serious finding(s)" toned down to "Top finding"/"Additional
+    # findings" per direct user feedback on a live report -- "serious" as a section LABEL read
+    # as more dramatic than intended; the actual severity is still stated plainly in the risk
+    # badge, legal-basis label and this sentence's own "how serious it is" wording below.
+    selection_note = ("Similar claims are grouped together, and the top-priority groups are explained in detail below"
         + (", making sure both green and social risks are represented rather than only the highest-scoring group. "
            if dimension_balanced else
-           ": one as “Most serious finding” and two more under “Additional serious findings”. ")
+           ": one as “Top finding” and two more under “Additional findings”. ")
         + "For each group, we show the clearest example we found — first by how serious it is, then by how easy it is to check (an exact quote with its source), and only then by how common that wording is. Nothing is left out: every finding, including groups not detailed here, is listed in full in the Full list of findings at the end of this report.")
     flow.append(Paragraph(selection_note, ST["small"]))
     flow.append(Spacer(1, 1.2*mm))
@@ -1202,8 +1206,8 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
 
     # PAGE 2 -- the evidence itself: exact quotes, why they matter, what to do.
     flow += header_block(data, "Company claim-risk report · Findings in detail")
-    flow.append(section_title("Most serious finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
-    flow.append(section_title("Additional serious findings"))
+    flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
+    flow.append(section_title("Additional findings"))
     if additional:
         for c in additional:
             flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 1.7*mm))
