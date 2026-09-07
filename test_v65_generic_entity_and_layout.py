@@ -81,7 +81,10 @@ sample = {
 }
 pdf = report_pdf.build_company_report_pdf(sample)
 reader = PdfReader(io.BytesIO(pdf))
-assert len(reader.pages) == 2
+# v93.41: the report now separates into dedicated pages by reason for reading (overview /
+# detailed evidence / external context / appendix) instead of packing as much as fits before
+# each page break, so even a small scan like this one no longer fits in 2 pages.
+assert len(reader.pages) >= 3, len(reader.pages)
 text = '\n'.join(page.extract_text() or '' for page in reader.pages)
 assert 'Very high' in text and 'Future environmental-performance' in text
 

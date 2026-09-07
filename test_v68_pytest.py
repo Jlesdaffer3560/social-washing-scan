@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_40_plain_language_report_readability_pass'
+    assert app.APP_VERSION == 'hostable_v93_41_dedicated_pages_three_block_cards_calmer_palette'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2189,8 +2189,18 @@ def test_build_company_report_pdf_keeps_full_inventory_even_past_four_pages():
 
 def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
     """v93.34/v93.35: a scan with a normal, modest number of findings should still produce a
-    concise report -- the "always include the full inventory" decision must not make an
-    ordinary scan's report needlessly long when there is little to append."""
+    concise CORE narrative -- the "always include the full inventory" decision must not make an
+    ordinary scan's narrative needlessly long when there is little to append.
+
+    v93.41: the report now separates into dedicated pages by reason for reading (overview /
+    detailed evidence / external context, then a separately-headed appendix), per explicit
+    reviewer feedback that a reader should get "what needs attention, where, what to do" without
+    it competing for space with evidence, external signals or the full appendix. Three hard page
+    breaks put a fixed floor of 3 pages under the CORE narrative regardless of content -- fewer
+    findings no longer means fewer pages there, only less content per page -- and the appendix
+    then starts fresh on its own page. This test now checks that floor directly (narrative <= 3
+    pages) rather than the old total-including-appendix <= 4, and sanity-checks the total for a
+    genuinely modest scan doesn't run away."""
     import pypdf
     import report_pdf as rp
     products=['vis','groenten','vlees','zuivel','bakkerij','dranken','snacks','fruit','kaas','ontbijt','soep','sauzen','diepvries','conserven']
@@ -2201,9 +2211,16 @@ def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
     data=_pdf_test_data(green+social+labels)
     pdf_bytes=rp.build_company_report_pdf(data)
     assert pdf_bytes.startswith(b'%PDF-')
-    page_count=len(pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
-    assert page_count<=4
-    full_text=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
+    pages=pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages
+    page_count=len(pages)
+    narrative_pages=0
+    for p in pages:
+        narrative_pages+=1
+        if 'FULL LIST OF FINDINGS' in p.extract_text().upper():
+            break
+    assert narrative_pages<=3, f"core narrative (overview/evidence/context) should fit in 3 dedicated pages, was {narrative_pages}"
+    assert page_count<=6, f"a modest scan's total report (narrative + appendix) should not run away, was {page_count}"
+    full_text=' '.join(p.extract_text() for p in pages)
     assert 'FULL LIST OF FINDINGS' in full_text.upper()
     assert 'occurrences' in full_text and 'milieuvriendelijk' in full_text
 

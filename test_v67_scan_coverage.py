@@ -54,9 +54,12 @@ sample={
 }
 pdf=report_pdf.build_company_report_pdf(sample)
 reader=PdfReader(io.BytesIO(pdf))
-assert len(reader.pages)==2,len(reader.pages)
+# v93.41: the report now separates into dedicated pages by reason for reading (overview /
+# detailed evidence / external context / appendix) instead of packing as much as fits before
+# each page break, so even a small scan like this one no longer fits in 2 pages.
+assert len(reader.pages)>=3,len(reader.pages)
 text='\n'.join((p.extract_text() or '') for p in reader.pages)
-assert 'ASSESSMENT COVERAGE' in text,text[-2000:]
+assert 'WHAT WE LOOKED AT' in text,text[-2000:]  # v93.40: renamed from "ASSESSMENT COVERAGE"
 assert 'REVIEWED PAGES AND DOCUMENTS' in text,text[-2000:]
 assert '4 website page(s)' in text,text[-2000:]
 assert '2 document(s) / PDF(s)' in text,text[-2000:]

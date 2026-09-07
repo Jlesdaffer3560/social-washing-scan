@@ -687,7 +687,14 @@ def summary_box(data, clusters):
     left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#52616A" size="8">{score_line}</font>', ST["body_dark"])
     note = Paragraph(esc(bounded_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on the result.", 170)), ST["small"])
     t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
-    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (0, 0), AMBER_SOFT), ("LINEBEFORE", (0, 0), (0, 0), 2.8, AMBER), ("BACKGROUND", (1, 0), (1, 0), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+    # v93.41: the opening conclusion is shown regardless of how severe the findings are (it
+    # says plainly when nothing of concern was found, too), so an amber "warning" wash behind
+    # it was misleading in the good-outcome case and, in the bad-outcome case, one more red/
+    # amber surface in a report a reviewer already found "made every finding look like an
+    # alarm." A calm navy accent line on a neutral background keeps this box looking like the
+    # report's lead conclusion, not a risk signal in itself -- actual risk is communicated by
+    # the score cards and finding badges below, in colours reserved for that purpose.
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (0, 0), GREY_100), ("LINEBEFORE", (0, 0), (0, 0), 2.8, NAVY), ("BACKGROUND", (1, 0), (1, 0), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     return t
 
 
@@ -926,31 +933,33 @@ def claim_card(cluster, excerpt_chars=220, material=False):
                    + '</font>', ST["source"])]
         for occ in other_occurrence_excerpts(cluster, max_items=extra_max_items, max_chars=extra_max_chars)
     ]
-    # v93.40: "EVIDENCE GAP"/"RECOMMENDED IMPROVEMENT"/"READY-TO-USE REWRITE" renamed to plain
-    # questions/instructions ("WHAT'S MISSING"/"WHAT TO DO") per explicit user/reviewer
-    # feedback -- the report must read fluently for executives, not just compliance readers.
-    # The rewrite example is also relabelled to make clear it is a starting point to verify and
-    # complete, not a ready, fact-checked replacement claim (a second reviewer's point: a tidy
-    # example sentence must not read as a new, unsubstantiated promise).
-    why = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_text(claim, 155 if material else 130))}', ST["small_dark"])
-    gap = Paragraph(f'<b>WHAT\'S MISSING</b><br/>{esc(evidence_gap_text(claim, 130 if material else 110))}', ST["small_dark"])
-    grid = Table([[why, gap]], colWidths=[inner_width*.52, inner_width*.48])
-    grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 7), ("LEFTPADDING", (1, 0), (1, 0), 7), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    rec = Paragraph(f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}', ST["small_dark"])
-    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[grid], [rec]]
+    # v93.41: collapsed the card from citation + two-column WHY/WHAT'S-MISSING grid + separate
+    # WHAT-TO-DO + separate EXAMPLE-WORDING block into a strict three-part pattern -- citation
+    # (head/phrases/source/quote/also, unchanged), MEANING (one flowing paragraph: what's wrong
+    # and what evidence is missing) and ACTION (the recommendation and, where available, the
+    # example wording under the SAME heading) -- per explicit user/reviewer feedback that five
+    # small blocks mostly telling the reader the same thing is harder to scan than three clear
+    # ones. Labels ("WHAT'S MISSING", "WHAT TO DO") were already renamed in v93.40; this only
+    # changes how many separate boxes they render as, not their wording.
+    why_body = why_text(claim, 155 if material else 130)
+    gap_body = evidence_gap_text(claim, 130 if material else 110)
+    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)} <font color="#7A8A93">What\'s missing:</font> {esc(gap_body)}', ST["small_dark"])
+    action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
-        rows.append([Paragraph(f'<b>EXAMPLE WORDING — VERIFY AND COMPLETE BEFORE USE</b><br/><font face="Courier">{esc(ready_rewrite)}</font>', ST["small_dark"])])
+        action_html += f'<br/><font color="#7A8A93">Example wording — verify and complete before use:</font> <font face="Courier">{esc(ready_rewrite)}</font>'
+    action = Paragraph(action_html, ST["small_dark"])
+    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[meaning], [action]]
     inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
-    # v86: the "most material finding" card always used GREEN_SOFT as its background
-    # regardless of actual risk, while its border/badge correctly followed risk_color() -- a
-    # High-risk finding rendered with a red badge, a red border, AND a soft-green card
-    # background, which read as visually contradictory ("this looks like a good result").
-    # risk_soft() picks the matching soft tone (red/amber/green) for the actual risk level.
-    card_background = risk_soft(claim_risk(claim)) if material else GREY_100
-    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), card_background), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    # v93.41: dropped the risk-coloured full-card background wash (RED_SOFT/AMBER_SOFT/
+    # GREEN_SOFT) per explicit reviewer feedback -- making every single finding fill its whole
+    # card in red/amber reads as an alarm regardless of how serious it actually is, and the
+    # risk is already unambiguous from the badge (colour + text label) and the left border
+    # accent alone. A calm, neutral card body keeps colour meaningful instead of decorative;
+    # red is now reserved for the badge/border of genuinely High/Very-high findings.
+    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("BOX", (0, 0), (-1, -1), .7, risk_color(claim_risk(claim))), ("LINEBEFORE", (0, 0), (0, 0), 3, risk_color(claim_risk(claim))), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
     return card
 
 
@@ -998,7 +1007,11 @@ def external_signal_card(signal, width):
     inner = Table(rows, colWidths=[width-16])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
     card = Table([[inner]], colWidths=[width])
-    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), RED_SOFT), ("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.8, RED), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    # v93.41: dropped the full RED_SOFT-wash background (every external signal is already
+    # filtered to negative-only, so a grid of several such cards previously read as a wall of
+    # red) in favour of a neutral card with a red accent line -- consistent with the same
+    # "colour signals, text confirms" change applied to claim_card().
+    card.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.8, RED), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return card
 
 
@@ -1138,12 +1151,28 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
             if candidate and candidate["group_priority"][0] >= MATERIALITY_FLOOR:
                 additional[-1] = candidate
                 dimension_balanced = True
+    # v93.41: the report is now split across dedicated pages by REASON FOR READING, not just by
+    # however much fit before the page ran out, per explicit reviewer feedback: an executive
+    # reader wants "what needs attention / where / what do I do" in two minutes, with the
+    # detailed evidence, external context and full appendix each on their own page so nothing
+    # competes with the overview for attention. Page 1 is the overview (conclusion, score, the
+    # attention table, first actions); page 2 is the detailed evidence (the actual quotes,
+    # explanation and recommendations); page 3 is external signals plus the scan's own coverage/
+    # confidence context; the appendix (full findings + methodology) is always a separate,
+    # clearly-labelled final section. This raises the CORE narrative's page floor from 2 to 3
+    # (three hard page breaks), which is still within the up-to-4-page budget the auto-shrink
+    # ladder below targets and matches prior explicit guidance that 3 pages is an expected,
+    # not exceptional, length for this report.
     flow = []
+    # PAGE 1 -- overview: what's wrong, how serious, what to do about it first.
     flow += header_block(data, "Company claim-risk report · Assessment overview")
     flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))
     flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 2.5*mm))
     rp = reliability_panel(data)
     if rp is not None:
+        # Kept on page 1, not moved to the later context page: a genuine coverage limitation
+        # can make the very conclusion above less certain, so the reader needs to see it
+        # immediately, not after already having acted on the headline result.
         flow.append(rp); flow.append(Spacer(1, 2.2*mm))
     flow.append(section_title("What needs attention"))
     # v93.37/v93.38: added per explicit user request -- readers otherwise couldn't tell why
@@ -1168,17 +1197,26 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     flow.append(Paragraph(selection_note, ST["small"]))
     flow.append(Spacer(1, 1.2*mm))
     flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
+    flow.append(section_title("Priority actions")); flow.append(actions_table(data))
+    flow.append(PageBreak())
+
+    # PAGE 2 -- the evidence itself: exact quotes, why they matter, what to do.
+    flow += header_block(data, "Company claim-risk report · Findings in detail")
     flow.append(section_title("Most serious finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
-    flow.append(assessment_basis(data)); flow.append(PageBreak())
-    flow += header_block(data, "Company claim-risk report · Context and response")
     flow.append(section_title("Additional serious findings"))
     if additional:
         for c in additional:
             flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 1.7*mm))
     else:
         flow.append(Paragraph("No additional finding is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
-    flow.append(Spacer(1, 1.4*mm)); flow.append(section_title("What external sources say")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
-    flow.append(section_title("Priority actions")); flow.append(actions_table(data)); flow.append(Spacer(1, 1.6*mm))
+    flow.append(PageBreak())
+
+    # PAGE 3 -- context that supports, but doesn't gate, the findings above: what outside
+    # sources say, and the scan's own coverage, confidence and regulatory basis.
+    flow += header_block(data, "Company claim-risk report · External signals and context")
+    flow.append(section_title("What external sources say")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
+    flow.append(assessment_basis(data))
+
     if include_inventory:
         # v93.34/v93.35: option 4 -- the narrative above only ever details the top 3 claim
         # clusters (one example each); this appendix lists every materially retained finding
@@ -1189,10 +1227,17 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         # only for a scan with an implausible number of findings. include_inventory=False is
         # used solely to probe how many pages the CORE narrative needs (see
         # build_company_report_pdf) -- the real, returned PDF always includes this section.
+        # v93.41: the appendix now always starts on its own page with its own header, clearly
+        # separated from the read-through narrative above, per explicit reviewer feedback.
+        flow.append(PageBreak())
+        flow += header_block(data, "Company claim-risk report · Full findings and methodology")
         flow.append(section_title("Full list of findings"))
         flow += full_claim_inventory_table(data, max_rows=inventory_limit)
         flow.append(Spacer(1, 1.6*mm))
-    flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
+        flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
+    else:
+        flow.append(Spacer(1, 1.8*mm))
+        flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
 

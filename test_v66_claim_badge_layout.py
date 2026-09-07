@@ -29,7 +29,10 @@ sample = {
 
 pdf = report_pdf.build_company_report_pdf(sample)
 reader = PdfReader(io.BytesIO(pdf))
-assert len(reader.pages) == 2, len(reader.pages)
+# v93.41: the report now separates into dedicated pages by reason for reading (overview /
+# detailed evidence / external context / appendix) instead of packing as much as fits before
+# each page break, so even a small scan like this one no longer fits in 2 pages.
+assert len(reader.pages) >= 3, len(reader.pages)
 
 # All text must stay within the page. In addition, claim-card risk labels now sit
 # in the left badge zone, far away from the right border.
