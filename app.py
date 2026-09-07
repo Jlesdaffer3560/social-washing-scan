@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_31_second_followup_review_fixes"
-APP_RELEASE_LABEL="v93.31"
+APP_VERSION="hostable_v93_32_brevo_ip_error_message"
+APP_RELEASE_LABEL="v93.32"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4344,6 +4344,18 @@ def send_report_pdf_email(to_email,pdf_bytes,company_name,stamp):
         # it never contains the recipient address or report content.
         try: detail=e.read().decode('utf-8',errors='ignore')[:300]
         except Exception: detail=str(e)
+        # v93.32: "unrecognised IP address" is a Brevo ACCOUNT-level security setting
+        # (Settings -> Security -> Authorised IPs), not an application bug -- it fires for
+        # every recipient/company alike whenever Render's outbound IP for this deployment
+        # isn't on Brevo's allowlist (Render's IP can change across deploys/restarts unless a
+        # paid Static Outbound IP add-on is enabled). Give an actionable message instead of a
+        # raw, confusing API error blob.
+        if 'unrecognised ip' in detail.lower() or 'authorised_ips' in detail.lower():
+            raise RuntimeError('Could not send the report email: Brevo is blocking this server\'s current outbound IP address '
+                                '(a Brevo account security setting, not an app bug). Fix it in the Brevo dashboard under '
+                                'Settings -> Security -> Authorised IPs -- either add this deployment\'s IP, or disable IP '
+                                'authorisation if the IP may change between deploys. Please try downloading the PDF instead '
+                                'in the meantime.') from e
         raise RuntimeError(f'Could not send the report email ({detail}). Please try downloading the PDF instead.') from e
     except Exception as exc:
         raise RuntimeError(f'Could not send the report email ({exc}). Please try downloading the PDF instead.') from exc

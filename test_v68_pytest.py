@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_31_second_followup_review_fixes'
+    assert app.APP_VERSION == 'hostable_v93_32_brevo_ip_error_message'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1412,6 +1412,31 @@ def test_uploaded_document_analysis_separates_full_inventory_from_display_cap():
     green_in_inventory=[c for c in result['findings'] if c.get('dimension')=='Green']
     assert len(green_in_inventory)>12, (
         f"expected the full claim inventory to keep more than 12 green claims, got {len(green_in_inventory)}")
+
+
+def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
+    """v93.32: Brevo's "unrecognised IP address" error is an ACCOUNT-level security setting
+    (Settings -> Security -> Authorised IPs) firing whenever the deployment's outbound IP
+    isn't allowlisted -- not an application bug, and not specific to any one recipient or
+    company. Reproduced live: sending a Delhaize report failed with Brevo's raw JSON error
+    blob shown verbatim to the user. Must now surface an actionable, self-explanatory
+    message pointing at the Brevo dashboard setting instead."""
+    import io, urllib.error
+    monkeypatch.setattr(app,'BREVO_API_KEY','fake-key')
+    monkeypatch.setattr(app,'BREVO_SENDER_EMAIL','sender@example.com')
+    body=(b'{"message":"We have detected you are using an unrecognised IP address 74.220.51.155. '
+          b'If you performed this action make sure to add the new IP address in this link: '
+          b'https://app.brevo.com/security/authorised_ips","code":"unauthorized"}')
+    def fake_open(req,timeout=None):
+        raise urllib.error.HTTPError('https://api.brevo.com/v3/smtp/email',401,'Unauthorized',{},io.BytesIO(body))
+    monkeypatch.setattr(app._SAFE_OPENER,'open',fake_open)
+    try:
+        app.send_report_pdf_email('someone@example.com',b'%PDF-fake','Delhaize','2026-09-07')
+        assert False, 'expected RuntimeError'
+    except RuntimeError as e:
+        msg=str(e).lower()
+        assert 'brevo' in msg and 'authoris' in msg and 'dashboard' in msg
+        assert '{"message"' not in str(e), 'should not show the raw Brevo JSON blob to the user'
 
 
 def test_inline_markup_does_not_break_negation_detection():
