@@ -1134,6 +1134,22 @@ def test_pdf_extraction_strips_unresolved_glyph_octal_artifacts(monkeypatch):
     assert 'o\\036er' not in txt and '\\227 enables' not in txt
 
 
+def test_pdf_regex_fallback_also_strips_octal_escape_artifacts():
+    """v93.26 follow-up: the artifact above was actually reproduced live via the
+    no-dependency regex fallback (pypdf raised on Colruyt Group's annual report PDF), not
+    the pypdf path -- the first fix only covered the pypdf branch and left this one
+    exposed. PDF literal strings use "\\ddd" octal escapes natively, and this fallback's
+    text_operators() only un-escapes "(", ")" and "\\\\", so any octal escape survives into
+    the extracted text verbatim unless also cleaned here."""
+    import zlib
+    content_stream=b'(What we o\\036er sustainable sourcing \\227 enables trust.)Tj'
+    compressed=zlib.compress(content_stream)
+    pdf_bytes=b'stream\n'+compressed+b'\nendstream'
+    txt=app._extract_pdf_text_regex_fallback(pdf_bytes)
+    assert '\\036' not in txt and '\\227' not in txt
+    assert 'oer sustainable sourcing' in txt
+
+
 def test_analyse_url_v27_prefers_kbo_official_website_over_name_resolution(monkeypatch):
     """v93.24: when KBO has an official website on file for the given number, it must be
     used directly instead of re-resolving via search/domain-guessing off the official

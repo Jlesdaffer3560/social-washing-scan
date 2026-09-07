@@ -3098,6 +3098,20 @@ def extract_docx_text(data):
                 pass
         return '\n'.join(parts).strip()
 
+def _strip_pdf_glyph_artifacts(txt):
+    """Strips literal "\\NNN" (backslash + 1-3 octal digits) placeholders that both PDF
+    extraction paths below can leak into visible text -- as four printable characters,
+    not an actual control byte. pypdf emits this for a glyph it cannot resolve via a
+    font's /Differences or ToUnicode map; the no-dependency regex fallback (used when
+    pypdf fails outright) emits it because PDF's own literal-string syntax legitimately
+    uses "\\ddd" octal escapes and that fallback never decodes them, only ever un-escaping
+    "(", ")" and "\\\\". Neither path knows the source font's actual encoding well enough to
+    safely guess the intended character (observed live as both a lost "ff" ligature and an
+    em dash for the same artifact pattern), so this only removes the artifact rather than
+    substituting a guess -- confirmed live on Colruyt Group's annual report PDF, where a
+    lost ligature surfaced verbatim as "o\\036er" in a quoted claim on the results page."""
+    return re.sub(r'\\[0-7]{1,3}', '', txt)
+
 def extract_pdf_text_best_effort(data, max_pages=60):
     """PDF text extraction. Tries pypdf first, which correctly handles FlateDecode
     (the near-universal PDF compression method) and font encoding/ToUnicode maps -- the
@@ -3122,13 +3136,7 @@ def extract_pdf_text_best_effort(data, max_pages=60):
                 if sum(len(p) for p in parts) > 200000:
                     break
             txt=' '.join(parts)
-            # pypdf emits a literal "\NNN" octal-escape placeholder (four printable
-            # characters, not an actual control byte) for glyphs it cannot resolve via a
-            # font's /Differences or ToUnicode map -- observed in practice as a lost "ff"
-            # ligature (e.g. "offer" -> "o\036er") in subset-encoded corporate PDF fonts.
-            # Strip these before they surface as visible gibberish in quoted claim text,
-            # reports and emails.
-            txt=re.sub(r'\\[0-7]{1,3}', '', txt)
+            txt=_strip_pdf_glyph_artifacts(txt)
             txt=re.sub(r'\s+', ' ', txt).strip()
             if len(txt) >= 80:
                 return txt[:90000]
@@ -3178,6 +3186,7 @@ def _extract_pdf_text_regex_fallback(data):
     except Exception:
         pass
     txt=re.sub(r'\s+', ' ', ' '.join(t for t in text_parts if t)).strip()
+    txt=_strip_pdf_glyph_artifacts(txt)
     return txt[:90000]
 
 def decode_uploaded_document(filename, content_base64, mime_type=''):
