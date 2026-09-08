@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_45_multilingual_ambiguous_word_context_guard'
+    assert app.APP_VERSION == 'hostable_v93_46_second_review_followup_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -716,6 +716,34 @@ def test_scan_history_top_claims_blacklist_column(monkeypatch):
     assert '&mdash;' in html
 
 
+def test_fetch_top_claims_counts_distinct_companies_not_distinct_scans(monkeypatch):
+    """v93.46: "companies" in the top-claims panel was COUNT(DISTINCT scan_id) -- counting
+    SCANS, not companies, so the same company scanned 3 times (re-scanned on a later date)
+    counted as 3 companies. Must join to scan_history and count distinct company NAMES
+    instead. Checked both the plain and the scan-id-scoped variant."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    captured=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): captured.append(sql)
+        def fetchall(self): return [('carbon neutral',7,2,3,True)]
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    app._v92_fetch_top_claims()
+    assert 'JOIN scan_history' in captured[-1]
+    assert 'COUNT(DISTINCT LOWER(sh.company))' in captured[-1]
+    assert 'COUNT(DISTINCT scan_id)' not in captured[-1] and 'COUNT(DISTINCT sf.scan_id)' not in captured[-1]
+
+    captured.clear()
+    app._v92_fetch_top_claims_for_scan_ids([1,2,3])
+    assert 'JOIN scan_history' in captured[-1]
+    assert 'COUNT(DISTINCT LOWER(sh.company))' in captured[-1]
+
+
 def test_scan_history_fetch_top_claims_includes_blacklist(monkeypatch):
     """v93.6: _v92_fetch_top_claims() must aggregate blacklisted status with BOOL_OR (true
     if ANY occurrence of that phrase was blacklisted) alongside the existing risk-rank
@@ -907,6 +935,44 @@ def test_backfill_legacy_findings_skips_already_populated(monkeypatch, tmp_path)
     assert insert_log==[]
 
 
+def test_backfill_finding_counts_recomputes_from_scan_findings(monkeypatch):
+    """v93.46: the v93.44 counting fixes (findings_count excluding placeholder rows,
+    high_risk_findings_count reading the correct field) only apply to NEW scans -- historical
+    rows logged before that fix kept their old, wrong stored values. The corrected data was
+    already sitting in scan_findings the whole time, so this backfill recomputes both columns
+    from there directly, without needing the original scan result. Must report how many rows
+    it actually changed."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append(sql); self.rowcount=7
+        rowcount=0
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    summary=app._v93_backfill_finding_counts()
+    assert summary['error'] is None
+    assert summary['updated_rows']==7
+    sql=executed[-1]
+    assert 'UPDATE scan_history' in sql and 'scan_findings' in sql
+    assert 'IS DISTINCT FROM' in sql, 'must only touch rows whose stored value actually differs'
+
+
+def test_backfill_finding_counts_reports_error_without_database(monkeypatch):
+    """v93.46: same safety posture as the other /history backfills -- a missing/unreachable
+    database must report a clear error, never raise."""
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: None)
+    summary=app._v93_backfill_finding_counts()
+    assert summary['error']=='Database not configured.'
+    assert summary['updated_rows']==0
+
+
 def test_backfill_sector_names_missing_fixture(monkeypatch, tmp_path):
     """v93.18: the sector-name backfill must report a clear error (not raise) when its
     bundled fixture file isn't present -- same safety posture as the legacy-findings
@@ -981,14 +1047,15 @@ def _sample_export_rows():
 
 def test_batch_report_aggregate_stats():
     """v93.12: _aggregate() must compute averages only over present (non-None) scores,
-    count risk buckets correctly (defaulting an unrecognised/blank risk to 'Low' rather
-    than crashing or silently dropping the row), count companies with at least one EmpCo
-    blacklisted claim, and derive the min/max scanned date range."""
+    count risk buckets correctly, count companies with at least one EmpCo blacklisted claim,
+    and derive the min/max scanned date range.
+    v93.46: an unrecognised/blank risk now buckets into its own 'Not assessed' count instead
+    of defaulting to 'Low' -- a missing score must not read as a genuine low-risk result."""
     import batch_report_pdf as brp
     agg=brp._aggregate(_sample_export_rows())
     assert agg['total']==3
     assert agg['avg_global']==37.0  # (41+61+9)/3
-    assert agg['risk_counts']=={'Low':1,'Medium':1,'High':1,'Very high':0}
+    assert agg['risk_counts']=={'Low':1,'Medium':1,'High':1,'Very high':0,'Not assessed':0}
     assert agg['high_plus']==1
     assert agg['blacklisted_companies']==2
     assert agg['date_range']==('2026-09-02','2026-09-03')
@@ -1062,6 +1129,28 @@ def test_get_build_batch_summary_report_pdf_lazy_import():
     so this must succeed the same way _get_build_company_report_pdf() does)."""
     fn=app._get_build_batch_summary_report_pdf()
     assert fn is not None and callable(fn)
+
+
+def test_infer_sector_does_not_classify_company_by_its_clients_industry():
+    """v93.46: a second reviewer reproduced a real gap the v86 fix didn't cover -- "We build
+    software for coffee and cotton suppliers." matched both "coffee" and "cotton" (2 distinct
+    High-tier Agricultural-commodities hits), independently satisfying the v86 2-hit
+    requirement even though both hits come from the SAME client-description clause naming who
+    the company serves, not what it does. An explicit software company was classified as
+    Agricultural commodities. The clause following an own-business keyword ("software"/
+    "consulting"/"technology"/...) + "for"/"voor"/"pour"/"aan" describes the client's industry
+    and must be excluded from sector-keyword matching; a genuine agriculture company (no such
+    clause) must still classify correctly."""
+    comp={'company':'X','sector':'Sector not explicitly identified','sector_risk':''}
+    sec=app.infer_sector(dict(comp),'We build software for coffee and cotton suppliers.')
+    assert sec['level']=='Low'
+    assert sec['name']=='Digital and technology services (NACE J)'
+    assert 'coffee' not in sec['basis'] and 'cotton' not in sec['basis']
+
+    # a real agriculture company (no client-description clause) must be unaffected
+    sec2=app.infer_sector(dict(comp),'Zabra is a leading poultry and egg producer supplying supermarkets across Belgium.')
+    assert sec2['level']=='High'
+    assert sec2['name']=='Agriculture, farming and animal production (NACE A)'
 
 
 def test_infer_sector_derives_real_name_from_matched_keyword():
@@ -1573,6 +1662,27 @@ def test_named_certification_scheme_downgrades_social_claim_risk_too():
     assert result2['risk']=='High'
 
 
+def test_certification_scheme_mentioned_only_for_contrast_does_not_downgrade_risk():
+    """v93.46: _names_recognized_certification_scheme() was a bare substring search -- naming
+    a scheme ANYWHERE in the text counted as "has a recognised certification", even when the
+    sentence explicitly says the opposite. Reproduced live: "Our products carry our
+    self-declared eco label, unlike Fairtrade." wrongly downgraded to Medium purely because
+    "Fairtrade" appears as a substring, despite the sentence contrasting itself against it --
+    exactly the self-declared-label risk EmpCo Annex I targets. A genuine claim naming the
+    scheme (no contrast marker) must still be detected and still downgrade risk."""
+    contrast_claim = 'Our products carry our self-declared eco label, unlike Fairtrade.'
+    assert app._names_recognized_certification_scheme(contrast_claim) is False
+    f = {'type': 'Sustainability label / certification claim', 'risk': 'High', 'claim': contrast_claim}
+    result = app.enrich_green_finding(dict(f), 'self-declared')
+    assert result['risk'] == 'High', 'a self-declared label explicitly contrasted with a real scheme must not be softened'
+
+    genuine_claim = 'Our coffee is 100% Fairtrade certified.'
+    assert app._names_recognized_certification_scheme(genuine_claim) is True
+    f2 = {'type': 'Sustainability label / certification claim', 'risk': 'High', 'claim': genuine_claim}
+    result2 = app.enrich_green_finding(dict(f2), 'certified')
+    assert result2['risk'] == 'Medium'
+
+
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
     """v93.32: Brevo's "unrecognised IP address" error is an ACCOUNT-level security setting
     (Settings -> Security -> Authorised IPs) firing whenever the deployment's outbound IP
@@ -1643,6 +1753,37 @@ def test_bare_ecologisch_trigger_requires_context_anchor_like_its_english_equiva
     # Same pattern in French.
     fr_context = "Le débat sur l'impact écologique des méthodes de pêche destructrices continue."
     assert app._v55_claim_context_ok(fr_context, 'écologique', 'green') is False
+
+
+def test_short_genuine_ecologisch_claim_is_not_rejected_as_a_heading(monkeypatch):
+    """v93.46: a second reviewer reproduced a real regression from the v93.45 fix -- "Onze
+    schoenen zijn ecologisch." (4 words) produced no finding at all. Two independent gaps
+    compounded: (1) the <=5-word heading-exclusion check requires one of a fixed list of
+    claim-object nouns, which can never enumerate every product name ("schoenen"/shoes wasn't
+    listed); (2) even past that, the bare 'ecologisch' trigger's anchor-word check doesn't
+    list "schoenen" either. Fixed generically: a short excerpt with BOTH a first-person/
+    possessive anchor AND a copula verb ("onze ... zijn ...") is accepted as a genuine
+    subject-predicate claim regardless of which product noun is used, and 'ecologisch'/
+    'ecological' (unambiguous words, unlike 'sustainable'/'green'/'fair') accept that same
+    first-person signal as an alternative to the anchor-word list.
+    Must not regress the actual false positives the v93.45 fix targeted, or reintroduce the
+    ambiguous-word false positives the anchor-word requirement exists to prevent."""
+    assert app._v55_claim_context_ok('Onze schoenen zijn ecologisch.', 'ecologisch', 'green') is True
+    assert app._v55_claim_context_ok('Our shoes are ecological.', 'ecological', 'green') is True
+
+    # the two real false positives the v93.45 fix targeted must stay excluded
+    fishing = 'Destructieve vismethoden verstoren het ecologische evenwicht en vernietigen broedplaatsen voor veel soorten.'
+    assert app._v55_claim_context_ok(fishing, 'ecologisch', 'green') is False
+    alliance = ('Global Tuna Alliance: Een onafhankelijke groep van retailers en bedrijven in de '
+                'toeleveringsketen die werkt aan het verbeteren van sociale en ecologische omstandigheden '
+                'in de toeleveringsketens van tonijn.')
+    assert app._v55_claim_context_ok(alliance, 'ecologisch', 'green') is False
+
+    # ambiguous words (financial "sustainable", "green" the colour, "fair" as in fair trial) must
+    # still require a real anchor word even in the first person -- no copula/first-person escape.
+    assert app._v55_claim_context_ok('Ons pensioenstelsel wordt duurzamer.', 'duurzamer', 'green') is False
+    assert app._v55_claim_context_ok('Onze aanpak is fair.', 'fair', 'green') is False
+    assert app._v55_claim_context_ok('Our approach is green.', 'green', 'green') is False
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
@@ -2003,6 +2144,19 @@ def test_batch_report_analysis_text_contrasts_top_and_bottom_company():
     agg_single=brp._aggregate(single)
     text_single=brp._analysis_text(agg_single,[])
     assert 'By contrast' not in text_single
+
+
+def test_missing_global_risk_buckets_as_not_assessed_not_low(monkeypatch):
+    """v93.46: a row with a missing/blank global_risk (e.g. a scan that produced no score at
+    all) previously fell into the 'Low' bucket by default, reading in the Risk distribution
+    chart as a genuine low-risk result -- the opposite of "we don't know". Must bucket
+    separately as 'Not assessed' instead, and that bucket must not count toward high_plus."""
+    import batch_report_pdf as brp
+    rows = _sample_export_rows() + [dict(_sample_export_rows()[0], global_risk='', global_score=None)]
+    agg = brp._aggregate(rows)
+    assert agg['risk_counts']['Not assessed'] == 1
+    assert agg['risk_counts']['Low'] == 1  # unchanged from the base 3 sample rows
+    assert agg['high_plus'] == 1  # the unassessed row must not inflate High/Very high
 
 
 def test_aggregate_computes_top_tie_count():

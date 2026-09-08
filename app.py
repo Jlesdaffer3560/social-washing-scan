@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_45_multilingual_ambiguous_word_context_guard"
-APP_RELEASE_LABEL="v93.45"
+APP_VERSION="hostable_v93_46_second_review_followup_fixes"
+APP_RELEASE_LABEL="v93.46"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1491,6 +1491,30 @@ def _sector_term_matches(term,low_text):
         _SECTOR_TERM_RE_CACHE[term]=rx
     return rx.search(low_text) is not None
 
+# v93.46: the v86 fix above (High tier requires 2+ distinct hits) was specifically meant to
+# stop a single incidental client/topic mention from deciding a company's sector -- but two
+# incidental mentions from the SAME client-description clause independently satisfy that same
+# 2-hit bar. Reproduced live: "We build software for coffee and cotton suppliers." matched both
+# "coffee" and "cotton" (2 distinct High-tier Agricultural-commodities hits) and classified an
+# explicit software company as Agricultural commodities, despite "software" (a Low-tier, own-
+# business keyword) being right there in the same sentence. A company naming who its CLIENTS
+# are ("... for X") is describing its clients' industry, not its own -- strip that clause before
+# keyword matching runs, so words inside it never count as a sector signal for this company.
+_OWN_BUSINESS_INDICATORS=('software','logiciel','consulting','advies','conseil',
+    'professional services','professionele diensten','services professionnels',
+    'agency','agentschap','agence','technology','technologie',
+    'media','publishing','uitgeverij','édition')
+_CLIENT_CLAUSE_RE=re.compile(
+    r'\b(?:'+'|'.join(re.escape(w) for w in _OWN_BUSINESS_INDICATORS)+r')\b\s+(?:for|voor|pour|aan)\s+([^.!?]*)',
+    re.IGNORECASE)
+
+def _strip_client_industry_clauses(text):
+    out=[]; last=0
+    for m in _CLIENT_CLAUSE_RE.finditer(text):
+        out.append(text[last:m.start(1)]); last=m.end(1)
+    out.append(text[last:])
+    return ''.join(out)
+
 def infer_sector(company,text,page_segments=None,homepage_url=None):
     # v93.14: sector_name is the real, human-readable industry label derived from whichever
     # keyword actually matched below -- '' when the company is a hardcoded PROFILES entry
@@ -1531,6 +1555,7 @@ def infer_sector(company,text,page_segments=None,homepage_url=None):
                         match=seg; break
             homepage_text=(match or page_segments[0]).get('text','') or ''
         lower=(company.get("sector","")+" "+(homepage_text[:8000] if homepage_text else text[:15000])).lower()
+        lower=_strip_client_industry_clauses(lower)
         level="Medium"; basis="default medium exposure"
         for lvl,terms,risks in SECTOR_RULES:
             # v93.24: was plain substring containment (`t in lower`) -- reproduced two real
@@ -2724,9 +2749,32 @@ _RECOGNIZED_CERTIFICATION_SCHEMES=(
     'better cotton initiative','bci cotton','iso 14001','higg index',
 )
 
+# v93.46: naming a recognised scheme is only evidence of a real certification when the claim
+# actually asserts membership in it -- a comparison or contrast ("unlike Fairtrade", "in
+# tegenstelling tot Fairtrade") names the scheme specifically to say the claim is NOT that kind
+# of certification, the opposite of what this check is meant to detect. Reproduced live: "Our
+# products carry our self-declared eco label, unlike Fairtrade." wrongly softened risk purely
+# because "Fairtrade" appears as a substring, despite the sentence explicitly contrasting itself
+# against it. Deliberately narrow, specific contrast markers (not bare "not"/"no"/"geen", which
+# are common enough elsewhere in a sentence to cause the opposite problem: wrongly suppressing a
+# genuine certification claim that happens to have an unrelated negation nearby).
+_CERTIFICATION_CONTRAST_MARKERS=(
+    'unlike','as opposed to','in contrast to','as compared to','compared to','not like','rather than',
+    'in tegenstelling tot','anders dan','in vergelijking met',
+    'contrairement à','à la différence de','par rapport à',
+)
+
 def _names_recognized_certification_scheme(claim_text):
     c=' '+(claim_text or '').lower()+' '
-    return any(scheme in c for scheme in _RECOGNIZED_CERTIFICATION_SCHEMES)
+    for scheme in _RECOGNIZED_CERTIFICATION_SCHEMES:
+        idx=c.find(scheme)
+        if idx==-1:
+            continue
+        window_before=c[max(0,idx-40):idx]
+        if any(marker in window_before for marker in _CERTIFICATION_CONTRAST_MARKERS):
+            continue
+        return True
+    return False
 
 def green_blacklisted_indicator(claim_type, trigger, claim_text):
     t=(claim_type or '').lower(); c=(claim_text or '').lower(); trig=(trigger or '').lower()
@@ -4627,7 +4675,16 @@ def _v92_ensure_table(conn):
                     # _v93_company_number_identity_check(). company_number_match is NULL
                     # when no number was supplied for that scan (distinct from False,
                     # which means a number was checked and did not match).
-                    'company_number TEXT','company_number_official_name TEXT','company_number_match BOOLEAN'):
+                    'company_number TEXT','company_number_official_name TEXT','company_number_match BOOLEAN',
+                    # v93.46: the scanner/scoring VERSION each scan ran under -- without this,
+                    # a score change between two scans of the same company (or an odd cross-
+                    # scan discrepancy like a blacklist indicator without the matching score
+                    # floor) is unexplainable from the stored data alone: was the company's
+                    # communication different, or did the scoring logic itself change between
+                    # the two scan dates? Historical rows logged before this column existed
+                    # have no way to answer that question and are left NULL rather than
+                    # guessed at.
+                    'scan_version TEXT'):
                     cur.execute(f'ALTER TABLE scan_history ADD COLUMN IF NOT EXISTS {col_sql}')
                 # v93.3: one row per individual flagged claim/phrase, so the evolving "Top 10
                 # most flagged claims/words" panel on /history can rank matched phrases across
@@ -4714,8 +4771,8 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                         findings_count,summary,client_ip,sector_risk,data_reliability_warning,
                         empco_blacklisted_count,high_risk_findings_count,
                         external_green_retained_count,external_social_retained_count,document_type,
-                        company_number,company_number_official_name,company_number_match)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        company_number,company_number_official_name,company_number_match,scan_version)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        RETURNING id''',
                     (scan_type,
                      str(comp.get('company','') or '')[:300],
@@ -4740,7 +4797,8 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      str(result.get('document_type','') or '')[:100],
                      str(identity_check.get('number','') or '')[:20],
                      str(identity_check.get('official_name','') or '')[:300],
-                     identity_check.get('match')))
+                     identity_check.get('match'),
+                     str(result.get('version') or APP_VERSION or '')[:100]))
                 scan_id=cur.fetchone()[0]
                 # v93.3: one row per flagged claim, feeding the cross-scan "Top 10 most
                 # flagged claims/words" panel -- matched_phrase is the exact wording that
@@ -4775,7 +4833,7 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
     'audience','document_type','findings_count','empco_blacklisted_count',
     'high_risk_findings_count','external_green_retained_count','external_social_retained_count',
     'company_number','company_number_official_name','company_number_match',
-    'data_reliability_warning','summary']
+    'data_reliability_warning','summary','scan_version']
 
 _V92_EXTERNAL_SIGNALS_EXPR="(COALESCE(external_green_retained_count,0) + COALESCE(external_social_retained_count,0))"
 
@@ -4977,7 +5035,12 @@ def _v92_fetch_top_claims(limit=10):
     many different companies, even though company REACH is what a cross-scan "most flagged"
     panel should actually be surfacing. Reported by a second reviewer after "responsible
     sourcing" (96 occurrences, 14 companies) ranked above "more sustainable" (17 companies)
-    purely on raw text-hit count."""
+    purely on raw text-hit count.
+
+    v93.46: "companies" itself was COUNT(DISTINCT scan_id) -- counting SCANS, not companies,
+    so the same company scanned 3 times counted as 3 companies. Joined to scan_history to
+    count distinct company names instead (case-insensitively, since the same company's name
+    should match regardless of capitalisation)."""
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -4986,12 +5049,13 @@ def _v92_fetch_top_claims(limit=10):
             return []
         with conn.cursor() as cur:
             cur.execute(f'''
-                SELECT MIN(matched_phrase) AS phrase, COUNT(*) AS occurrences,
-                       COUNT(DISTINCT scan_id) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank,
-                       BOOL_OR(blacklisted) AS blacklisted
-                FROM scan_findings
-                WHERE matched_phrase IS NOT NULL AND matched_phrase <> ''
-                GROUP BY LOWER(matched_phrase)
+                SELECT MIN(sf.matched_phrase) AS phrase, COUNT(*) AS occurrences,
+                       COUNT(DISTINCT LOWER(sh.company)) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank,
+                       BOOL_OR(sf.blacklisted) AS blacklisted
+                FROM scan_findings sf
+                JOIN scan_history sh ON sh.id = sf.scan_id
+                WHERE sf.matched_phrase IS NOT NULL AND sf.matched_phrase <> ''
+                GROUP BY LOWER(sf.matched_phrase)
                 HAVING MAX({_V92_RISK_RANK_SQL}) >= 2
                 ORDER BY companies DESC, occurrences DESC
                 LIMIT %s
@@ -5012,7 +5076,10 @@ def _v92_fetch_top_claims_for_scan_ids(scan_ids,limit=10):
     (with an empty ANY(%s) array) simply match nothing anyway.
 
     v93.44: ranked by distinct companies first, occurrences as tiebreak -- see
-    _v92_fetch_top_claims()'s docstring for why."""
+    _v92_fetch_top_claims()'s docstring for why.
+
+    v93.46: "companies" joined to scan_history and counted by distinct company NAME, not by
+    distinct scan_id -- see _v92_fetch_top_claims()'s docstring for why."""
     if not scan_ids:
         return []
     conn=_v92_db_connect()
@@ -5023,12 +5090,13 @@ def _v92_fetch_top_claims_for_scan_ids(scan_ids,limit=10):
             return []
         with conn.cursor() as cur:
             cur.execute(f'''
-                SELECT MIN(matched_phrase) AS phrase, COUNT(*) AS occurrences,
-                       COUNT(DISTINCT scan_id) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank,
-                       BOOL_OR(blacklisted) AS blacklisted
-                FROM scan_findings
-                WHERE scan_id = ANY(%s) AND matched_phrase IS NOT NULL AND matched_phrase <> ''
-                GROUP BY LOWER(matched_phrase)
+                SELECT MIN(sf.matched_phrase) AS phrase, COUNT(*) AS occurrences,
+                       COUNT(DISTINCT LOWER(sh.company)) AS companies, MAX({_V92_RISK_RANK_SQL}) AS risk_rank,
+                       BOOL_OR(sf.blacklisted) AS blacklisted
+                FROM scan_findings sf
+                JOIN scan_history sh ON sh.id = sf.scan_id
+                WHERE sf.scan_id = ANY(%s) AND sf.matched_phrase IS NOT NULL AND sf.matched_phrase <> ''
+                GROUP BY LOWER(sf.matched_phrase)
                 HAVING MAX({_V92_RISK_RANK_SQL}) >= 2
                 ORDER BY companies DESC, occurrences DESC
                 LIMIT %s
@@ -5156,6 +5224,54 @@ def _v92_backfill_sector_names():
                     cur.execute('SELECT COUNT(*) FROM scan_history WHERE company ILIKE %s',(company,))
                     if cur.fetchone()[0]==0:
                         summary['not_found'].append(company)
+        conn.commit()
+    except Exception as e:
+        summary['error']=str(e)
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        conn.close()
+    return summary
+
+def _v93_backfill_finding_counts():
+    """One-time correction of scan_history.findings_count and high_risk_findings_count for
+    scans logged before the v93.44 counting fixes: findings_count no longer counts the
+    synthetic "No material {green,social} claim retained" placeholder rows as real findings,
+    and high_risk_findings_count now reads the finding's actual 'risk_level' field instead of
+    a 'risk' key that never existed on these normalized dicts (silently stuck at 0 before).
+    The corrected per-finding data was ALREADY stored correctly in scan_findings the whole
+    time (populated since v93.3) -- the bug was only in the AGGREGATE counts saved to
+    scan_history at scan time, never in the individual finding rows themselves. Recomputes
+    both columns directly from scan_findings for every scan that has at least one row there.
+    A scan with zero scan_findings rows either genuinely had zero real findings (its stored
+    0 is already correct) or predates scan_findings entirely (before v93.3) and cannot be
+    recomputed from this data -- left untouched rather than guessed at. Idempotent (only
+    updates rows whose stored value actually differs from the recomputed one); safe to run
+    more than once. Never raises -- returns a summary dict either way."""
+    summary={'updated_rows':0,'error':None}
+    conn=_v92_db_connect()
+    if conn is None:
+        summary['error']='Database not configured.'
+        return summary
+    try:
+        if not _v92_ensure_table(conn):
+            summary['error']='Could not prepare tables.'
+            return summary
+        with conn.cursor() as cur:
+            cur.execute('''
+                UPDATE scan_history sh
+                SET findings_count=fc.cnt, high_risk_findings_count=fc.high_cnt
+                FROM (
+                    SELECT scan_id, COUNT(*) AS cnt,
+                           COUNT(*) FILTER (WHERE LOWER(risk)='high') AS high_cnt
+                    FROM scan_findings
+                    GROUP BY scan_id
+                ) fc
+                WHERE sh.id=fc.scan_id
+                  AND (sh.findings_count IS DISTINCT FROM fc.cnt
+                       OR sh.high_risk_findings_count IS DISTINCT FROM fc.high_cnt)
+            ''')
+            summary['updated_rows']=cur.rowcount
         conn.commit()
     except Exception as e:
         summary['error']=str(e)
@@ -5982,6 +6098,16 @@ class Handler(BaseHTTPRequestHandler):
             if not _v92_valid_history_cookie(self.headers.get('Cookie')):
                 return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
             return self._json(_v92_backfill_sector_names())
+        if self.path=='/history/backfill_finding_counts':
+            # v93.46: one-time, idempotent correction of scan_history.findings_count and
+            # high_risk_findings_count for scans logged before the v93.44 counting fixes --
+            # see _v93_backfill_finding_counts(). Gated behind the same /history cookie auth;
+            # safe to visit more than once (already-correct rows are left untouched).
+            if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+                return self._json({'error':'Scan history is not configured for this deployment.'},404)
+            if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+                return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+            return self._json(_v93_backfill_finding_counts())
         return self._json({'error':'Not found'},404)
 
     def _handle_history_login(self):
@@ -6434,9 +6560,19 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if sum(1 for m in letterhead_markers if m in c) >= 2:
         return False
     # Exclude headings that have no claim object.
-    if len(c.split()) <= 5 and not any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon',
+    # v93.46: a short GENUINE claim sentence ("Onze schoenen zijn ecologisch." -- 4 words) was
+    # rejected here purely because its product noun ("schoenen"/shoes) wasn't one of the
+    # enumerated claim-object words below -- that list can never enumerate every possible
+    # product name. A navigation/menu heading is reliably a bare noun phrase with no verb
+    # ("Sustainability", "Our Products", "Contact Us"); a real subject-predicate sentence has a
+    # copula ("is"/"are"/"zijn"/"sont"/"est") pairing with a first-person/possessive anchor.
+    # That combination is accepted as its own claim-object signal alongside the enumerated list,
+    # without having to name the specific product.
+    _short_excerpt_has_first_person_claim=bool(re.search(r'\b(we|our|us|wij|ons|onze|nous|notre|nos)\b',c)) and bool(
+        re.search(r"\b(is|are|'s|zijn|ben|bent|sont|est|était|étaient|sommes|êtes)\b",c))
+    if len(c.split()) <= 5 and not (_short_excerpt_has_first_person_claim or any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon',
         'product','verpakking','materiaal','leverancier','rechten','loon','gemeenschap','gerecycleerd','recycleerbaar','koolstof',
-        'produit','emballage','matériau','fournisseur','droits','salaire','communauté','recyclé','recyclable','carbone']):
+        'produit','emballage','matériau','fournisseur','droits','salaire','communauté','recyclé','recyclable','carbone'])):
         return False
     if 'challenges' in c and 'opportunities' in c:
         return False
@@ -6599,8 +6735,24 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # own "Generic environmental claim" / Potentially Prohibited, the most serious
         # classification, despite being either well-substantiated, third-party/general context,
         # or not about the company at all. Same anchor-word list as the check below.
-        if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair',
-                    'ecologisch','ecologische','écologique','écologiques'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental','milieu','klimaat','koolstof','verpakking','materiaal','materialen','environnement','emballage','matériau','matériaux']):
+        _green_context_anchors=['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental','milieu','klimaat','koolstof','verpakking','materiaal','materialen','environnement','emballage','matériau','matériaux']
+        # v93.46: 'eco'/'ecological' and the NL/FR forms just added above are essentially
+        # unambiguous -- unlike 'sustainable'/'green'/'natural'/'fair' below (each has a common
+        # everyday meaning with nothing to do with the environment: financial durability, a
+        # colour, "that's not fair"), there is no ordinary non-environmental sense of
+        # "ecological"/"ecologisch"/"écologique". An explicit first-person/possessive anchor
+        # ("onze schoenen zijn ecologisch") is therefore sufficient evidence on its own, without
+        # also requiring one of the anchor words below. Reported live: "Onze schoenen zijn
+        # ecologisch." produced no finding at all because "schoenen" (shoes) isn't a listed
+        # anchor word -- the fix must not require enumerating every possible product noun.
+        if trig in ['eco','ecological','ecologisch','ecologische','écologique','écologiques'] and not (
+                has_first_person or any(x in c for x in _green_context_anchors)):
+            return False
+        # The remaining bare words really are ambiguous even in the first person -- "our pension
+        # system is more sustainable" or "our approach is fair" is not a green claim just because
+        # it is phrased in the first person -- so these keep requiring the anchor word, with no
+        # first-person escape.
+        if trig in ['green','sustainable','natural','ethical','responsible','fair'] and not any(x in c for x in _green_context_anchors):
             return False
         # v75: "more sustainable"/"duurzamer"/"plus durable" alone is ambiguous -- English/Dutch/
         # French "sustainable"/"duurzaam"/"durable" routinely means "financially durable" or
@@ -6608,7 +6760,7 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # approach to managing debt", "duurzamer pensioenstelsel", "modèle plus durable pour
         # l'entreprise"). Require the same nearby product/environmental-context anchor as the bare
         # single-word triggers above before treating it as a green claim.
-        if trig in ['more sustainable','duurzamer','plus durable','plus durables'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental','milieu','klimaat','koolstof','verpakking','materiaal','materialen','environnement','emballage','matériau','matériaux']):
+        if trig in ['more sustainable','duurzamer','plus durable','plus durables'] and not any(x in c for x in _green_context_anchors):
             return False
         # v77: same request-vs-completed-state distinction as the social supplier_request guard
         # below, applied to green wording -- "We encourage our suppliers to switch to recycled

@@ -37,18 +37,25 @@ from report_pdf import (
 )
 
 _RISK_ORDER = ['Low', 'Medium', 'High', 'Very high']
+# v93.46: a row with a missing/unrecognised global_risk value (e.g. a scan that never
+# produced a score at all) silently fell into the Low bucket -- reproduced live: such a row
+# reads in the Risk distribution chart as a genuine low-risk result, the opposite of "we don't
+# know". Counted and rendered separately instead (see _risk_distribution_chart()), using the
+# same "Not assessed" wording and grey colour report_pdf.py's risk_color()/risk_soft() already
+# use for this exact situation on the per-company report.
+_RISK_UNKNOWN = 'Not assessed'
 
 
 def _risk_bucket(risk):
     r = clean_text(risk)
-    return r if r in _RISK_ORDER else 'Low'
+    return r if r in _RISK_ORDER else _RISK_UNKNOWN
 
 
 def _aggregate(rows):
     """Pure aggregation over the row dicts -- kept standalone so it's testable
     without generating a PDF."""
     scores = {'global': [], 'green': [], 'social': []}
-    risk_counts = {k: 0 for k in _RISK_ORDER}
+    risk_counts = {k: 0 for k in _RISK_ORDER + [_RISK_UNKNOWN]}
     sector_risk_counts = {}
     findings_counts = []
     blacklisted_companies = 0
@@ -140,18 +147,22 @@ def _yes_no_pill(flag, width=40):
 
 def _risk_distribution_chart(risk_counts, width, height=140):
     """A hand-drawn, rounded-top vertical bar chart -- one bar per risk tier, the value
-    printed above the bar and the tier name below it, no axis/gridlines clutter."""
+    printed above the bar and the tier name below it, no axis/gridlines clutter.
+
+    v93.46: the "Not assessed" bucket only gets its own bar when at least one row actually
+    falls into it, so a normal, fully-scored selection still shows the plain 4-bar chart."""
+    categories = list(_RISK_ORDER) + ([_RISK_UNKNOWN] if risk_counts.get(_RISK_UNKNOWN) else [])
     d = Drawing(width, height)
     margin_l, margin_r = 14, 14
     margin_b, margin_t = 20, 26
     plot_w = width - margin_l - margin_r
     plot_h = height - margin_b - margin_t
-    n = len(_RISK_ORDER)
+    n = len(categories)
     slot_w = plot_w / n
     bar_w = slot_w * 0.5
     max_val = max(risk_counts.values()) if risk_counts else 0
     d.add(Line(margin_l, margin_b, width - margin_r, margin_b, strokeColor=GREY_300, strokeWidth=0.75))
-    for i, cat in enumerate(_RISK_ORDER):
+    for i, cat in enumerate(categories):
         val = risk_counts.get(cat, 0)
         cx = margin_l + slot_w * i + slot_w / 2
         bar_h = (val / max_val) * plot_h if max_val else 0
