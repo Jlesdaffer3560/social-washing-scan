@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_42_soften_serious_finding_wording'
+    assert app.APP_VERSION == 'hostable_v93_43_beta_access_code_gate'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1170,6 +1170,28 @@ def test_open_public_url_routes_through_the_safe_opener(monkeypatch):
     data,ctype,final_url=app._open_public_url('https://example.com/')
     assert calls and calls[0]=='https://example.com/'
     assert data==b'hello world'
+
+
+def test_access_code_gate_is_a_noop_when_not_configured(monkeypatch):
+    """v93.43: ACCESS_CODE defaults to empty (unset), which must leave every request accepted
+    -- local development and any deployment that hasn't opted into the beta-access gate must
+    stay exactly as open as before this feature existed."""
+    monkeypatch.setattr(app,'ACCESS_CODE','')
+    assert app._access_code_ok({})
+    assert app._access_code_ok({'access_code':'anything'})
+    assert app._access_code_ok(None)
+
+
+def test_access_code_gate_rejects_wrong_or_missing_code_when_configured(monkeypatch):
+    """v93.43: once ACCESS_CODE is set, only an exact match in the request body's access_code
+    field is accepted -- a missing field, wrong value, or a non-dict body (e.g. a malformed/
+    absent JSON payload) must all be rejected, not silently let through."""
+    monkeypatch.setattr(app,'ACCESS_CODE','letmein')
+    assert app._access_code_ok({'access_code':'letmein'})
+    assert not app._access_code_ok({'access_code':'wrong'})
+    assert not app._access_code_ok({})
+    assert not app._access_code_ok(None)
+    assert not app._access_code_ok('letmein')  # a bare string, not a dict, must not match
 
 
 def test_html_parser_keeps_short_negation_words():

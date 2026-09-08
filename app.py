@@ -96,14 +96,21 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_42_soften_serious_finding_wording"
-APP_RELEASE_LABEL="v93.42"
+APP_VERSION="hostable_v93_43_beta_access_code_gate"
+APP_RELEASE_LABEL="v93.43"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
 RATE_LIMIT_REPORTS=max(1, int(os.environ.get("RATE_LIMIT_REPORTS", "20")))
 MAX_CONCURRENT_SCANS=max(1, min(4, int(os.environ.get("MAX_CONCURRENT_SCANS", "2"))))
+# v93.43: a shared beta-access code gating the scan endpoints ahead of a public launch, so a
+# sudden wave of unexpected traffic can't exhaust the crawl/rate-limit budget meant for invited
+# testers. Deliberately a single shared secret, not a per-user account system -- distributed by
+# hand to whoever is invited to test. Left unset (empty string, falsy) by default so local
+# development and any deployment that hasn't opted in stays open, exactly like JINA_API_KEY and
+# the other optional integrations above.
+ACCESS_CODE=os.environ.get("ACCESS_CODE", "").strip()
 ALLOWED_ORIGINS={x.strip().rstrip('/') for x in os.environ.get("DURABLY_ALLOWED_ORIGINS", "").split(',') if x.strip()}
 _REPORT_SIGNING_KEY_TEXT=os.environ.get("DURABLY_REPORT_SIGNING_KEY", "").strip()
 _REPORT_SIGNING_KEY_CONFIGURED=bool(_REPORT_SIGNING_KEY_TEXT)
@@ -4329,6 +4336,17 @@ def _client_ip(handler):
     return handler.client_address[0] if handler.client_address else 'unknown'
 
 
+def _access_code_ok(data):
+    """v93.43: beta-access gate for the scan endpoints. When ACCESS_CODE is configured, the
+    request's JSON body must carry a matching 'access_code' field; a wrong or missing code is
+    rejected before it can consume a rate-limit slot or a concurrency slot (checked ahead of
+    both in do_POST). A no-op (always True) when ACCESS_CODE is not configured, so local
+    development and any deployment that hasn't opted into gated access stays unaffected."""
+    if not ACCESS_CODE:
+        return True
+    return isinstance(data, dict) and data.get('access_code', '') == ACCESS_CODE
+
+
 def _rate_limit_allowed(client,bucket,maximum):
     now=time.time(); key=(client,bucket)
     with _RATE_LOCK:
@@ -5792,6 +5810,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/' or self.path.startswith('/?'):
             html=(APP_DIR/'frontend.html').read_text(encoding='utf-8')
             html=html.replace('{{APP_VERSION}}',APP_VERSION).replace('{{APP_RELEASE_LABEL}}',APP_RELEASE_LABEL).replace('{{APP_RELEASE_DATE}}',APP_RELEASE_DATE)
+            # v93.43: baked into the page server-side (like the version fields above) rather than
+            # fetched async from /api/health, so the beta-access gate can decide whether to show
+            # itself on the very first paint -- no network round-trip, no flash of the scan form
+            # before the gate covers it.
+            html=html.replace('{{ACCESS_CODE_REQUIRED}}','true' if ACCESS_CODE else 'false')
             return self._send(html)
         if self.path=='/methodology.pdf':
             pdf=APP_DIR/'methodology.pdf'; return self._send(pdf.read_bytes(),'application/pdf') if pdf.exists() else self._json({'error':'Methodology PDF not found'},404)
@@ -5840,6 +5863,9 @@ class Handler(BaseHTTPRequestHandler):
                                    'EXTERNAL_SIGNAL_WORKERS':EXTERNAL_SIGNAL_WORKERS},
                                'rate_limits':{'RATE_LIMIT_SCANS':RATE_LIMIT_SCANS,'RATE_LIMIT_REPORTS':RATE_LIMIT_REPORTS,
                                    'RATE_LIMIT_WINDOW_SECONDS':RATE_LIMIT_WINDOW_SECONDS,'MAX_CONCURRENT_SCANS':MAX_CONCURRENT_SCANS},
+                               # v93.43: surfaces whether the beta-access gate is active, mirroring how the other
+                               # optional-integration flags above are exposed -- never the code itself.
+                               'access_code_required':bool(ACCESS_CODE),
                                'container_cpu':_v91_4_container_cpu_quota(),
                                # v92.1: history_configured mirrors the other optional-feature
                                # flags above; history_last_error surfaces the most recent
@@ -6037,6 +6063,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data=self._read_json()
             if self.path in {'/api/scan/url','/api/scan/document'}:
+                # v93.43: checked before the rate limit and concurrency semaphore so a wrong/
+                # missing access code never consumes either -- an invited tester's own budget
+                # shouldn't shrink because someone else is guessing codes.
+                if not _access_code_ok(data): return self._json({'error':'Invalid or missing access code.','access_denied':True},401)
                 if not _rate_limit_allowed(client,'scan',RATE_LIMIT_SCANS): return self._json({'error':'Scan rate limit reached. Try again later.'},429)
                 if not _SCAN_SEMAPHORE.acquire(blocking=False): return self._json({'error':'The scan service is busy. Try again in a few moments.'},429)
                 try:
