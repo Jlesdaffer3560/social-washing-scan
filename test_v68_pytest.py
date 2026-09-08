@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_43_beta_access_code_gate'
+    assert app.APP_VERSION == 'hostable_v93_44_batch_report_accuracy_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -760,6 +760,80 @@ def test_scan_history_findings_saved_per_claim(monkeypatch):
     _,sql,rows=insert_calls[0]
     assert 'INSERT INTO scan_findings' in sql
     assert rows==[(99,'green','vague eco claim','carbon neutral','High',False)]  # the empty-phrase finding is skipped
+
+
+def test_scan_history_findings_count_excludes_placeholder_rows(monkeypatch):
+    """v93.44: findings_count previously counted the synthetic "No material {green,social}
+    claim retained" placeholder rows that build_green_claim_inventory()/social_claim_
+    inventory_with_dimension() always include (one per dimension) when nothing real was
+    found -- every scan with zero actual findings stored findings_count=2, not 0,
+    systematically inflating this column and its cross-scan average on /history. Only real
+    findings (is_placeholder_finding() False) must be counted; a scan with two real findings
+    plus both placeholders must still count as 2, not 4."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append(('execute',sql,params))
+        def executemany(self,sql,rows): executed.append(('executemany',sql,rows))
+        def fetchone(self): return (99,)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    # Column order in the INSERT (see _v92_save_scan_history): index 11 is findings_count.
+    result={'company':{'company':'Acme'},
+            'findings':[{'dimension':'Green','claim_type':'No material problematic green claim retained','risk_level':'Low'},
+                        {'dimension':'Social','claim_type':'No material problematic social claim retained','risk_level':'Low'}]}
+    app._v92_save_scan_history(result,'url','1.2.3.4')
+    insert_calls=[c for c in executed if c[0]=='execute' and 'INSERT INTO scan_history' in c[1]]
+    assert len(insert_calls)==1
+    findings_count=insert_calls[0][2][11]
+    assert findings_count==0, f'placeholder-only findings must count as 0, got {findings_count}'
+
+    executed.clear()
+    result2={'company':{'company':'Acme'},
+             'findings':[{'dimension':'Green','claim_type':'Generic environmental claim','risk_level':'High','matched_phrase':'eco-friendly'},
+                         {'dimension':'Social','claim_type':'No material problematic social claim retained','risk_level':'Low'}]}
+    app._v92_save_scan_history(result2,'url','1.2.3.4')
+    insert_calls2=[c for c in executed if c[0]=='execute' and 'INSERT INTO scan_history' in c[1]]
+    findings_count2=insert_calls2[0][2][11]
+    assert findings_count2==1, f'one real finding plus one placeholder must count as 1, got {findings_count2}'
+
+
+def test_scan_history_high_risk_findings_count_reads_risk_level_key(monkeypatch):
+    """v93.44: build_green_claim_inventory()/build_claim_inventory() only ever set
+    'risk_level' on these normalized dicts, never a bare 'risk' key -- high_risk_findings_
+    count's f.get('risk','') comparison was therefore always '' == 'high': False, silently
+    stuck at 0 for every scan ever logged regardless of how many High-risk findings existed."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append(('execute',sql,params))
+        def executemany(self,sql,rows): executed.append(('executemany',sql,rows))
+        def fetchone(self): return (99,)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    # Column order in the INSERT (see _v92_save_scan_history): index 17 is
+    # high_risk_findings_count.
+    result={'company':{'company':'Acme'},
+            'findings':[{'dimension':'Green','claim_type':'Generic environmental claim','risk_level':'High','matched_phrase':'eco-friendly'},
+                        {'dimension':'Social','claim_type':'Human-rights claim','risk_level':'High','matched_phrase':'ethical sourcing'},
+                        {'dimension':'Green','claim_type':'Minor claim','risk_level':'Low','matched_phrase':'natural'}]}
+    app._v92_save_scan_history(result,'url','1.2.3.4')
+    insert_calls=[c for c in executed if c[0]=='execute' and 'INSERT INTO scan_history' in c[1]]
+    assert len(insert_calls)==1
+    high_risk_count=insert_calls[0][2][17]
+    assert high_risk_count==2, f'expected 2 High-risk findings counted, got {high_risk_count}'
 
 
 def test_backfill_legacy_findings_missing_fixture(monkeypatch, tmp_path):
@@ -1898,6 +1972,52 @@ def test_batch_report_analysis_text_contrasts_top_and_bottom_company():
     agg_single=brp._aggregate(single)
     text_single=brp._analysis_text(agg_single,[])
     assert 'By contrast' not in text_single
+
+
+def test_aggregate_computes_top_tie_count():
+    """v93.44: a second reviewer pointed out that naming one company as carrying "the
+    highest risk" is misleading when several scans in the selection share that exact top
+    score (routinely because a fixed EmpCo-blacklist floor rule raises a score to exactly
+    that band). _aggregate() must count how many scored rows share top_company's score."""
+    import batch_report_pdf as brp
+    rows = _sample_export_rows()  # Lidl 61, Zabra 41, Home Invest 9 -- all distinct
+    assert brp._aggregate(rows)['top_tie_count'] == 1
+    tied_rows = [dict(r, global_score=75) for r in rows]
+    agg_tied = brp._aggregate(tied_rows)
+    assert agg_tied['top_tie_count'] == 3
+    assert brp._aggregate([])['top_tie_count'] == 0
+
+
+def test_analysis_text_discloses_score_tie_instead_of_a_false_ranking():
+    """v93.44: when multiple scans share the top global score, the Analysis section must
+    say so explicitly instead of implying the top-listed company is uniquely highest-risk."""
+    import batch_report_pdf as brp
+    rows = _sample_export_rows()
+    tied_rows = [dict(r, global_score=75) for r in rows]
+    agg = brp._aggregate(tied_rows)
+    text = brp._analysis_text(agg, [])
+    assert 'one of 3 scans' in text and '75/100' in text
+    assert 'carries the highest Global score' not in text  # the untied phrasing must not also appear
+    # the untied case (existing sample rows have distinct scores) must keep the original,
+    # single-company phrasing rather than a spurious tie disclosure.
+    agg_untied = brp._aggregate(rows)
+    text_untied = brp._analysis_text(agg_untied, [])
+    assert 'carries the highest Global score' in text_untied
+    assert 'one of' not in text_untied
+
+
+def test_batch_report_wording_says_scans_not_companies_for_totals():
+    """v93.44: a second reviewer flagged that the batch report's headline counts read as
+    counting unique COMPANIES when the underlying rows are individual SCANS -- the same
+    company can legitimately appear more than once (re-scanned on a later date), so a total
+    row count is not a distinct-company count. Executive-summary and cards-row wording must
+    say "scan(s)", not "compan(y|ies)", for these totals."""
+    import batch_report_pdf as brp
+    rows = _sample_export_rows()
+    agg = brp._aggregate(rows)
+    text = brp._executive_summary_text(agg)
+    assert f'{agg["total"]} scans included' in text
+    assert 'companies included' not in text.lower()
 
 
 def test_batch_report_pill_badges():

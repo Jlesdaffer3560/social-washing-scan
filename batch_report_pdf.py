@@ -79,6 +79,14 @@ def _aggregate(rows):
     scored = [r for r in rows if isinstance(r.get('global_score'), (int, float))]
     top_company = max(scored, key=lambda r: r['global_score']) if scored else None
     bottom_company = min(scored, key=lambda r: r['global_score']) if len(scored) > 1 else None
+    # v93.44: how many rows actually SHARE top_company's score -- a second reviewer pointed
+    # out that naming one company as carrying "the highest risk" is misleading when e.g. 28
+    # of 86 selected scans all show the same top score (75/100, often because a fixed
+    # EmpCo-blacklist floor rule raises a score to exactly that band rather than every one of
+    # those scans genuinely calculating the identical risk). _analysis_text() uses this to
+    # disclose the tie instead of implying a single highest-risk company.
+    top_tie_count = (sum(1 for r in scored if r['global_score'] == top_company['global_score'])
+                      if top_company else 0)
 
     dominant_sector_risk = None
     if sector_risk_counts:
@@ -97,6 +105,7 @@ def _aggregate(rows):
         'high_risk_findings': high_risk_findings,
         'date_range': (min(dates), max(dates)) if dates else (None, None),
         'top_company': top_company,
+        'top_tie_count': top_tie_count,
         'bottom_company': bottom_company,
         'dominant_sector_risk': dominant_sector_risk,
     }
@@ -223,11 +232,21 @@ def _cards_row(agg):
     high_plus = agg['high_plus']
     blacklisted = agg['blacklisted_companies']
     cards = [
-        _metric_card('Companies included', total, NAVY),
+        # v93.44: "Companies included" renamed to "Scans included" -- the selection can (and
+        # routinely does) contain more than one scan of the same company, so a total scan
+        # count was being read as a distinct-company count. Until the /history selection
+        # itself offers a one-scan-per-company view, every aggregate figure in this report
+        # must say "scans", not "companies".
+        _metric_card('Scans included', total, NAVY),
         _metric_card('Avg. global score', f'{avg_g}/100' if avg_g is not None else '—', TEAL_DARK),
         _metric_card('High / very high risk', f'{high_plus} of {total}' if total else '0',
                       RED if high_plus else risk_color('Low')),
-        _metric_card('EmpCo blacklisted', blacklisted, RED if blacklisted else risk_color('Low')),
+        # v93.44: "EmpCo blacklisted" stated a wordmatch as if it were a confirmed legal
+        # finding -- a matched trigger phrase is not itself proof of a prohibited practice
+        # (context, the precise claim and available substantiation decide that). Reframed as
+        # an attention flag needing review, consistent with the softer framing already
+        # applied to the per-company PDF report earlier this session.
+        _metric_card('EmpCo attention points', blacklisted, RED if blacklisted else risk_color('Low')),
     ]
     t = Table([cards], colWidths=[CONTENT_W * .25] * 4)
     t.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
@@ -236,21 +255,28 @@ def _cards_row(agg):
 
 
 def _executive_summary_text(agg):
+    # v93.44: rewritten to talk about SCANS throughout, not "companies" -- a selection
+    # routinely includes more than one scan of the same company (re-scanned on a later
+    # date), so a count of rows is not a count of distinct companies until /history offers a
+    # one-scan-per-company view. Also softened the blacklist sentence: a matched trigger
+    # phrase flags something worth checking, it is not itself a confirmed finding of a
+    # prohibited practice -- see the same reframing applied to the per-company PDF report.
     total = agg['total']
     if not total:
         return 'No scans matched this selection.'
     high_plus = agg['high_plus']
     pct = round(100 * high_plus / total) if total else 0
     avg_g = agg['avg_global']
-    parts = [f'Of the {total} compan{"y" if total == 1 else "ies"} included in this report, '
-             f'{high_plus} ({pct}%) carr{"y" if high_plus != 1 else "ies"} a High or Very high '
-             f'claim-risk rating.']
+    parts = [f'Of the {total} scan{"" if total == 1 else "s"} included in this report, '
+             f'{high_plus} ({pct}%) show a High or Very high claim-risk rating.']
     if avg_g is not None:
-        parts.append(f'The average Global score across the set is {avg_g}/100.')
+        parts.append(f'The average Global score across the set is {avg_g}/100 -- this reflects wording and '
+                      'evidence gaps found, not a share of unlawful claims.')
     if agg['blacklisted_companies']:
-        parts.append(f'{agg["blacklisted_companies"]} compan{"y" if agg["blacklisted_companies"] == 1 else "ies"} '
-                      f'carr{"y" if agg["blacklisted_companies"] != 1 else "ies"} at least one claim matching a fixed '
-                      'EmpCo Annex I blacklisted practice.')
+        parts.append(f'{agg["blacklisted_companies"]} scan{"" if agg["blacklisted_companies"] == 1 else "s"} '
+                      f'flagged at least one claim matching a fixed EmpCo Annex I blacklisted-practice pattern '
+                      '(automated wording match; each still needs individual review before being treated as a '
+                      'confirmed finding).')
     date_from, date_to = agg['date_range']
     if date_from and date_to:
         parts.append(f'Scans span {date_from} to {date_to}.' if date_from != date_to else f'All scans were run on {date_from}.')
@@ -266,10 +292,21 @@ def _analysis_text(agg, top_claims):
         return ''
     parts = []
     top = agg.get('top_company')
+    tie_count = agg.get('top_tie_count') or 0
     if top:
-        parts.append(f'{esc(clean_text(top.get("company")) or "The top-scoring company")} carries the highest Global '
-                      f'score in this selection, at {top.get("global_score")}/100'
-                      + (f' ({esc(clean_text(top.get("global_risk")))})' if top.get('global_risk') else '') + '.')
+        # v93.44: naming ONE company as carrying "the highest risk" is misleading when
+        # several scans in the selection share that same top score -- often because a fixed
+        # EmpCo-blacklist floor rule raises a score to exactly that band, not because every
+        # one of those scans independently calculated the identical risk. Disclose the tie
+        # instead of implying a single standout.
+        if tie_count > 1:
+            parts.append(f'{esc(clean_text(top.get("company")) or "The top-scoring company")} is one of {tie_count} scans '
+                          f'sharing the highest Global score in this selection, {top.get("global_score")}/100'
+                          + (f' ({esc(clean_text(top.get("global_risk")))})' if top.get('global_risk') else '') + '.')
+        else:
+            parts.append(f'{esc(clean_text(top.get("company")) or "The top-scoring company")} carries the highest Global '
+                          f'score in this selection, at {top.get("global_score")}/100'
+                          + (f' ({esc(clean_text(top.get("global_risk")))})' if top.get('global_risk') else '') + '.')
     bottom = agg.get('bottom_company')
     if bottom and top and bottom is not top:
         parts.append(f'By contrast, {esc(clean_text(bottom.get("company")) or "the lowest-scoring company")} shows the '
@@ -277,7 +314,7 @@ def _analysis_text(agg, top_claims):
                       + (f' ({esc(clean_text(bottom.get("global_risk")))})' if bottom.get('global_risk') else '') + '.')
     dom = agg.get('dominant_sector_risk')
     if dom and agg['total'] > 1:
-        parts.append(f'{dom["count"]} of {agg["total"]} companies operate in a sector classified as '
+        parts.append(f'{dom["count"]} of {agg["total"]} scans are for a company in a sector classified as '
                       f'{esc(dom["level"])} structural risk.')
     if agg.get('avg_findings') is not None:
         parts.append(f'On average, {agg["avg_findings"]} flagged claim(s) were retained per company.')
@@ -288,7 +325,8 @@ def _analysis_text(agg, top_claims):
         comps = tc.get('companies') or 0
         parts.append(f'The most frequently flagged wording across this selection is &ldquo;{phrase}&rdquo;, '
                       f'appearing {occ} time{"s" if occ != 1 else ""} across {comps} compan{"y" if comps == 1 else "ies"}'
-                      + (', which also matches a fixed EmpCo blacklisted practice' if tc.get('blacklisted') else '') + '.')
+                      + (', which also matches a fixed EmpCo Annex I blacklisted-practice pattern (automated match, '
+                         'not a confirmed finding)' if tc.get('blacklisted') else '') + '.')
         if len(top_claims) > 1:
             others = ', '.join(f'&ldquo;{esc(clean_text(c.get("phrase")))}&rdquo;' for c in top_claims[1:4])
             parts.append(f'Other recurring wording includes {others}.')
@@ -300,7 +338,9 @@ def _analysis_text(agg, top_claims):
 def _top_claims_table(top_claims):
     if not top_claims:
         return None
-    header = ['#', 'Phrase', 'Risk level', 'EmpCo blacklist', 'Occurrences', 'Companies']
+    # v93.44: "EmpCo blacklist" renamed -- a matched trigger phrase is an automated wording
+    # match, not by itself a confirmed finding of a blacklisted practice.
+    header = ['#', 'Phrase', 'Risk level', 'EmpCo pattern match', 'Occurrences', 'Companies']
     data = [[Paragraph(esc(h), ST['table_head']) for h in header]]
     for i, c in enumerate(top_claims):
         data.append([
@@ -342,16 +382,23 @@ def _company_table(rows):
                                     ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
                                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
         data.append([
-            Paragraph(esc(bounded_text(r.get('company') or '—', 42)), ST['table_dark']),
-            Paragraph(esc(bounded_text(r.get('sector') or '—', 26)), ST['table']),
+            Paragraph(esc(bounded_text(r.get('company') or '—', 34)), ST['table_dark']),
+            # v93.44: sector labels now cite a NACE section letter (e.g. "Real estate and
+            # property management (NACE L)", 46 chars) -- a 26-char budget routinely cut
+            # these mid-word, dropping the NACE suffix and leaving a dangling fragment
+            # ("Sector not explicitly."). Widened the column (stealing width from Company/
+            # Global/Scanned below) and raised the budget high enough that Paragraph wraps
+            # most real labels onto two lines instead of truncating them; the cap here is
+            # just a safety bound against a pathologically long value.
+            Paragraph(esc(bounded_text(r.get('sector') or '—', 60)), ST['table']),
             gcell,
             Paragraph(esc(r.get('green_score') if r.get('green_score') is not None else '—'), ST['table']),
             Paragraph(esc(r.get('social_score') if r.get('social_score') is not None else '—'), ST['table']),
             Paragraph(esc(r.get('findings_count') if r.get('findings_count') is not None else '—'), ST['table']),
             Paragraph(esc(clean_text(r.get('scanned_at'))[:10] or '—'), ST['table']),
         ])
-    col_widths = [CONTENT_W * .24, CONTENT_W * .17, CONTENT_W * .18, CONTENT_W * .09,
-                  CONTENT_W * .09, CONTENT_W * .10, CONTENT_W * .13]
+    col_widths = [CONTENT_W * .20, CONTENT_W * .24, CONTENT_W * .17, CONTENT_W * .08,
+                  CONTENT_W * .08, CONTENT_W * .09, CONTENT_W * .14]
     t = Table(data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), NAVY),
@@ -428,9 +475,23 @@ def build_batch_summary_report_pdf(rows, meta=None):
     flow += _header(subtitle, generated)
     top_chart = _top_companies_chart(rows, CONTENT_W)
     if top_chart is not None:
-        flow.append(_section_title('Highest-risk companies (top 10 by global score)'))
+        flow.append(_section_title('Highest-scoring scans (top 10 by global score)'))
         flow.append(Spacer(1, 1 * mm))
         flow.append(top_chart)
+        # v93.44: several rows tying at the same top score (routinely because a fixed
+        # EmpCo-blacklist floor rule raises a score to exactly that band) previously read as
+        # 10 genuinely distinct risk levels -- a second reviewer pointed out that an
+        # identical-height bar chart communicates almost nothing extra once the tie is this
+        # wide. Disclose it directly under the chart instead of letting the ranking imply a
+        # false distinction.
+        top_score = top_chart and agg.get('top_company', {}).get('global_score')
+        tie_count = agg.get('top_tie_count') or 0
+        if tie_count > 1:
+            flow.append(Spacer(1, 1.5 * mm))
+            flow.append(Paragraph(
+                f'{tie_count} of the {agg["total"]} selected scans share this chart’s highest score, {top_score}/100 '
+                '-- the ranking above reflects list order among tied scans, not a further distinction in calculated risk.',
+                ST['small']))
         flow.append(Spacer(1, 4 * mm))
     claims_table = _top_claims_table(top_claims)
     if claims_table is not None:
@@ -439,7 +500,7 @@ def build_batch_summary_report_pdf(rows, meta=None):
         flow.append(Spacer(1, 1.5 * mm))
         flow.append(claims_table)
     flow.append(PageBreak())
-    flow.append(_section_title(f'All {agg["total"]} companies · sorted by global score (highest first)'))
+    flow.append(_section_title(f'All {agg["total"]} scans · sorted by global score (highest first)'))
     flow.append(Spacer(1, 2 * mm))
     flow.append(_company_table(rows))
     doc.build(flow, onFirstPage=_draw_footer, onLaterPages=_draw_footer)

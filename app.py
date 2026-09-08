@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_43_beta_access_code_gate"
-APP_RELEASE_LABEL="v93.43"
+APP_VERSION="hostable_v93_44_batch_report_accuracy_fixes"
+APP_RELEASE_LABEL="v93.44"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4679,10 +4679,24 @@ def _v92_save_scan_history(result,scan_type,client_ip):
         sec=result.get('sector') or {}
         audience=result.get('document_audience') or {}
         findings=result.get('findings') or result.get('merged_claims') or []
+        # v93.44: findings here (result['findings']/'merged_claims') is build_green_claim_
+        # inventory()+social_claim_inventory_with_dimension()'s output -- a NORMALIZED view
+        # that always carries a synthetic "No material {green,social} claim retained"
+        # placeholder row per dimension when nothing real was found (is_placeholder_finding()
+        # is the established check for it, used elsewhere in this file for exactly this
+        # reason). len(findings) therefore counted those status rows as real findings: a
+        # scan with zero actual claims stored findings_count=2 (one placeholder per
+        # dimension), not 0, systematically inflating this column and its cross-scan average
+        # on /history for every low/no-finding scan. Count only real findings.
+        real_findings=[f for f in findings if not is_placeholder_finding(f.get('claim_type') or f.get('type',''))]
         green_findings=result.get('green_findings') or []
         ext=result.get('external_research') or {}
         empco_count=sum(1 for f in green_findings if f.get('blacklisted_practice_indicator'))
-        high_risk_count=sum(1 for f in findings if str(f.get('risk','')).lower()=='high')
+        # v93.44: was f.get('risk',...) -- these normalized dicts only ever carry
+        # 'risk_level' (see build_green_claim_inventory/build_claim_inventory), never a bare
+        # 'risk' key, so this comparison was always '' == 'high': False. high_risk_findings_
+        # count has been silently stuck at 0 for every scan ever logged.
+        high_risk_count=sum(1 for f in real_findings if str(f.get('risk_level','')).lower()=='high')
         green_retained=len((ext.get('green') or {}).get('compact_sources') or [])
         social_retained=len((ext.get('social') or {}).get('compact_sources') or [])
         identity_check=result.get('company_identity_check') or {}
@@ -4714,7 +4728,7 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      result.get('social_score'),
                      str(result.get('social_risk','') or '')[:50],
                      str(audience.get('audience','') or '')[:200],
-                     len(findings),
+                     len(real_findings),
                      str(result.get('screening_conclusion','') or '')[:2000],
                      str(client_ip or '')[:64],
                      str(sec.get('level','') or comp.get('sector_risk','') or '')[:50],
@@ -4955,7 +4969,15 @@ def _v92_fetch_top_claims(limit=10):
     scan" list -- the evolving Top 10 panel on /history. Grouped case-insensitively on
     the exact matched phrase so "Carbon Neutral" and "carbon neutral" count as one entry;
     Low-risk matches are excluded, since a Low-risk hit isn't "problematic". Returns []
-    if the feature isn't configured/available, or nothing qualifies yet."""
+    if the feature isn't configured/available, or nothing qualifies yet.
+
+    v93.44: ranked by DISTINCT COMPANIES first, occurrences only as a tiebreak -- was the
+    reverse, which let a phrase repeated many times on ONE company's large site (or across
+    several of that company's own pages) outrank a phrase seen fewer times but spread across
+    many different companies, even though company REACH is what a cross-scan "most flagged"
+    panel should actually be surfacing. Reported by a second reviewer after "responsible
+    sourcing" (96 occurrences, 14 companies) ranked above "more sustainable" (17 companies)
+    purely on raw text-hit count."""
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -4971,7 +4993,7 @@ def _v92_fetch_top_claims(limit=10):
                 WHERE matched_phrase IS NOT NULL AND matched_phrase <> ''
                 GROUP BY LOWER(matched_phrase)
                 HAVING MAX({_V92_RISK_RANK_SQL}) >= 2
-                ORDER BY occurrences DESC, companies DESC
+                ORDER BY companies DESC, occurrences DESC
                 LIMIT %s
             ''',(limit,))
             return [{'phrase':r[0],'occurrences':r[1],'companies':r[2],'risk':_V92_RISK_RANK_LABEL.get(r[3],''),
@@ -4987,7 +5009,10 @@ def _v92_fetch_top_claims_for_scan_ids(scan_ids,limit=10):
     feeds the "Create report" PDF's most-flagged-claims section with data from just the
     companies actually selected on /history, not the whole deployment's history. Returns
     [] immediately for an empty id list rather than issuing a query that would otherwise
-    (with an empty ANY(%s) array) simply match nothing anyway."""
+    (with an empty ANY(%s) array) simply match nothing anyway.
+
+    v93.44: ranked by distinct companies first, occurrences as tiebreak -- see
+    _v92_fetch_top_claims()'s docstring for why."""
     if not scan_ids:
         return []
     conn=_v92_db_connect()
@@ -5005,7 +5030,7 @@ def _v92_fetch_top_claims_for_scan_ids(scan_ids,limit=10):
                 WHERE scan_id = ANY(%s) AND matched_phrase IS NOT NULL AND matched_phrase <> ''
                 GROUP BY LOWER(matched_phrase)
                 HAVING MAX({_V92_RISK_RANK_SQL}) >= 2
-                ORDER BY occurrences DESC, companies DESC
+                ORDER BY companies DESC, occurrences DESC
                 LIMIT %s
             ''',(list(scan_ids),limit))
             return [{'phrase':r[0],'occurrences':r[1],'companies':r[2],'risk':_V92_RISK_RANK_LABEL.get(r[3],''),
