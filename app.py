@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_44_batch_report_accuracy_fixes"
-APP_RELEASE_LABEL="v93.44"
+APP_VERSION="hostable_v93_45_multilingual_ambiguous_word_context_guard"
+APP_RELEASE_LABEL="v93.45"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5501,7 +5501,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         top_claims_html=f'''<div class="card">
 <h2 style="margin:0 0 4px;font-size:18px">Top {len(top_claims)} most flagged claims/words</h2>
 <p class="small" style="margin:0 0 10px">Across every scan logged on this deployment &mdash; updates automatically as new scans come in.</p>
-<table><thead><tr><th>#</th><th>Phrase</th><th>Risk level</th><th>EmpCo blacklist</th><th>Occurrences</th><th>Companies</th></tr></thead>
+<table><thead><tr><th>#</th><th>Phrase</th><th>Risk level</th><th>EmpCo pattern match</th><th>Occurrences</th><th>Companies</th></tr></thead>
 <tbody>{claim_rows}</tbody></table>
 </div>'''
     else:
@@ -6585,7 +6585,22 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if any(n in c for n in training_context) and not any(x in c for x in ['our product','our products','have achieved','has achieved','results in','has resulted','resulted in','reduced by','increase of','decrease of','certified','certification','100%','all of our','all our']):
         return False
     if dimension == 'green':
-        if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental']):
+        # v93.45: 'ecologisch'/'ecologische' (Dutch) and 'écologique'/'écologiques' (French) are
+        # bare standalone triggers in GREEN_CLAIMS, exactly like English 'ecological' -- but this
+        # ambiguous-bare-word anchor requirement only ever listed the English form, even though
+        # the very next check a few lines down (more sustainable/duurzamer/plus durable) already
+        # covers all three languages. On a Dutch/French-heavy site this gap meant the safety net
+        # barely applied at all: real cases found live include "ecologische kwesties" (ecological
+        # ISSUES, a category name inside "economic, social and ecological issues" describing what
+        # named certifiers FSC/PEFC verify -- not a claim), "ecologisch evenwicht" (ecological
+        # BALANCE, in a general sentence about destructive fishing methods with no reference to
+        # the scanned company at all) and a tuna-alliance description's "sociale en ecologische
+        # omstandigheden" (social and ecological CONDITIONS) -- all three fired as the company's
+        # own "Generic environmental claim" / Potentially Prohibited, the most serious
+        # classification, despite being either well-substantiated, third-party/general context,
+        # or not about the company at all. Same anchor-word list as the check below.
+        if trig in ['green','eco','sustainable','natural','ecological','ethical','responsible','fair',
+                    'ecologisch','ecologische','écologique','écologiques'] and not any(x in c for x in ['product','products','packaging','material','materials','collection','range','choice','fashion','sourcing','sourced','made','designed','shop','buy','recycled','recyclable','climate','carbon','emissions','environmental','milieu','klimaat','koolstof','verpakking','materiaal','materialen','environnement','emballage','matériau','matériaux']):
             return False
         # v75: "more sustainable"/"duurzamer"/"plus durable" alone is ambiguous -- English/Dutch/
         # French "sustainable"/"duurzaam"/"durable" routinely means "financially durable" or

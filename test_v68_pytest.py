@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_44_batch_report_accuracy_fixes'
+    assert app.APP_VERSION == 'hostable_v93_45_multilingual_ambiguous_word_context_guard'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -703,12 +703,15 @@ def test_scan_history_table_still_renders_alongside_top_claims_panel(monkeypatch
 def test_scan_history_top_claims_blacklist_column(monkeypatch):
     """v93.6: the Top 10 panel must show whether a phrase was ever flagged as an EmpCo
     Annex I blacklisted practice, separate from the general risk-level badge -- "Yes" for
-    a blacklisted phrase, a plain dash for one that wasn't."""
+    a blacklisted phrase, a plain dash for one that wasn't.
+    v93.45: column header renamed to "EmpCo pattern match" -- a matched trigger phrase is
+    an automated wording match, not by itself a confirmed finding of a blacklisted practice.
+    Same reframing already applied to the batch-report PDF's equivalent column."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     top_claims=[{'phrase':'carbon neutral','risk':'High','occurrences':7,'companies':5,'blacklisted':True},
                 {'phrase':'eco-friendly','risk':'Medium','occurrences':4,'companies':3,'blacklisted':False}]
     html=app._v92_render_history_page([],0,1,25,'',top_claims=top_claims)
-    assert 'EmpCo blacklist' in html
+    assert 'EmpCo pattern match' in html
     assert html.count('>Yes<')==1
     assert '&mdash;' in html
 
@@ -1612,6 +1615,34 @@ def test_inline_markup_does_not_break_negation_detection():
     excerpt=app._v55_sentence_list(text,'carbon neutral')
     assert app._v55_claim_context_ok(excerpt,'carbon neutral','green') is False, (
         f'negation should be detected, but claim_context_ok accepted: {excerpt!r}')
+
+
+def test_bare_ecologisch_trigger_requires_context_anchor_like_its_english_equivalent():
+    """v93.45: 'ecologisch'/'ecologische' (Dutch) and 'écologique'/'écologiques' (French) are
+    bare standalone triggers in GREEN_CLAIMS, exactly like English 'ecological' -- but the
+    ambiguous-bare-word anchor requirement only ever listed the English form. On a Dutch/
+    French-heavy site that left this safety net barely applying at all. Three real false
+    positives found live on an actual Delhaize scan: a general sentence about destructive
+    fishing methods with no reference to the company at all ("ecologisch evenwicht" /
+    ecological balance), and an alliance description naming what it works to improve
+    ("sociale en ecologische omstandigheden" / social and ecological conditions) -- both fired
+    as the company's own "Generic environmental claim", the most serious classification.
+    A genuine claim with a real product/context anchor nearby must still be flagged."""
+    fishing_context = 'Destructieve vismethoden verstoren het ecologische evenwicht en vernietigen broedplaatsen voor veel soorten.'
+    assert app._v55_claim_context_ok(fishing_context, 'ecologisch', 'green') is False
+
+    alliance_context = ('Global Tuna Alliance: Een onafhankelijke groep van retailers en bedrijven in de '
+                         'toeleveringsketen die werkt aan het verbeteren van sociale en ecologische omstandigheden '
+                         'in de toeleveringsketens van tonijn.')
+    assert app._v55_claim_context_ok(alliance_context, 'ecologisch', 'green') is False
+
+    # A genuine product claim with a real anchor word nearby must still be caught.
+    genuine_claim = 'Onze producten zijn 100% ecologisch geproduceerd en verpakt.'
+    assert app._v55_claim_context_ok(genuine_claim, 'ecologisch', 'green') is True
+
+    # Same pattern in French.
+    fr_context = "Le débat sur l'impact écologique des méthodes de pêche destructrices continue."
+    assert app._v55_claim_context_ok(fr_context, 'écologique', 'green') is False
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):

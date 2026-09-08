@@ -71,7 +71,7 @@ def draw_footer(canvas, doc):
     canvas.line(MARGIN, 9 * mm, PAGE_W - MARGIN, 9 * mm)
     canvas.setFont('Helvetica-Oblique', 6.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · Last updated 4 September 2026')
+    canvas.drawString(MARGIN, 5.8 * mm, 'Durably Sustainability Claims Risk Scan — Methodology summary · Last updated 8 September 2026')
     canvas.drawRightString(PAGE_W - MARGIN, 5.8 * mm, f'Page {canvas.getPageNumber()}')
     canvas.restoreState()
 
@@ -91,7 +91,7 @@ def build_methodology_pdf():
     # methodology impact) bumped the app version past whatever was last baked in here.
     # A plain "last updated" date reflects reality without needing to be re-synced on
     # every app release.
-    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; Last updated 4 September 2026', STY['sub']))
+    flow.append(Paragraph('Methodology summary &mdash; claim-risk screening &middot; Last updated 8 September 2026', STY['sub']))
     flow.append(Spacer(1, 5))
     flow.append(Paragraph(
         'EmpCo / Directive (EU) 2024/825 ("Empowering Consumers for the Green Transition" Directive) '
