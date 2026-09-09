@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_46_second_review_followup_fixes'
+    assert app.APP_VERSION == 'hostable_v93_47_unique_visitor_counter'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -159,6 +159,64 @@ def test_scan_history_noop_without_database_url(monkeypatch):
     app._v92_save_scan_history({'company':{'company':'Acme'},'global_score':50},'url','1.2.3.4')
     rows,total=app._v92_fetch_scan_history()
     assert rows==[] and total==0
+
+
+def test_record_site_visit_noop_without_database_url(monkeypatch):
+    """v93.47: the visitor counter must be fully optional, same safety posture as the scan-
+    history feature -- with DATABASE_URL unset, recording a visit must never raise, and
+    fetching stats must return safe all-zero defaults."""
+    monkeypatch.setattr(app,'DATABASE_URL','')
+    app._v93_record_site_visit('1.2.3.4')
+    stats=app._v93_fetch_visit_stats()
+    assert stats=={'today':0,'this_month':0,'all_time':0}
+
+
+def test_record_site_visit_dedupes_per_day_via_on_conflict(monkeypatch):
+    """v93.47: "unique visitors per day" is enforced by ON CONFLICT (visit_date,client_ip) DO
+    NOTHING at insert time, not by a separate SELECT-then-INSERT check -- a second page load
+    from the same IP on the same day must be a silent no-op, not raise or duplicate."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append((sql,params))
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    app._v93_record_site_visit('203.0.113.7')
+    sql,params=executed[-1]
+    assert 'INSERT INTO site_visits' in sql
+    assert 'ON CONFLICT' in sql and 'DO NOTHING' in sql
+    assert params==('203.0.113.7',)
+
+
+def test_fetch_visit_stats_queries_today_month_and_all_time_distinctly(monkeypatch):
+    """v93.47: "today" counts rows for the current date (each row is already one unique IP
+    that day); "this month" and "all-time" count DISTINCT client_ip so a visitor returning on
+    a later day within the same month is not double-counted for the monthly figure, while
+    "all-time" reflects genuinely distinct IPs ever seen, not the sum of each day's count."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    results=iter([(3,),(11,),(47,)])
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append(sql)
+        def fetchone(self): return next(results)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    stats=app._v93_fetch_visit_stats()
+    assert stats=={'today':3,'this_month':11,'all_time':47}
+    assert 'visit_date=CURRENT_DATE' in executed[0]
+    assert 'COUNT(DISTINCT client_ip)' in executed[1] and 'date_trunc' in executed[1]
+    assert executed[2]=='SELECT COUNT(DISTINCT client_ip) FROM site_visits'
 
 
 def test_scan_history_page_escapes_untrusted_content(monkeypatch):

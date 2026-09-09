@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_46_second_review_followup_fixes"
-APP_RELEASE_LABEL="v93.46"
+APP_VERSION="hostable_v93_47_unique_visitor_counter"
+APP_RELEASE_LABEL="v93.47"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4706,6 +4706,22 @@ def _v92_ensure_table(conn):
                 # blacklisted practice (per se unfair, no burden of proof needed) -- distinct
                 # from `risk`, which is the general Low/Medium/High/Very high severity rating.
                 cur.execute('ALTER TABLE scan_findings ADD COLUMN IF NOT EXISTS blacklisted BOOLEAN')
+                # v93.47: one row per (day, IP) that ever loaded the homepage -- deliberately
+                # deduplicated AT INSERT TIME (ON CONFLICT DO NOTHING in _v93_record_site_visit)
+                # rather than counted as raw page-view hits, per the user's explicit choice of
+                # "unique visitors per day" over a plain hit counter. A repeat page load or
+                # refresh from the same visitor on the same day adds no new row; the same IP
+                # on a later day does, since "unique" is scoped per day, not all-time.
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS site_visits (
+                        id SERIAL PRIMARY KEY,
+                        visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                        client_ip TEXT NOT NULL,
+                        first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        UNIQUE(visit_date, client_ip)
+                    )
+                ''')
+                cur.execute('CREATE INDEX IF NOT EXISTS site_visits_date_idx ON site_visits (visit_date DESC)')
             conn.commit()
             _V92_TABLE_READY=True
             return True
@@ -4714,6 +4730,60 @@ def _v92_ensure_table(conn):
             try: conn.rollback()
             except Exception: pass
             return False
+
+def _v93_record_site_visit(client_ip):
+    """Best-effort log of one homepage load, for the unique-visitors-per-day counter shown on
+    /history. Never raises and never delays serving the page -- a database hiccup must not
+    turn a normal page load into a failed response. ON CONFLICT DO NOTHING is what actually
+    enforces "unique per day": a second load from the same IP on the same day is a silent
+    no-op, not a duplicate row, so this is safe to call on every single page view."""
+    if not DATABASE_URL:
+        return
+    try:
+        conn=_v92_db_connect()
+        if conn is None:
+            return
+        try:
+            if not _v92_ensure_table(conn):
+                return
+            with conn.cursor() as cur:
+                cur.execute(
+                    'INSERT INTO site_visits (client_ip) VALUES (%s) ON CONFLICT (visit_date,client_ip) DO NOTHING',
+                    (str(client_ip or '')[:64],))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+def _v93_fetch_visit_stats():
+    """Unique-visitor counts for the /history stats block: today, this calendar month, and
+    all-time -- each a DISTINCT count over site_visits, so a visitor returning on a later day
+    is counted again for "today"/"this month" but "all-time" still reflects genuinely
+    distinct IPs ever seen, not the sum of each day's unique count (which would double-count
+    a repeat visitor across days). Returns safe all-zero defaults if the feature isn't
+    configured/available -- never raises."""
+    defaults={'today':0,'this_month':0,'all_time':0}
+    if not DATABASE_URL:
+        return defaults
+    conn=_v92_db_connect()
+    if conn is None:
+        return defaults
+    try:
+        if not _v92_ensure_table(conn):
+            return defaults
+        with conn.cursor() as cur:
+            cur.execute('SELECT COUNT(*) FROM site_visits WHERE visit_date=CURRENT_DATE')
+            today=cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT client_ip) FROM site_visits WHERE visit_date>=date_trunc('month',CURRENT_DATE)")
+            this_month=cur.fetchone()[0]
+            cur.execute('SELECT COUNT(DISTINCT client_ip) FROM site_visits')
+            all_time=cur.fetchone()[0]
+            return {'today':today,'this_month':this_month,'all_time':all_time}
+    except Exception:
+        return defaults
+    finally:
+        conn.close()
 
 def _v92_save_scan_history(result,scan_type,client_ip):
     """Best-effort log of a completed scan. Never raises -- a database problem must
@@ -5576,7 +5646,7 @@ def _v92_option(value,label,current):
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
                               date_from=None,date_to=None,sort='company',distinct_scores=None,
-                              distinct_companies=None,distinct_dates=None,min_external=None):
+                              distinct_companies=None,distinct_dates=None,min_external=None,visit_stats=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -5595,6 +5665,16 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="stat"><strong>{stats.get("this_month",0)}</strong><span>This month</span></div>
 <div class="stat"><strong>{stats.get("avg_score") if stats.get("avg_score") is not None else "—"}</strong><span>Average global score</span></div>
 <div class="stat"><strong>{high_plus}</strong><span>High / Very high risk</span></div>
+</div>'''
+    # v93.47: unique-visitors-per-day counter -- a separate row from the scan stats above,
+    # since this counts homepage LOADS (anyone who opened the site), not scans actually run.
+    # Never blocks rendering the rest of the page if the DB is briefly unavailable (visit_stats
+    # defaults to all-zero, same safety posture as _v93_fetch_visit_stats() itself).
+    visit_stats=visit_stats or {'today':0,'this_month':0,'all_time':0}
+    visits_html=f'''<div class="stats-row">
+<div class="stat"><strong>{visit_stats.get("today",0)}</strong><span>Unique visitors today</span></div>
+<div class="stat"><strong>{visit_stats.get("this_month",0)}</strong><span>Unique visitors this month</span></div>
+<div class="stat"><strong>{visit_stats.get("all_time",0)}</strong><span>Unique visitors all-time</span></div>
 </div>'''
     # v93.3: evolving "Top 10 most flagged claims/words" panel, aggregated across every
     # scan ever logged (not scoped to the current search/filter -- it's meant to answer
@@ -5799,6 +5879,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
 <a class="btn secondary" href="/history/logout">Log out</a></div>
 {stats_html}
+{visits_html}
 {top_claims_html}
 <div class="card">
 <form method="GET" action="/history" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -5949,6 +6030,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path=='/' or self.path.startswith('/?'):
+            # v93.47: unique-visitors-per-day counter, shown on /history. Recorded here (the
+            # actual homepage GET), not in do_HEAD -- HEAD requests are typically uptime/
+            # monitoring checks, not real visits.
+            _v93_record_site_visit(_client_ip(self))
             html=(APP_DIR/'frontend.html').read_text(encoding='utf-8')
             html=html.replace('{{APP_VERSION}}',APP_VERSION).replace('{{APP_RELEASE_LABEL}}',APP_RELEASE_LABEL).replace('{{APP_RELEASE_DATE}}',APP_RELEASE_DATE)
             # v93.43: baked into the page server-side (like the version fields above) rather than
@@ -6048,9 +6133,10 @@ class Handler(BaseHTTPRequestHandler):
             distinct_scores=_v92_fetch_distinct_scores()
             distinct_companies=_v92_fetch_distinct_companies()
             distinct_dates=_v92_fetch_distinct_dates()
+            visit_stats=_v93_fetch_visit_stats()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
                 min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores,
-                distinct_companies,distinct_dates,min_external))
+                distinct_companies,distinct_dates,min_external,visit_stats))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
