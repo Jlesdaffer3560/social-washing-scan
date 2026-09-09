@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_47_unique_visitor_counter"
-APP_RELEASE_LABEL="v93.47"
+APP_VERSION="hostable_v93_48_visitor_counter_footer_placement"
+APP_RELEASE_LABEL="v93.48"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5594,6 +5594,7 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
 .stat strong{display:block;font-size:24px;color:var(--accent2)}
 .stat span{display:block;font-size:12px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.03em}
+.visit-meta{font-size:10.5px;color:var(--muted);margin:16px 0 0;text-align:center;opacity:.8}.visit-meta strong{color:var(--muted);font-weight:700}
 .pager{display:flex;gap:8px;margin-top:14px}
 .empty{color:var(--muted);font-style:italic;padding:20px 0}
 a{color:var(--accent2)}
@@ -5666,16 +5667,18 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="stat"><strong>{stats.get("avg_score") if stats.get("avg_score") is not None else "—"}</strong><span>Average global score</span></div>
 <div class="stat"><strong>{high_plus}</strong><span>High / Very high risk</span></div>
 </div>'''
-    # v93.47: unique-visitors-per-day counter -- a separate row from the scan stats above,
-    # since this counts homepage LOADS (anyone who opened the site), not scans actually run.
-    # Never blocks rendering the rest of the page if the DB is briefly unavailable (visit_stats
-    # defaults to all-zero, same safety posture as _v93_fetch_visit_stats() itself).
+    # v93.48: unique-visitors-per-day counter -- deliberately NOT another .stats-row/.stat
+    # block like the scan stats above (that read as "more scan stats", confusing, per direct
+    # user feedback on the first version), and deliberately not in the page header either (too
+    # prominent, per a second round of feedback asking for something smaller in a different
+    # spot again). Rendered as one small, muted, single line at the very bottom of the page,
+    # below the last card -- the classic "quiet footnote" position, clearly a different kind
+    # of information (site traffic) from the scan data above it, and unobtrusive.
     visit_stats=visit_stats or {'today':0,'this_month':0,'all_time':0}
-    visits_html=f'''<div class="stats-row">
-<div class="stat"><strong>{visit_stats.get("today",0)}</strong><span>Unique visitors today</span></div>
-<div class="stat"><strong>{visit_stats.get("this_month",0)}</strong><span>Unique visitors this month</span></div>
-<div class="stat"><strong>{visit_stats.get("all_time",0)}</strong><span>Unique visitors all-time</span></div>
-</div>'''
+    visits_html=(f'<p class="visit-meta">Unique visitors &mdash; '
+                 f'today: <strong>{visit_stats.get("today",0)}</strong> &middot; '
+                 f'this month: <strong>{visit_stats.get("this_month",0)}</strong> &middot; '
+                 f'all-time: <strong>{visit_stats.get("all_time",0)}</strong></p>')
     # v93.3: evolving "Top 10 most flagged claims/words" panel, aggregated across every
     # scan ever logged (not scoped to the current search/filter -- it's meant to answer
     # "what wording keeps coming up", independent of which companies you're browsing right
@@ -5879,7 +5882,6 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
 <a class="btn secondary" href="/history/logout">Log out</a></div>
 {stats_html}
-{visits_html}
 {top_claims_html}
 <div class="card">
 <form method="GET" action="/history" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -5916,7 +5918,9 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 {select_all_note}
 </div>
 {pager}
-</div></div>
+</div>
+{visits_html}
+</div>
 <script>
 (function(){{
   var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'),
