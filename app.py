@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_48_visitor_counter_footer_placement"
-APP_RELEASE_LABEL="v93.48"
+APP_VERSION="hostable_v93_49_visitor_counter_boxed_style"
+APP_RELEASE_LABEL="v93.49"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5594,7 +5594,7 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
 .stat strong{display:block;font-size:24px;color:var(--accent2)}
 .stat span{display:block;font-size:12px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.03em}
-.visit-meta{font-size:10.5px;color:var(--muted);margin:16px 0 0;text-align:center;opacity:.8}.visit-meta strong{color:var(--muted);font-weight:700}
+.visit-meta{font-size:13px;color:var(--muted);margin:16px 0 0;padding:10px 14px;background:var(--soft);border:1px solid var(--line);border-radius:10px;text-align:center}.visit-meta strong{color:var(--ink);font-weight:700}
 .pager{display:flex;gap:8px;margin-top:14px}
 .empty{color:var(--muted);font-style:italic;padding:20px 0}
 a{color:var(--accent2)}

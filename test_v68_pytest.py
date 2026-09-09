@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_48_visitor_counter_footer_placement'
+    assert app.APP_VERSION == 'hostable_v93_49_visitor_counter_boxed_style'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
