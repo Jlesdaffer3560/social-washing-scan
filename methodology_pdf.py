@@ -170,15 +170,19 @@ def build_methodology_pdf():
     flow.append(section_table(legal_basis_rows, [W * 0.26, W * 0.74]))
     flow.append(Spacer(1, 6))
     flow.append(Paragraph(
-        '<b>Automatic Very high score.</b> When at least one retained green claim is classified <b>Potentially '
-        'Prohibited (Annex I)</b>, the green score and the overall score are automatically raised to the Very high '
-        'band (75/100 or higher), regardless of what the blended scoring formula in Section 6 would otherwise '
-        'produce. A confirmed match against the fixed Annex I list is treated as categorically more severe than a '
-        'case-by-case claim, so it is not diluted by averaging with claim wording, evidence-gap, external-context '
-        'or sector-modifier components that were designed for the broader, non-blacklisted case. This rule only '
-        'ever raises a score — a scan whose blended formula already reaches 75 or higher is unaffected. Social '
-        'claims have no equivalent fixed Annex I list (assessed case-by-case only, per the Forced Labour Regulation '
-        'lens in Section 1), so the social score is never raised by this rule.', STY['body']))
+        '<b>Automatic minimum score.</b> When at least one retained green claim is classified <b>Potentially '
+        'Prohibited (Annex I)</b>, the green score and the overall score are automatically raised to a minimum, '
+        'regardless of what the blended scoring formula in Section 6 would otherwise produce. A confirmed match '
+        'against the fixed Annex I list is treated as categorically more severe than a case-by-case claim, so it '
+        'is not diluted by averaging with claim wording, evidence-gap, external-context or sector-modifier '
+        'components that were designed for the broader, non-blacklisted case. For client- or consumer-facing '
+        'material, that minimum is 75/100 (the Very high band), since EmpCo/UCPD apply most directly there. For '
+        'material assessed as mainly investor or internal/governance content, the minimum is scaled down (to '
+        'around 56&ndash;68/100, typically the High band, rather than Very high), reflecting that EmpCo/UCPD '
+        'reach that material only indirectly. This rule only ever raises a score — a scan '
+        'whose blended formula already reaches the applicable minimum is unaffected. Social claims have no '
+        'equivalent fixed Annex I list (assessed case-by-case only, per the Forced Labour Regulation lens in '
+        'Section 1), so the social score is never raised by this rule.', STY['body']))
 
     flow.append(Paragraph('3. What is retained as a claim signal', STY['h2']))
     flow.append(Paragraph(
@@ -308,8 +312,10 @@ def build_methodology_pdf():
          Paragraph('Strong wording risk, evidence gaps and/or negative external stakeholder signals require priority review.', STY['td'])),
         (Paragraph('75 &ndash; 100  Very high', ParagraphStyle('bv', parent=STY['td_b'], textColor=colors.HexColor('#7a1e1e'))),
          Paragraph('Reached either by multiple severe claim signals with strong external or regulatory context, or '
-                   'automatically whenever a retained green claim is classified Potentially Prohibited (Annex I) '
-                   '&mdash; see Section 2.', STY['td'])),
+                   'automatically for client- or consumer-facing material whenever a retained green claim is '
+                   'classified Potentially Prohibited (Annex I) &mdash; see Section 2 (the same rule applies a '
+                   'lower automatic minimum, typically landing in the High band, for mainly investor or internal/'
+                   'governance material).', STY['td'])),
     ]
     flow.append(section_table(band_rows, [W * 0.28, W * 0.72]))
 
@@ -354,9 +360,11 @@ def build_methodology_pdf():
         'the published weights above: 65&times;50% + 70&times;22% + 30&times;20% + 40&times;8% = 32.5 + 15.4 + 6.0 + '
         '3.2 = 57.1, rounded to <b>57/100</b> (High risk band). This shows how the four weighted components combine into the final '
         'score; it does not disclose the full internal point schedule used to score any individual claim, which '
-        'varies by claim type, channel and retained evidence. If this claim were additionally classified '
-        'Potentially Prohibited (Annex I), the automatic Very high rule from Section 2 would apply instead, and the '
-        'score would be raised to at least 75/100 regardless of this blended calculation.', STY['body']))
+        'varies by claim type, channel and retained evidence. If this consumer-facing claim were additionally '
+        'classified Potentially Prohibited (Annex I), the automatic minimum-score rule from Section 2 would apply '
+        'instead, and the score would be raised to at least 75/100 regardless of this blended calculation -- for '
+        'material assessed as mainly investor or internal/governance content, that automatic minimum is lower '
+        '(see Section 2).', STY['body']))
 
     flow.append(Paragraph('10. Limits of the scan', STY['h2']))
     flow.append(Paragraph(

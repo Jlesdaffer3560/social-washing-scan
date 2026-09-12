@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_52_fix_actual_truncation_path_and_history_counter'
+    assert app.APP_VERSION == 'hostable_v93_53_generalise_negation_role_and_dedup_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -999,6 +999,34 @@ def test_add_finding_dedup_key_does_not_merge_distinct_claims_with_shared_prefix
     assert 'bioplastic' in claims_text
 
 
+def test_dedup_survives_truncation_of_two_claims_naming_different_products():
+    """v93.53: a follow-up review found that deduping on the full excerpt (the v93.52 fix) was
+    still not enough, because that "full excerpt" was itself the ALREADY-TRUNCATED (620-char,
+    trigger-centered) display text -- when a long, near-identical sentence template names a
+    different product far enough from the trigger to fall outside that truncation window, both
+    truncated excerpts become byte-identical even though the underlying sentences are genuinely
+    different, so the second claim was silently deduped away. Reproduced with two sentences
+    about "product Alpha" and "product Beta" sharing identical wording near the trigger, with
+    the product names pushed past the truncation radius. Fixed by deduping on the excerpt
+    BEFORE truncation (see _v55_all_matches_sentences()/_v55_add_finding()); truncation for
+    display now happens after the dedup check."""
+    filler_before = (
+        'which operates across many regions with a strong focus on quality, service, community '
+        'engagement, and long-term responsible growth, and which after extensive internal review and '
+        'multiple rounds of stakeholder consultation and a lengthy internal governance process spanning '
+        'several quarters and involving numerous departments across the organisation and several external '
+        'advisors brought in specifically for this purpose over an extended period of time, further '
+        'reviewed again by an independent working group convened solely to evaluate this specific matter '
+        'in significant additional depth and detail before any conclusion was reached internally, '
+    )
+    def make(name):
+        return f'Our product {name}, {filler_before}is eco-friendly and proud of it.'
+    combined = make('Alpha') + ' ' + make('Beta')
+    findings = app.detect_green_claims(combined)
+    material = [f for f in findings if not app.is_placeholder_finding(f.get('type', ''))]
+    assert len(material) == 2, f'expected both the Alpha and Beta claims retained, got {len(material)}'
+
+
 def test_empco_floor_conclusion_text_matches_the_actual_resulting_band():
     """v93.52: the "Automatic Very high" conclusion prefix was hardcoded regardless of what the
     floor actually raised the score to -- since v93.51 scales the floor by audience factor for
@@ -1014,6 +1042,27 @@ def test_empco_floor_conclusion_text_matches_the_actual_resulting_band():
     assert result['green_risk'] == 'High'
     assert 'Automatic High:' in result['green_conclusion']
     assert 'Automatic Very high' not in result['green_conclusion']
+
+
+def test_empco_floor_text_consistency_covers_full_response_not_just_conclusion():
+    """v93.53: a follow-up review found the v93.52 fix only touched green_conclusion --
+    score_driver_details() (surfaced as both why_score.green and score_driver_details.green)
+    still hardcoded "Automatically floored to Very high" and "floors this score to Very high
+    (75+)" regardless of the actual audience-scaled floor value, so an internal-document scan
+    showing green_risk="High" (56/100) still had these OTHER strings claiming "Very high" --
+    checking only green_conclusion was insufficient, per the reviewer's own point. Every score-
+    explanation surface must agree with the actual computed band."""
+    text = ('This internal governance policy confirms our product line is climate neutral through '
+        'offsetting, achieved via certified carbon credits, as part of our corporate '
+        'sustainability programme.')
+    result = app.analyse_uploaded_document('internal_policy.txt', text, 'TestCo')
+    assert result['empco_blacklist_floor_applied'] is True
+    assert result['green_risk'] == 'High'
+    assert 'Very high' not in result['green_conclusion']
+    assert 'Very high' not in result['why_score']['green']
+    assert 'Very high' not in result['score_driver_details']['green']['summary']
+    assert not any('Very high' in d for d in result['score_driver_details']['green']['key_drivers'])
+    assert 'at least high' in result['why_score']['green'].lower()
 
 
 def test_backfill_legacy_findings_missing_fixture(monkeypatch, tmp_path):
@@ -1856,6 +1905,24 @@ def test_offset_negation_flips_blacklist_indicator():
     assert 'offset basis not established' in dutch_not_flagged
 
 
+def test_offset_negation_handles_post_positioned_negation_and_repeated_terms():
+    """v93.53: a follow-up review of the v93.51 fix found three further gaps, all in
+    _offset_basis_confirmed(). (1) It only ever checked a window BEFORE the matched term, so
+    "offsetting is NOT used" (negation AFTER the word) was missed and still flagged as
+    confirmed. (2) Its negation markers were exact phrases like "no offset" checked against the
+    before-window -- but that window excludes the term itself by construction, so "no offsets
+    are used" only ever puts "no " in the window and the "no offset" marker can never match.
+    (3) c.find(term) found only the FIRST occurrence of each term, so a sentence negating one
+    occurrence but affirming a later one ("without offsetting transport but through offsetting
+    production emissions") was wrongly read as fully negated. All three are reported by a
+    third-party code review with these exact reproductions."""
+    assert app._offset_basis_confirmed('Our product is carbon neutral; no offsets are used.') is False
+    assert app._offset_basis_confirmed('Our product is carbon neutral and offsetting is not used.') is False
+    assert app._offset_basis_confirmed(
+        'Our product is carbon neutral without offsetting transport but through offsetting '
+        'production emissions.') is True
+
+
 def test_recognised_scheme_in_unrelated_clause_does_not_suppress_other_claim():
     """v93.51: _v55_claim_context_ok()'s recognised-scheme guard scanned the WHOLE excerpt for
     any of ~18 hardcoded scheme names and rejected the excerpt outright on a match, with no
@@ -1869,6 +1936,27 @@ def test_recognised_scheme_in_unrelated_clause_does_not_suppress_other_claim():
     assert app._v55_claim_context_ok(mixed_claim, 'carbon neutral', 'green') is True
     same_clause_claim = 'Our product is eco-label certified, carrying the EU Ecolabel.'
     assert app._v55_claim_context_ok(same_clause_claim, 'eco-label', 'green') is False
+
+
+def test_certification_boundary_recognises_comma_with_and_unlike_contrast():
+    """v93.53: a follow-up review found the v93.51 clause-boundary regex too narrow. (1) A comma
+    followed by "with" introduces a separate, unrelated attribute ("carbon neutral through
+    offsetting, WITH FSC certified paper packaging") but wasn't recognised as a boundary, so the
+    genuinely serious claim still vanished -- the earlier fix only caught the "and"-joined
+    phrasing, not the comma+with variant. (2) "Our products carry our self-declared eco label,
+    UNLIKE the EU Ecolabel" is an explicit CONTRAST, not the trigger's own certification basis,
+    but with no boundary marker recognised there this whole excerpt (a genuine self-declared-
+    label claim) was rejected before the separate contrast-detection mechanism
+    (_names_recognized_certification_scheme) ever ran -- confirmed via the real
+    detect_green_claims() pipeline returning zero findings for it."""
+    comma_with_claim = 'Our products are carbon neutral through offsetting, with FSC certified paper packaging.'
+    assert app._v55_claim_context_ok(comma_with_claim, 'carbon neutral', 'green') is True
+
+    unlike_text = 'Our products carry our self-declared eco label, unlike the EU Ecolabel.'
+    findings = app.detect_green_claims(unlike_text)
+    material = [f for f in findings if not app.is_placeholder_finding(f.get('type', ''))]
+    assert any(f['type'] == 'Sustainability label / certification claim' for f in material)
+    assert all(f.get('risk') == 'High' for f in material if f['type'] == 'Sustainability label / certification claim')
 
 
 def test_green_evidence_score_ignores_substring_inside_unrelated_word():
@@ -1939,6 +2027,31 @@ def test_entity_match_rejects_target_named_only_as_non_accused_helper():
         'url': 'https://news.example.com/companyx-greenwashing-accusation',
     }
     assert app.entity_match_details(genuine_accusation, 'CompanyX')['matched'] is True
+
+
+def test_entity_match_does_not_misattribute_a_helper_role_to_the_actually_accused_company():
+    """v93.53: a follow-up review found the v93.51 fix itself introduced the mirror-image bug --
+    it checked for a non-accused-role marker in a window AFTER the target's own name, which is
+    just as flawed in reverse. "ExampleCo was fined after RivalCo helped uncover misleading
+    environmental claims" still has "helped uncover" within 90 characters of "ExampleCo", so
+    the genuinely accused ExampleCo was wrongly excluded even though "helped uncover" is
+    grammatically RivalCo's role. Also reported: a company that is itself fined AND separately
+    helps expose a different case must not be excluded either. Reported by a third-party code
+    review with both exact reproductions."""
+    genuinely_accused_with_nearby_helper = {
+        'title': 'ExampleCo fined for greenwashing',
+        'content': 'ExampleCo was fined after RivalCo helped uncover misleading environmental claims.',
+        'url': 'https://news.example.com/examplco-fined-greenwashing',
+    }
+    assert app.entity_match_details(genuinely_accused_with_nearby_helper, 'ExampleCo')['matched'] is True
+
+    self_accused_and_separately_helpful = {
+        'title': 'ExampleCo fined for greenwashing and praised for helping expose a rival scandal',
+        'content': 'ExampleCo was fined by regulators for its own misleading environmental claims. '
+            'Separately, ExampleCo helped expose fraud at a different company entirely.',
+        'url': 'https://news.example.com/examplco-fined-and-helps-expose',
+    }
+    assert app.entity_match_details(self_accused_and_separately_helpful, 'ExampleCo')['matched'] is True
 
 
 def test_empco_blacklist_floor_scales_down_for_internal_audience():
@@ -2065,6 +2178,29 @@ def test_history_login_rate_limit_bucket_throttles_after_configured_max(monkeypa
     for _ in range(app.RATE_LIMIT_LOGIN):
         assert app._rate_limit_allowed(client, 'history_login', app.RATE_LIMIT_LOGIN) is True
     assert app._rate_limit_allowed(client, 'history_login', app.RATE_LIMIT_LOGIN) is False
+
+
+def test_specification_check_ignores_substring_and_negated_methodology_mention():
+    """v93.53: _has_strong_same_medium_specification() (used by enrich_green_finding() to
+    decide whether a "generic environmental claim" has enough same-medium specification to
+    clear the Annex I 4a blacklist indicator) shared the exact same bug class already fixed for
+    green_evidence_signal_score() -- bare substring matching let 'lca' match inside the
+    unrelated word "volcanic", and there was no negation awareness, so "eco-friendly... without
+    any methodology" was read as genuine specification. Reported by a third-party code review
+    with both exact reproductions, confirmed end-to-end via enrich_green_finding() incorrectly
+    clearing blacklisted_practice_indicator for both. A genuine specification reference must
+    still clear the indicator."""
+    volcanic = {'type': 'Generic environmental claim', 'risk': 'High',
+        'claim': 'Our products are eco-friendly and made in a volcanic region.'}
+    assert app.enrich_green_finding(dict(volcanic), 'eco-friendly')['blacklisted_practice_indicator'] is True
+
+    no_methodology = {'type': 'Generic environmental claim', 'risk': 'High',
+        'claim': 'Our products are eco-friendly without any methodology.'}
+    assert app.enrich_green_finding(dict(no_methodology), 'eco-friendly')['blacklisted_practice_indicator'] is True
+
+    genuine = {'type': 'Generic environmental claim', 'risk': 'High',
+        'claim': 'Our products are eco-friendly, verified according to ISO 14024 methodology.'}
+    assert app.enrich_green_finding(dict(genuine), 'eco-friendly')['blacklisted_practice_indicator'] is False
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):

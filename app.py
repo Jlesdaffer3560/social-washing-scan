@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_52_fix_actual_truncation_path_and_history_counter"
-APP_RELEASE_LABEL="v93.52"
+APP_VERSION="hostable_v93_53_generalise_negation_role_and_dedup_fixes"
+APP_RELEASE_LABEL="v93.53"
 APP_RELEASE_DATE="2026-09-12"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -2846,26 +2846,42 @@ def _names_recognized_certification_scheme(claim_text):
         return True
     return False
 
+_OFFSET_NEGATION_WORD_RE=re.compile(
+    r"\b(not|never|no|without)\b|n't|\bzonder\b|\bniet\b|\bgeen\b|\bsans\b|\bpas\b|\baucun[e]?\b")
+
 def _offset_basis_confirmed(claim_text):
     """v93.51: was a bare substring check (any of 'offset'/'compensat'/'carbon credit' present
     anywhere) with no negation awareness -- "Our product is carbon neutral WITHOUT offsetting"
     still contains the substring "offset" and was treated identically to "...THROUGH
     offsetting", flagging the exact opposite of what Annex I point 4c actually targets (a claim
-    that IS based on offsetting). Checks a short window immediately before each occurrence for
-    an explicit negation of the offset basis; only counts as confirmed if at least one
-    occurrence is not negated."""
+    that IS based on offsetting).
+
+    v93.53: the v93.51 fix still missed real cases, reported by a third-party code review with
+    these three reproductions. (1) It only ever checked a window BEFORE the term -- "offsetting
+    is NOT used" negates AFTER the word and was missed entirely. (2) Its negation markers were
+    exact multi-word phrases like "no offset"/"not offset" checked against the window BEFORE
+    the term -- but that window by construction excludes the term itself, so a marker that
+    embeds the term string can never match ("no offsets are used" only ever puts "no " in the
+    window, not "no offset"). (3) c.find(term) found only the FIRST occurrence of each term
+    string, then moved on to a different term entirely -- "carbon neutral WITHOUT offsetting
+    transport but THROUGH offsetting production emissions" has its first "offsetting" negated
+    and its second one affirmative, but the second was never even examined. Now scans every
+    occurrence of every term, checks a window on BOTH sides using single-word negation markers
+    (so "no"/"not"/"without"/"never" match regardless of what immediately follows), and treats
+    the offset basis as confirmed as soon as any single occurrence is not negated on either
+    side."""
     c=' '+(claim_text or '').lower()+' '
-    negation_markers=('without','not based on','not through','not via','no offset','not offset',
-        'zonder','niet gebaseerd op','niet via','niet op basis van',
-        'sans','pas de','non basé sur','non fondé sur','sans recourir')
     for term in ('offset','compensat','carbon credit','carbon-credit'):
-        idx=c.find(term)
-        if idx==-1:
-            continue
-        window_before=c[max(0,idx-30):idx]
-        if any(m in window_before for m in negation_markers):
-            continue
-        return True
+        start=0
+        while True:
+            idx=c.find(term,start)
+            if idx==-1:
+                break
+            window_before=c[max(0,idx-40):idx]
+            window_after=c[idx+len(term):idx+len(term)+40]
+            if not (_OFFSET_NEGATION_WORD_RE.search(window_before) or _OFFSET_NEGATION_WORD_RE.search(window_after)):
+                return True
+            start=idx+len(term)
     return False
 
 def green_blacklisted_indicator(claim_type, trigger, claim_text):
@@ -3061,7 +3077,16 @@ _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS=['according to','methodology','life cycl
     "valable jusqu'au",' norme','vérifié par un tiers','vérifié de manière indépendante']
 
 def _has_strong_same_medium_specification(claim_text):
-    return any(x in (claim_text or '').lower() for x in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS)
+    """v93.53: was a bare substring check, sharing the exact same bug class already fixed for
+    green_evidence_signal_score()/evidence_signal_score() (see _evidence_term_hit()) -- 'lca'
+    (the life-cycle-assessment shorthand in this term list) matched inside the unrelated word
+    "volcanic", and there was no negation awareness, so "eco-friendly... without any
+    methodology" was read as if a real methodology reference were present. Reported by a
+    third-party code review with both exact reproductions, confirmed end-to-end to still
+    incorrectly clear the Annex I generic-claim blacklist indicator via enrich_green_finding().
+    Reuses the same word-boundary + negation-window helper as the evidence-score fix."""
+    text=(claim_text or '').lower()
+    return any(_evidence_term_hit(term.strip(), text) for term in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS)
 
 def enrich_green_finding(f, trigger=''):
     f['module']=green_claim_module(f.get('type',''))
@@ -3405,7 +3430,14 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
     else:
         g_summary=f'Green risk is {green_score}/100 ({band(green_score)}). No material green claim was retained.'
     if g_blacklisted:
-        g_summary+=' Automatically floored to Very high because a retained claim matches the fixed EmpCo Annex I blacklist, regardless of the blended calculation below.'
+        # v93.53: this always said "Very high" regardless of what the floor actually raised
+        # green_score to -- since v93.51 scales the floor by audience factor for internal/
+        # indirect material, this text could contradict the {green_score}/100 ({band(...)})
+        # shown one sentence earlier in the same summary. Reported by a third-party code
+        # review, which specifically found this exact remaining inconsistency after the
+        # green_conclusion text (a different string) had already been fixed. Name the band the
+        # floor actually produced, using the same band(green_score) already computed above.
+        g_summary+=f' Automatically floored to at least {band(green_score)} because a retained claim matches the fixed EmpCo Annex I blacklist, regardless of the blended calculation below.'
     if snames:
         s_summary=f'Social risk is {social_score}/100 ({band(social_score)}). Main contribution: {s_top}.'
     else:
@@ -3415,7 +3447,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
             'score': green_score,
             'summary': g_summary,
             'key_drivers': [
-                *(['EmpCo Annex I blacklist match — automatically floors this score to Very high (75+), overriding the blended calculation below.'] if g_blacklisted else []),
+                *([f'EmpCo Annex I blacklist match — automatically floors this score to at least {band(green_score)}, overriding the blended calculation below.'] if g_blacklisted else []),
                 f'Claim wording — {material_count(green_fs)} relevant occurrence(s) across {len(gnames)} claim type(s).',
                 f'Evidence support — {gap_label(green_splits.get("substantiation_risk",0))} visible evidence gap ({green_splits.get("substantiation_risk",0)}/100).',
                 f'External context — {external_line(g_ext_n)}',
@@ -4007,10 +4039,17 @@ def analyse_url_v27(raw, company_number=''):
     if reliability_warning:
         summary=f"⚠ DATA RELIABILITY: {reliability_warning} " + summary
     if empco_blacklist_floor:
-        summary=summary+" A retained claim matches a fixed EmpCo Annex I blacklisted practice, which automatically raises the green and overall scores to the Very high band regardless of the blended score."
+        # v93.53: both of these always said "Very high" regardless of what the floor actually
+        # raised the score to -- since v93.51 scales the floor by audience factor for internal/
+        # indirect material, a scan could show green_risk="High" while these two strings still
+        # claimed "Very high", directly contradicting the {green_score}/100 figure one sentence
+        # earlier and the level(green_score) already computed for screening_conclusion itself.
+        # Reported by a third-party code review, which found this exact remaining
+        # inconsistency after the (separate) green_conclusion string had already been fixed.
+        summary=summary+f" A retained claim matches a fixed EmpCo Annex I blacklisted practice, which automatically raises the green and overall scores to at least the {level(green_score)} band regardless of the blended score."
     screening_conclusion=f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}'
     if empco_blacklist_floor:
-        screening_conclusion='EmpCo Annex I blacklist match: automatic Very high | '+screening_conclusion
+        screening_conclusion=f'EmpCo Annex I blacklist match: automatic {level(green_score)} | '+screening_conclusion
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
@@ -6973,10 +7012,19 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # claim entirely, purely because an unrelated product attribute later in the same sentence
     # named FSC certification. Only suppress when the recognised scheme is named in the SAME
     # clause as the trigger (i.e. it is what the label/certification trigger itself refers to),
-    # not merely present anywhere else in the excerpt -- a clause boundary (sentence punctuation,
-    # or a coordinating conjunction like "and"/"en"/"et") between the two means they are separate
-    # assertions. Falls back to the old whole-excerpt check only when the trigger's own position
-    # can't be located.
+    # not merely present anywhere else in the excerpt -- a clause boundary between the two means
+    # they are separate assertions. Falls back to the old whole-excerpt check only when the
+    # trigger's own position can't be located.
+    # v93.53: a follow-up review found this boundary regex too narrow, missing two common ways
+    # of introducing a SEPARATE, unrelated attribute or an explicit CONTRAST rather than
+    # continuing to describe the same claim: (1) "..., with FSC certified paper packaging" --
+    # a comma followed by "with" introduces a new, separate fact, unlike a comma that continues
+    # elaborating the same claim ("eco-label certified, carrying the EU Ecolabel"); (2) "Our
+    # products carry our self-declared eco label, UNLIKE the EU Ecolabel" -- "unlike" explicitly
+    # means the named scheme is a CONTRAST, not the trigger's own basis, yet with no boundary
+    # marker recognised here this whole excerpt (a genuine self-declared-label claim) was
+    # rejected before the separate, already-existing contrast-detection mechanism
+    # (_names_recognized_certification_scheme) ever got a chance to run.
     recognised_schemes=['eu ecolabel','ecolabel logo','emas','regulation (ec) no 66/2010','regulation (ec) no 1221/2009',
         'nordic swan','blue angel','fairtrade certified','fair trade certified','gots certified','oeko-tex',
         'cradle to cradle','forest stewardship council','fsc certified','iso 14024','certified b corporation',
@@ -6992,7 +7040,7 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
             if trig_pos != -1:
                 lo,hi=(trig_pos,scheme_pos) if trig_pos<=scheme_pos else (scheme_pos,trig_pos)
                 between=c[lo:hi]
-                if not re.search(r'[.;!?]|\band\b|\ben\b|\bet\b|\bmaar\b|\bmais\b',between):
+                if not re.search(r'[.;!?]|\band\b|\ben\b|\bet\b|\bmaar\b|\bmais\b|,\s*(with|met|avec)\b|\bunlike\b|in tegenstelling tot|contrairement à',between):
                     return False
             else:
                 return False
@@ -7297,6 +7345,14 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         # silently dropped as if it were a duplicate of the first. Reported by a third-party
         # code review. Use the full excerpt so only excerpts that are actually identical (not
         # merely identical in their first 160 characters) are treated as duplicates.
+        # v93.53: `excerpt` (== `cleaned` == the candidate from _v55_all_matches_sentences) is
+        # now the FULL, untruncated sentence, not the already-620-truncated one v93.52 dedup
+        # against -- a follow-up review found that two long, near-identical sentences naming
+        # different products (Alpha/Beta) could still truncate down to byte-identical DISPLAY
+        # text once the product name fell outside the trigger-centered window, so deduping on
+        # the truncated text merged two genuinely distinct claims. Deduping on the full,
+        # pre-truncation text (truncation for display happens further below) fixes this at the
+        # root instead of merely reducing how often it can happen.
         sig=(typ, excerpt.lower())
         if sig in seen:
             continue
@@ -7313,15 +7369,21 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         # highlighted in the quoted excerpt, so nothing about traceability is lost by leading
         # with the substance instead of the detection mechanism.
         why_flagged=issue or f'The wording "{trig}" needs claim-specific substantiation and audience review.'
+        # v93.53: truncation for DISPLAY happens here, AFTER the dedup signature above was
+        # already computed from the full, untruncated `excerpt` -- see the v93.53 note on
+        # _v55_all_matches_sentences(). Every other use of `excerpt` (the dedup sig, the
+        # context/qualification checks above, problematic_terms_for_finding()) still sees the
+        # full text; only the text actually shown to a reader is bounded.
+        display_excerpt=_v93_trigger_centered_truncate(excerpt,trig,620)
         if dimension == 'green':
-            f={'dimension':'green','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+            f={'dimension':'green','type':typ,'risk':risk,'claim':display_excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
                'matched_phrase':trig,'why_flagged':why_flagged,
                'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
                'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
                'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
             fs.append(enrich_green_finding(f,trig))
         else:
-            f={'dimension':'social','type':typ,'risk':risk,'claim':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+            f={'dimension':'social','type':typ,'risk':risk,'claim':display_excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
                'matched_phrase':trig,'why_flagged':why_flagged,
                'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
                'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
@@ -7453,11 +7515,23 @@ def _v55_all_matches_sentences(text, trigger):
     but returns an excerpt for EVERY occurrence of trigger in text, in order, instead of only
     the first. Used so a later, more concrete occurrence of the same trigger phrase is not
     silently missed just because an earlier occurrence (e.g. a generic explanatory sentence)
-    fails a claim-context check."""
+    fails a claim-context check.
+
+    v93.53: this used to truncate each excerpt to 620 characters HERE, before returning --
+    which meant _v55_add_finding()'s dedup signature was computed from the TRUNCATED text.
+    A follow-up review found that when a long, near-identical sentence template names a
+    different product far enough from the trigger to fall outside the (already-fixed, v93.52)
+    trigger-centered truncation window, both truncated excerpts become byte-identical even
+    though the underlying sentences (and product names) are genuinely different -- so the
+    second, distinct claim was silently deduped away as if it were a repeat of the first.
+    Reproduced with two sentences about "product Alpha" and "product Beta" sharing identical
+    wording near the trigger. Returns the FULL, untruncated excerpt now; truncation for
+    DISPLAY happens in _v55_add_finding(), after the dedup signature is already computed from
+    the full text."""
     raw=' '.join((text or '').replace('\r',' ').replace('\n','. ').split())
     trig=(trigger or '').lower()
     if not raw or not trig:
-        return [raw[:620]] if raw else []
+        return [raw] if raw else []
     parts=[p.strip() for p in re.split(r'(?<=[.!?])\s+', raw) if p.strip()]
     out_list=[]
     for idx,p in enumerate(parts):
@@ -7482,20 +7556,13 @@ def _v55_all_matches_sentences(text, trigger):
             # v57n: joining sentence fragments can leave a doubled sentence-ending punctuation
             # mark (e.g. "...conventional practices.." or "...forward..") -- collapse to one.
             out=re.sub(r'([.!?])\1+', r'\1', out)
-            # v93.52: this was a flat out[:620] with no regard for where `trigger` ended up --
-            # fragment-joining above (prepending the previous sentence, appending the next one)
-            # can push the trigger well past character 620 in a long joined excerpt, silently
-            # returning a displayed claim that never contains the word the finding is about.
-            # This is the ACTUAL live truncation point in the detection pipeline (clean_excerpt()
-            # above has no callers here) -- reported by a third-party code review after an
-            # earlier fix targeted clean_excerpt() instead of this function.
-            out_list.append(_v93_trigger_centered_truncate(out,trigger,620))
+            out_list.append(out)
     if out_list:
         return out_list
     i=raw.lower().find(trig)
     if i < 0:
-        return [raw[:620]] if raw else []
-    return [raw[max(0,i-180):min(len(raw),i+300)][:620]]
+        return [raw] if raw else []
+    return [raw[max(0,i-180):min(len(raw),i+300)]]
 
 
 def _v55_sentence_list(text, trigger, window=850):
@@ -8623,13 +8690,53 @@ _V93_NON_ACCUSED_ROLE_MARKERS=(
     'assisted the regulator in investigating','assisted regulators in investigating',
     'helped the regulator investigate','helped regulators investigate',
     'helped uncover','helped expose','tipped off regulators about','tipped off the regulator about',
-    'acted as a witness against','testified against','blew the whistle on','was a whistleblower',
+    'acted as a witness against','testified against','testified as a witness','appeared as a witness',
+    'gave evidence as a witness','served as a witness','witness for the prosecution','witness in the case against',
+    'blew the whistle on','was a whistleblower',
     'supplied evidence used in the investigation into','provided data used in the investigation into',
     'provided evidence used in the investigation into','supplied data used in the investigation into',
     'was not accused','has not been accused','is not accused',
     'is not the subject of the investigation','is not the target of the investigation',
     'cleared of any wrongdoing','cleared of all charges','cleared of all wrongdoing',
 )
+
+_V93_PROPER_NOUN_RE=re.compile(r'\b[A-Z][A-Za-z0-9&.\-]{1,40}(?:\s+[A-Z][A-Za-z0-9&.\-]{1,40})*\b')
+
+def _v93_last_named_entity_before(text,pos,window=90):
+    """Returns the LAST capitalised word-sequence (a crude proper-noun proxy) found in the
+    `window` characters immediately before `pos` in the original, case-preserved text, or ''
+    if none is found. Used as a lightweight stand-in for "who is the grammatical subject of
+    this verb phrase" without full entity-role parsing -- deliberately requires the ORIGINAL
+    case-preserved text (not a lowercased/normalised copy), since capitalisation is the only
+    signal available here for "this is a named entity"."""
+    segment=text[max(0,pos-window):pos]
+    matches=_V93_PROPER_NOUN_RE.findall(segment)
+    return matches[-1] if matches else ''
+
+def _v93_name_matches_alias(name,aliases):
+    key=_v64_norm(name)
+    if not key:
+        return False
+    return any(_v64_norm(alias) and (_v64_norm(alias) in key or key in _v64_norm(alias)) for alias in aliases)
+
+_V93_DIRECT_ACCUSATION_VERBS=(
+    'was fined','has been fined','were fined','was sanctioned','has been sanctioned',
+    'was convicted','has been convicted','pleaded guilty','was sued','has been sued',
+    'was accused','has been accused','was found guilty','has been found guilty',
+    'agreed to pay a fine','was ordered to pay','was ruled against',
+)
+
+def _v93_target_has_direct_accusation(text,aliases,window=90):
+    """Whether the target itself is the grammatical subject of a direct adverse-action verb
+    (fined, convicted, sued, accused, ...) anywhere in the text -- used as a safety net so a
+    company that is genuinely, separately accused of its OWN wrongdoing is never excluded just
+    because the same article also describes it helping expose a different matter."""
+    for verb in _V93_DIRECT_ACCUSATION_VERBS:
+        for m in re.finditer(re.escape(verb),text,flags=re.I):
+            subject=_v93_last_named_entity_before(text,m.start(),window)
+            if subject and _v93_name_matches_alias(subject,aliases):
+                return True
+    return False
 
 def _v93_target_named_as_non_accused_party(text,aliases,window=90):
     """v93.51: entity_match_details() retained a source purely because the target was named
@@ -8639,16 +8746,25 @@ def _v93_target_named_as_non_accused_party(text,aliases,window=90):
     cleared in someone ELSE's negative story. Reported by a third-party code review with this
     exact scenario: a company named as helping a regulator investigate a rival still had that
     rival's greenwashing investigation attributed to itself as a negative external signal.
-    Narrow, marker-based (matching this file's established approach for similar guards
-    elsewhere -- reported-speech, criticism/denial, hiring-context) rather than full
-    entity-role parsing: only fires when an explicit non-accused-role phrase immediately
-    follows the target's own mention, so it doesn't suppress a genuine "X was investigated
-    and has since cooperated" claim, which does not use any of these phrases."""
-    low=_v64_norm(text)
-    for alias in aliases:
-        for m in re.finditer(r'(?<![a-z0-9])'+re.escape(alias).replace(r'\ ',r'\s+')+r'(?![a-z0-9])',low):
-            segment=low[m.end():m.end()+window]
-            if any(marker in segment for marker in _V93_NON_ACCUSED_ROLE_MARKERS):
+
+    v93.53: the v93.51 fix checked for a marker in a window AFTER the target's own name, which
+    has the same flaw in reverse -- "ExampleCo was fined after RivalCo helped uncover
+    misleading environmental claims" still has "helped uncover" within 90 characters of
+    "ExampleCo", so the genuinely accused ExampleCo was wrongly excluded even though "helped
+    uncover" is grammatically RivalCo's role, not ExampleCo's. Reported by a third-party code
+    review with this exact reproduction, plus the mirror case: a company that is itself fined
+    AND separately helps expose a different case must not be excluded either. Fixed by finding
+    each marker's actual grammatical subject -- the LAST capitalised name appearing before it
+    (see _v93_last_named_entity_before(), which needs the original case-preserved text, unlike
+    the rest of this file's normalised-lowercase matching) -- rather than checking whether the
+    target's name merely appears somewhere nearby, and by never excluding a target that is
+    ALSO, separately, the direct subject of an adverse-action verb elsewhere in the same text."""
+    for marker in _V93_NON_ACCUSED_ROLE_MARKERS:
+        for m in re.finditer(re.escape(marker),text,flags=re.I):
+            subject=_v93_last_named_entity_before(text,m.start(),window)
+            if subject and _v93_name_matches_alias(subject,aliases):
+                if _v93_target_has_direct_accusation(text,aliases,window):
+                    continue
                 return True
     return False
 
