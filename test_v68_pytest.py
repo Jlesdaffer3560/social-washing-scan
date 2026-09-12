@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_51_third_review_fix_batch'
+    assert app.APP_VERSION == 'hostable_v93_52_fix_actual_truncation_path_and_history_counter'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -923,6 +923,97 @@ def test_scan_history_high_risk_findings_count_reads_risk_level_key(monkeypatch)
     assert len(insert_calls)==1
     high_risk_count=insert_calls[0][2][17]
     assert high_risk_count==2, f'expected 2 High-risk findings counted, got {high_risk_count}'
+
+
+def test_scan_history_empco_count_uses_full_indicator_count_not_display_cap(monkeypatch):
+    """v93.52: _v92_save_scan_history() counted blacklisted indicators from
+    result['green_findings'], which is the report's DISPLAY-ONLY top-12 selection
+    (green_fs[:12] -- see the v93.31 comment at detect_green_claims()), not the full analysis
+    list. A scan with 20 real blacklisted indicators therefore persisted
+    scan_history.empco_blacklisted_count=12. This is a DIFFERENT counter than
+    regulatory_risk_summary['empco_blacklisted_indicator_count'] (already correct, computed
+    from the full list) -- a third-party code review specifically reproduced the DATABASE
+    column being wrong even though that API field was right, and flagged that an earlier
+    review response had verified the wrong counter. Fixed by reading the count from
+    regulatory_risk_summary instead of recomputing it from the capped display list."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None): executed.append(('execute',sql,params))
+        def executemany(self,sql,rows): executed.append(('executemany',sql,rows))
+        def fetchone(self): return (99,)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    capped_green_findings=[{'blacklisted_practice_indicator':True} for _ in range(12)]
+    result={'company':{'company':'Acme'},
+            'green_findings':capped_green_findings,
+            'regulatory_risk_summary':{'empco_blacklisted_indicator_count':20}}
+    app._v92_save_scan_history(result,'url','1.2.3.4')
+    insert_calls=[c for c in executed if c[0]=='execute' and 'INSERT INTO scan_history' in c[1]]
+    assert len(insert_calls)==1
+    empco_count=insert_calls[0][2][16]
+    assert empco_count==20, f'expected the full 20 indicators, got {empco_count} (the capped-list count)'
+
+
+def test_detect_green_claims_excerpt_contains_trigger_after_real_truncation_path():
+    """v93.52: the earlier v93.51 fix targeted clean_excerpt()'s out[:560] truncation, but
+    clean_excerpt() has NO callers anywhere in the live claim-detection pipeline (confirmed by
+    a third-party code review, which correctly pointed out that fix missed the actual code
+    path). The real, currently-served excerpt truncation is _v55_all_matches_sentences()'s
+    out[:620], reached via detect_green_claims() -> _v55_add_finding(). A long run-on sentence
+    (or one lengthened by this function's own fragment-joining) must still produce a finding
+    whose 'claim' text actually contains the trigger word it names."""
+    prefix = ('Our company operates across many regions, focusing on quality, service, community '
+        'engagement, ') * 6
+    trig = 'carbon neutral'
+    text = prefix + f'and our products are {trig} thanks to our offsetting programme, which we are proud of.'
+    findings = app.detect_green_claims(text)
+    material = [f for f in findings if not app.is_placeholder_finding(f.get('type', ''))]
+    hits = [f for f in material if f.get('matched_phrase', '').lower() == trig]
+    assert hits, 'expected a finding matched on "carbon neutral"'
+    assert trig in hits[0]['claim'].lower()
+
+
+def test_add_finding_dedup_key_does_not_merge_distinct_claims_with_shared_prefix():
+    """v93.52: _v55_add_finding()'s dedup signature truncated the excerpt to its first 160
+    characters -- two genuinely DIFFERENT claims of the same type sharing a long common opening
+    clause (e.g. a boilerplate lead-in before two different product claims) collapsed into one
+    signature, silently dropping the second, distinct claim. Reported by a third-party code
+    review. Using the full excerpt as the dedup key must keep both distinct claims while still
+    deduping a truly repeated one."""
+    common_prefix = ('Our company is fully committed to sustainability across every part of our '
+        'operations, and we believe strongly that ')
+    text = (common_prefix + 'our packaging is eco-friendly because it uses recycled cardboard sourced '
+        'from certified suppliers. ' + common_prefix + 'our packaging is eco-friendly because it uses a '
+        'completely different material called bioplastic derived from algae.')
+    findings = app.detect_green_claims(text)
+    material = [f for f in findings if not app.is_placeholder_finding(f.get('type', ''))]
+    claims_text = ' '.join(f['claim'] for f in material)
+    assert 'recycled cardboard' in claims_text
+    assert 'bioplastic' in claims_text
+
+
+def test_empco_floor_conclusion_text_matches_the_actual_resulting_band():
+    """v93.52: the "Automatic Very high" conclusion prefix was hardcoded regardless of what the
+    floor actually raised the score to -- since v93.51 scales the floor by audience factor for
+    internal/indirect material, a scan can land in the "High" band (e.g. 56) while this text
+    still claimed "Automatic Very high", a direct self-contradiction the report would show to a
+    reader. Reported by a third-party code review, which specifically flagged this as a risk of
+    the audience-scaled floor. The conclusion must name the band the floor actually produced."""
+    text = ('This internal governance policy confirms our product line is climate neutral through '
+        'offsetting, achieved via certified carbon credits, as part of our corporate '
+        'sustainability programme.')
+    result = app.analyse_uploaded_document('internal_policy.txt', text, 'TestCo')
+    assert result['empco_blacklist_floor_applied'] is True
+    assert result['green_risk'] == 'High'
+    assert 'Automatic High:' in result['green_conclusion']
+    assert 'Automatic Very high' not in result['green_conclusion']
 
 
 def test_backfill_legacy_findings_missing_fixture(monkeypatch, tmp_path):

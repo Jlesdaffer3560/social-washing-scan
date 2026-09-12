@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_51_third_review_fix_batch"
-APP_RELEASE_LABEL="v93.51"
+APP_VERSION="hostable_v93_52_fix_actual_truncation_path_and_history_counter"
+APP_RELEASE_LABEL="v93.52"
 APP_RELEASE_DATE="2026-09-12"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -485,6 +485,26 @@ def standards_for_claim(t):
     if "worker" in x or "safety" in x: return ["EmpCo / Directive (EU) 2024/825 Art. 6(1)(b) (social characteristics: safety of the work environment)","CSRD/ESRS S1","ILO","GRI"]
     if "impact" in x or "community" in x: return ["CSRD/ESRS S3","UNGPs","OECD Guidelines","GRI"]
     return ["CSRD/ESRS S1-S4","OECD Guidelines","UNGC","GRI"]
+def _v93_trigger_centered_truncate(out,trig,limit,radius=200):
+    """v93.51/v93.52: a flat out[:limit] truncation has no regard for where the trigger word
+    itself ended up inside `out` -- a long, period-free run-on sentence (common in
+    PDF-extracted policy text), or a fragment-joining step that prepends/appends neighbouring
+    sentences (see _v55_all_matches_sentences()), can push the trigger well past the cutoff,
+    silently returning a displayed excerpt that never actually contains the word the finding
+    names. Reported by a third-party code review, which also pointed out that the FIRST fix
+    for this (in clean_excerpt() alone) missed the actual live detection path -- clean_excerpt()
+    has no callers in the claim-detection pipeline; _v55_all_matches_sentences() is where the
+    real, currently-served excerpts get truncated. Both now share this same centering logic.
+    If a flat cutoff would land before the trigger, center the truncation window on the
+    trigger's own position instead."""
+    if len(out)<=limit:
+        return out
+    trig_i=out.lower().find((trig or '').lower())
+    if not trig or trig_i==-1 or trig_i+len(trig)<=limit:
+        return out[:limit]+"..."
+    w_start=max(0,trig_i-radius); w_end=min(len(out),trig_i+len(trig)+radius)
+    return ("..." if w_start>0 else "")+out[w_start:w_end]+("..." if w_end<len(out) else "")
+
 def clean_excerpt(text,trig):
     if not trig: return text[:360]+("..." if len(text)>360 else "")
     low=text.lower(); i=low.find(trig.lower())
@@ -496,20 +516,7 @@ def clean_excerpt(text,trig):
     e=(min(ends)+1) if ends else min(len(text), i+len(trig)+260)
     out=" ".join(text[s:e].split())
     if len(out)<45: out=" ".join(text[max(0,i-130):min(len(text),i+len(trig)+240)].split())
-    # v93.51: this used to blindly return out[:560] with no regard for where the trigger word
-    # itself ended up inside `out` -- a long, period-free run-on sentence (common in
-    # PDF-extracted policy text) can push the trigger well past character 560, silently
-    # returning a displayed excerpt that never actually contains the word the finding names.
-    # Reported by a third-party code review. If a flat 560-char cutoff would land before the
-    # trigger, center the truncation window on the trigger's own position instead.
-    if len(out)>560:
-        trig_i=out.lower().find(trig.lower())
-        if trig_i==-1 or trig_i+len(trig)<=560:
-            out=out[:560]+"..."
-        else:
-            w_start=max(0,trig_i-200); w_end=min(len(out),trig_i+len(trig)+200)
-            out=("..." if w_start>0 else "")+out[w_start:w_end]+("..." if w_end<len(out) else "")
-    return out
+    return _v93_trigger_centered_truncate(out,trig,560)
 def _source_status(text):
     """v57q: classify a retained external signal by how far it has progressed, not just whether
     negative keywords are present -- an unproven allegation and a final court ruling carry very
@@ -3785,7 +3792,14 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
     green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs,audience)
     if empco_blacklist_floor:
-        green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
+        # v93.52: this always said "Automatic Very high", regardless of what the floor
+        # actually raised the score to -- since v93.51 scaled the floor down by audience
+        # factor for internal/indirect material (e.g. to 56, the "High" band, not "Very
+        # high"), a scan could show green_risk="High" while this text still claimed "Automatic
+        # Very high", a direct contradiction. Reported by a third-party code review, which
+        # specifically warned this exact inconsistency could result from the audience-scaled
+        # floor. Name the band the floor actually produced.
+        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
     # v93.31: green_fs/social_fs are the FULL analysis lists -- only the
     # 'green_findings'/'social_findings' keys below get a display-only top-12 selection.
     green_findings_display=green_fs[:12]; social_findings_display=social_fs[:12]
@@ -3943,7 +3957,14 @@ def analyse_url_v27(raw, company_number=''):
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs,audience)
     if empco_blacklist_floor:
-        green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
+        # v93.52: this always said "Automatic Very high", regardless of what the floor
+        # actually raised the score to -- since v93.51 scaled the floor down by audience
+        # factor for internal/indirect material (e.g. to 56, the "High" band, not "Very
+        # high"), a scan could show green_risk="High" while this text still claimed "Automatic
+        # Very high", a direct contradiction. Reported by a third-party code review, which
+        # specifically warned this exact inconsistency could result from the audience-scaled
+        # floor. Name the band the floor actually produced.
+        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
@@ -4941,9 +4962,20 @@ def _v92_save_scan_history(result,scan_type,client_ip):
         # dimension), not 0, systematically inflating this column and its cross-scan average
         # on /history for every low/no-finding scan. Count only real findings.
         real_findings=[f for f in findings if not is_placeholder_finding(f.get('claim_type') or f.get('type',''))]
-        green_findings=result.get('green_findings') or []
         ext=result.get('external_research') or {}
-        empco_count=sum(1 for f in green_findings if f.get('blacklisted_practice_indicator'))
+        # v93.52: this counted blacklisted indicators from result['green_findings'], which is
+        # the report's DISPLAY-ONLY top-12 selection (green_fs[:12] -- see the v93.31 comment
+        # at detect_green_claims()), not the full analysis list -- so a scan with, say, 20
+        # blacklisted indicators still saved empco_blacklisted_count=12 to scan_history.
+        # Reported by a third-party code review with exactly this reproduction (20 real
+        # indicators, 12 persisted). build_regulatory_risk_summary()'s own
+        # empco_blacklisted_indicator_count is already computed from the full, uncapped
+        # green_findings list (see its own definition), so use that instead; only fall back to
+        # counting the capped list if that field is unexpectedly absent.
+        reg_summary=result.get('regulatory_risk_summary') or {}
+        empco_count=reg_summary.get('empco_blacklisted_indicator_count')
+        if empco_count is None:
+            empco_count=sum(1 for f in (result.get('green_findings') or []) if f.get('blacklisted_practice_indicator'))
         # v93.44: was f.get('risk',...) -- these normalized dicts only ever carry
         # 'risk_level' (see build_green_claim_inventory/build_claim_inventory), never a bare
         # 'risk' key, so this comparison was always '' == 'high': False. high_risk_findings_
@@ -7258,7 +7290,14 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         if not _v55_claim_context_ok(cleaned, trig, dimension):
             continue
         excerpt=cleaned
-        sig=(typ, excerpt[:160].lower())
+        # v93.52: truncating the dedup key to the first 160 characters meant two genuinely
+        # DIFFERENT claims of the same type that happen to share a long common opening clause
+        # (e.g. a boilerplate "we believe strongly that..." lead-in before two different
+        # product claims) collapsed into a single signature -- the second, distinct claim was
+        # silently dropped as if it were a duplicate of the first. Reported by a third-party
+        # code review. Use the full excerpt so only excerpts that are actually identical (not
+        # merely identical in their first 160 characters) are treated as duplicates.
+        sig=(typ, excerpt.lower())
         if sig in seen:
             continue
         seen.add(sig)
@@ -7443,7 +7482,14 @@ def _v55_all_matches_sentences(text, trigger):
             # v57n: joining sentence fragments can leave a doubled sentence-ending punctuation
             # mark (e.g. "...conventional practices.." or "...forward..") -- collapse to one.
             out=re.sub(r'([.!?])\1+', r'\1', out)
-            out_list.append(out[:620])
+            # v93.52: this was a flat out[:620] with no regard for where `trigger` ended up --
+            # fragment-joining above (prepending the previous sentence, appending the next one)
+            # can push the trigger well past character 620 in a long joined excerpt, silently
+            # returning a displayed claim that never contains the word the finding is about.
+            # This is the ACTUAL live truncation point in the detection pipeline (clean_excerpt()
+            # above has no callers here) -- reported by a third-party code review after an
+            # earlier fix targeted clean_excerpt() instead of this function.
+            out_list.append(_v93_trigger_centered_truncate(out,trigger,620))
     if out_list:
         return out_list
     i=raw.lower().find(trig)
