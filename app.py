@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_49_visitor_counter_boxed_style"
-APP_RELEASE_LABEL="v93.49"
+APP_VERSION="hostable_v93_50_mark_inferred_sector_names"
+APP_RELEASE_LABEL="v93.50"
 APP_RELEASE_DATE="2026-09-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1577,9 +1577,23 @@ def apply_sector_name(comp,sec):
     hardcoded PROFILES list, leaving every other company with the generic "Sector not
     explicitly identified" placeholder otherwise. Shared by both scan entry points
     (website scan and uploaded-document scan) so /history, PDF reports and CSV export all
-    see the same real sector label instead of the placeholder."""
+    see the same real sector label instead of the placeholder.
+
+    v93.50: marked "(inferred)" -- three separate live audit rounds each turned up a real
+    company confidently mislabelled by this same keyword-matching mechanism (Ageas as "Food
+    service and catering" from generic staff-catering/office-facilities boilerplate; Melexis,
+    a semiconductor company, as "Real estate", "Mining" or "Banking" depending on which scan,
+    from investor-relations/supply-chain-disclosure boilerplate; Syensqo as "Agriculture" from
+    client-industry mentions). None of these are a threshold-tuning bug -- each already cleared
+    the existing 2+-distinct-hit safeguard for the High tier, and the same keywords that cause
+    these false positives are also needed for genuinely correct matches elsewhere (mining
+    correctly names Umicore, agriculture correctly names Zabra), so a keyword blacklist would
+    just trade one class of wrong label for another. Rather than keep chasing individual
+    keywords, every INFERRED name (as opposed to a hardcoded PROFILES entry, which is
+    hand-verified) is now marked as such wherever it is shown, so the report never states this
+    kind of automated guess with unwarranted confidence."""
     if sec.get('name') and 'not explicitly identified' in str(comp.get('sector','')).lower():
-        comp['sector']=sec['name']
+        comp['sector']=sec['name']+' (inferred)'
 
 def google_search(query, max_results=5):
     """Google Custom Search JSON API fallback. Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX."""

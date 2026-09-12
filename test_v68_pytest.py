@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_49_visitor_counter_boxed_style'
+    assert app.APP_VERSION == 'hostable_v93_50_mark_inferred_sector_names'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1246,10 +1246,16 @@ def test_infer_sector_no_name_when_nothing_matches():
 def test_apply_sector_name_backfills_placeholder_only():
     """v93.14: apply_sector_name() must backfill company['sector'] only when it's still
     the generic placeholder -- never overwrite an already-real sector name (e.g. a
-    hardcoded PROFILES label), and be a no-op when infer_sector() found no name."""
+    hardcoded PROFILES label), and be a no-op when infer_sector() found no name.
+    v93.50: the backfilled name is now marked "(inferred)" -- three separate live audit
+    rounds each found a real company confidently mislabelled by this keyword-based
+    mechanism (Ageas, Melexis, Syensqo), and the same keywords that cause those false
+    positives are also needed for genuinely correct matches elsewhere, so the mechanism
+    itself can't be tightened without breaking real cases. Marking it as an automated
+    inference (vs. a hand-verified PROFILES entry) is the honest fix."""
     comp={'sector':'Sector not explicitly identified'}
     app.apply_sector_name(comp,{'name':'Food retail and supermarkets (NACE G)'})
-    assert comp['sector']=='Food retail and supermarkets (NACE G)'
+    assert comp['sector']=='Food retail and supermarkets (NACE G) (inferred)'
     comp2={'sector':'Banking and financial services (NACE K)'}
     app.apply_sector_name(comp2,{'name':'Food retail and supermarkets (NACE G)'})
     assert comp2['sector']=='Banking and financial services (NACE K)'  # untouched, already a real name
