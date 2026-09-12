@@ -160,7 +160,7 @@ def build_methodology_pdf():
          Paragraph('Not on the Annex I list, so not automatically unfair &mdash; but not a free pass either. It may '
                    'still be found misleading after an individual assessment under general UCPD unfair-commercial-'
                    'practice rules (Art. 6/7, or Art. 6(2)(d) for future environmental-performance claims). Under '
-                   'UCPD Art. 12/12a (reinforced by EmpCo), an authority or court can require the company to '
+                   'UCPD Article 12(a) and (b) (reinforced by EmpCo), an authority or court can require the company to '
                    'substantiate the claim\'s factual accuracy, and the claim is treated as inaccurate for that '
                    'assessment if adequate evidence is not supplied &mdash; in practice, once challenged, the burden '
                    'falls on the company to produce evidence, not on the enforcer to disprove the claim. Whether it '

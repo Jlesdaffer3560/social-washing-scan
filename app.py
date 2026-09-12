@@ -96,13 +96,18 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_50_mark_inferred_sector_names"
-APP_RELEASE_LABEL="v93.50"
-APP_RELEASE_DATE="2026-09-01"
+APP_VERSION="hostable_v93_51_third_review_fix_batch"
+APP_RELEASE_LABEL="v93.51"
+APP_RELEASE_DATE="2026-09-12"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
 RATE_LIMIT_REPORTS=max(1, int(os.environ.get("RATE_LIMIT_REPORTS", "20")))
+# v93.51: the admin /history/login form had no rate-limiting of its own, unlike every JSON
+# scan/report endpoint below (which all call _rate_limit_allowed) -- an attacker could submit
+# unlimited password guesses against HISTORY_ADMIN_PASSWORD with no slowdown. Deliberately
+# stricter than the scan/report buckets since this guards a single shared admin credential.
+RATE_LIMIT_LOGIN=max(1, int(os.environ.get("RATE_LIMIT_LOGIN", "10")))
 MAX_CONCURRENT_SCANS=max(1, min(4, int(os.environ.get("MAX_CONCURRENT_SCANS", "2"))))
 # v93.43: a shared beta-access code gating the scan endpoints ahead of a public launch, so a
 # sudden wave of unexpected traffic can't exhaust the crawl/rate-limit budget meant for invited
@@ -491,7 +496,20 @@ def clean_excerpt(text,trig):
     e=(min(ends)+1) if ends else min(len(text), i+len(trig)+260)
     out=" ".join(text[s:e].split())
     if len(out)<45: out=" ".join(text[max(0,i-130):min(len(text),i+len(trig)+240)].split())
-    return out[:560]+("..." if len(out)>560 else "")
+    # v93.51: this used to blindly return out[:560] with no regard for where the trigger word
+    # itself ended up inside `out` -- a long, period-free run-on sentence (common in
+    # PDF-extracted policy text) can push the trigger well past character 560, silently
+    # returning a displayed excerpt that never actually contains the word the finding names.
+    # Reported by a third-party code review. If a flat 560-char cutoff would land before the
+    # trigger, center the truncation window on the trigger's own position instead.
+    if len(out)>560:
+        trig_i=out.lower().find(trig.lower())
+        if trig_i==-1 or trig_i+len(trig)<=560:
+            out=out[:560]+"..."
+        else:
+            w_start=max(0,trig_i-200); w_end=min(len(out),trig_i+len(trig)+200)
+            out=("..." if w_start>0 else "")+out[w_start:w_end]+("..." if w_end<len(out) else "")
+    return out
 def _source_status(text):
     """v57q: classify a retained external signal by how far it has progressed, not just whether
     negative keywords are present -- an unproven allegation and a final court ruling carry very
@@ -1834,6 +1852,37 @@ def is_placeholder_finding(finding_type):
     t = (finding_type or '').lower()
     return t.startswith('no material') or t.startswith('no major')
 
+_EVIDENCE_TERM_RE_CACHE = {}
+def _evidence_term_hit(term, text):
+    """v93.51: evidence_signal_score()/green_evidence_signal_score() both counted a term as
+    "evidence found" via a bare substring check (`term in text`), with two real consequences.
+    (1) A short term matches inside an unrelated word -- "lca" (from the strong-evidence list)
+    is a literal substring of "volcanic", so "eco-friendly and made in a volcanic region" picked
+    up a phantom LCA-evidence hit it never made. (2) No negation awareness -- "We have no LCA,
+    no audit, no baseline, no methodology, no third-party verification for this claim" counted
+    every one of those as a substantiation hit and *raised* the evidence score, the opposite of
+    what the sentence actually says. Requires a whole-word/phrase match (mirrors
+    _trigger_present's word-boundary approach elsewhere in this file) and only counts an
+    occurrence when it is not immediately preceded by an explicit negation of having it."""
+    rx = _EVIDENCE_TERM_RE_CACHE.get(term)
+    if rx is None:
+        # A term with no leading/trailing alphanumeric character (e.g. the bare "%" symbol,
+        # meant to catch any percentage figure like "50%") needs no word-boundary guard --
+        # applying one would block it, since "%" is legitimately preceded by a digit.
+        if term and term[0].isalnum():
+            rx = re.compile(r'(?<![a-z0-9])' + re.escape(term) + r'(?![a-z0-9])')
+        else:
+            rx = re.compile(re.escape(term))
+        _EVIDENCE_TERM_RE_CACHE[term] = rx
+    negation_markers = ('no ', 'not ', 'without ', 'zero ', 'none ', 'lack of', 'absence of',
+        'geen ', 'zonder ', 'niet ', 'sans ', 'pas de ', 'aucun')
+    for m in rx.finditer(text):
+        window_before = text[max(0, m.start() - 25):m.start()]
+        if any(n in window_before for n in negation_markers):
+            continue
+        return True
+    return False
+
 
 def evidence_signal_score(page_text, findings):
     """
@@ -1855,8 +1904,8 @@ def evidence_signal_score(page_text, findings):
         "withdrawal procedure","customs procedure","remediation plan"
     ]
     weak_terms=["policy","policies","commitment","principles","code of conduct","training","programme","program","progress","initiative"]
-    strong_hits=[t for t in strong_terms if t in text]
-    weak_hits=[t for t in weak_terms if t in text]
+    strong_hits=[t for t in strong_terms if _evidence_term_hit(t, text)]
+    weak_hits=[t for t in weak_terms if _evidence_term_hit(t, text)]
     # Numeric data near social terms is a strong substantiation proxy.
     import re
     social_window_terms=["supplier","worker","employee","human rights","diversity","inclusion","safety","customer","community","labour","labor","forced labour","forced labor","modern slavery","traceability","import","export","product"]
@@ -2790,6 +2839,28 @@ def _names_recognized_certification_scheme(claim_text):
         return True
     return False
 
+def _offset_basis_confirmed(claim_text):
+    """v93.51: was a bare substring check (any of 'offset'/'compensat'/'carbon credit' present
+    anywhere) with no negation awareness -- "Our product is carbon neutral WITHOUT offsetting"
+    still contains the substring "offset" and was treated identically to "...THROUGH
+    offsetting", flagging the exact opposite of what Annex I point 4c actually targets (a claim
+    that IS based on offsetting). Checks a short window immediately before each occurrence for
+    an explicit negation of the offset basis; only counts as confirmed if at least one
+    occurrence is not negated."""
+    c=' '+(claim_text or '').lower()+' '
+    negation_markers=('without','not based on','not through','not via','no offset','not offset',
+        'zonder','niet gebaseerd op','niet via','niet op basis van',
+        'sans','pas de','non basé sur','non fondé sur','sans recourir')
+    for term in ('offset','compensat','carbon credit','carbon-credit'):
+        idx=c.find(term)
+        if idx==-1:
+            continue
+        window_before=c[max(0,idx-30):idx]
+        if any(m in window_before for m in negation_markers):
+            continue
+        return True
+    return False
+
 def green_blacklisted_indicator(claim_type, trigger, claim_text):
     t=(claim_type or '').lower(); c=(claim_text or '').lower(); trig=(trigger or '').lower()
     # v57o: EmpCo (Directive (EU) 2024/825) is not yet applicable -- it applies from 27 September
@@ -2802,7 +2873,7 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
         # claim that is BASED ON OFFSETTING -- a bare "climate/carbon neutral" claim with no
         # offset basis established in the retained wording is not automatically that practice;
         # it is still a case-by-case UCPD question until offsetting is confirmed as the basis.
-        offset_established=any(x in c for x in ['offset','compensat','carbon credit','carbon-credit'])
+        offset_established=_offset_basis_confirmed(c)
         if offset_established:
             return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting.'+date_note
         return ('Potential Annex I relevance -- offset basis not established from the retained wording alone. EmpCo Annex I point 4c '
@@ -2847,8 +2918,8 @@ def classify_legal_basis(f):
       found misleading after an individual, case-by-case assessment under the
       general UCPD provisions (Article 6 misleading actions, Article 7
       misleading omissions, or Article 6(2)(d) specifically for forward-looking
-      claims). Critically, UCPD Art. 12/12a (reinforced by EmpCo) lets a court
-      or authority REQUIRE the company to substantiate the claim's factual
+      claims). Critically, UCPD Article 12(a) and (b) (reinforced by EmpCo)
+      lets a court or authority REQUIRE the company to substantiate the claim's factual
       accuracy, and treats the claim as inaccurate/misleading for that
       assessment if adequate evidence is not supplied -- so once a claim is
       challenged, the evidentiary burden in practice sits with the company,
@@ -2870,8 +2941,8 @@ def classify_legal_basis(f):
     return {
         'legal_basis_category': 'problematic',
         'legal_basis_label': 'Problematic, not automatically prohibited (case-by-case)',
-        'legal_basis_short': ('Not on the fixed Annex I list, so not automatically unfair -- but under UCPD Art. '
-                               '12/12a (reinforced by EmpCo), an authority or court can require the company to '
+        'legal_basis_short': ('Not on the fixed Annex I list, so not automatically unfair -- but under UCPD Article '
+                               '12(a) and (b) (reinforced by EmpCo), an authority or court can require the company to '
                                "substantiate the claim's factual accuracy, and the claim is treated as inaccurate/"
                                'misleading for that assessment if adequate evidence is not supplied. In practice, once '
                                'challenged, the burden falls on the company to produce evidence, not on the enforcer to '
@@ -3054,8 +3125,8 @@ def green_evidence_signal_score(page_text, findings):
         return 75, ['No major green claim detected; evidence gap is not the main driver.']
     strong=['lca','life cycle','scope 1','scope 2','scope 3','baseline','methodology','verified','assurance','certified','iso','ghg protocol','science based','sbt','emissions data','recycled content','percentage','%','third party','audit','standard','criteria','valid until','implementation plan','transition plan','milestone','resources allocated']
     weak=['policy','commitment','aim','target','progress','initiative','programme','program']
-    strong_hits=[t for t in strong if t in text]
-    weak_hits=[t for t in weak if t in text]
+    strong_hits=[t for t in strong if _evidence_term_hit(t, text)]
+    weak_hits=[t for t in weak if _evidence_term_hit(t, text)]
     import re
     env_terms=['emissions','carbon','climate','recycled','recyclable','sustainable','environment','water','energy','waste','biodiversity','circular']
     numeric_env_hits=0
@@ -3110,7 +3181,19 @@ def combine_green_social(green_score, social_score, audience):
     # If the dimensions are equal, keep equality; otherwise keep a distinct integrated score.
     return max(0, min(max(green, social), overall))
 
-def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings):
+def _v93_audience_factor(audience):
+    """Shared with calc_green_score()/calc_score()'s own audience weighting (kept as one
+    definition so all three stay consistent): 1.0 for client/consumer-facing material,
+    0.90 for a mixed/unclear audience, 0.75 for investor/internal material that EmpCo/UCPD
+    reaches only indirectly (those rules target business-to-consumer commercial practices)."""
+    audience_label=audience.get('audience','') if isinstance(audience,dict) else ''
+    if 'Client-facing' in audience_label or 'Consumer-facing' in audience_label or 'commercial' in audience_label.lower():
+        return 1.0
+    if 'Mixed' in audience_label or 'unclear' in audience_label.lower():
+        return 0.90
+    return 0.75
+
+def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings, audience=None):
     """A retained green claim with blacklisted_practice_indicator=True matches a FIXED
     pattern on EmpCo Annex I -- the Directive (EU) 2024/825 practices automatically
     treated as unfair once EmpCo applies (27 September 2026), with no separate
@@ -3129,11 +3212,22 @@ def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings)
     threshold) -- this only ever RAISES a score, never lowers one already at or above 75
     from the blended formula. Social claims have no equivalent fixed Annex I blacklist
     (assessed case-by-case only -- see the explicit `blacklisted_practice_indicator=False`
-    for social findings), so social_score is never floored by this rule."""
+    for social findings), so social_score is never floored by this rule.
+
+    v93.51: this ignored audience/channel context entirely -- a scan correctly classified as
+    mainly investor/internal-governance material (EmpCo/UCPD applies most directly to
+    consumer-facing claims; build_regulatory_risk_summary's own channel_caveat text already
+    says as much, but the SCORE itself did not reflect it) still had its score floored to the
+    full 75 "Very high" threshold, identical to a confirmed client-facing violation. Reported
+    by a third-party code review. Scale the floor by the same audience_factor used throughout
+    calc_green_score/calc_score so a confirmed Annex I match in mostly-internal material still
+    lands solidly in the elevated "High" band rather than being ignored, without overstating
+    it as automatically "Very high" the way genuinely client-facing material is."""
     has_blacklisted=any(f.get('blacklisted_practice_indicator') for f in green_findings or [])
     if not has_blacklisted:
         return green_score, overall_score, False
-    return max(green_score, 75), max(overall_score, 75), True
+    floor_value=round(75*_v93_audience_factor(audience)) if audience is not None else 75
+    return max(green_score, floor_value), max(overall_score, floor_value), True
 
 def green_washing_conclusion(score, findings, evidence_gap, external_score, audience):
     no_major=findings and is_placeholder_finding(findings[0].get('type',''))
@@ -3689,7 +3783,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
-    green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs)
+    green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs,audience)
     if empco_blacklist_floor:
         green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
     # v93.31: green_fs/social_fs are the FULL analysis lists -- only the
@@ -3847,7 +3941,7 @@ def analyse_url_v27(raw, company_number=''):
     green_splits={k:green_components[k] for k in ['claim_wording_risk','substantiation_risk','external_context_risk','sector_baseline_risk']}
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
-    green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs)
+    green_score,overall,empco_blacklist_floor=_v93_apply_empco_blacklist_floor(green_score,overall,green_fs,audience)
     if empco_blacklist_floor:
         green_conclusion='Automatic Very high: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
@@ -4328,8 +4422,7 @@ def calc_green_score(findings, sector, ext, page_text, audience, page_segments=N
     external_context=green_external_context_risk(ext)
     external_score=external_context.get('score',0)
     sector_score=sector_environment_score(sector)
-    audience_label=audience.get('audience','') if isinstance(audience,dict) else ''
-    audience_factor=1.0 if ('Client-facing' in audience_label or 'Consumer-facing' in audience_label or 'commercial' in audience_label.lower()) else 0.90 if ('Mixed' in audience_label or 'unclear' in audience_label.lower()) else 0.75
+    audience_factor=_v93_audience_factor(audience)
     regulatory=any(f.get('blacklisted_practice_indicator') for f in material)
     score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     top=max([f.get('claim_score',0) for f in material] or [8])
@@ -4350,8 +4443,7 @@ def calc_score(findings,sector,context,external_research=None,page_text="",compa
     # social claim scored the same as the identical wording on a public product page, despite
     # the app's own audience methodology saying internal content should not be weighted like
     # consumer-facing marketing.
-    audience_label=audience.get('audience','') if isinstance(audience,dict) else ''
-    audience_factor=1.0 if ('Client-facing' in audience_label or 'Consumer-facing' in audience_label or 'commercial' in audience_label.lower()) else 0.90 if ('Mixed' in audience_label or 'unclear' in audience_label.lower()) else 0.75
+    audience_factor=_v93_audience_factor(audience)
     score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     external_mod, external_note=external_relevance_score(findings, external_research or {})
     top=max([f.get('claim_score',0) for f in material] or [8])
@@ -4407,6 +4499,25 @@ def _access_code_ok(data):
     if not ACCESS_CODE:
         return True
     return isinstance(data, dict) and data.get('access_code', '') == ACCESS_CODE
+
+
+def _v93_read_form_body(handler):
+    """Shared, size-capped reader for the plain HTML-form POST endpoints under /history/*
+    (login, export_selected, report_selected, delete_selected). These are dispatched in
+    do_POST BEFORE the try/except that wraps the JSON-body scan/report endpoints below, so
+    each previously read Content-Length with no upper bound at all -- unlike every JSON
+    endpoint, which already goes through _read_json()'s MAX_REQUEST_BYTES cap. An attacker
+    could send an arbitrarily large body to any of these four routes with no application-level
+    limit. Returns (form, None) on success, or (None, error_response) once the body exceeds
+    the same cap JSON requests already enforce -- the caller returns error_response directly
+    rather than this function raising, since these call sites have no surrounding except
+    block to catch it."""
+    try: n=int(handler.headers.get('Content-Length',0) or 0)
+    except Exception: n=0
+    if n>MAX_REQUEST_BYTES:
+        return None, handler._json({'error':f'Request exceeds the {MAX_REQUEST_BYTES//1_000_000} MB application limit.'},413)
+    raw=handler.rfile.read(n) if n>0 else b''
+    return parse_qs(raw.decode('utf-8','ignore')), None
 
 
 def _rate_limit_allowed(client,bucket,maximum):
@@ -5538,15 +5649,31 @@ def _v92_parse_ids(source):
         except (TypeError,ValueError): pass
     return out
 
+_V93_CSV_FORMULA_TRIGGER_CHARS=('=','+','-','@','\t','\r')
+def _v93_csv_safe_cell(value):
+    """v93.51: a cell value beginning with =, +, -, @ (or a leading tab/CR) is interpreted as a
+    FORMULA by Excel/Sheets/LibreOffice when the exported file is opened, not as literal text --
+    this is the well-known CSV/formula-injection class (OWASP). `company` and other exported
+    fields ultimately come from scan input a site visitor controls (a scanned company name or
+    URL), so a value like "=1+1" (or a legacy DDE payload) stored via a scan would execute as a
+    formula for whoever opens this admin export. Reported by a third-party code review. Prefix
+    with a single quote, the standard mitigation every major spreadsheet application treats as
+    "force text" and strips from the displayed value."""
+    s=value if isinstance(value,str) else str(value)
+    if s and s[0] in _V93_CSV_FORMULA_TRIGGER_CHARS:
+        return "'"+s
+    return s
+
 def _v92_rows_to_csv(rows):
-    """CSV is not HTML -- no escaping concern here, values go straight into cells as-is
-    (csv.writer handles quoting/delimiter-escaping itself). A UTF-8 BOM is prefixed so the
-    file opens with correct encoding directly in Excel, not just in text editors/Sheets."""
+    """CSV has no HTML-style markup-escaping concern (csv.writer handles quoting/delimiter-
+    escaping itself), but cell VALUES still need the formula-injection guard above before being
+    written. A UTF-8 BOM is prefixed so the file opens with correct encoding directly in Excel,
+    not just in text editors/Sheets."""
     buf=io.StringIO()
     writer=csv.writer(buf)
     writer.writerow(_V92_EXPORT_COLUMNS)
     for r in rows:
-        writer.writerow([str(r.get(c,'') if r.get(c) is not None else '') for c in _V92_EXPORT_COLUMNS])
+        writer.writerow([_v93_csv_safe_cell(str(r.get(c,'') if r.get(c) is not None else '')) for c in _V92_EXPORT_COLUMNS])
     return b'\xef\xbb\xbf'+buf.getvalue().encode('utf-8')
 
 def _v92_history_cookie_value():
@@ -6217,11 +6344,17 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_history_login(self):
         """POST /history/login submits a plain HTML form (application/x-www-form-urlencoded,
         not JSON), so it is handled entirely separately from do_POST's JSON-only body
-        parsing below -- routed here before that generic path is ever reached."""
-        try: n=int(self.headers.get('Content-Length',0) or 0)
-        except Exception: n=0
-        raw=self.rfile.read(n) if n>0 else b''
-        form=parse_qs(raw.decode('utf-8','ignore'))
+        parsing below -- routed here before that generic path is ever reached.
+
+        v93.51: unlike every JSON scan/report endpoint (all gated by _rate_limit_allowed),
+        this password-guessing surface had no rate limit of its own -- an attacker could
+        submit unlimited guesses against the single shared HISTORY_ADMIN_PASSWORD. Reported
+        by a third-party code review."""
+        client=_client_ip(self)
+        if not _rate_limit_allowed(client,'history_login',RATE_LIMIT_LOGIN):
+            return self._send(_v92_render_history_login('Too many login attempts. Try again later.'),status=429)
+        form,err=_v93_read_form_body(self)
+        if err is not None: return err
         submitted=(form.get('password',[''])[0] or '')
         if HISTORY_ADMIN_PASSWORD and hmac.compare_digest(submitted,HISTORY_ADMIN_PASSWORD):
             cookie_val=_v92_history_cookie_value()
@@ -6238,10 +6371,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error':'Scan history is not configured for this deployment.'},404)
         if not _v92_valid_history_cookie(self.headers.get('Cookie')):
             return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
-        try: n=int(self.headers.get('Content-Length',0) or 0)
-        except Exception: n=0
-        raw=self.rfile.read(n) if n>0 else b''
-        form=parse_qs(raw.decode('utf-8','ignore'))
+        form,err=_v93_read_form_body(self)
+        if err is not None: return err
         rows=_v92_resolve_selected_export_rows(form)
         csv_bytes=_v92_rows_to_csv(rows)
         stamp=datetime.date.today().isoformat()
@@ -6259,10 +6390,8 @@ class Handler(BaseHTTPRequestHandler):
         build_fn=_get_build_batch_summary_report_pdf()
         if build_fn is None:
             return self._json({'error':'Report PDF generation is unavailable: '+(_batch_report_pdf_import_error or 'unknown import error')},500)
-        try: n=int(self.headers.get('Content-Length',0) or 0)
-        except Exception: n=0
-        raw=self.rfile.read(n) if n>0 else b''
-        form=parse_qs(raw.decode('utf-8','ignore'))
+        form,err=_v93_read_form_body(self)
+        if err is not None: return err
         rows=_v92_resolve_selected_export_rows(form)
         scan_ids=_v92_resolve_selected_scan_ids(form)
         top_claims=_v92_fetch_top_claims_for_scan_ids(scan_ids)
@@ -6283,10 +6412,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error':'Scan history is not configured for this deployment.'},404)
         if not _v92_valid_history_cookie(self.headers.get('Cookie')):
             return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
-        try: n=int(self.headers.get('Content-Length',0) or 0)
-        except Exception: n=0
-        raw=self.rfile.read(n) if n>0 else b''
-        form=parse_qs(raw.decode('utf-8','ignore'))
+        form,err=_v93_read_form_body(self)
+        if err is not None: return err
         ids=_v92_parse_ids(form)
         select_all=(form.get('select_all',[''])[0]=='1')
         if select_all:
@@ -6760,6 +6887,32 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     bare_legal_triggers=['meets legal requirements','according to legal standards','required by law','legal requirement']
     if trig in bare_legal_triggers and not any(x in c for x in ['environment','emission','chemical','substance','packaging','plastic','waste','energy','ecodesign','reach ','recycl','sustainab','carbon','climate']):
         return False
+    # v93.51: even once on-topic, this claim type (Annex I point 10a) specifically targets
+    # presenting a legal requirement AS A DISTINCTIVE FEATURE -- a neutral statement that a
+    # requirement exists or is met ("As required by law, our packaging displays the correct
+    # recycling symbols") is not itself the blacklisted practice; only wording that frames
+    # compliance as something that sets the company apart (a comparison to others, "ahead of"/
+    # "leadership"/"already"/"beyond what is required", etc.) matches what the Directive
+    # actually targets. Reported by a third-party code review: this trigger previously fired
+    # identically on a purely neutral compliance statement and a genuinely distinctive-framing
+    # one. Applies to the full legal-requirement trigger set, not just the bare/generic ones
+    # above (an environment-qualified trigger like "compliant with environmental law" is
+    # on-topic by construction, but still needs the distinctive-framing language to actually
+    # match point 10a).
+    legal_requirement_triggers=['compliant with environmental law','meets legal requirements','according to legal standards',
+        'required by law','legal requirement','eu compliant','regulation compliant',
+        'conform milieuwetgeving','voldoet aan wettelijke vereisten','volgens wettelijke normen','wettelijk verplicht','wettelijke vereiste','eu-conform','conform de regelgeving',
+        'conforme à la législation environnementale','répond aux exigences légales','selon les normes légales','requis par la loi','exigence légale','conforme ue','conforme à la réglementation']
+    if trig in legal_requirement_triggers:
+        distinctive_framing_markers=['unlike','ahead of','leader in','leading the way','better than','goes beyond','go beyond',
+            'exceeds','surpasses','sets us apart','set us apart','differentiates us','distinguishes us','one of the first',
+            'years ahead','shows our leadership','proof of our','another reason to choose','why choose us',
+            'more sustainable than','further than required','beyond what is required','beyond the legal minimum','above and beyond',
+            'in tegenstelling tot','koploper','loopt voorop','verder dan wettelijk verplicht','meer dan wettelijk vereist',
+            'onderscheidt ons','een van de eersten',
+            'contrairement à','en avance sur','nous distingue','au-delà de ce qui est exigé','plus loin que la loi','parmi les premiers']
+        if not any(m in c for m in distinctive_framing_markers):
+            return False
     # v57j: absolute safety wording ("zero accidents", "zero harm") combined with clear
     # forward-looking goal/target language is a stated ambition, not a claim that the outcome has
     # already been achieved (e.g. "Our safety goal for 2027 is zero accidents across all our
@@ -6781,12 +6934,36 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # the opposite of the "self-declared sustainability label" risk EmpCo targets (Annex I point
     # 2a; Recital 7 explicitly lists the EU Ecolabel and EMAS as legitimate, publicly-established
     # schemes). Do not flag a label reference when a recognised scheme is explicitly named.
+    # v93.51: this previously scanned the WHOLE excerpt `c` and rejected it outright on ANY
+    # scheme match, with no scoping to the trigger under evaluation -- so a compound sentence
+    # covering two unrelated claims ("Our products are carbon neutral through offsetting and our
+    # paper packaging is FSC certified") lost the genuinely serious carbon-neutral-via-offsetting
+    # claim entirely, purely because an unrelated product attribute later in the same sentence
+    # named FSC certification. Only suppress when the recognised scheme is named in the SAME
+    # clause as the trigger (i.e. it is what the label/certification trigger itself refers to),
+    # not merely present anywhere else in the excerpt -- a clause boundary (sentence punctuation,
+    # or a coordinating conjunction like "and"/"en"/"et") between the two means they are separate
+    # assertions. Falls back to the old whole-excerpt check only when the trigger's own position
+    # can't be located.
     recognised_schemes=['eu ecolabel','ecolabel logo','emas','regulation (ec) no 66/2010','regulation (ec) no 1221/2009',
         'nordic swan','blue angel','fairtrade certified','fair trade certified','gots certified','oeko-tex',
         'cradle to cradle','forest stewardship council','fsc certified','iso 14024','certified b corporation',
         'b corp certified','rainforest alliance certified']
-    if dimension == 'green' and any(s in c for s in recognised_schemes):
-        return False
+    if dimension == 'green':
+        scheme_pos=-1
+        for s in recognised_schemes:
+            idx=c.find(s)
+            if idx != -1:
+                scheme_pos=idx
+                break
+        if scheme_pos != -1:
+            if trig_pos != -1:
+                lo,hi=(trig_pos,scheme_pos) if trig_pos<=scheme_pos else (scheme_pos,trig_pos)
+                between=c[lo:hi]
+                if not re.search(r'[.;!?]|\band\b|\ben\b|\bet\b|\bmaar\b|\bmais\b',between):
+                    return False
+            else:
+                return False
     # v57j: a claim-trigger phrase inside a job posting/hiring context describes a role title or
     # responsibility, not a performance claim about the company's own products or operations
     # (e.g. "We are hiring a Climate Neutral Program Manager to lead our decarbonisation
@@ -8396,6 +8573,40 @@ def _v65_first_alias_position(text, aliases):
     return min(positions) if positions else 10**9
 
 
+_V93_NON_ACCUSED_ROLE_MARKERS=(
+    'assisted the regulator in investigating','assisted regulators in investigating',
+    'helped the regulator investigate','helped regulators investigate',
+    'helped uncover','helped expose','tipped off regulators about','tipped off the regulator about',
+    'acted as a witness against','testified against','blew the whistle on','was a whistleblower',
+    'supplied evidence used in the investigation into','provided data used in the investigation into',
+    'provided evidence used in the investigation into','supplied data used in the investigation into',
+    'was not accused','has not been accused','is not accused',
+    'is not the subject of the investigation','is not the target of the investigation',
+    'cleared of any wrongdoing','cleared of all charges','cleared of all wrongdoing',
+)
+
+def _v93_target_named_as_non_accused_party(text,aliases,window=90):
+    """v93.51: entity_match_details() retained a source purely because the target was named
+    prominently (title/URL) with some negative/controversy term appearing anywhere nearby --
+    with no check for whether the target is actually the one accused, or merely named as a
+    third party assisting an investigation, exposing, testifying against, or explicitly
+    cleared in someone ELSE's negative story. Reported by a third-party code review with this
+    exact scenario: a company named as helping a regulator investigate a rival still had that
+    rival's greenwashing investigation attributed to itself as a negative external signal.
+    Narrow, marker-based (matching this file's established approach for similar guards
+    elsewhere -- reported-speech, criticism/denial, hiring-context) rather than full
+    entity-role parsing: only fires when an explicit non-accused-role phrase immediately
+    follows the target's own mention, so it doesn't suppress a genuine "X was investigated
+    and has since cooperated" claim, which does not use any of these phrases."""
+    low=_v64_norm(text)
+    for alias in aliases:
+        for m in re.finditer(r'(?<![a-z0-9])'+re.escape(alias).replace(r'\ ',r'\s+')+r'(?![a-z0-9])',low):
+            segment=low[m.end():m.end()+window]
+            if any(marker in segment for marker in _V93_NON_ACCUSED_ROLE_MARKERS):
+                return True
+    return False
+
+
 def entity_match_details(result,company_name,reviewed_pages=None):
     """Conservative generic direct-entity match.
 
@@ -8432,6 +8643,14 @@ def entity_match_details(result,company_name,reviewed_pages=None):
     matched=(direct and score>=6) or (body_only and score>=6)
     if not matched and not direct and content_count:
         return {'matched':False,'score':score,'label':'Rejected - incidental/body-only mention','reason':'The target is absent from the title and URL and is not sufficiently prominent in the source summary.'}
+    # v93.51: a source naming the target prominently (e.g. in the title) was retained as
+    # pertaining to the target purely from that prominence plus any nearby controversy term --
+    # with no check for whether the target is the one accused, or merely named as a third
+    # party assisting an investigation, exposing, testifying against, or explicitly cleared in
+    # someone else's negative story. See _v93_target_named_as_non_accused_party() above.
+    if matched and _v93_target_named_as_non_accused_party(title+' '+content,aliases):
+        return {'matched':False,'score':score,'label':'Rejected - target named only as an assisting/non-accused party',
+                'reason':'The target appears alongside an explicit non-accused-role phrase (assisting an investigation, exposing/testifying against another party, or explicitly cleared), not as the subject of the adverse issue.'}
     label=('Direct - '+', '.join(reasons[:2])) if matched else 'Rejected - insufficient entity evidence'
     return {'matched':matched,'score':score,'label':label,'reason':'; '.join(reasons)}
 

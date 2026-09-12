@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_50_mark_inferred_sector_names'
+    assert app.APP_VERSION == 'hostable_v93_51_third_review_fix_batch'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1745,6 +1745,235 @@ def test_certification_scheme_mentioned_only_for_contrast_does_not_downgrade_ris
     f2 = {'type': 'Sustainability label / certification claim', 'risk': 'High', 'claim': genuine_claim}
     result2 = app.enrich_green_finding(dict(f2), 'certified')
     assert result2['risk'] == 'Medium'
+
+
+def test_offset_negation_flips_blacklist_indicator():
+    """v93.51: green_blacklisted_indicator()'s offsetting check was a bare substring search for
+    'offset'/'compensat'/'carbon credit' with no negation awareness -- "Our product is carbon
+    neutral WITHOUT offsetting" contains the literal substring "offset" and was flagged
+    identically to "...THROUGH offsetting", the exact opposite of what EmpCo Annex I point 4c
+    actually targets (a claim that IS based on offsetting/carbon credits, not one that explicitly
+    disclaims it). Reported by a third-party code review with this exact reproduction."""
+    flagged = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
+        'Our product is carbon neutral through offsetting.')
+    assert 'blacklisted-practice indicator where product-level' in flagged
+    not_flagged = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
+        'Our product is carbon neutral without offsetting.')
+    assert 'offset basis not established' in not_flagged
+    dutch_not_flagged = app.green_blacklisted_indicator('Climate-neutrality claim', 'klimaatneutraal',
+        'Ons product is klimaatneutraal zonder compensatie.')
+    assert 'offset basis not established' in dutch_not_flagged
+
+
+def test_recognised_scheme_in_unrelated_clause_does_not_suppress_other_claim():
+    """v93.51: _v55_claim_context_ok()'s recognised-scheme guard scanned the WHOLE excerpt for
+    any of ~18 hardcoded scheme names and rejected the excerpt outright on a match, with no
+    scoping to the trigger actually being evaluated -- so a compound sentence covering two
+    unrelated claims lost a genuinely serious one purely because an unrelated product attribute
+    later in the same sentence named a certification scheme. Reported by a third-party code
+    review with this exact reproduction: the carbon-neutral-via-offsetting claim must still be
+    detected even though the same sentence separately mentions FSC certification for the
+    packaging. A genuine same-clause scheme reference must still be recognised and suppressed."""
+    mixed_claim = 'Our products are carbon neutral through offsetting and our paper packaging is FSC certified.'
+    assert app._v55_claim_context_ok(mixed_claim, 'carbon neutral', 'green') is True
+    same_clause_claim = 'Our product is eco-label certified, carrying the EU Ecolabel.'
+    assert app._v55_claim_context_ok(same_clause_claim, 'eco-label', 'green') is False
+
+
+def test_green_evidence_score_ignores_substring_inside_unrelated_word():
+    """v93.51: green_evidence_signal_score()'s strong-evidence term list matched via bare
+    substring containment, so the short term 'lca' (life-cycle-assessment shorthand) matched
+    inside the completely unrelated word "volcanic" ("vo-LCA-nic"). Reported by a third-party
+    code review with this exact reproduction: a claim naming no real evidence at all still
+    picked up a phantom LCA-evidence hit purely from a place name."""
+    findings = [{'type': 'Sustainability label / certification claim'}]
+    score, notes = app.green_evidence_signal_score(
+        'Our products are eco-friendly and made in a volcanic region.', findings)
+    assert score == 0
+    assert 'lca' not in ' '.join(notes)
+
+
+def test_evidence_score_does_not_credit_explicitly_negated_evidence_terms():
+    """v93.51: both evidence_signal_score() and green_evidence_signal_score() counted a term as
+    a substantiation hit on bare presence, with no negation awareness -- "We have no LCA, no
+    audit, no baseline, no methodology, no third-party verification" listed every one of those
+    as evidence found and RAISED the score, the opposite of what the sentence says. Reported by
+    a third-party code review (ChatGPT's own reproduction showed the score rising from 3 to 52).
+    A genuine, non-negated mention of the same terms must still count."""
+    findings = [{'type': 'Sustainability label / certification claim'}]
+    negated_score, _ = app.green_evidence_signal_score(
+        'We have no LCA, no audit, no baseline, no methodology, and no third-party verification '
+        'for this claim.', findings)
+    assert negated_score == 0
+    genuine_score, _ = app.green_evidence_signal_score(
+        'Our packaging uses 50% recycled content, verified by an independent third-party audit '
+        'against ISO 14024, with a full life cycle assessment baseline and methodology.', findings)
+    assert genuine_score > negated_score
+    assert genuine_score >= 45
+
+    social_findings = [{'type': 'Supplier-responsibility / sourcing claim'}]
+    negated_social_score, _ = app.evidence_signal_score(
+        'We have no KPI, no metrics, no baseline, and no independent audit for our supplier '
+        'programme.', social_findings)
+    genuine_social_score, _ = app.evidence_signal_score(
+        'Our supplier programme reports a 30% reduction with clear KPIs, an independent audit '
+        'and a defined baseline methodology.', social_findings)
+    assert genuine_social_score > negated_social_score
+
+
+def test_entity_match_rejects_target_named_only_as_non_accused_helper():
+    """v93.51: entity_match_details() retained a source purely from the target being named
+    prominently (title/URL) plus a controversy term appearing anywhere nearby, with no check
+    for whether the target is actually accused of anything, or merely a third party assisting
+    an investigation into a DIFFERENT company. Reported by a third-party code review with this
+    exact reproduction: a company named as helping a regulator investigate a rival still had
+    that rival's greenwashing story attributed to itself. A genuine accusation against the
+    target itself must still be retained."""
+    helper_source = {
+        'title': 'Regulator investigates RivalCo for greenwashing, with help from CompanyX',
+        'content': 'The environmental regulator opened a greenwashing investigation into RivalCo after '
+            'complaints about its misleading carbon-neutral claims. CompanyX, a data-analytics firm, '
+            'assisted the regulator in investigating RivalCo by supplying independent emissions '
+            'verification data used in the probe. RivalCo has denied wrongdoing.',
+        'url': 'https://news.example.com/rivalco-greenwashing-investigation-companyx-assists',
+    }
+    result = app.entity_match_details(helper_source, 'CompanyX')
+    assert result['matched'] is False
+    assert app.source_mentions_company(helper_source, 'CompanyX') is False
+
+    genuine_accusation = {
+        'title': 'CompanyX accused of greenwashing over carbon-neutral claims',
+        'content': 'Regulators are investigating CompanyX after complaints that its carbon-neutral '
+            'claims are misleading. CompanyX has denied any wrongdoing.',
+        'url': 'https://news.example.com/companyx-greenwashing-accusation',
+    }
+    assert app.entity_match_details(genuine_accusation, 'CompanyX')['matched'] is True
+
+
+def test_empco_blacklist_floor_scales_down_for_internal_audience():
+    """v93.51: _v93_apply_empco_blacklist_floor() ignored audience/channel context entirely --
+    a scan correctly classified as mainly investor/internal-governance material (EmpCo/UCPD
+    applies most directly to consumer-facing claims) still had its score floored to the full
+    75 'Very high' threshold, identical to a confirmed client-facing violation, even though
+    calc_green_score/calc_score already apply a 0.75 audience discount to internal material
+    everywhere else. Reported by a third-party code review. Consumer-facing material must
+    still floor to the full 75; internal/indirect material floors to a scaled-down value that
+    still lands in the elevated 'High' band; the floor must never LOWER an already-high score."""
+    green_fs = [{'type': 'Climate-neutrality claim', 'risk': 'High', 'blacklisted_practice_indicator': True}]
+    consumer_audience = {'audience': 'Consumer-facing marketing material', 'empco_relevance': 'Direct / high'}
+    green, overall, applied = app._v93_apply_empco_blacklist_floor(30, 30, green_fs, consumer_audience)
+    assert (green, overall, applied) == (75, 75, True)
+
+    internal_audience = {'audience': 'Policy / internal governance document', 'empco_relevance': 'Indirect / governance evidence'}
+    green, overall, applied = app._v93_apply_empco_blacklist_floor(30, 30, green_fs, internal_audience)
+    assert applied is True
+    assert 50 <= green < 75, 'internal/indirect material should still land in the elevated High band, not full Very high'
+    assert app.level(green) == 'High'
+
+    # a score already at/above the scaled floor must never be lowered
+    green, overall, applied = app._v93_apply_empco_blacklist_floor(80, 80, green_fs, internal_audience)
+    assert (green, overall) == (80, 80)
+
+    # omitting audience (legacy call sites) keeps the original, unconditional full-75 behaviour
+    green, overall, applied = app._v93_apply_empco_blacklist_floor(30, 30, green_fs)
+    assert (green, overall, applied) == (75, 75, True)
+
+
+def test_legal_requirement_claim_requires_distinctive_framing_not_neutral_compliance():
+    """v93.51: the 'Legal requirement presented as green benefit' claim type (EmpCo Annex I
+    point 10a) fired identically on a purely neutral statement that a legal requirement is met
+    and on genuinely distinctive-framing wording -- but the Directive specifically targets
+    presenting compliance AS A DISTINCTIVE FEATURE, not merely stating that a requirement
+    exists. Reported by a third-party code review with this exact reproduction: "As required
+    by law, our packaging displays the correct recycling symbols" is a neutral statement and
+    must not be flagged; wording that frames the same compliance as setting the company apart
+    from competitors must still be flagged."""
+    neutral = 'As required by law, our packaging displays the correct recycling symbols.'
+    neutral_findings = [f for f in app.detect_green_claims(neutral) if not app.is_placeholder_finding(f.get('type', ''))]
+    assert neutral_findings == []
+
+    distinctive = ('Unlike our competitors, who lag behind, we proudly go beyond the industry as our '
+        'packaging is required by law to reduce waste, showing our clear environmental leadership.')
+    distinctive_findings = [f for f in app.detect_green_claims(distinctive) if not app.is_placeholder_finding(f.get('type', ''))]
+    assert any(f['type'] == 'Legal requirement presented as green benefit' for f in distinctive_findings)
+
+
+def test_clean_excerpt_does_not_truncate_before_reaching_the_trigger_word():
+    """v93.51: clean_excerpt() blindly returned out[:560], with no regard for where the trigger
+    word itself ended up inside that string -- a long, period-free run-on sentence (common in
+    PDF-extracted policy text) can push the trigger well past character 560, silently returning
+    a displayed excerpt that never actually contains the word the finding names. Reported by a
+    third-party code review. A flat cutoff must now center the window on the trigger instead of
+    cutting it off; a normal short excerpt must be returned unchanged."""
+    prefix = ('Our company operates across many regions, focusing on quality, service, community '
+        'engagement, ') * 6
+    trig = 'carbon neutral'
+    text = prefix + f'and our products are {trig} thanks to our offsetting programme, which we are proud of.'
+    excerpt = app.clean_excerpt(text, trig)
+    assert trig in excerpt.lower()
+
+    normal_text = 'Our packaging is 100% recyclable and meets EU standards.'
+    assert app.clean_excerpt(normal_text, 'recyclable') == normal_text
+
+
+def test_csv_export_neutralises_formula_injection_in_company_name():
+    """v93.51: _v92_rows_to_csv() wrote exported cell values verbatim -- a company name like
+    "=1+1" (or a legacy DDE payload) is interpreted as a FORMULA by Excel/Sheets/LibreOffice
+    when the exported file is opened, not as literal text. This is the well-known CSV/formula-
+    injection class (OWASP), and `company` ultimately comes from scan input a site visitor
+    controls. Reported by a third-party code review. A value starting with =, +, -, @, tab or
+    CR must be prefixed with a quote; an ordinary value must be left untouched."""
+    rows = [{'company': '=1+1', 'input_url': 'https://example.com', 'global_score': 50}]
+    csv_bytes = app._v92_rows_to_csv(rows)
+    text = csv_bytes.decode('utf-8-sig')
+    assert "'=1+1" in text
+    assert ',=1+1,' not in text
+
+    normal_rows = [{'company': 'Acme Corp', 'input_url': 'https://acme.example', 'global_score': 40}]
+    normal_text = app._v92_rows_to_csv(normal_rows).decode('utf-8-sig')
+    assert 'Acme Corp' in normal_text
+    assert "'Acme Corp" not in normal_text
+
+
+def test_history_form_body_reader_rejects_oversized_request():
+    """v93.51: the four /history/* plain-HTML-form POST handlers (login, export_selected,
+    report_selected, delete_selected) each read Content-Length with no upper bound at all,
+    unlike every JSON scan/report endpoint (which already goes through _read_json()'s
+    MAX_REQUEST_BYTES cap via do_POST's own try/except). Reported by a third-party code
+    review. _v93_read_form_body() is the shared, size-capped reader those four now use --
+    it must accept an ordinary small body and reject one over the application limit with a
+    413, without raising (these call sites have no surrounding except block to catch it)."""
+    import io as _io
+
+    class FakeHandler:
+        def __init__(self, content_length, body):
+            self.headers = {'Content-Length': str(content_length)}
+            self.rfile = _io.BytesIO(body)
+        def _json(self, d, status=200):
+            return {'_status': status, '_body': d}
+
+    small_body = b'password=abc'
+    form, err = app._v93_read_form_body(FakeHandler(len(small_body), small_body))
+    assert err is None
+    assert form.get('password') == ['abc']
+
+    oversized_len = app.MAX_REQUEST_BYTES + 1
+    form2, err2 = app._v93_read_form_body(FakeHandler(oversized_len, b''))
+    assert form2 is None
+    assert err2['_status'] == 413
+
+
+def test_history_login_rate_limit_bucket_throttles_after_configured_max(monkeypatch):
+    """v93.51: /history/login had no rate limit of its own, unlike every JSON scan/report
+    endpoint (all gated by _rate_limit_allowed) -- an attacker could submit unlimited password
+    guesses against the single shared HISTORY_ADMIN_PASSWORD. Reported by a third-party code
+    review. The new 'history_login' bucket must throttle after RATE_LIMIT_LOGIN attempts from
+    the same client, the same mechanism already used for scans and report downloads."""
+    monkeypatch.setattr(app, '_RATE_EVENTS', {})
+    client = '203.0.113.5'
+    for _ in range(app.RATE_LIMIT_LOGIN):
+        assert app._rate_limit_allowed(client, 'history_login', app.RATE_LIMIT_LOGIN) is True
+    assert app._rate_limit_allowed(client, 'history_login', app.RATE_LIMIT_LOGIN) is False
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
