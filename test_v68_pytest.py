@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_53_generalise_negation_role_and_dedup_fixes'
+    assert app.APP_VERSION == 'hostable_v93_54_full_text_analysis_and_role_case_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1923,6 +1923,22 @@ def test_offset_negation_handles_post_positioned_negation_and_repeated_terms():
         'production emissions.') is True
 
 
+def test_offset_negation_respects_clause_scope_and_unrelated_word_senses():
+    """v93.54: a second follow-up review found the v93.53 window-based negation check still had
+    two gaps. (1) Scope: "carbon neutral through offsetting, NOT emission reductions" read the
+    "not" as negating "offsetting" itself, when it grammatically negates the different
+    alternative after the comma ("emission reductions") -- the claim actually confirms
+    offsetting as the basis. Fixed by cutting each negation window at the nearest clause
+    boundary. (2) Relevance: "the packaging uses OFFSET PRINTING" still matched the bare word
+    "offset" despite having nothing to do with climate offsetting -- a known unrelated sense is
+    now excluded before it can count as a climate-offset reference. Both reported by a
+    third-party code review with these exact reproductions."""
+    assert app._offset_basis_confirmed(
+        'Our product is carbon neutral through offsetting, not emission reductions.') is True
+    assert app._offset_basis_confirmed(
+        'Our product is carbon neutral; the packaging uses offset printing.') is False
+
+
 def test_recognised_scheme_in_unrelated_clause_does_not_suppress_other_claim():
     """v93.51: _v55_claim_context_ok()'s recognised-scheme guard scanned the WHOLE excerpt for
     any of ~18 hardcoded scheme names and rejected the excerpt outright on a match, with no
@@ -2000,6 +2016,26 @@ def test_evidence_score_does_not_credit_explicitly_negated_evidence_terms():
     assert genuine_social_score > negated_social_score
 
 
+def test_evidence_score_and_specification_check_handle_negation_stated_after_the_term():
+    """v93.54: a follow-up review found _evidence_term_hit() only checked a window BEFORE the
+    matched term for negation -- "LCA is unavailable. Methodology is unavailable. Audit is
+    unavailable. Assurance is unavailable. Baseline is unavailable." still counted every one of
+    those as genuine evidence (substantiation score 3 -> 38 in the reviewer's own reproduction),
+    because the negation ("is unavailable") comes AFTER the term. The identical gap affected
+    _has_strong_same_medium_specification(), which shares this helper: "a methodology is not
+    available" still cleared the Annex I generic-claim indicator as if real specification were
+    present. A genuine, non-negated mention must still count in both."""
+    findings = [{'type': 'Sustainability label / certification claim'}]
+    unavailable_score, _ = app.green_evidence_signal_score(
+        'LCA is unavailable. Methodology is unavailable. Audit is unavailable. Assurance is '
+        'unavailable. Baseline is unavailable.', findings)
+    assert unavailable_score == 0
+
+    genuine = {'type': 'Generic environmental claim', 'risk': 'High',
+        'claim': 'Our products are eco-friendly; a methodology is not available.'}
+    assert app.enrich_green_finding(dict(genuine), 'eco-friendly')['blacklisted_practice_indicator'] is True
+
+
 def test_entity_match_rejects_target_named_only_as_non_accused_helper():
     """v93.51: entity_match_details() retained a source purely from the target being named
     prominently (title/URL) plus a controversy term appearing anywhere nearby, with no check
@@ -2052,6 +2088,34 @@ def test_entity_match_does_not_misattribute_a_helper_role_to_the_actually_accuse
         'url': 'https://news.example.com/examplco-fined-and-helps-expose',
     }
     assert app.entity_match_details(self_accused_and_separately_helpful, 'ExampleCo')['matched'] is True
+
+
+def test_entity_role_attribution_is_case_insensitive_and_recognises_witness_phrasing():
+    """v93.54: a second follow-up review found the v93.53 fix relied solely on capitalised-word
+    detection (_V93_PROPER_NOUN_RE) to find a marker's grammatical subject -- so the exact same
+    scenario correctly excluded the target when its name was capitalised ("ExampleCo assisted
+    the regulator...") but wrongly kept it as a negative signal when the identical text used
+    lowercase ("exampleco assisted the regulator..."), since the target's own name became
+    invisible to the subject-detection regex. Also reported: "ExampleCo provided evidence to
+    the regulator as a witness" (about a DIFFERENT company's fine) was still attributed to
+    ExampleCo as a negative signal, since none of the existing witness-role markers matched
+    that exact phrasing. Fixed by also searching for the target's own known aliases
+    case-insensitively when finding a marker's subject, and by broadening the witness markers."""
+    lowercase_helper = {
+        'title': 'regulator investigates rivalco for greenwashing, with help from exampleco',
+        'content': 'exampleco, a data-analytics firm, assisted the regulator in investigating rivalco by '
+            'supplying independent emissions verification data used in the probe. rivalco has denied wrongdoing.',
+        'url': 'https://news.example.com/rivalco-greenwashing-investigation-lowercase-exampleco',
+    }
+    assert app.entity_match_details(lowercase_helper, 'ExampleCo')['matched'] is False
+
+    witness_source = {
+        'title': 'RivalCo fined for misleading environmental claims; ExampleCo gave evidence',
+        'content': 'The court fined RivalCo for misleading environmental claims. ExampleCo provided '
+            'evidence to the regulator as a witness.',
+        'url': 'https://news.example.com/rivalco-fined-examplco-witness',
+    }
+    assert app.entity_match_details(witness_source, 'ExampleCo')['matched'] is False
 
 
 def test_empco_blacklist_floor_scales_down_for_internal_audience():
@@ -2201,6 +2265,35 @@ def test_specification_check_ignores_substring_and_negated_methodology_mention()
     genuine = {'type': 'Generic environmental claim', 'risk': 'High',
         'claim': 'Our products are eco-friendly, verified according to ISO 14024 methodology.'}
     assert app.enrich_green_finding(dict(genuine), 'eco-friendly')['blacklisted_practice_indicator'] is False
+
+
+def test_legal_classification_uses_full_claim_text_not_the_truncated_display_excerpt():
+    """v93.54: a third-party code review found that enrich_green_finding()/
+    enrich_social_finding() decide the actual legal classification
+    (blacklisted_practice_indicator, specification strength, corporate-level exception) by
+    reading f['claim'] -- but f['claim'] had become the TRUNCATED, trigger-centered DISPLAY
+    excerpt (the v93.53 fix). Reproduced exactly: "Our product is carbon neutral through
+    offsetting" correctly gets the Annex I indicator; the same claim with a long descriptive
+    clause inserted before "through offsetting" (pushing the offset basis past the 620-char
+    truncation window) lost it, purely because of where the truncation cut fell. Fixed by
+    storing the full, untruncated text as f['full_claim_text'] and having enrich_*_finding()
+    read that instead (via _v93_analysis_text()); f['claim'] stays the bounded display text."""
+    short = 'Our product is carbon neutral through offsetting.'
+    short_findings = [f for f in app.detect_green_claims(short) if not app.is_placeholder_finding(f.get('type', ''))]
+    assert any(f.get('blacklisted_practice_indicator') for f in short_findings)
+
+    filler = ('which reflects years of dedicated investment in sustainable practices, extensive '
+        'stakeholder engagement, and a comprehensive review of our entire value chain conducted over '
+        'multiple reporting periods with input from independent third-party advisors and technical '
+        'consultants brought in specifically to evaluate our approach across every relevant business '
+        'unit and geography, further supported by additional internal governance processes spanning '
+        'several quarters and involving numerous departments across the wider organisation and '
+        'external stakeholders consulted at some length, ')
+    long_text = f'Our product is carbon neutral, {filler}through offsetting.'
+    assert len(long_text) > 620
+    long_findings = [f for f in app.detect_green_claims(long_text) if not app.is_placeholder_finding(f.get('type', ''))]
+    assert any(f.get('blacklisted_practice_indicator') for f in long_findings), \
+        'the offset basis must still be detected even though it falls outside the display truncation window'
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):

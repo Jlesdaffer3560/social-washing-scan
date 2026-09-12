@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_53_generalise_negation_role_and_dedup_fixes"
-APP_RELEASE_LABEL="v93.53"
+APP_VERSION="hostable_v93_54_full_text_analysis_and_role_case_fixes"
+APP_RELEASE_LABEL="v93.54"
 APP_RELEASE_DATE="2026-09-12"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1881,11 +1881,23 @@ def _evidence_term_hit(term, text):
         else:
             rx = re.compile(re.escape(term))
         _EVIDENCE_TERM_RE_CACHE[term] = rx
-    negation_markers = ('no ', 'not ', 'without ', 'zero ', 'none ', 'lack of', 'absence of',
+    negation_before = ('no ', 'not ', 'without ', 'zero ', 'none ', 'lack of', 'absence of',
         'geen ', 'zonder ', 'niet ', 'sans ', 'pas de ', 'aucun')
+    # v93.54: negation of an evidence term is just as often stated AFTER it as before it --
+    # "LCA is unavailable", "Methodology is not available" -- but this only ever checked a
+    # window BEFORE the term, so "LCA is unavailable. Methodology is unavailable. Audit is
+    # unavailable. Assurance is unavailable. Baseline is unavailable." counted every one of
+    # those as genuine evidence and RAISED the substantiation score, exactly the negation-
+    # awareness gap this function was built to close in the first place. Reported by a
+    # third-party code review; the same fix also closes the identical gap in
+    # _has_strong_same_medium_specification(), which shares this helper.
+    negation_after = ('unavailable', 'not available', 'is not', 'are not', 'was not', 'were not',
+        'niet beschikbaar', 'ontbreekt', 'is niet', 'zijn niet',
+        "n'est pas disponible", 'indisponible', "n'est pas", 'ne sont pas')
     for m in rx.finditer(text):
         window_before = text[max(0, m.start() - 25):m.start()]
-        if any(n in window_before for n in negation_markers):
+        window_after = text[m.end():m.end() + 30]
+        if any(n in window_before for n in negation_before) or any(n in window_after for n in negation_after):
             continue
         return True
     return False
@@ -2848,6 +2860,13 @@ def _names_recognized_certification_scheme(claim_text):
 
 _OFFSET_NEGATION_WORD_RE=re.compile(
     r"\b(not|never|no|without)\b|n't|\bzonder\b|\bniet\b|\bgeen\b|\bsans\b|\bpas\b|\baucun[e]?\b")
+_OFFSET_CLAUSE_BOUNDARY_RE=re.compile(r'[.,;!?]')
+# v93.54: "offset" is genuinely ambiguous outside a climate/carbon context -- printing,
+# accounting and finance all use the same word for an unrelated concept. A bare substring
+# match let "the packaging uses offset printing" count as a climate-offset reference purely
+# because the word "offset" appears, even though nothing about it concerns emissions.
+_OFFSET_UNRELATED_SENSES=('offset printing','offset press','offset lithography','offset account',
+    'offset mortgage','offsetting entry','offsetting entries')
 
 def _offset_basis_confirmed(claim_text):
     """v93.51: was a bare substring check (any of 'offset'/'compensat'/'carbon credit' present
@@ -2869,7 +2888,18 @@ def _offset_basis_confirmed(claim_text):
     occurrence of every term, checks a window on BOTH sides using single-word negation markers
     (so "no"/"not"/"without"/"never" match regardless of what immediately follows), and treats
     the offset basis as confirmed as soon as any single occurrence is not negated on either
-    side."""
+    side.
+
+    v93.54: the v93.53 window-based check still had two gaps, reported by a third-party code
+    review. (1) Scope: "carbon neutral through offsetting, NOT emission reductions" reads the
+    "not" in the AFTER window as negating "offsetting" itself, when grammatically it negates
+    the DIFFERENT alternative that follows the comma ("emission reductions"), not offsetting --
+    the claim is actually confirming offsetting as the basis. Fixed by cutting each window at
+    the nearest clause boundary (.,;!?), so a negation separated from the term by a comma/period
+    no longer counts as negating it. (2) Relevance: "the packaging uses OFFSET PRINTING" still
+    matched the bare word "offset" even though it has nothing to do with climate offsetting --
+    a known unrelated sense (printing, accounting, mortgages) is now excluded before it can be
+    treated as a climate-offset reference at all."""
     c=' '+(claim_text or '').lower()+' '
     for term in ('offset','compensat','carbon credit','carbon-credit'):
         start=0
@@ -2877,11 +2907,19 @@ def _offset_basis_confirmed(claim_text):
             idx=c.find(term,start)
             if idx==-1:
                 break
+            start=idx+len(term)
+            if any(c[idx:idx+len(sense)]==sense for sense in _OFFSET_UNRELATED_SENSES):
+                continue
             window_before=c[max(0,idx-40):idx]
+            boundary_before=max((window_before.rfind(ch) for ch in '.,;!?'), default=-1)
+            if boundary_before!=-1:
+                window_before=window_before[boundary_before+1:]
             window_after=c[idx+len(term):idx+len(term)+40]
+            boundary_after=_OFFSET_CLAUSE_BOUNDARY_RE.search(window_after)
+            if boundary_after:
+                window_after=window_after[:boundary_after.start()]
             if not (_OFFSET_NEGATION_WORD_RE.search(window_before) or _OFFSET_NEGATION_WORD_RE.search(window_after)):
                 return True
-            start=idx+len(term)
     return False
 
 def green_blacklisted_indicator(claim_type, trigger, claim_text):
@@ -3088,23 +3126,39 @@ def _has_strong_same_medium_specification(claim_text):
     text=(claim_text or '').lower()
     return any(_evidence_term_hit(term.strip(), text) for term in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS)
 
+def _v93_analysis_text(f):
+    """v93.54: enrich_green_finding()/enrich_social_finding() decide the actual legal
+    classification (blacklisted_practice_indicator, specification strength, corporate-level-
+    claim exception, named-scheme risk downgrade) by reading f['claim'] -- but f['claim'] is
+    now the TRUNCATED, trigger-centered DISPLAY excerpt (see _v55_add_finding()'s v93.53
+    change), not the full sentence. Reported by a third-party code review with this exact
+    reproduction: "Our product is carbon neutral through offsetting" correctly gets the Annex I
+    indicator, but the same claim with a long descriptive clause inserted before "through
+    offsetting" loses it, purely because the offset basis fell outside the truncation window
+    used for display. _v55_add_finding() now also stores the full, untruncated text as
+    f['full_claim_text']; every content/legal analysis must read THAT (falling back to
+    f['claim'] when full_claim_text is absent, e.g. a finding dict built directly in a test or
+    by any other caller that never set it)."""
+    return f.get('full_claim_text') or f.get('claim','')
+
 def enrich_green_finding(f, trigger=''):
+    analysis_text=_v93_analysis_text(f)
     f['module']=green_claim_module(f.get('type',''))
-    f['specification_check']=green_specification_check(f.get('type',''), f.get('claim',''))
-    f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
+    f['specification_check']=green_specification_check(f.get('type',''), analysis_text)
+    f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, analysis_text)
     sig=f['regulatory_signal'].lower(); f['blacklisted_practice_indicator']=(('blacklisted-practice indicator' in sig) and not sig.startswith('no direct'))
     t_low=f.get('type','').lower()
     # EmpCo Annex I point 4a only blacklists a GENERIC claim that lacks same-medium
     # specification; once genuine specification is present the claim is no longer "generic" in
     # the Annex I sense and moves to the general, case-by-case UCPD test instead (still
     # potentially misleading, but not an automatic Annex I match).
-    if f['blacklisted_practice_indicator'] and 'generic' in t_low and _has_strong_same_medium_specification(f.get('claim','')):
+    if f['blacklisted_practice_indicator'] and 'generic' in t_low and _has_strong_same_medium_specification(analysis_text):
         f['blacklisted_practice_indicator']=False
     # EmpCo Annex I point 4c specifically targets claiming that a PRODUCT has a neutral,
     # reduced or positive climate impact based on offsetting -- a company- or operations-wide
     # neutrality claim (e.g. "our direct operations reached carbon neutrality") is not on that
     # fixed list and remains a case-by-case UCPD assessment instead.
-    if f['blacklisted_practice_indicator'] and ('climate' in t_low or 'offset' in t_low) and _is_corporate_level_claim(f.get('claim','')):
+    if f['blacklisted_practice_indicator'] and ('climate' in t_low or 'offset' in t_low) and _is_corporate_level_claim(analysis_text):
         f['blacklisted_practice_indicator']=False
     # v93.36: fixing the Annex I misclassification (v93.33) for a label/certification claim
     # that names a real, independent certifier only touched the legal-basis category -- the
@@ -7272,7 +7326,8 @@ def social_ready_to_use_rewrite(claim_type):
             'evidence: [link]."')
 
 def enrich_social_finding(f, trigger=''):
-    f['regulatory_signal']=social_blacklisted_indicator(f.get('type',''), trigger, f.get('claim',''))
+    analysis_text=_v93_analysis_text(f)
+    f['regulatory_signal']=social_blacklisted_indicator(f.get('type',''), trigger, analysis_text)
     # Social/human-rights characteristics are not covered by a fixed EmpCo Annex I blacklist entry
     # (unlike the specific environmental practices in points 2a/4a/4b/4c/10a) -- they are always
     # assessed case-by-case under general UCPD rules, so this is explicitly False here.
@@ -7289,10 +7344,10 @@ def enrich_social_finding(f, trigger=''):
     # The claim still needs scope/KPI/verification evidence either way -- this only reflects
     # that a named, independently-audited scheme is a materially different starting point than
     # zero named evidence.
-    if f.get('risk')=='High' and _names_recognized_certification_scheme(f.get('claim','')):
+    if f.get('risk')=='High' and _names_recognized_certification_scheme(analysis_text):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
-    f['specification_check']=social_specification_check(f.get('type',''), f.get('claim',''))
+    f['specification_check']=social_specification_check(f.get('type',''), analysis_text)
     f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
@@ -7374,16 +7429,26 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         # _v55_all_matches_sentences(). Every other use of `excerpt` (the dedup sig, the
         # context/qualification checks above, problematic_terms_for_finding()) still sees the
         # full text; only the text actually shown to a reader is bounded.
-        display_excerpt=_v93_trigger_centered_truncate(excerpt,trig,620)
+        # v93.54: display_excerpt was then also fed to enrich_green_finding()/
+        # enrich_social_finding() as f['claim'] -- but those functions decide the actual legal
+        # classification (blacklisted_practice_indicator, specification strength, ...) FROM
+        # f['claim']. Reported by a third-party code review with this exact reproduction: a
+        # long descriptive clause inserted before "through offsetting" pushed the offset basis
+        # outside the truncation window, so the SAME claim lost its Annex I indicator purely
+        # because of where the truncation cut happened to fall. f['full_claim_text'] now
+        # carries the untruncated excerpt for enrich_*_finding() (via _v93_analysis_text()) to
+        # analyse; f['claim'] stays the bounded display text.
         if dimension == 'green':
-            f={'dimension':'green','type':typ,'risk':risk,'claim':display_excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+            f={'dimension':'green','type':typ,'risk':risk,'claim':_v93_trigger_centered_truncate(excerpt,trig,620),
+               'full_claim_text':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
                'matched_phrase':trig,'why_flagged':why_flagged,
                'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
                'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
                'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
             fs.append(enrich_green_finding(f,trig))
         else:
-            f={'dimension':'social','type':typ,'risk':risk,'claim':display_excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
+            f={'dimension':'social','type':typ,'risk':risk,'claim':_v93_trigger_centered_truncate(excerpt,trig,620),
+               'full_claim_text':excerpt,'issue':issue,'rewrite':rewrite,'claim_score':score,
                'matched_phrase':trig,'why_flagged':why_flagged,
                'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
                'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
@@ -8695,6 +8760,8 @@ _V93_NON_ACCUSED_ROLE_MARKERS=(
     'blew the whistle on','was a whistleblower',
     'supplied evidence used in the investigation into','provided data used in the investigation into',
     'provided evidence used in the investigation into','supplied data used in the investigation into',
+    'provided evidence to the regulator','provided evidence to regulators','gave evidence to the regulator',
+    'gave evidence to regulators','submitted evidence to the regulator','testified to the regulator',
     'was not accused','has not been accused','is not accused',
     'is not the subject of the investigation','is not the target of the investigation',
     'cleared of any wrongdoing','cleared of all charges','cleared of all wrongdoing',
@@ -8702,16 +8769,36 @@ _V93_NON_ACCUSED_ROLE_MARKERS=(
 
 _V93_PROPER_NOUN_RE=re.compile(r'\b[A-Z][A-Za-z0-9&.\-]{1,40}(?:\s+[A-Z][A-Za-z0-9&.\-]{1,40})*\b')
 
-def _v93_last_named_entity_before(text,pos,window=90):
-    """Returns the LAST capitalised word-sequence (a crude proper-noun proxy) found in the
-    `window` characters immediately before `pos` in the original, case-preserved text, or ''
-    if none is found. Used as a lightweight stand-in for "who is the grammatical subject of
-    this verb phrase" without full entity-role parsing -- deliberately requires the ORIGINAL
-    case-preserved text (not a lowercased/normalised copy), since capitalisation is the only
-    signal available here for "this is a named entity"."""
+def _v93_last_named_entity_before(text,pos,window=90,aliases=None):
+    """Returns the LAST named-entity mention found in the `window` characters immediately
+    before `pos` in the original, case-preserved text, or '' if none is found. Used as a
+    lightweight stand-in for "who is the grammatical subject of this verb phrase" without full
+    entity-role parsing. Two independent signals are combined and the CLOSEST one to `pos`
+    wins: (1) a capitalised word-sequence (a crude proper-noun proxy, for an entity whose name
+    we don't otherwise know -- e.g. a rival named only in this one article), and (2) an
+    occurrence of one of the TARGET's own known aliases, matched case-INSENSITIVELY.
+
+    v93.54: originally relied solely on capitalisation (signal 1) -- but a source that writes
+    the target's name in lowercase ("exampleco assisted the regulator...", common in URLs,
+    slugs or informally-cased text) was then invisible to this function entirely, so the
+    exclusion this function exists to provide silently failed to fire. Reported by a
+    third-party code review with this exact reproduction: the identical scenario correctly
+    excluded the target when capitalised ("ExampleCo") but wrongly kept it as a negative
+    signal when the same text used lowercase ("exampleco"). Adding the alias-based signal
+    fixes this for the target's own name specifically -- capitalisation is still the only
+    signal available for an unknown OTHER entity's name, which is an inherent limit of a
+    marker-based approach without full named-entity recognition."""
     segment=text[max(0,pos-window):pos]
-    matches=_V93_PROPER_NOUN_RE.findall(segment)
-    return matches[-1] if matches else ''
+    candidates=[(m.start(),m.group(0)) for m in _V93_PROPER_NOUN_RE.finditer(segment)]
+    for alias in (aliases or []):
+        if not alias:
+            continue
+        for m in re.finditer(r'(?<![a-z0-9])'+re.escape(alias).replace(r'\ ',r'\s+')+r'(?![a-z0-9])',segment,flags=re.I):
+            candidates.append((m.start(),m.group(0)))
+    if not candidates:
+        return ''
+    candidates.sort(key=lambda c: c[0])
+    return candidates[-1][1]
 
 def _v93_name_matches_alias(name,aliases):
     key=_v64_norm(name)
@@ -8733,7 +8820,7 @@ def _v93_target_has_direct_accusation(text,aliases,window=90):
     because the same article also describes it helping expose a different matter."""
     for verb in _V93_DIRECT_ACCUSATION_VERBS:
         for m in re.finditer(re.escape(verb),text,flags=re.I):
-            subject=_v93_last_named_entity_before(text,m.start(),window)
+            subject=_v93_last_named_entity_before(text,m.start(),window,aliases)
             if subject and _v93_name_matches_alias(subject,aliases):
                 return True
     return False
@@ -8761,7 +8848,7 @@ def _v93_target_named_as_non_accused_party(text,aliases,window=90):
     ALSO, separately, the direct subject of an adverse-action verb elsewhere in the same text."""
     for marker in _V93_NON_ACCUSED_ROLE_MARKERS:
         for m in re.finditer(re.escape(marker),text,flags=re.I):
-            subject=_v93_last_named_entity_before(text,m.start(),window)
+            subject=_v93_last_named_entity_before(text,m.start(),window,aliases)
             if subject and _v93_name_matches_alias(subject,aliases):
                 if _v93_target_has_direct_accusation(text,aliases,window):
                     continue
