@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_55_source_attribution_coverage_and_score_fixes"
-APP_RELEASE_LABEL="v93.55"
+APP_VERSION="hostable_v93_56_unique_source_probe_and_comma_negation_fixes"
+APP_RELEASE_LABEL="v93.56"
 APP_RELEASE_DATE="2026-09-13"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1898,17 +1898,24 @@ def _evidence_term_hit(term, text):
     # (1) window_after read straight across a sentence boundary -- "LCA is available. Audit is
     # NOT available." still read "not available" (belonging to Audit, the NEXT sentence) as
     # negating LCA, since nothing stopped the 30-char window at the period. Clip both windows
-    # at the nearest clause boundary, the same fix already applied to _offset_basis_confirmed().
-    # (2) "LCA is NOT ONLY available but independently reviewed" is an emphatic AFFIRMATION
-    # ("not only X but also Y" asserts X), not a negation -- but it contains the literal
-    # substring "is not", so it still matched the 'is not' marker. Excluded as a special case.
+    # at the nearest SENTENCE boundary. (2) "LCA is NOT ONLY available but independently
+    # reviewed" is an emphatic AFFIRMATION ("not only X but also Y" asserts X), not a negation
+    # -- but it contains the literal substring "is not", so it still matched the 'is not'
+    # marker. Excluded as a special case.
+    # v93.56: the v93.55 fix included a COMMA as a boundary character, which broke a genuinely
+    # common English/Dutch construction -- a single leading negation governing a comma-
+    # separated list ("No LCA, audit or assurance is available"). Clipping window_before at the
+    # comma before "audit" threw away the "no" that negates it, so audit (and assurance) were
+    # wrongly counted as present. Reported by a third-party code review. Only true sentence-
+    # ending punctuation (.;!?) is treated as a boundary now; a comma inside a shared-negation
+    # list no longer breaks the connection between the negation word and later list items.
     for m in rx.finditer(text):
         window_before = text[max(0, m.start() - 25):m.start()]
-        boundary_before = max((window_before.rfind(ch) for ch in '.,;!?'), default=-1)
+        boundary_before = max((window_before.rfind(ch) for ch in '.;!?'), default=-1)
         if boundary_before != -1:
             window_before = window_before[boundary_before + 1:]
         window_after = text[m.end():m.end() + 30]
-        boundary_after = re.search(r'[.,;!?]', window_after)
+        boundary_after = re.search(r'[.;!?]', window_after)
         if boundary_after:
             window_after = window_after[:boundary_after.start()]
         before_negated = any(n in window_before for n in negation_before) and 'not only' not in window_before and 'no doubt' not in window_before
@@ -2726,19 +2733,42 @@ def assign_claim_sources(claims, page_segments, documents):
             # longer appears as one exact long substring of the raw crawled page text. Try
             # several candidate windows (different lengths, and a mid-excerpt window in case a
             # prefix was added) before giving up on an exact match.
-            candidates=[]
-            for n in (10,7,5):
-                if len(words)>=n:
-                    candidates.append(' '.join(words[:n]))
-            if len(words)>=14:
+            # v93.56: this tried SHORT probes first (10/7/5 words) and took the FIRST page any
+            # of them matched -- so two claims sharing a long common template/intro but naming
+            # a different product later (e.g. "Our company is committed to... Our product
+            # ALPHA/BETA is eco-friendly...") both matched on their shared short intro and were
+            # attributed to whichever page came first, even when the full claim text -- which
+            # DOES include the distinguishing product name -- was uniquely present on only one
+            # page. Reported by a third-party code review: using full_claim_text (the v93.55
+            # fix) alone wasn't enough, since the matching probes themselves were still short
+            # and non-specific. Now tries LONGEST probes first and only accepts a probe that
+            # matches EXACTLY ONE page (a confident, unique match); a probe matching zero or
+            # several pages is not decisive and a shorter one is tried next. Only once no
+            # length ever achieves a unique match does this fall back to the first page any
+            # probe matched, the same "better than nothing" behaviour as before.
+            probe_lengths=[n for n in (30,20,14,10,7,5) if len(words)>=n]
+            first_match_fallback=None
+            for n in probe_lengths:
+                probe=' '.join(words[:n])
+                if not probe:
+                    continue
+                matches=[seg.get('url') for seg in page_segments if probe in (seg.get('text') or '').lower()]
+                if matches and first_match_fallback is None:
+                    first_match_fallback=matches[0]
+                if len(matches)==1:
+                    best=matches[0]
+                    break
+            if not best and len(words)>=14:
                 mid=len(words)//3
-                candidates.append(' '.join(words[mid:mid+8]))
-            for probe in candidates:
-                for seg in page_segments:
-                    hay=(seg.get('text') or '').lower()
-                    if probe and probe in hay:
-                        best=seg.get('url'); break
-                if best: break
+                probe=' '.join(words[mid:mid+8])
+                if probe:
+                    matches=[seg.get('url') for seg in page_segments if probe in (seg.get('text') or '').lower()]
+                    if len(matches)==1:
+                        best=matches[0]
+                    elif matches and first_match_fallback is None:
+                        first_match_fallback=matches[0]
+            if not best:
+                best=first_match_fallback
             if not best:
                 # No exact-substring match anywhere. Previously this silently defaulted to
                 # page_segments[0] -- i.e. whichever page happened to be fetched/listed first --
@@ -3316,6 +3346,24 @@ def _v93_audience_factor(audience):
     if 'Mixed' in audience_label or 'unclear' in audience_label.lower():
         return 0.90
     return 0.75
+
+def _v93_score_calculation_note(material, regulatory_label):
+    """v93.56: calc_green_score()/calc_score() always described the SAME 50/22/20/8 weighting
+    in score_calculation_note, but _recalibrated_score() uses a DIFFERENT set of weights
+    (45/30/15/10) on fixed baseline inputs when there is no material claim to score at all --
+    so the shown explanation didn't match the formula that actually ran for that case. Reported
+    by a third-party code review. Describes whichever formula _recalibrated_score() actually
+    used, matching the branch taken there."""
+    if material:
+        return (f'Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + '
+            f'8% sector/channel sensitivity, weighted by audience factor, then capped by claim count and '
+            f'regulatory signal (see raw_before_cap/cap_applied) so that isolated claim signals cannot alone '
+            f'drive a High/Very high result unless they are a direct {regulatory_label} indicator or are '
+            'supported by negative external stakeholder signals.')
+    return ('No material claim was retained, so this score uses fixed baseline inputs rather than claim-derived '
+        'ones: 45% baseline claim-wording risk + 30% baseline evidence gap + 15% external stakeholder context + '
+        '10% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory '
+        'signal (see raw_before_cap/cap_applied).')
 
 def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings, audience=None):
     """A retained green claim with blacklisted_practice_indicator=True matches a FIXED
@@ -4639,7 +4687,7 @@ def calc_green_score(findings, sector, ext, page_text, audience, page_segments=N
     # claim bonus) and made the displayed score unreconstructable from the displayed components.
     score,recalibrated_comps=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     comps=dict(recalibrated_comps,substantiation_score=substantiation,evidence_notes=evidence_notes,audience_factor=audience_factor,
-        score_calculation_note='Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory signal (see raw_before_cap/cap_applied) so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.')
+        score_calculation_note=_v93_score_calculation_note(material,'blacklisted-practice'))
     return score, comps, external_context
 
 def calc_score(findings,sector,context,external_research=None,page_text="",company_name="",audience=None,page_segments=None):
@@ -4664,7 +4712,7 @@ def calc_score(findings,sector,context,external_research=None,page_text="",compa
     score,recalibrated_comps=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     external_mod, external_note=external_relevance_score(findings, external_research or {})
     comps=dict(recalibrated_comps,substantiation_score=substantiation,evidence_notes=evidence_notes,audience_factor=audience_factor,
-        score_calculation_note="Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory signal (see raw_before_cap/cap_applied) so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals.")
+        score_calculation_note=_v93_score_calculation_note(material,'regulatory (forced-labour)'))
     return score, external_mod, external_note, evidence_quality_credit(local_text, findings), comps
 
 def recalc_global_score(green_score, social_score, green_findings=None, social_findings=None):

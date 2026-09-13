@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_55_source_attribution_coverage_and_score_fixes'
+    assert app.APP_VERSION == 'hostable_v93_56_unique_source_probe_and_comma_negation_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1065,6 +1065,33 @@ def test_source_attribution_uses_full_text_not_the_truncated_display_excerpt():
         assert f['source_url'] == expected
 
 
+def test_source_attribution_prefers_longest_unique_probe_over_shared_intro():
+    """v93.56: a follow-up review found that using full_claim_text (v93.55) alone wasn't
+    enough -- assign_claim_sources() still tried SHORT probes first (10/7/5 words) and took
+    the FIRST page any of them matched. Two claims sharing a long common template/intro but
+    naming a different product later ("Our company is committed to... Our product ALPHA/BETA
+    is eco-friendly...") both matched on their shared short intro probe (present on BOTH
+    pages) and were attributed to whichever page came first, even though the fuller claim text
+    -- which does include the distinguishing product name -- was uniquely present on only one
+    page. Fixed by trying the longest probe first and only accepting a probe that uniquely
+    matches exactly one page."""
+    shared_intro = ('Our company is committed to environmental responsibility across every part '
+        'of our operations.')
+    def make(name):
+        return (shared_intro + f' Our product {name} is eco-friendly and made from recycled '
+            'ocean plastic collected by local fishing communities.')
+    text_alpha = make('Alpha')
+    text_beta = make('Beta')
+    claims = [{'claim_text': text_alpha, 'claim_type': 'Generic environmental claim'},
+        {'claim_text': text_beta, 'claim_type': 'Generic environmental claim'}]
+    page_segments = [{'url': 'https://example.com/alpha', 'text': text_alpha},
+        {'url': 'https://example.com/beta', 'text': text_beta}]
+    documents = [{'url': 'https://example.com/alpha'}, {'url': 'https://example.com/beta'}]
+    result = app.assign_claim_sources([dict(c) for c in claims], page_segments, documents)
+    assert result[0]['source_url'] == 'https://example.com/alpha'
+    assert result[1]['source_url'] == 'https://example.com/beta'
+
+
 def test_empco_floor_conclusion_text_matches_the_actual_resulting_band():
     """v93.52: the "Automatic Very high" conclusion prefix was hardcoded regardless of what the
     floor actually raised the score to -- since v93.51 scales the floor by audience factor for
@@ -2086,6 +2113,20 @@ def test_evidence_term_hit_respects_sentence_boundary_and_not_only_construction(
     assert app._evidence_term_hit('lca', 'lca is not only available but independently reviewed.') is True
 
 
+def test_evidence_term_hit_keeps_negation_across_a_comma_separated_list():
+    """v93.56: a third follow-up review found the v93.55 fix included a COMMA as a clause
+    boundary, which broke a genuinely common construction -- a single leading negation
+    governing a comma-separated list ("No LCA, audit or assurance is available."). Clipping
+    window_before at the comma right before "audit" threw away the "no" that negates it, so
+    audit (and assurance) were wrongly counted as present evidence. Reported by a third-party
+    code review with this exact reproduction. Only true sentence-ending punctuation (.;!?) is
+    a boundary now; a comma inside a shared-negation list no longer breaks the connection."""
+    text = 'no lca, audit or assurance is available.'
+    assert app._evidence_term_hit('lca', text) is False
+    assert app._evidence_term_hit('audit', text) is False
+    assert app._evidence_term_hit('assurance', text) is False
+
+
 def test_entity_match_rejects_target_named_only_as_non_accused_helper():
     """v93.51: entity_match_details() retained a source purely from the target being named
     prominently (title/URL) plus a controversy term appearing anywhere nearby, with no check
@@ -2429,6 +2470,24 @@ def test_score_is_reconstructable_from_its_displayed_components():
     raw = round((comps['claim_wording_risk']*0.50 + comps['substantiation_risk']*0.22
         + comps['external_context_risk']*0.20 + comps['sector_baseline_risk']*0.08) * comps['audience_factor'])
     assert raw == comps['raw_before_cap']
+
+
+def test_score_calculation_note_matches_the_formula_actually_used():
+    """v93.56: calc_green_score()/calc_score() always described the same 50/22/20/8 weighting
+    in score_calculation_note, but _recalibrated_score() uses a DIFFERENT set of weights
+    (45/30/15/10 on fixed baseline inputs) when there is no material claim to score at all --
+    so the shown explanation didn't match the formula that actually ran, even though the
+    v93.55 fix had otherwise made the score reconstructable from its components. Reported by a
+    third-party code review. The note must describe whichever formula actually ran."""
+    score, comps = app._recalibrated_score([], 50, [], 20, 35, False, 1.0)
+    note = app._v93_score_calculation_note([], 'blacklisted-practice')
+    assert '45%' in note and '30%' in note and '15%' in note and '10%' in note
+    reconstructed = round(comps['claim_wording_risk']*0.45 + comps['substantiation_risk']*0.30
+        + comps['external_context_risk']*0.15 + comps['sector_baseline_risk']*0.10)
+    assert reconstructed == comps['raw_before_cap']
+
+    material_note = app._v93_score_calculation_note([{'claim_score': 50}], 'blacklisted-practice')
+    assert '50%' in material_note and '22%' in material_note and '20%' in material_note and '8%' in material_note
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
