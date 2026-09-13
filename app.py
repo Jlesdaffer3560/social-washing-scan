@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_56_unique_source_probe_and_comma_negation_fixes"
-APP_RELEASE_LABEL="v93.56"
+APP_VERSION="hostable_v93_57_full_probe_and_clause_aware_negation_fixes"
+APP_RELEASE_LABEL="v93.57"
 APP_RELEASE_DATE="2026-09-13"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1859,6 +1859,7 @@ def is_placeholder_finding(finding_type):
     t = (finding_type or '').lower()
     return t.startswith('no material') or t.startswith('no major')
 
+_EVIDENCE_CLAUSE_VERB_RE = re.compile(r"\b(is|are|was|were|zijn|ben|bent|est|sont|était|étaient)\b")
 _EVIDENCE_TERM_RE_CACHE = {}
 def _evidence_term_hit(term, text):
     """v93.51: evidence_signal_score()/green_evidence_signal_score() both counted a term as
@@ -1906,18 +1907,35 @@ def _evidence_term_hit(term, text):
     # common English/Dutch construction -- a single leading negation governing a comma-
     # separated list ("No LCA, audit or assurance is available"). Clipping window_before at the
     # comma before "audit" threw away the "no" that negates it, so audit (and assurance) were
-    # wrongly counted as present. Reported by a third-party code review. Only true sentence-
-    # ending punctuation (.;!?) is treated as a boundary now; a comma inside a shared-negation
-    # list no longer breaks the connection between the negation word and later list items.
+    # wrongly counted as present. Reported by a third-party code review. Removing the comma
+    # entirely fixed that, but a third review then found the OTHER direction breaks: "LCA is
+    # available, audit is not available" is two INDEPENDENT clauses sharing a comma splice, not
+    # a shared-negation list -- with no comma boundary at all, LCA's window_after read straight
+    # into "audit is not available" and wrongly treated LCA itself as negated.
+    # v93.57: a comma only separates independent clauses (and should act as a hard boundary)
+    # when the text on ITS OWN side of the comma already forms a complete clause with its own
+    # verb ("LCA IS available," / "...audit IS NOT available"); a comma inside a shared-negation
+    # list has no verb before it ("no LCA," / "audit or assurance,") since the list items are
+    # bare nouns governed by one distant verb. Only cut at the comma when that verb is present.
+    # A 3+ item list ("no A, B, or C is available") needs a wider window than a single comma's
+    # reach to still see the leading negation for the LAST item -- 90 chars comfortably covers
+    # a realistic list without reaching into an unrelated preceding sentence (already excluded
+    # by the sentence-boundary cut below, which runs first).
     for m in rx.finditer(text):
-        window_before = text[max(0, m.start() - 25):m.start()]
+        window_before = text[max(0, m.start() - 90):m.start()]
         boundary_before = max((window_before.rfind(ch) for ch in '.;!?'), default=-1)
         if boundary_before != -1:
             window_before = window_before[boundary_before + 1:]
-        window_after = text[m.end():m.end() + 30]
+        comma_before = window_before.rfind(',')
+        if comma_before != -1 and _EVIDENCE_CLAUSE_VERB_RE.search(window_before[:comma_before]):
+            window_before = window_before[comma_before + 1:]
+        window_after = text[m.end():m.end() + 60]
         boundary_after = re.search(r'[.;!?]', window_after)
         if boundary_after:
             window_after = window_after[:boundary_after.start()]
+        comma_after = window_after.find(',')
+        if comma_after != -1 and _EVIDENCE_CLAUSE_VERB_RE.search(window_after[:comma_after]):
+            window_after = window_after[:comma_after]
         before_negated = any(n in window_before for n in negation_before) and 'not only' not in window_before and 'no doubt' not in window_before
         after_negated = any(n in window_after for n in negation_after) and 'not only' not in window_after and 'no doubt' not in window_after
         if before_negated or after_negated:
@@ -2743,18 +2761,24 @@ def assign_claim_sources(claims, page_segments, documents):
             # fix) alone wasn't enough, since the matching probes themselves were still short
             # and non-specific. Now tries LONGEST probes first and only accepts a probe that
             # matches EXACTLY ONE page (a confident, unique match); a probe matching zero or
-            # several pages is not decisive and a shorter one is tried next. Only once no
-            # length ever achieves a unique match does this fall back to the first page any
-            # probe matched, the same "better than nothing" behaviour as before.
-            probe_lengths=[n for n in (30,20,14,10,7,5) if len(words)>=n]
-            first_match_fallback=None
+            # several pages is not decisive and a shorter one is tried next.
+            # v93.57: the v93.56 fix still capped the longest probe at 30 words, so a shared
+            # intro LONGER than 30 words (common in real corporate boilerplate) meant even the
+            # longest probe tried never reached the distinguishing text -- still ambiguous at
+            # every length, and the old code then fell back to "guess the first page any probe
+            # matched", misattributing the claim again. Reported by a third-party code review.
+            # The full claim text itself is now always tried FIRST, regardless of length, since
+            # an exact match against it is the most specific probe possible. Per the reviewer's
+            # own recommendation, an ambiguous claim (never uniquely resolved at any probe
+            # length) no longer guesses the first match either -- it falls through to the
+            # distinctive-word-overlap scoring below, and ultimately to an explicit "source
+            # could not be confidently matched" rather than a confident wrong answer.
+            probe_lengths=sorted({len(words)} | {n for n in (60,40,30,20,14,10,7,5) if len(words)>=n}, reverse=True)
             for n in probe_lengths:
                 probe=' '.join(words[:n])
                 if not probe:
                     continue
                 matches=[seg.get('url') for seg in page_segments if probe in (seg.get('text') or '').lower()]
-                if matches and first_match_fallback is None:
-                    first_match_fallback=matches[0]
                 if len(matches)==1:
                     best=matches[0]
                     break
@@ -2765,10 +2789,6 @@ def assign_claim_sources(claims, page_segments, documents):
                     matches=[seg.get('url') for seg in page_segments if probe in (seg.get('text') or '').lower()]
                     if len(matches)==1:
                         best=matches[0]
-                    elif matches and first_match_fallback is None:
-                        first_match_fallback=matches[0]
-            if not best:
-                best=first_match_fallback
             if not best:
                 # No exact-substring match anywhere. Previously this silently defaulted to
                 # page_segments[0] -- i.e. whichever page happened to be fetched/listed first --

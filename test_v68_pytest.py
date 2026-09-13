@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_56_unique_source_probe_and_comma_negation_fixes'
+    assert app.APP_VERSION == 'hostable_v93_57_full_probe_and_clause_aware_negation_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1092,6 +1092,33 @@ def test_source_attribution_prefers_longest_unique_probe_over_shared_intro():
     assert result[1]['source_url'] == 'https://example.com/beta'
 
 
+def test_source_attribution_resolves_shared_intro_longer_than_30_words():
+    """v93.57: a final review found the v93.56 fix still capped its longest probe at 30 words --
+    a shared intro LONGER than 30 words (common in real corporate boilerplate) meant even the
+    longest probe tried never reached the distinguishing product name, so it stayed ambiguous
+    at every length and fell back to guessing the first page any probe matched. Reported by a
+    third-party code review with this exact reproduction (a 38-word shared intro). The full
+    claim text itself is now always tried first, regardless of length, since an exact match
+    against it is the most specific probe possible."""
+    shared_intro = ('Our company has a long-standing commitment to environmental responsibility and '
+        'sustainable business practices across every part of our global operations and supply '
+        'chain network worldwide today, reflecting years of dedicated investment and extensive '
+        'stakeholder engagement throughout our history.')
+    assert len(shared_intro.split()) > 30
+    def make(name):
+        return shared_intro + f' Our product {name} is eco-friendly and made from recycled ocean plastic.'
+    text_alpha = make('Alpha')
+    text_beta = make('Beta')
+    claims = [{'claim_text': text_alpha, 'claim_type': 'Generic environmental claim'},
+        {'claim_text': text_beta, 'claim_type': 'Generic environmental claim'}]
+    page_segments = [{'url': 'https://example.com/alpha', 'text': text_alpha},
+        {'url': 'https://example.com/beta', 'text': text_beta}]
+    documents = [{'url': 'https://example.com/alpha'}, {'url': 'https://example.com/beta'}]
+    result = app.assign_claim_sources([dict(c) for c in claims], page_segments, documents)
+    assert result[0]['source_url'] == 'https://example.com/alpha'
+    assert result[1]['source_url'] == 'https://example.com/beta'
+
+
 def test_empco_floor_conclusion_text_matches_the_actual_resulting_band():
     """v93.52: the "Automatic Very high" conclusion prefix was hardcoded regardless of what the
     floor actually raised the score to -- since v93.51 scales the floor by audience factor for
@@ -2125,6 +2152,27 @@ def test_evidence_term_hit_keeps_negation_across_a_comma_separated_list():
     assert app._evidence_term_hit('lca', text) is False
     assert app._evidence_term_hit('audit', text) is False
     assert app._evidence_term_hit('assurance', text) is False
+
+
+def test_evidence_term_hit_distinguishes_shared_negation_list_from_independent_clauses():
+    """v93.57: a final review found the v93.56 comma-removal fix (which correctly kept a shared
+    negation list intact) broke the OTHER direction: "LCA is available, audit is not available"
+    is two INDEPENDENT clauses joined by a comma splice, not a shared-negation list -- with no
+    comma boundary at all, LCA's window_after read straight into "audit is not available" and
+    wrongly treated LCA itself as negated. Also, a 3-item comma list ("no life cycle assessment,
+    independent audit or assurance is available") needs the negation window wide enough to
+    still reach the leading "no" for the LAST item. Fixed by only treating a comma as a clause
+    boundary when the text on its own side already forms a complete clause with its own verb
+    (a bare noun list has no verb before the comma); reported by a third-party code review with
+    both exact reproductions."""
+    list_text = 'no life cycle assessment, independent audit or assurance is available.'
+    assert app._evidence_term_hit('life cycle', list_text) is False
+    assert app._evidence_term_hit('audit', list_text) is False
+    assert app._evidence_term_hit('assurance', list_text) is False
+
+    clause_text = 'lca is available, audit is not available.'
+    assert app._evidence_term_hit('lca', clause_text) is True
+    assert app._evidence_term_hit('audit', clause_text) is False
 
 
 def test_entity_match_rejects_target_named_only_as_non_accused_helper():
