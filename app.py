@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_54_full_text_analysis_and_role_case_fixes"
-APP_RELEASE_LABEL="v93.54"
-APP_RELEASE_DATE="2026-09-12"
+APP_VERSION="hostable_v93_55_source_attribution_coverage_and_score_fixes"
+APP_RELEASE_LABEL="v93.55"
+APP_RELEASE_DATE="2026-09-13"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -1894,10 +1894,26 @@ def _evidence_term_hit(term, text):
     negation_after = ('unavailable', 'not available', 'is not', 'are not', 'was not', 'were not',
         'niet beschikbaar', 'ontbreekt', 'is niet', 'zijn niet',
         "n'est pas disponible", 'indisponible', "n'est pas", 'ne sont pas')
+    # v93.55: a follow-up review found the v93.54 window-based check had two further gaps.
+    # (1) window_after read straight across a sentence boundary -- "LCA is available. Audit is
+    # NOT available." still read "not available" (belonging to Audit, the NEXT sentence) as
+    # negating LCA, since nothing stopped the 30-char window at the period. Clip both windows
+    # at the nearest clause boundary, the same fix already applied to _offset_basis_confirmed().
+    # (2) "LCA is NOT ONLY available but independently reviewed" is an emphatic AFFIRMATION
+    # ("not only X but also Y" asserts X), not a negation -- but it contains the literal
+    # substring "is not", so it still matched the 'is not' marker. Excluded as a special case.
     for m in rx.finditer(text):
         window_before = text[max(0, m.start() - 25):m.start()]
+        boundary_before = max((window_before.rfind(ch) for ch in '.,;!?'), default=-1)
+        if boundary_before != -1:
+            window_before = window_before[boundary_before + 1:]
         window_after = text[m.end():m.end() + 30]
-        if any(n in window_before for n in negation_before) or any(n in window_after for n in negation_after):
+        boundary_after = re.search(r'[.,;!?]', window_after)
+        if boundary_after:
+            window_after = window_after[:boundary_after.start()]
+        before_negated = any(n in window_before for n in negation_before) and 'not only' not in window_before and 'no doubt' not in window_before
+        after_negated = any(n in window_after for n in negation_after) and 'not only' not in window_after and 'no doubt' not in window_after
+        if before_negated or after_negated:
             continue
         return True
     return False
@@ -1991,7 +2007,11 @@ def evidence_checklist(f):
     return base+["evidence trail","methodology","governance owner"]
 
 def build_claim_inventory(findings):
-    return [{"claim_text":f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite","")} for f in findings]
+    # v93.55: full_claim_text carries the untruncated excerpt alongside the display claim_text
+    # -- see assign_claim_sources()'s v93.55 fix, which needs it to match a finding to its
+    # actual source page instead of the truncated display text two similar long claims can
+    # share once their distinguishing wording falls outside the truncation window.
+    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite","")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -2685,9 +2705,18 @@ def build_channel_analysis(documents):
     }
 
 def assign_claim_sources(claims, page_segments, documents):
+    # v93.55: this matched a claim to its source page using the TRUNCATED, trigger-centered
+    # display text (claim_text) -- so two long, near-identical claims naming different
+    # products (Alpha on /alpha, Beta on /beta) truncate down to identical text once the
+    # product name falls outside the truncation window, and the substring-probe matching
+    # below can no longer tell them apart -- both got attributed to whichever page matched
+    # first. Reported by a third-party code review with this exact reproduction. Prefer the
+    # full, untruncated text (full_claim_text, set by build_claim_inventory()/
+    # build_green_claim_inventory()/assign_sources_to_findings()) for matching; fall back to
+    # claim_text for any caller that never set it.
     docs_by_url={d.get('url'):d for d in documents or []}
     for c in claims:
-        txt=(c.get('claim_text') or '').strip().lower()
+        txt=(c.get('full_claim_text') or c.get('claim_text') or '').strip().lower()
         best=None
         if txt and page_segments:
             words=txt.split()
@@ -2745,10 +2774,19 @@ def assign_claim_sources(claims, page_segments, documents):
 def assign_sources_to_findings(findings, page_segments, documents):
     """Attach page/document source details directly to UI findings.
     This keeps the claim-signal table traceable: source page/doc/link is shown next to the wording.
-    """
+
+    v93.55: this matched a finding to its source page using f['claim'] -- the TRUNCATED,
+    trigger-centered DISPLAY excerpt (see the v93.54 full_claim_text split) -- not the full
+    text. Reported by a third-party code review with this exact reproduction: two long, near-
+    identical claims naming different products (Alpha on /alpha, Beta on /beta) truncate down
+    to identical display text once the product name falls outside the truncation window, so
+    assign_claim_sources()'s substring-probe matching can no longer tell them apart and
+    attributes both to whichever page it happens to match first. Use the full, untruncated
+    text (already preserved for legal analysis) for source matching too; only fall back to
+    the display text when full_claim_text is absent."""
     proxy=[]
     for f in findings or []:
-        proxy.append({'claim_text':f.get('claim',''), 'claim_type':f.get('type','')})
+        proxy.append({'claim_text':f.get('full_claim_text') or f.get('claim',''), 'claim_type':f.get('type','')})
     proxy=assign_claim_sources(proxy, page_segments, documents)
     for f, c in zip(findings or [], proxy):
         for k in ['source_url','source_label','audience_group','audience_lens','source_interpretation']:
@@ -3328,7 +3366,9 @@ def green_washing_conclusion(score, findings, evidence_gap, external_score, audi
 def build_green_claim_inventory(findings):
     out=[]
     for f in findings:
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        # v93.55: full_claim_text carries the untruncated excerpt alongside the display
+        # claim_text -- see assign_claim_sources()'s v93.55 fix.
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -3581,7 +3621,7 @@ def _strip_pdf_glyph_artifacts(txt):
     lost ligature surfaced verbatim as "o\\036er" in a quoted claim on the results page."""
     return re.sub(r'\\[0-7]{1,3}', '', txt)
 
-def extract_pdf_text_best_effort(data, max_pages=60):
+def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False):
     """PDF text extraction. Tries pypdf first, which correctly handles FlateDecode
     (the near-universal PDF compression method) and font encoding/ToUnicode maps -- the
     dominant case for professionally produced corporate PDFs (annual/CSR/ESG reports).
@@ -3589,33 +3629,46 @@ def extract_pdf_text_best_effort(data, max_pages=60):
     fails to parse the file, so a single malformed PDF cannot break the scan.
     max_pages bounds worst case processing time for very large reports on a hosted,
     time-limited deployment.
-    """
+
+    v93.55: return_coverage=True (used only by decode_uploaded_document(), the user-upload
+    scan path) additionally returns a coverage dict (original_chars, analyzed_chars,
+    total_pages, pages_analyzed) alongside the text, so a silently truncated document -- a
+    claim near the end of a long report simply vanishing with no indication anything was cut
+    -- can instead be disclosed to the user. Reported by a third-party code review. Every
+    other caller (fetch_page_content(), fetch_document_text()) keeps calling this with the
+    default False and sees no behaviour change at all."""
     pypdf=_get_pypdf()
     if pypdf is not None:
         try:
             reader=pypdf.PdfReader(io.BytesIO(data))
+            total_pages=len(reader.pages)
             parts=[]
-            n=min(len(reader.pages), max_pages)
+            n=min(total_pages, max_pages)
+            pages_analyzed=0
             for i in range(n):
                 try:
                     t=reader.pages[i].extract_text() or ''
                 except Exception:
                     t=''
                 if t: parts.append(t)
+                pages_analyzed=i+1
                 if sum(len(p) for p in parts) > 200000:
                     break
             txt=' '.join(parts)
             txt=_strip_pdf_glyph_artifacts(txt)
             txt=re.sub(r'\s+', ' ', txt).strip()
             if len(txt) >= 80:
+                if return_coverage:
+                    return txt[:90000],{'original_chars':len(txt),'analyzed_chars':min(len(txt),90000),
+                        'total_pages':total_pages,'pages_analyzed':pages_analyzed}
                 return txt[:90000]
             # pypdf ran but yielded almost nothing usable (e.g. scanned/image-only PDF) --
             # fall through to the regex fallback in case it can pull out something extra.
         except Exception:
             pass
-    return _extract_pdf_text_regex_fallback(data)
+    return _extract_pdf_text_regex_fallback(data, return_coverage=return_coverage)
 
-def _extract_pdf_text_regex_fallback(data):
+def _extract_pdf_text_regex_fallback(data, return_coverage=False):
     """Best-effort extraction without any dependency. Decompresses FlateDecode content
     streams via the standard-library zlib module and pulls text-showing operator strings
     (Tj/TJ) from them; falls back further to any parenthesised literal string for very old
@@ -3656,6 +3709,9 @@ def _extract_pdf_text_regex_fallback(data):
         pass
     txt=re.sub(r'\s+', ' ', ' '.join(t for t in text_parts if t)).strip()
     txt=_strip_pdf_glyph_artifacts(txt)
+    if return_coverage:
+        return txt[:90000],{'original_chars':len(txt),'analyzed_chars':min(len(txt),90000),
+            'total_pages':None,'pages_analyzed':None}
     return txt[:90000]
 
 def decode_uploaded_document(filename, content_base64, mime_type=''):
@@ -3664,6 +3720,13 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     # a clear error, instead of the default lenient decoder silently discarding the bad
     # characters and returning a truncated/corrupted document with no indication anything
     # went wrong.
+    # v93.55: this silently truncated to 90,000 characters with no indication to the caller
+    # that anything was cut -- a document of 99,105 characters lost its final ~9,000 characters
+    # (and any claim in them) with nothing in the response to say so. Reported by a third-party
+    # code review. Now returns (text, coverage) -- coverage carries original_chars,
+    # analyzed_chars, whether truncation happened, and (for a PDF) total_pages/pages_analyzed --
+    # so analyse_uploaded_document() can disclose this explicitly instead of a claim near the
+    # end simply vanishing with no explanation.
     try:
         data=base64.b64decode(content_base64 or '',validate=True)
     except ValueError as e:  # binascii.Error is itself a ValueError subclass
@@ -3671,10 +3734,11 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     if len(data)>8_000_000:
         raise ValueError('Uploaded document is too large for this hosted first-pass scan. Please upload an extract below 8 MB (the raw file size, before this upload step\'s base64 encoding).')
     name=(filename or 'uploaded_document').lower()
+    page_coverage=None
     if name.endswith('.docx') or 'wordprocessingml' in (mime_type or '').lower():
         txt=extract_docx_text(data)
     elif name.endswith('.pdf') or 'pdf' in (mime_type or '').lower():
-        txt=extract_pdf_text_best_effort(data)
+        txt,page_coverage=extract_pdf_text_best_effort(data, return_coverage=True)
     else:
         txt=data.decode('utf-8',errors='ignore')
         if '<html' in txt[:500].lower() or '<body' in txt[:1000].lower():
@@ -3684,7 +3748,17 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     txt=re.sub(r'\n{2,}','\n',txt).strip()
     if len(txt)<80:
         raise ValueError('The uploaded document could not be parsed into enough text. Please upload a text-based DOCX/HTML/TXT version or paste an extract into a text file.')
-    return txt[:90000]
+    # For PDFs, page_coverage['original_chars'] already reflects the pre-normalisation
+    # extracted length (measured inside extract_pdf_text_best_effort, before the whitespace
+    # clean-up just above) -- close enough for a disclosure figure; for DOCX/text/HTML, txt
+    # here IS the full, untruncated text, so its own length is the true original size.
+    original_chars=page_coverage['original_chars'] if page_coverage else len(txt)
+    analyzed_text=txt[:90000]
+    coverage={'original_chars':original_chars,'analyzed_chars':min(len(analyzed_text),original_chars),
+        'truncated':original_chars>90000,
+        'total_pages':(page_coverage or {}).get('total_pages'),
+        'pages_analyzed':(page_coverage or {}).get('pages_analyzed')}
+    return analyzed_text,coverage
 
 def fetch_document_text(url):
     p=urlparse(url)
@@ -3832,7 +3906,26 @@ def federation_pilot_output(green_findings, social_findings, overall, green_scor
         'example_sector_output':'A federation can run the same scan across a small sample of member websites and receive an anonymised benchmark of most common claim risks.'
     }
 
-def analyse_uploaded_document(filename, text, company_name_hint='', company_number=''):
+def analyse_uploaded_document(filename, text, company_name_hint='', company_number='', document_coverage=None):
+    # v93.55: decode_uploaded_document() silently truncated to 90,000 characters with no
+    # indication anything was cut -- a document of 99,105 characters lost its final ~9,000
+    # characters (and any claim in them) with nothing in the response to say so. Reported by a
+    # third-party code review. document_coverage (from decode_uploaded_document()) is surfaced
+    # explicitly below, both as its own result field and as a plain-language note prepended to
+    # the summary when truncation occurred, so "no claim found" is visibly scoped to the
+    # analysed portion rather than implying the whole document was reviewed.
+    coverage=dict(document_coverage) if document_coverage else {'original_chars':len(text or ''),
+        'analyzed_chars':len(text or ''),'truncated':False,'total_pages':None,'pages_analyzed':None}
+    coverage.setdefault('truncated', coverage.get('original_chars',0) > coverage.get('analyzed_chars',0))
+    coverage_note=''
+    if coverage.get('truncated'):
+        page_note=''
+        if coverage.get('total_pages') and coverage.get('pages_analyzed') and coverage['pages_analyzed'] < coverage['total_pages']:
+            page_note=f" (pages 1-{coverage['pages_analyzed']} of {coverage['total_pages']})"
+        coverage_note=(f"Document coverage note: this document contains approximately {coverage['original_chars']:,} "
+            f"characters; only the first {coverage['analyzed_chars']:,}{page_note} were analysed for this hosted "
+            "first-pass scan. Any claim appearing only after that point was not reviewed and is not reflected in "
+            "this result.")
     source='Uploaded internal document: '+(filename or 'document')
     kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
     if kbo_info and kbo_info.get('name'):
@@ -3894,8 +3987,10 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
              f"overall sustainability-claim risk ({overall}/100). Green-claim risk is {green_score}/100; "
              f"social-claim risk is {social_score}/100. The main priorities are the retained wording and the "
              "evidence available to support it. This is an initial screening result, not a legal finding.")
+    if coverage_note:
+        summary=coverage_note+' '+summary
     return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','company_identity_check':company_identity_check,'empco_blacklist_floor_applied':empco_blacklist_floor,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'document_coverage':coverage,'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']+([coverage_note] if coverage_note else [])},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
     """Turns a raw fetch exception into a clear, non-technical explanation."""
@@ -4538,9 +4633,13 @@ def calc_green_score(findings, sector, ext, page_text, audience, page_segments=N
     sector_score=sector_environment_score(sector)
     audience_factor=_v93_audience_factor(audience)
     regulatory=any(f.get('blacklisted_practice_indicator') for f in material)
-    score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
-    top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={'claim_wording_risk':min(100, top + 5*(len(material)-1)) if material else 8,'substantiation_risk':15 if not material else max(0,100-substantiation),'external_context_risk':external_score,'sector_baseline_risk':sector_score,'substantiation_score':substantiation,'evidence_notes':evidence_notes,'audience_factor':audience_factor,'score_calculation_note':'Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.'}
+    # v93.55: comps below now comes directly from _recalibrated_score()'s own return value
+    # instead of being recomputed separately -- see that function's v93.55 note for why the
+    # two had drifted apart (a different, uncapped count factor, and a missing regulatory-
+    # claim bonus) and made the displayed score unreconstructable from the displayed components.
+    score,recalibrated_comps=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
+    comps=dict(recalibrated_comps,substantiation_score=substantiation,evidence_notes=evidence_notes,audience_factor=audience_factor,
+        score_calculation_note='Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory signal (see raw_before_cap/cap_applied) so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct blacklisted-practice indicator or are supported by negative external stakeholder signals.')
     return score, comps, external_context
 
 def calc_score(findings,sector,context,external_research=None,page_text="",company_name="",audience=None,page_segments=None):
@@ -4558,10 +4657,14 @@ def calc_score(findings,sector,context,external_research=None,page_text="",compa
     # the app's own audience methodology saying internal content should not be weighted like
     # consumer-facing marketing.
     audience_factor=_v93_audience_factor(audience)
-    score=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
+    # v93.55: see calc_green_score()'s matching v93.55 note -- comps now comes directly from
+    # _recalibrated_score()'s own return value instead of a separately recomputed (and
+    # subtly different) version, so the displayed score is actually reconstructable from the
+    # displayed components.
+    score,recalibrated_comps=_recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory, audience_factor)
     external_mod, external_note=external_relevance_score(findings, external_research or {})
-    top=max([f.get('claim_score',0) for f in material] or [8])
-    comps={"claim_wording_risk":min(100, top + 5*(len(material)-1)) if material else 8,"substantiation_risk":15 if not material else max(0,100-substantiation),"external_context_risk":external_score,"sector_baseline_risk":sector_score,"substantiation_score":substantiation,"evidence_notes":evidence_notes,"audience_factor":audience_factor,"score_calculation_note":"Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor and capped conservatively so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals."}
+    comps=dict(recalibrated_comps,substantiation_score=substantiation,evidence_notes=evidence_notes,audience_factor=audience_factor,
+        score_calculation_note="Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + 8% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory signal (see raw_before_cap/cap_applied) so that isolated claim signals cannot alone drive a High/Very high result unless they are a direct regulatory (forced-labour) indicator or are supported by negative external stakeholder signals.")
     return score, external_mod, external_note, evidence_quality_credit(local_text, findings), comps
 
 def recalc_global_score(green_score, social_score, green_findings=None, social_findings=None):
@@ -6592,8 +6695,8 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')
                         if not content: return self._json({'error':'No document content provided'},400)
-                        txt=decode_uploaded_document(filename,content,data.get('mime_type',''))
-                        result=analyse_uploaded_document(filename,txt,data.get('company_name',''),data.get('company_number',''))
+                        txt,doc_coverage=decode_uploaded_document(filename,content,data.get('mime_type',''))
+                        result=analyse_uploaded_document(filename,txt,data.get('company_name',''),data.get('company_number',''),document_coverage=doc_coverage)
                         _v92_save_scan_history(result,'document',client)
                     if data.get('format')=='pdf': return self._respond_pdf(result)
                     return self._json(attach_report_signature(result))
@@ -6881,7 +6984,14 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
             neg_before=neg_before[last_boundary+1:]
         fr_negator=re.search(r"\bne\b|\bn'",neg_before)
         fr_pas=re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_before) or re.search(r'\b(pas|jamais|plus|aucun|aucune)\b',neg_after)
-        if re.search(r"\b(not|never|no)\b|n't|niet|geen|nooit",neg_before) or (fr_negator and fr_pas):
+        # v93.55: "not only X (but also Y)" and "no doubt X" are emphatic AFFIRMATIONS of X, not
+        # negations -- but the bare "\b(not|never|no)\b" pattern matched the "not"/"no" inside
+        # them regardless, so "Our products are NOT ONLY eco-friendly but also durable" and
+        # "There is NO DOUBT that our products are eco-friendly" were both rejected as if the
+        # claim itself were negated. Reported by a third-party code review; these two idioms are
+        # excluded from the negation match with a lookahead rather than removed from it entirely,
+        # so an unrelated negation elsewhere in the same window still works normally.
+        if re.search(r"\b(not|never|no)\b(?!\s+(only|doubt))|n't|niet(?!\s+alleen)|geen(?!\s+twijfel)|nooit",neg_before) or (fr_negator and fr_pas):
             return False
         # v87: a conditional/hypothetical sentence ("If our packaging were fully recyclable, it
         # would reduce waste", "Should we become carbon neutral, we would be proud") is not an
@@ -6940,7 +7050,17 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         'data shows','is estimated at','is defined as','refers to','supports un sustainable development goal',
         'sustainable development goal','sdg 8','ilo convention','csddd requires','csrd requires','the law requires',
         'regulation requires','directive requires','is a fundamental part of']
-    if any(n in c for n in definitional_citation) and not any(x in c for x in ['we ensure','we guarantee','we comply','we are compliant','our compliance','we achieve','we have achieved']):
+    # v93.55: "according to our OWN assessment/analysis/data" is the company citing ITSELF, not
+    # an external source, law or study -- a genuine (if self-assessed, weaker-evidence) first-
+    # person claim, not the definitional/citation pattern this list targets. Reported by a
+    # third-party code review: "Our products are eco-friendly according to our own assessment"
+    # was rejected entirely, identically to a genuine external citation like "according to a UN
+    # report". Only the bare 'according to' entry is affected; any OTHER citation phrase present
+    # in the same excerpt still excludes it as before.
+    matched_citation=[n for n in definitional_citation if n in c]
+    if re.search(r'according to our (own|internal)\b',c) and 'according to' in matched_citation:
+        matched_citation.remove('according to')
+    if matched_citation and not any(x in c for x in ['we ensure','we guarantee','we comply','we are compliant','our compliance','we achieve','we have achieved']):
         return False
     # v84: "our industry" only caught that exact phrase; a very common equivalent phrasing --
     # an industry-wide/sector-wide statistic with no claim about the scanned company itself,
@@ -7554,9 +7674,24 @@ def _score_cap(material, external_score, regulatory_signal=False):
     return 92
 
 def _recalibrated_score(material, substantiation, evidence_notes, external_score, sector_score, regulatory_signal=False, audience_factor=1.0):
+    """v93.55: this computed claim_wording/evidence_gap/the score cap internally and returned
+    only the final blended number -- but calc_green_score()/calc_score() then recomputed their
+    OWN, separate version of claim_wording_risk for display (using 5*(len(material)-1) with no
+    cap, instead of this function's actual min(20, 4*max(0,len(material)-1)); and omitting this
+    function's +5-per-blacklisted/regulatory-claim bonus entirely), and never exposed the cap
+    or which regulatory_signal value was actually applied. A reader could not reconstruct the
+    displayed score from the displayed components even though both existed in the same call.
+    Reported by a third-party code review with this exact reproduction. Now returns
+    (score, components) so calc_green_score()/calc_score() can display the ACTUAL values this
+    function used, not a parallel, drifting recomputation."""
     if not material:
-        raw=round((8*0.45 + 15*0.30 + external_score*0.15 + sector_score*0.10)*audience_factor)
-        return min(raw, _score_cap(material, external_score, regulatory_signal))
+        claim_wording=8; evidence_gap=15
+        raw=round((claim_wording*0.45 + evidence_gap*0.30 + external_score*0.15 + sector_score*0.10)*audience_factor)
+        cap=_score_cap(material, external_score, regulatory_signal)
+        score=max(0,min(100,min(raw,cap)))
+        return score,{'claim_wording_risk':claim_wording,'substantiation_risk':evidence_gap,
+            'external_context_risk':external_score,'sector_baseline_risk':sector_score,
+            'raw_before_cap':raw,'cap_applied':cap,'regulatory_signal_used':bool(regulatory_signal)}
     top=max(f.get('claim_score',0) for f in material)
     blacklisted=sum(1 for f in material if f.get('blacklisted_practice_indicator') or 'forced-labour' in f.get('type','').lower() or 'climate-neutrality' in f.get('type','').lower())
     count_factor=min(20, 4*max(0,len(material)-1))
@@ -7569,8 +7704,12 @@ def _recalibrated_score(material, substantiation, evidence_notes, external_score
     # wording's weight; evidence-gap and external stayed at roughly their prior ratio to each
     # other, sector (the least specific signal) absorbed most of the reduction.
     raw=round((claim_wording*0.50 + evidence_gap*0.22 + external_score*0.20 + sector_score*0.08)*audience_factor)
-    cap=_score_cap(material, external_score, regulatory_signal or blacklisted>0)
-    return max(0,min(100,min(raw,cap)))
+    reg_used=regulatory_signal or blacklisted>0
+    cap=_score_cap(material, external_score, reg_used)
+    score=max(0,min(100,min(raw,cap)))
+    return score,{'claim_wording_risk':claim_wording,'substantiation_risk':evidence_gap,
+        'external_context_risk':external_score,'sector_baseline_risk':sector_score,
+        'raw_before_cap':raw,'cap_applied':cap,'regulatory_signal_used':bool(reg_used)}
 
 # Override excerpt extraction with a sentence-segmentation approach to avoid mixing several claims.
 

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_54_full_text_analysis_and_role_case_fixes'
+    assert app.APP_VERSION == 'hostable_v93_55_source_attribution_coverage_and_score_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1027,6 +1027,44 @@ def test_dedup_survives_truncation_of_two_claims_naming_different_products():
     assert len(material) == 2, f'expected both the Alpha and Beta claims retained, got {len(material)}'
 
 
+def test_source_attribution_uses_full_text_not_the_truncated_display_excerpt():
+    """v93.55: a follow-up review found that while both Alpha/Beta claims survive detection
+    (the v93.53 dedup fix), assign_claim_sources()/assign_sources_to_findings() still matched
+    a claim to its source page using the TRUNCATED display text (claim_text) -- so once both
+    claims' display excerpts become identical (product name outside the truncation window),
+    the substring-probe matching can no longer tell them apart and attributes both to whichever
+    page matches first. Reproduced exactly: Alpha's claim (from /alpha) and Beta's claim (from
+    /beta) both truncate to the same display text; Beta was wrongly attributed to /alpha.
+    Fixed by matching on full_claim_text (the untruncated excerpt, already preserved for legal
+    analysis) instead."""
+    filler_before = (
+        'which operates across many regions with a strong focus on quality, service, community '
+        'engagement, and long-term responsible growth, and which after extensive internal review and '
+        'multiple rounds of stakeholder consultation and a lengthy internal governance process spanning '
+        'several quarters and involving numerous departments across the organisation and several external '
+        'advisors brought in specifically for this purpose over an extended period of time, further '
+        'reviewed again by an independent working group convened solely to evaluate this specific matter '
+        'in significant additional depth and detail before any conclusion was reached internally, '
+    )
+    def make(name):
+        return f'Our product {name}, {filler_before}is eco-friendly and proud of it.'
+    text_alpha = make('Alpha')
+    text_beta = make('Beta')
+    material = ([f for f in app.detect_green_claims(text_alpha) if not app.is_placeholder_finding(f.get('type', ''))]
+        + [f for f in app.detect_green_claims(text_beta) if not app.is_placeholder_finding(f.get('type', ''))])
+    assert len(material) == 2
+    # both claims must have truncated to the same display text, or this test isn't exercising the bug
+    assert material[0]['claim'] == material[1]['claim']
+
+    page_segments = [{'url': 'https://example.com/alpha', 'text': text_alpha},
+        {'url': 'https://example.com/beta', 'text': text_beta}]
+    documents = [{'url': 'https://example.com/alpha'}, {'url': 'https://example.com/beta'}]
+    result = app.assign_sources_to_findings([dict(f) for f in material], page_segments, documents)
+    for f in result:
+        expected = 'https://example.com/alpha' if 'Alpha' in f['full_claim_text'] else 'https://example.com/beta'
+        assert f['source_url'] == expected
+
+
 def test_empco_floor_conclusion_text_matches_the_actual_resulting_band():
     """v93.52: the "Automatic Very high" conclusion prefix was hardcoded regardless of what the
     floor actually raised the score to -- since v93.51 scales the floor by audience factor for
@@ -2036,6 +2074,18 @@ def test_evidence_score_and_specification_check_handle_negation_stated_after_the
     assert app.enrich_green_finding(dict(genuine), 'eco-friendly')['blacklisted_practice_indicator'] is True
 
 
+def test_evidence_term_hit_respects_sentence_boundary_and_not_only_construction():
+    """v93.55: a second follow-up review found _evidence_term_hit()'s post-positioned negation
+    window read straight across a sentence boundary -- "LCA is available. Audit is not
+    available." still read Audit's negation as if it applied to LCA, since nothing stopped the
+    30-char window at the period. Also, "LCA is NOT ONLY available but independently reviewed"
+    is an emphatic AFFIRMATION ("not only X but also Y" asserts X), not a negation, but it
+    still matched the 'is not' marker as a literal substring. Both reported by a third-party
+    code review with these exact reproductions."""
+    assert app._evidence_term_hit('lca', 'lca is available. audit is not available.') is True
+    assert app._evidence_term_hit('lca', 'lca is not only available but independently reviewed.') is True
+
+
 def test_entity_match_rejects_target_named_only_as_non_accused_helper():
     """v93.51: entity_match_details() retained a source purely from the target being named
     prominently (title/URL) plus a controversy term appearing anywhere nearby, with no check
@@ -2294,6 +2344,91 @@ def test_legal_classification_uses_full_claim_text_not_the_truncated_display_exc
     long_findings = [f for f in app.detect_green_claims(long_text) if not app.is_placeholder_finding(f.get('type', ''))]
     assert any(f.get('blacklisted_practice_indicator') for f in long_findings), \
         'the offset basis must still be detected even though it falls outside the display truncation window'
+
+
+def test_not_only_no_doubt_and_self_assessed_claims_are_not_rejected():
+    """v93.55: three genuine claims had been on the open-issues list since the first review
+    round and were confirmed still vanishing in every subsequent round. (1) "Our products are
+    NOT ONLY eco-friendly but also durable" and (2) "There is NO DOUBT that our products are
+    eco-friendly" were rejected by _v55_claim_context_ok()'s negation-window check, which
+    matched the bare "not"/"no" inside these emphatic-AFFIRMATION idioms as if the claim itself
+    were negated. (3) "Our products are eco-friendly ACCORDING TO OUR OWN assessment" was
+    rejected by the definitional-citation check, which treats any "according to" as citing an
+    external source -- but "according to OUR OWN assessment" is the company citing itself, a
+    genuine (if self-assessed) first-person claim. A genuine negation and a genuine external
+    citation must still be rejected."""
+    for text in ('Our products are not only eco-friendly but also durable.',
+                 'There is no doubt that our products are eco-friendly.',
+                 'Our products are eco-friendly according to our own assessment.'):
+        material = [f for f in app.detect_green_claims(text) if not app.is_placeholder_finding(f.get('type', ''))]
+        assert material, f'expected a retained claim for: {text}'
+
+    genuinely_negated = [f for f in app.detect_green_claims('These components are not recyclable materials.')
+        if not app.is_placeholder_finding(f.get('type', ''))]
+    assert genuinely_negated == []
+
+    genuine_external_citation = [f for f in app.detect_green_claims(
+        'According to a recent UN report, sustainable products are eco-friendly.')
+        if not app.is_placeholder_finding(f.get('type', ''))]
+    assert genuine_external_citation == []
+
+
+def test_document_upload_discloses_silent_truncation_at_90000_characters():
+    """v93.55: decode_uploaded_document() silently truncated any uploaded document to 90,000
+    characters with no indication to the caller that anything was cut -- a document of 99,105
+    characters lost its final ~9,000 characters (and any claim in them) with nothing in the
+    response to say so. Reported by a third-party code review with this exact reproduction.
+    decode_uploaded_document() now returns (text, coverage); analyse_uploaded_document() surfaces
+    coverage as its own result field and prepends a plain-language disclosure to the summary
+    when truncation occurred, so a claim near the end is disclosed as unreviewed rather than
+    silently absent. An untruncated document must show no such note."""
+    import base64
+    filler_unit = 'This document describes our general operations and internal governance. '
+    filler = filler_unit * 2000
+    claim_at_end = ' Our product is climate neutral through offsetting.'
+    target_len = 99105
+    text = filler[:target_len - len(claim_at_end)] + claim_at_end
+    assert len(text) == target_len
+
+    b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
+    txt, coverage = app.decode_uploaded_document('bigdoc.txt', b64, 'text/plain')
+    assert coverage['original_chars'] == 99105
+    assert coverage['analyzed_chars'] == 90000
+    assert coverage['truncated'] is True
+    assert 'climate neutral' not in txt, 'the claim at the end should have been truncated out of the analysed text'
+
+    result = app.analyse_uploaded_document('bigdoc.txt', txt, 'TestCo', document_coverage=coverage)
+    assert result['document_coverage']['truncated'] is True
+    assert '99,105' in result['report']['summary']
+    assert '90,000' in result['report']['summary']
+
+    short_text = ('This is a short internal note about our operations. Our product is climate '
+        'neutral through offsetting, as described in our internal sustainability policy.')
+    short_b64 = base64.b64encode(short_text.encode('utf-8')).decode('ascii')
+    short_txt, short_coverage = app.decode_uploaded_document('small.txt', short_b64, 'text/plain')
+    assert short_coverage['truncated'] is False
+    short_result = app.analyse_uploaded_document('small.txt', short_txt, 'TestCo', document_coverage=short_coverage)
+    assert 'Document coverage note' not in short_result['report']['summary']
+
+
+def test_score_is_reconstructable_from_its_displayed_components():
+    """v93.55: calc_green_score()/calc_score() recomputed a SEPARATE, drifted version of
+    claim_wording_risk for display (5*(len(material)-1) with no cap, instead of
+    _recalibrated_score()'s actual min(20, 4*max(0,len(material)-1)); and omitting its +5-per-
+    blacklisted/regulatory-claim bonus entirely) and never exposed the cap or which
+    regulatory_signal was applied -- so a reader could not reconstruct the displayed score from
+    the displayed components even though both existed in the same call. Reported by a third-
+    party code review with this exact reproduction ("Our product is carbon neutral."). Fixed
+    by having _recalibrated_score() return (score, components) and using that directly."""
+    text = 'Our product is carbon neutral.'
+    result = app.analyse_uploaded_document('test.txt', text, 'TestCo')
+    comps = result['score_components']['green']
+    assert 'raw_before_cap' in comps and 'cap_applied' in comps and 'regulatory_signal_used' in comps
+    reconstructed = min(comps['raw_before_cap'], comps['cap_applied'])
+    assert reconstructed == result['green_score']
+    raw = round((comps['claim_wording_risk']*0.50 + comps['substantiation_risk']*0.22
+        + comps['external_context_risk']*0.20 + comps['sector_baseline_risk']*0.08) * comps['audience_factor'])
+    assert raw == comps['raw_before_cap']
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):
