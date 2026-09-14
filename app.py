@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_57_full_probe_and_clause_aware_negation_fixes"
-APP_RELEASE_LABEL="v93.57"
-APP_RELEASE_DATE="2026-09-13"
+APP_VERSION="hostable_v93_58_linked_sources_and_document_cutoff"
+APP_RELEASE_LABEL="v93.58"
+APP_RELEASE_DATE="2026-09-14"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -1271,6 +1271,44 @@ def discover_sitemap_urls(base_url,limit=160,deadline=None):
 THIN_CONTENT_CHARS=400
 
 
+# v93.58: corporate sustainability/ESG communication moves fast enough that a report or page
+# dated before this cutoff no longer reflects the company's current claims -- reproduced live
+# on SHEIN's own site, where a "2023 sustainability and social impact report" still linked from
+# the site was scanned and its claims presented as current alongside genuinely current pages.
+# Scoped deliberately to the company's OWN crawled website/documents only -- NOT to external
+# stakeholder signals (news, NGO, regulator, union coverage via the separate external-search
+# layer), which are independent third-party reporting about the company and are not "the
+# company's own communication going stale" in the same sense.
+DOCUMENT_SCREENING_CUTOFF_YEAR=2025
+_REPORT_YEAR_KEYWORD_RE=re.compile(r'(report|annual|sustainab|csr|esg|impact|jaarverslag|duurzaam|rapport|durabilit)',re.I)
+_REPORT_YEAR_RE=re.compile(r'\b(20\d{2})\b')
+
+def _v93_extract_report_year(url,text):
+    """Returns an integer year if the URL/filename or the opening portion of the document's
+    own text clearly names this as a dated report (a 4-digit year within ~40 characters of a
+    report-type keyword), else None. Deliberately conservative -- a bare year anywhere in a URL
+    or page (e.g. a product model number, a "founded in 2018" aside) is NOT enough on its own;
+    only a year that co-occurs with an explicit report/annual/sustainability-type keyword is
+    treated as the document's own publication/reporting year."""
+    for haystack,radius in ((url or '',40),((text or '')[:2000],70)):
+        low=haystack.lower()
+        for m in _REPORT_YEAR_RE.finditer(low):
+            year=int(m.group(1))
+            if 2015<=year<=2035:
+                window=low[max(0,m.start()-radius):m.end()+radius]
+                if _REPORT_YEAR_KEYWORD_RE.search(window):
+                    return year
+    return None
+
+def _v93_document_predates_screening_cutoff(url,text):
+    """True only when _v93_extract_report_year() finds an explicit, confident report year
+    before DOCUMENT_SCREENING_CUTOFF_YEAR. A page/document with no discernible report-year
+    signal is never excluded on this basis -- this only catches the specific, common case of a
+    company's own dated report/press item that is still linked from its current site."""
+    year=_v93_extract_report_year(url,text)
+    return year is not None and year<DOCUMENT_SCREENING_CUTOFF_YEAR
+
+
 def _log_fetch_success(log,url,chars,method='direct',source='discovered',content_kind='html'):
     if log is not None:
         log.append({'url':url,'ok':True,'http_status':200,'chars':chars,
@@ -1283,6 +1321,18 @@ def _log_fetch_failure(log,url,err,source='discovered'):
         code=err.code if isinstance(err,HTTPError) else None
         log.append({'url':url,'ok':False,'http_status':code,'chars':0,'thin':False,
                     'error':_describe_fetch_error(err),'method':'failed','source':source})
+
+
+def _log_fetch_skipped_outdated(log,url,chars,year,source='discovered',content_kind='html'):
+    """A page/document WAS successfully retrieved but is excluded from the analysed text because
+    it predates DOCUMENT_SCREENING_CUTOFF_YEAR (see _v93_document_predates_screening_cutoff()).
+    Deliberately distinct from both _log_fetch_success() (ok=True, contributes to analysis) and
+    _log_fetch_failure() (ok=False, could not be retrieved at all) -- this was retrieved fine,
+    it is being excluded on purpose, and build_scan_inventory() surfaces it as its own category
+    rather than silently dropping it or mislabelling it as "not accessed"."""
+    if log is not None:
+        log.append({'url':url,'ok':True,'skipped_outdated':True,'detected_year':year,'chars':chars,
+                    'thin':False,'error':None,'method':'skipped_outdated','source':source,'content_kind':content_kind})
 
 
 def _candidate_score(item):
@@ -1456,11 +1506,22 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                     t,kind,method,page_links,link_base=future.result()
                     min_chars=80 if kind=='pdf' else 120
                     if len(t)>min_chars:
-                        _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
-                        if successful<max_extra_pages:
-                            label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
-                            chunks.append('\n\n'+label+link+'\n'+t)
-                            pages.append(link); successful+=1
+                        # v93.58: a report/press item clearly dated before the screening cutoff
+                        # (see DOCUMENT_SCREENING_CUTOFF_YEAR) is retrieved successfully here but
+                        # deliberately excluded from the analysed text -- it no longer reflects
+                        # the company's current claims. Still fetched (so its own links, if any,
+                        # can be discovered) and still logged, just under a distinct status so
+                        # the coverage register shows it as knowingly excluded, not silently
+                        # missing or "failed to access".
+                        stale_year=_v93_extract_report_year(link,t)
+                        if stale_year is not None and stale_year<DOCUMENT_SCREENING_CUTOFF_YEAR:
+                            _log_fetch_skipped_outdated(log,link,len(t),stale_year,source=source,content_kind=kind)
+                        else:
+                            _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
+                            if successful<max_extra_pages:
+                                label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
+                                chunks.append('\n\n'+label+link+'\n'+t)
+                                pages.append(link); successful+=1
                         for href in page_links:
                             full=urljoin(link_base,href)
                             is_pdf=full.lower().split('?')[0].endswith('.pdf')
@@ -2662,6 +2723,23 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
         failed.append({'url':entry.get('url'),'name':page_name_from_url(entry.get('url')),'http_status':entry.get('http_status'),
                        'error':entry.get('error') or 'The page could not be accessed.','discovery_source':entry.get('source') or 'discovered'})
 
+    # v93.58: a page/document that WAS successfully retrieved but excluded for predating
+    # DOCUMENT_SCREENING_CUTOFF_YEAR (see _log_fetch_skipped_outdated()) is neither a normal
+    # "reviewed" source (it never entered chunks/pages, so it would never appear in `reviewed`
+    # above) nor a "failed" one (it was not inaccessible -- ok=True) -- it needs its own,
+    # honestly-labelled category rather than silently disappearing or being mislabelled as
+    # "could not be accessed".
+    skipped_outdated=[]; skipped_seen=set()
+    for entry in crawl_log:
+        if not isinstance(entry,dict) or not entry.get('skipped_outdated') or not entry.get('url'): continue
+        key=canon(entry.get('url'))
+        if key in skipped_seen: continue
+        skipped_seen.add(key)
+        year=entry.get('detected_year')
+        skipped_outdated.append({'url':entry.get('url'),'name':page_name_from_url(entry.get('url')),
+            'detected_year':year,'reason':f'Dated {year} -- excluded because it predates the {DOCUMENT_SCREENING_CUTOFF_YEAR} screening cutoff for the company\'s own communication.' if year else 'Excluded as outdated.',
+            'discovery_source':entry.get('source') or 'discovered'})
+
     page_items=[x for x in reviewed if x.get('source_type')=='Website page']
     document_items=[x for x in reviewed if x.get('source_type')!='Website page']
     domains=sorted({x.get('domain') for x in reviewed if x.get('domain')})
@@ -2673,8 +2751,10 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
                        'fully_analysed':status_counts.get('Retrieved and analysed',0),
                        'partially_analysed':status_counts.get('Retrieved and partially analysed',0),
                        'limited_text':status_counts.get('Limited text extracted',0),
-                       'retrieved_not_analysed':status_counts.get('Retrieved but not analysed due to budget',0)},
+                       'retrieved_not_analysed':status_counts.get('Retrieved but not analysed due to budget',0),
+                       'skipped_outdated':len(skipped_outdated)},
             'website_pages':page_items,'documents':document_items,'failed_fetches':failed,'domains':domains,
+            'skipped_outdated':skipped_outdated,
             'note':''}
 
 

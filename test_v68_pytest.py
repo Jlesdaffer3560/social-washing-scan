@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_57_full_probe_and_clause_aware_negation_fixes'
+    assert app.APP_VERSION == 'hostable_v93_58_linked_sources_and_document_cutoff'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2536,6 +2536,86 @@ def test_score_calculation_note_matches_the_formula_actually_used():
 
     material_note = app._v93_score_calculation_note([{'claim_score': 50}], 'blacklisted-practice')
     assert '50%' in material_note and '22%' in material_note and '20%' in material_note and '8%' in material_note
+
+
+def test_report_year_detection_requires_a_report_keyword_near_the_year():
+    """v93.58: corporate sustainability communication moves fast enough that a report dated
+    before the screening cutoff no longer reflects the company's current claims -- reported
+    live on SHEIN's own site, where a "2023 sustainability and social impact report" still
+    linked from the site was scanned and its claims presented as current. Detection must be
+    conservative: a bare year with no report-type keyword nearby (a product model number, a
+    "founded in" aside) must NOT be treated as a report date, only a year that co-occurs with
+    an explicit report/annual/sustainability keyword."""
+    assert app._v93_document_predates_screening_cutoff(
+        'https://www.shein.com/reports/2023-sustainability-report.pdf',
+        'SHEIN 2023 Sustainability and Social Impact Report.') is True
+    assert app._v93_document_predates_screening_cutoff(
+        'https://example.com/annual-report-2021', 'Annual Report 2021 - our year in review.') is True
+    assert app._v93_document_predates_screening_cutoff(
+        'https://www.shein.com/reports/2025-sustainability-report.pdf',
+        'SHEIN 2025 Sustainability and Social Impact Report.') is False
+    assert app._v93_document_predates_screening_cutoff(
+        'https://www.shein.com/newsroom/sharing-our-evolushein-roadmap',
+        'Sharing our evoluSHEIN roadmap to guide the future of sustainability.') is False
+    assert app._v93_document_predates_screening_cutoff(
+        'https://example.com/products/model-2024x-dress', 'This dress model 2024x is a bestseller.') is False
+    assert app._v93_document_predates_screening_cutoff(
+        'https://example.com/about', 'Founded in 2018, our company has grown steadily since.') is False
+
+
+def test_crawl_excludes_stale_report_and_surfaces_it_in_scan_inventory(monkeypatch):
+    """v93.58: a report/press item dated before the screening cutoff was retrieved and scanned
+    as if it reflected the company's current claims -- reproduced live on SHEIN's site. This is
+    scoped to the company's OWN crawled website/documents only, never to external stakeholder
+    signals (news, NGO, regulator, union coverage via the separate external-search layer).
+    crawl() must exclude such a document from the analysed chunks/pages while still logging it
+    (as retrieved, not failed) so build_scan_inventory() can disclose it explicitly rather than
+    letting it silently disappear or mislabelling it as inaccessible."""
+    def fake_fetch_html(url, timeout=7):
+        html = ('<html><body><a href="/2023-sustainability-report.pdf">2023 Report</a>'
+            '<a href="/sustainability">Sustainability</a></body></html>')
+        return html, url
+    def fake_fetch_page_content(url, timeout=8):
+        if '2023-sustainability-report' in url:
+            return ('SHEIN 2023 Sustainability and Social Impact Report. ' * 20, 'pdf', 'direct', [], url)
+        if 'sustainability' in url:
+            return ('This is our current sustainable product page with genuine claims. ' * 20, 'html', 'direct', [], url)
+        raise Exception('not found')
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    log = []
+    text, pages, chunks = app.crawl('https://example.com', max_extra_pages=5, deadline=None, log=log)
+    assert not any('2023-sustainability-report' in p for p in pages)
+    assert not any('Social Impact Report' in c for c in chunks)
+    skipped_entries = [e for e in log if e.get('skipped_outdated')]
+    assert len(skipped_entries) == 1
+    assert skipped_entries[0]['detected_year'] == 2023
+    assert skipped_entries[0]['ok'] is True
+
+    inv = app.build_scan_inventory(pages, [], log, full_text='\n\n'.join(chunks))
+    assert inv['summary']['skipped_outdated'] == 1
+    assert len(inv['skipped_outdated']) == 1
+    assert inv['skipped_outdated'][0]['detected_year'] == 2023
+    assert '2023-sustainability-report' in inv['skipped_outdated'][0]['url']
+    # must not also appear as a normal reviewed page or a failed fetch
+    assert not any('2023-sustainability-report' in p.get('url', '') for p in inv['website_pages'] + inv['documents'])
+    assert not any('2023-sustainability-report' in f.get('url', '') for f in inv['failed_fetches'])
+
+
+def test_frontend_claim_sources_are_labelled_and_linked():
+    """v93.58: the claim-signal table showed a source label with no clear indication that it
+    WAS the source (styled identically to body text, not a link), and no way to click straight
+    through to the exact page/document -- reported directly by the user reviewing a live SHEIN
+    scan. Fixed generically for every claim: the per-occurrence source is now prefixed with an
+    explicit "Source:" label and rendered as a real clickable link (with the domain shown)
+    whenever a URL is available."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert 'function claimSourceLink' in text
+    assert 'claim-source-label' in text
+    assert '<span class="claim-source-label">Source:</span>' in text
+    # the old, unlinked-only rendering must be gone from the per-occurrence view
+    assert 'function claimSource(r){' not in text
 
 
 def test_send_report_pdf_email_explains_brevo_ip_authorisation_error(monkeypatch):

@@ -338,10 +338,20 @@ def build_methodology_pdf():
         (Paragraph('Limited text extracted',STY['td_b']),Paragraph('The page or document returned too little usable text for a complete assessment, often because of JavaScript rendering or extraction limits.',STY['td'])),
         (Paragraph('Retrieved but not analysed',STY['td_b']),Paragraph('The source was fetched but did not enter the final analysis because the crawl or text budget was reached.',STY['td'])),
         (Paragraph('Failed / skipped',STY['td_b']),Paragraph('The source could not be accessed, was a duplicate, was low relevance or was outside the crawl budget. It does not support findings.',STY['td'])),
+        (Paragraph('Excluded as outdated',STY['td_b']),Paragraph('The source was retrieved successfully but is dated before the screening cutoff (see below) for the company\'s own communication, so it was not analysed.',STY['td'])),
     ]
     flow.append(section_table(coverage_rows,[W*.31,W*.69]))
     flow.append(Spacer(1,5))
     flow.append(Paragraph('Confidence reflects source coverage, extraction quality, access failures, fallback use, claim-level signals and whether external search was performed. It is reported separately from claim risk. A low detected risk with limited coverage must not be read as proof that risky claims are absent.',STY['body']))
+    flow.append(Spacer(1,6))
+    flow.append(Paragraph(
+        '<b>Screening cutoff for the company\'s own communication.</b> A page or document from the company\'s own '
+        'website is excluded from analysis when it is clearly dated (an explicit year next to a report/annual/'
+        'sustainability-type keyword, in its URL or its own text) before 1 January 2025 -- corporate sustainability '
+        'communication moves fast enough that an older report no longer reflects the company\'s current claims. '
+        'This cutoff applies only to the company\'s own website pages and documents, never to external stakeholder '
+        'signals (news, NGO, regulator or union coverage in Section 7), which are independent third-party reporting '
+        'and are reviewed regardless of age.', STY['body']))
 
     flow.append(Paragraph('9. Illustrative score example', STY['h2']))
     example_rows=[
