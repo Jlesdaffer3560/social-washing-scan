@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_58_linked_sources_and_document_cutoff"
-APP_RELEASE_LABEL="v93.58"
-APP_RELEASE_DATE="2026-09-14"
+APP_VERSION="hostable_v93_59_nace_sector_and_flagship_domain_fixes"
+APP_RELEASE_LABEL="v93.59"
+APP_RELEASE_DATE="2026-09-15"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -1601,15 +1601,97 @@ def _strip_client_industry_clauses(text):
     out.append(text[last:])
     return ''.join(out)
 
-def infer_sector(company,text,page_segments=None,homepage_url=None):
+_NACE_CODE_OVERRIDE={
+    '20.20':('Medium','Agrochemicals and crop protection (NACE C)'),
+}
+_NACE_DIVISION_OVERRIDE={
+    10:('High','Food and beverage manufacturing (NACE C)'),11:('High','Food and beverage manufacturing (NACE C)'),
+    12:('High','Food and beverage manufacturing (NACE C)'),
+    13:('High','Textile and apparel manufacturing (NACE C)'),14:('High','Textile and apparel manufacturing (NACE C)'),
+    15:('High','Textile and apparel manufacturing (NACE C)'),
+    20:('Medium','Chemicals manufacturing (NACE C)'),
+    21:('Medium','Pharmaceuticals and nutrition manufacturing (NACE C)'),
+    24:('Medium','Metals and materials manufacturing (NACE C)'),25:('Medium','Metals and materials manufacturing (NACE C)'),
+    29:('Medium','Automotive (NACE C)'),30:('Medium','Automotive (NACE C)'),
+    65:('Medium','Insurance (NACE K)'),
+    75:('Low','Veterinary activities (NACE M)'),
+    78:('Medium','Staffing and human resources services (NACE N)'),
+}
+# v93.58: NACE Rev.2/NACEBEL section-level fallback (used when a company's primary activity
+# code isn't specific enough to hit a division override above) -- 21 official sections (A-U),
+# reusing the exact sector-name strings already used by the keyword-based path where a good
+# fit exists, for consistency; a section with no existing named counterpart gets a plain,
+# section-accurate generic name instead of forcing it into an unrelated existing one.
+_NACE_SECTION_DEFAULT=[
+    (1,3,'High','Agriculture, farming and animal production (NACE A)'),
+    (5,9,'Medium','Mining and quarrying (NACE B)'),
+    (10,33,'Medium','Industrial manufacturing (NACE C)'),
+    (35,35,'Medium','Energy and utilities (NACE D)'),
+    (36,39,'Medium','Waste management and environmental services (NACE E)'),
+    (41,43,'Medium','Infrastructure and construction (NACE F)'),
+    (45,47,'Medium','Wholesale and retail trade (NACE G)'),
+    (49,53,'Medium','Transport and logistics (NACE H)'),
+    (55,56,'Medium','Accommodation and food service activities (NACE I)'),
+    (58,63,'Low','Digital and technology services (NACE J)'),
+    (64,66,'Medium','Banking and financial services (NACE K)'),
+    (68,68,'Medium','Real estate and property management (NACE L)'),
+    (69,75,'Low','Professional and business services (NACE M)'),
+    (77,82,'Medium','Facilities and outsourced services (NACE N)'),
+    (84,84,'Medium','Public administration (NACE O)'),
+    (85,85,'Medium','Education and training (NACE P)'),
+    (86,88,'Medium','Human health and social work activities (NACE Q)'),
+    (90,93,'Medium','Arts, entertainment and recreation (NACE R)'),
+    (94,99,'Low','Other services (NACE S)'),
+]
+
+def _v93_nace_sector(nace_activities):
+    """v93.58: resolves a sector level+name AUTHORITATIVELY from a company's real, government-
+    verified NACEBEL activity codes (scraped from the public Belgian KBO/BCE register by
+    _v93_lookup_kbo_company()), instead of guessing from free text. Reported live: three
+    separate scans (Ageas, Melexis, Syensqo) were each confidently mislabelled by the
+    keyword-matching fallback below, even though a KBO company number was available for each
+    and the register already states their real activity -- but that data was only ever glued
+    into the free-text blob as extra keyword soup (nace_hint_text), where it could still be
+    diluted or overridden by unrelated boilerplate elsewhere on the site, the exact failure
+    mode already diagnosed for all three. The KBO register lists activities with the PRIMARY
+    ("hoofdactiviteit") one first, so the first code present is used. Falls back through: an
+    exact 4-digit code override, a 2-digit division override, a broader NACE-section default,
+    and finally None (caller falls back to the keyword-based guess) when no code is present or
+    recognised at all."""
+    for act in nace_activities or []:
+        code=(act.get('code') or '').strip()
+        if code in _NACE_CODE_OVERRIDE:
+            return _NACE_CODE_OVERRIDE[code]
+        digits=re.sub(r'[^0-9]','',code)
+        if len(digits)<2:
+            continue
+        division=int(digits[:2])
+        if division in _NACE_DIVISION_OVERRIDE:
+            return _NACE_DIVISION_OVERRIDE[division]
+        for lo,hi,level,name in _NACE_SECTION_DEFAULT:
+            if lo<=division<=hi:
+                return (level,name)
+    return None
+
+def infer_sector(company,text,page_segments=None,homepage_url=None,nace_activities=None):
     # v93.14: sector_name is the real, human-readable industry label derived from whichever
     # keyword actually matched below -- '' when the company is a hardcoded PROFILES entry
     # (which already has its own real name) or when no rule matched at all (no signal to
     # name a sector from). Callers backfill company['sector'] with this when it's still the
     # generic "Sector not explicitly identified" placeholder.
     sector_name=''
+    nace_verified=False
+    nace_resolved=_v93_nace_sector(nace_activities) if nace_activities else None
     if company.get("sector_risk"):
         level=company["sector_risk"]; basis="recognised company/sector profile"
+    elif nace_resolved:
+        # v93.58: an official NACEBEL activity code from the KBO/BCE register is authoritative
+        # -- skip the keyword guess entirely rather than blend it into free text that can
+        # dilute or override it (see _v93_nace_sector()'s docstring for the three real
+        # mislabelled companies this fixes).
+        level,sector_name=nace_resolved
+        basis="official NACEBEL activity code (KBO/BCE register)"
+        nace_verified=True
     else:
         # v86: sector was inferred from the first 15,000 chars of the ENTIRE crawled corpus
         # (every page concatenated), taking the FIRST tier (High wins outright over Medium/Low)
@@ -1655,7 +1737,7 @@ def infer_sector(company,text,page_segments=None,homepage_url=None):
                 sector_name=SECTOR_KEYWORD_NAMES.get(hits[0],'')
                 break
     risks=next(r for lvl,terms,r in SECTOR_RULES if lvl==level)
-    return {"level":level,"basis":basis,"risks":risks,"name":sector_name}
+    return {"level":level,"basis":basis,"risks":risks,"name":sector_name,"nace_verified":nace_verified}
 
 def apply_sector_name(comp,sec):
     """If infer_sector() derived a real sector name from matched keywords, backfill
@@ -1677,9 +1759,16 @@ def apply_sector_name(comp,sec):
     just trade one class of wrong label for another. Rather than keep chasing individual
     keywords, every INFERRED name (as opposed to a hardcoded PROFILES entry, which is
     hand-verified) is now marked as such wherever it is shown, so the report never states this
-    kind of automated guess with unwarranted confidence."""
+    kind of automated guess with unwarranted confidence.
+
+    v93.58: when infer_sector() resolved the sector from a real, government-verified NACEBEL
+    activity code (the KBO/BCE register -- see _v93_nace_sector()), the name is marked
+    "(NACE register)" instead of "(inferred)": it is not a keyword guess and shouldn't be
+    presented with the same reduced confidence as one, even though it is also not a
+    hand-curated PROFILES entry."""
     if sec.get('name') and 'not explicitly identified' in str(comp.get('sector','')).lower():
-        comp['sector']=sec['name']+' (inferred)'
+        suffix=' (NACE register)' if sec.get('nace_verified') else ' (inferred)'
+        comp['sector']=sec['name']+suffix
 
 def google_search(query, max_results=5):
     """Google Custom Search JSON API fallback. Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX."""
@@ -4103,7 +4192,8 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     green_targeted=[]
     exttext=''
     nace_hint_text='\n'.join(a['description'] for a in (kbo_info or {}).get('nace_activities',[]))
-    sec=infer_sector(comp,text+('\n'+nace_hint_text if nace_hint_text else ''),page_segments)
+    sec=infer_sector(comp,text+('\n'+nace_hint_text if nace_hint_text else ''),page_segments,
+        nace_activities=(kbo_info or {}).get('nace_activities'))
     apply_sector_name(comp,sec)
     ctx=infer_context(comp,text,social_ext)
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext,text,comp.get("company",""),audience,page_segments)
@@ -4249,7 +4339,8 @@ def analyse_url_v27(raw, company_number=''):
     green_ext=external_green(comp['company'], green_fs, pages)
     exttext=' '.join(r.get('title','')+' '+r.get('content','') for r in (social_ext.get('results',[])+green_ext.get('results',[])))
     nace_hint_text='\n'.join(a['description'] for a in (kbo_info or {}).get('nace_activities',[]))
-    sec=infer_sector(comp,txt+'\n'+exttext+('\n'+nace_hint_text if nace_hint_text else ''),page_segments,url)
+    sec=infer_sector(comp,txt+'\n'+exttext+('\n'+nace_hint_text if nace_hint_text else ''),page_segments,url,
+        nace_activities=(kbo_info or {}).get('nace_activities'))
     apply_sector_name(comp,sec)
     ctx=infer_context(comp,txt,social_ext)
     # v84: was capped at 5 -- this same capped list both fed the risk score AND was the only
@@ -8950,7 +9041,48 @@ def resolve_company_website(name):
     ranked=sorted(((_v65_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
     if ranked and ranked[0][0]>=70:
         host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
-        return f'https://{host}', f'Company name "{name}" was resolved to {host} after a strong brand/domain and title-content match. Verify the entity before relying on the result.'
+        search_url=f'https://{host}'
+        # v93.59: this used to return the search engine's single top-ranked hit immediately,
+        # with no check for whether a sibling domain of the SAME brand (e.g. the flagship
+        # .com global site vs. a thinner .be regional storefront) carries more sustainability/
+        # ESG content -- so scanning the same company by name could resolve to a different
+        # domain, and give different results, purely depending on which TLD the search API
+        # happened to rank first. Reported by the user after noticing inconsistent results
+        # between a company's .com and .be sites. Now also validates that brand's other
+        # conventional TLD variants (the same domain-guess machinery the no-confident-search-
+        # match fallback below already uses) and applies this function's own established
+        # V72.1 tie-break -- prefer the flagship TLD when several validate, then the richer
+        # page -- to the search-based path too, instead of only when search resolution fails
+        # outright. Bounded to a short deadline so this stays a small, worthwhile addition to
+        # an already-confident match, not a second full domain-guessing pass.
+        tld_check_deadline=time.time()+12
+        validated=[]
+        primary=_v72_validate_guessed_domain(search_url,name)
+        if primary:
+            final_url,content_length=primary
+            tld='.'+((urlparse(final_url).hostname or '').rsplit('.',1)[-1].lower())
+            pref=_V72_TLD_PREFERENCE.get(tld,len(_V72_TLD_PREFERENCE))
+            validated.append((pref,-content_length,final_url))
+        for cand in related_company_sites(search_url,max_sites=5):
+            if time.time()>=tld_check_deadline:
+                break
+            result=_v72_validate_guessed_domain(cand,name)
+            if result:
+                final_url,content_length=result
+                tld='.'+((urlparse(final_url).hostname or '').rsplit('.',1)[-1].lower())
+                pref=_V72_TLD_PREFERENCE.get(tld,len(_V72_TLD_PREFERENCE))
+                validated.append((pref,-content_length,final_url))
+        if validated:
+            validated.sort()
+            best_host=(urlparse(validated[0][2]).hostname or '').lower()
+            extra=(f' A sibling domain of the same brand ({len(validated)} checked) was preferred for broader '
+                   'sustainability-content coverage.') if len(validated)>1 and best_host!=host else ''
+            return f'https://{best_host}', (f'Company name "{name}" was resolved to {best_host} after a strong brand/domain '
+                f'and title-content match.{extra} Verify the entity before relying on the result.')
+        # The search-confirmed domain (and every sibling tried) failed live validation -- fall
+        # back to trusting the search engine's own answer rather than discarding a confident
+        # match entirely.
+        return search_url, f'Company name "{name}" was resolved to {host} after a strong brand/domain and title-content match. Verify the entity before relying on the result.'
 
     # No search provider configured, or no confidently-matched result: try every plausible
     # domain guess directly and accept only ones whose live page content actually names the

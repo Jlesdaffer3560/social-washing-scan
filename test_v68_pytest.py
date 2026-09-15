@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_58_linked_sources_and_document_cutoff'
+    assert app.APP_VERSION == 'hostable_v93_59_nace_sector_and_flagship_domain_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -101,6 +101,41 @@ def test_flagship_domain_preferred_over_country_domain(monkeypatch):
     url,note=app.resolve_company_website('Puratos')
     assert url=='https://www.puratos.be'
     assert 'unverified' not in note.lower()
+
+
+def test_confident_search_match_still_prefers_flagship_sibling_domain(monkeypatch):
+    """v93.59: a CONFIDENT search-provider match (score >=70) used to be returned immediately,
+    with no check for whether a sibling domain of the same brand (e.g. the flagship .com global
+    site vs. a thinner .be regional storefront) carried more content -- so scanning the same
+    company by name could resolve to a different domain, and give different results, purely
+    depending on which TLD the search API happened to rank first. Reported by the user after
+    noticing inconsistent results between a company's .com and .be sites. This is the SAME
+    flagship-TLD/richer-content tie-break V72.1 already applies in the no-confident-search-
+    match fallback (see test_flagship_domain_preferred_over_country_domain), now also applied
+    when search itself already found a confident match."""
+    monkeypatch.setattr(app,'tavily_search',lambda *a,**k: [
+        {'url':'https://www.puratos.be','title':'Puratos Belux','content':'Puratos Belgium official site'}])
+    monkeypatch.setattr(app,'google_search',lambda *a,**k: [])
+    com_html=('<html><head><title>Bakery Solutions | Puratos</title></head><body>'
+              '<h1>Puratos</h1><p>Puratos is an international group offering bakery, patisserie and '
+              'chocolate ingredients worldwide, serving customers in over 100 countries. Global '
+              'headquarters located in Belgium since 1919. News, sustainability report, careers.</p>'
+              '</body></html>')
+    be_html=('<html><head><title>Puratos Belux</title></head><body>'
+             '<h1>Puratos Belgium</h1><p>Puratos Belux is the local Belgian office of the '
+             'international Puratos group, offering the full range of products and solutions for '
+             'the bakery, patisserie and chocolate sector. Contact our local team for more '
+             'information about our products and services in Belgium.</p></body></html>')
+    def fake_open(url,timeout=8,accept=None,max_bytes=None):
+        if 'puratos.com' in url:
+            return com_html.encode(),'text/html',url
+        if 'puratos.be' in url:
+            return be_html.encode(),'text/html',url
+        raise Exception('not found')
+    monkeypatch.setattr(app,'_open_public_url',fake_open)
+    url,note=app.resolve_company_website('Puratos')
+    assert url=='https://www.puratos.com'
+    assert 'sibling domain' in note.lower()
 
 
 def test_frontend_score_bands_and_privacy():
@@ -1494,6 +1529,46 @@ def test_apply_sector_name_backfills_placeholder_only():
     comp3={'sector':'Sector not explicitly identified'}
     app.apply_sector_name(comp3,{'name':''})
     assert comp3['sector']=='Sector not explicitly identified'  # no name found -> no change
+
+
+def test_nace_activity_code_overrides_misleading_keyword_text():
+    """v93.58: three separate live audit rounds each found a real company confidently
+    mislabelled by the keyword-based sector guess (Ageas as "Food service and catering" from
+    staff-catering boilerplate; Melexis, a semiconductor company, as "Real estate"/"Mining"/
+    "Banking" from investor-relations boilerplate; Syensqo as "Agriculture" from client-industry
+    mentions) -- even though a KBO company number was available for each, and the official
+    NACEBEL register already states their real activity. That data was only ever glued into the
+    free-text blob as extra keyword soup, where it could still be diluted or overridden by
+    unrelated boilerplate. infer_sector() now uses a real NACEBEL activity code (from the KBO/
+    BCE register) AUTHORITATIVELY, bypassing the keyword guess entirely, and marks the result
+    "(NACE register)" rather than "(inferred)" since it is not a guess. Reported by the user
+    after noticing the /history page still showed wrong sectors for some companies."""
+    misleading_text = ('Our offices provide catering and facilities services to staff, with '
+        'outsourced restauration partners.')
+    comp = {'sector': 'Sector not explicitly identified'}
+    sec = app.infer_sector(comp, misleading_text, nace_activities=[{'code': '65.12', 'description': 'Niet-levensverzekeringen'}])
+    app.apply_sector_name(comp, sec)
+    assert comp['sector'] == 'Insurance (NACE K) (NACE register)'
+
+    misleading_text2 = ('Our investor relations page discusses our property portfolio and '
+        'supply chain financing arrangements with banks.')
+    comp2 = {'sector': 'Sector not explicitly identified'}
+    sec2 = app.infer_sector(comp2, misleading_text2, nace_activities=[{'code': '26.11', 'description': 'Vervaardiging van elektronische componenten'}])
+    app.apply_sector_name(comp2, sec2)
+    assert comp2['sector'] == 'Industrial manufacturing (NACE C) (NACE register)'
+
+    misleading_text3 = 'We supply advanced materials to agriculture, coffee and cotton producers worldwide.'
+    comp3 = {'sector': 'Sector not explicitly identified'}
+    sec3 = app.infer_sector(comp3, misleading_text3, nace_activities=[{'code': '20.16', 'description': 'Vervaardiging van kunststof in primaire vormen'}])
+    app.apply_sector_name(comp3, sec3)
+    assert comp3['sector'] == 'Chemicals manufacturing (NACE C) (NACE register)'
+
+    # without a NACE code at all, the old keyword-based fallback still applies (and is still
+    # marked "(inferred)", not authoritative)
+    comp4 = {'sector': 'Sector not explicitly identified'}
+    sec4 = app.infer_sector(comp4, misleading_text3, nace_activities=None)
+    app.apply_sector_name(comp4, sec4)
+    assert comp4['sector'].endswith('(inferred)')
 
 
 def test_infer_sector_expanded_taxonomy_covers_more_industries():
