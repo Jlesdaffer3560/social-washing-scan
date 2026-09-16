@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_60_beer_brewing_sector_keyword_fix'
+    assert app.APP_VERSION == 'hostable_v93_61_company_report_pdf_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3648,3 +3648,187 @@ def test_legal_basis_label_prefers_the_stored_backend_label():
     # falls back to a derived label when the stored one is absent (e.g. an older cached result)
     text2,_color2=rp.legal_basis_label({'legal_basis_category':'prohibited'})
     assert text2=='Potentially Prohibited (EmpCo Annex I)'
+
+
+def test_bounded_text_uses_an_ellipsis_not_a_period_when_actually_truncated():
+    """v93.61: appending "." to a truncated fragment made it visually indistinguishable from a
+    genuinely complete sentence -- e.g. "It is problematic where supplier tiers, audit."
+    reported live as reading as finished when it was actually cut mid-thought. An ellipsis
+    signals a real cut; a value that already fits under max_chars is returned unchanged, with
+    no suffix appended at all."""
+    import report_pdf as rp
+    short = rp.bounded_text('A short sentence that already fits.', 100)
+    assert short == 'A short sentence that already fits.'
+    long_text = 'This is a much longer sentence that will definitely need to be truncated because it goes on and on.'
+    truncated = rp.bounded_text(long_text, 40)
+    assert truncated.endswith('…')
+    assert not truncated.endswith('.')
+
+
+def test_claim_excerpt_preserves_the_trigger_phrase_at_a_small_budget():
+    """v93.61: claim_excerpt()'s trigger-centred window used FIXED 80-before/110-after
+    windows regardless of max_chars. At the appendix table's max_chars=100 (used via
+    highlighted_excerpt(claim, 100) in full_claim_inventory_table), the fixed 80-char
+    before-window plus the "Context: " prefix alone could exceed the whole budget, leaving
+    the final right-hand truncation nothing to keep the phrase itself with -- reported live as
+    "certified sustainable" disappearing from an excerpt built specifically around it."""
+    import report_pdf as rp
+    lead_in = 'Across our entire retail network and every product category we proudly state that our full range of goods is '
+    claim = {'claim_text': lead_in + 'certified sustainable and independently verified by leading global auditors every single year.',
+             'matched_phrase': 'certified sustainable'}
+    excerpt = rp.claim_excerpt(claim, 100)
+    assert 'certified sustainable' in excerpt.lower(), f'trigger phrase missing from excerpt: {excerpt!r}'
+    highlighted = rp.highlighted_excerpt(claim, 100)
+    assert 'certified sustainable' in highlighted.lower()
+
+
+def test_claim_excerpt_falls_back_to_the_bare_phrase_when_the_budget_is_too_small_for_anything_else():
+    """v93.61: an extreme edge case -- max_chars smaller than the phrase itself plus any
+    context -- must still show (a prefix of) the phrase rather than raising or returning an
+    empty/unrelated string."""
+    import report_pdf as rp
+    claim = {'claim_text': 'Padding text before ' + 'a fully certified sustainable product line' + ' and padding text after this point too.',
+             'matched_phrase': 'a fully certified sustainable product line'}
+    excerpt = rp.claim_excerpt(claim, 15)
+    assert excerpt, 'must not return an empty excerpt'
+
+
+def test_risk_rank_does_not_conflate_very_low_with_very_high():
+    """v93.61: `"very" in risk` alone gave "Very low" the same rank (4) as "Very high" --
+    confirmed by direct code inspection and reproduced here."""
+    import report_pdf as rp
+    assert rp.risk_rank({'risk_level':'Very high'}) == 4
+    assert rp.risk_rank({'risk_level':'Very low'}) < rp.risk_rank({'risk_level':'Low'})
+    assert rp.risk_rank({'risk_level':'Very low'}) < rp.risk_rank({'risk_level':'Medium'})
+    assert rp.risk_rank({'risk_level':'Very low'}) < rp.risk_rank({'risk_level':'Very high'})
+
+
+def test_risk_rank_gives_unknown_risk_its_own_rank_below_low():
+    """v93.61: an unrecognised/unassessed risk value used to silently fall to the same rank as
+    a genuine "Low" -- it must not outrank, or tie with, an actually-assessed Low risk."""
+    import report_pdf as rp
+    assert rp.risk_rank({'risk_level':'Not assessed'}) < rp.risk_rank({'risk_level':'Low'})
+    assert rp.risk_rank({}) < rp.risk_rank({'risk_level':'Low'})
+
+
+def test_compact_action_preserves_the_backends_real_action_text():
+    """v93.61: compact_action() checked the action's title for common keywords ("green",
+    "social", "supplier", "evidence"...) FIRST and always substituted a generic canned
+    sentence on any match -- the backend's real, specific action text was only used as a
+    fallback for the rare title matching none of them, which is almost never since titles
+    virtually always contain one of these words."""
+    import report_pdf as rp
+    action = {'title':'Fix green claims on the homepage','action':'Remove the unqualified "climate positive" banner from the homepage by 2026-10-01.'}
+    _title,desc = rp.compact_action(action, 'Test Co')
+    assert desc == 'Remove the unqualified "climate positive" banner from the homepage by 2026-10-01.'
+    # still falls back to a generic template when there really is no real action text
+    bare = {'title':'Fix green claims'}
+    _title2,desc2 = rp.compact_action(bare, 'Test Co')
+    assert 'scope, methodology' in desc2
+
+
+def test_external_signal_card_does_not_default_a_missing_entity_match_to_direct():
+    """v93.61: a missing entity_match field silently rendered as "Direct" -- implying a
+    confirmed entity match when none was actually determined."""
+    import report_pdf as rp
+    import pypdf, io as _io
+    from reportlab.platypus import SimpleDocTemplate
+    signal = {'title':'Some negative coverage','url':'https://news.example/article','source_name':'News Example'}
+    card = rp.external_signal_card(signal, rp.CONTENT_W)
+    buf=_io.BytesIO()
+    doc=SimpleDocTemplate(buf,pagesize=rp.A4)
+    doc.build([card])
+    text=pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    assert 'Direct' not in text
+    assert 'Not verified' in text
+
+
+def test_external_signal_card_links_the_title_to_its_source_url():
+    """v93.61: the external-source cards had no clickable link at all -- a reader had to copy
+    the source name into a search engine to find the item. The title now links to the
+    signal's URL when a real http(s) URL is present."""
+    import report_pdf as rp
+    signal = {'title':'Some negative coverage','url':'https://news.example/article','source_name':'News Example'}
+    card = rp.external_signal_card(signal, rp.CONTENT_W)
+    inner = card._cellvalues[0][0]
+    title_para = inner._cellvalues[0][0]
+    assert 'href="https://news.example/article"' in title_para.text
+
+
+def test_coverage_methodology_text_reflects_actual_crawl_diagnostics():
+    """v93.61: the METHODOLOGY panel used to always claim "some were only partially
+    accessible, and a few could not be reached at all" regardless of the scan's actual
+    crawl_diagnostics -- shown even for a scan where every page was fetched cleanly."""
+    import report_pdf as rp
+    clean_data=_pdf_test_data([])
+    clean_data['crawl_diagnostics']={'pages_attempted':5,'pages_failed':0,'pages_thin':0,'pages_retrieved_via_fallback':0}
+    note_clean=rp._methodology_access_note(clean_data)
+    assert 'could not be reached' not in note_clean
+    assert 'successfully read' in note_clean.lower()
+    bad_data=_pdf_test_data([])
+    bad_data['crawl_diagnostics']={'pages_attempted':5,'pages_failed':2,'pages_thin':0,'pages_retrieved_via_fallback':0}
+    note_bad=rp._methodology_access_note(bad_data)
+    assert '2 of 5 page fetch' in note_bad.lower()
+
+
+def test_risk_driver_table_matches_the_dimension_balanced_detail_cards():
+    """v93.61: risk_driver_table() used to always be called with the raw clusters[:3],
+    ignoring the dimension-balancing substitution _build_once() applies to the
+    [material]+additional set used for the page-2 detail cards -- so the page-1 overview
+    table and the page-2 detail cards could disagree on which findings are "top". Reusing the
+    exact scenario from test_dimension_balance_swap_requires_a_materiality_floor (a
+    Medium-severity social claim swapped in for balance), the overview table must now show it
+    too, not just the detail card."""
+    import report_pdf as rp
+    import pypdf, io as _io
+    green=(
+        [_pdf_finding(i,'Generic environmental claim','High',f'Green claim A number {i} about our products and impact.',74,source=f'gA{i}') for i in range(3)]
+        +[_pdf_finding(10+i,'Recycled / recyclable material claim','High',f'Green claim B number {i} about recycled materials used.',74,source=f'gB{i}') for i in range(3)]
+        +[_pdf_finding(20+i,'Climate-neutrality or offsetting claim','High',f'Green claim C number {i} about carbon neutrality goals.',74,source=f'gC{i}') for i in range(3)]
+    )
+    medium_social=[_pdf_finding(200+i,'Human-rights / labour-rights claim','Medium',f'Medium-severity social claim {i} about labour conditions and practices.',50,dim='social',source=f'sM{i}') for i in range(2)]
+    data=_pdf_test_data(green+medium_social)
+    pdf_bytes=rp.build_company_report_pdf(data)
+    full_text=' '.join(p.extract_text() for p in pypdf.PdfReader(_io.BytesIO(pdf_bytes)).pages)
+    overview_text=full_text.split('Findings in detail')[0]
+    assert 'Human-rights' in overview_text, 'the page-1 overview table must show the same dimension-balanced top-3 as the page-2 detail cards'
+
+
+def test_selection_note_reflects_the_actual_number_of_additional_findings():
+    """v93.61: the "What needs attention" explanatory sentence always claimed "one as Top
+    finding and two more under Additional findings" regardless of how many groups were
+    actually in `additional` (0, 1 or 2 depending on cluster count or the auto-shrink ladder),
+    and separately overclaimed "Nothing is left out... listed in full" even though the
+    appendix caps rows and shows only a short excerpt per row."""
+    import report_pdf as rp
+    single=[_pdf_finding(0,'Generic environmental claim','High','Only one distinct claim type appears in this scan.',60,source='only')]
+    data=_pdf_test_data(single)
+    pdf_bytes=rp.build_company_report_pdf(data)
+    full_text=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
+    assert 'two more' not in full_text.lower(), 'must not claim two additional findings when there are none'
+    assert 'nothing is left out' not in full_text.lower()
+    assert 'listed in full' not in full_text.lower()
+
+
+def test_methodology_section_does_not_share_the_appendix_page_with_the_findings_table():
+    """v93.61: "What we looked at" used to sit AFTER the (potentially long) full-claim-
+    inventory table on the same appendix page -- it could land at the bottom of a full page,
+    or spill onto a near-empty trailing page. Moved onto the earlier context page (which has
+    spare room from the external-signals panel), so the appendix page is just the findings
+    table with nothing else competing for space on it."""
+    import report_pdf as rp
+    import pypdf, io as _io
+    many_findings=[_pdf_finding(i,f'Claim type {i}','Medium',f'Distinct claim wording number {i} about our products.',40,source=f'page{i}') for i in range(60)]
+    data=_pdf_test_data(many_findings)
+    pdf_bytes=rp.build_company_report_pdf(data)
+    pages=pypdf.PdfReader(_io.BytesIO(pdf_bytes)).pages
+    # Note: the "What needs attention" narrative sentence legitimately *mentions* "Full list
+    # of findings" by name (it points the reader ahead to it) -- so detect the appendix table
+    # page by its actual column headers, not by that phrase, to avoid a false match on page 1.
+    for p in pages:
+        text=p.extract_text().upper()
+        if 'EXCERPT' in text and 'SOURCE' in text:
+            assert 'REVIEWED PAGES AND DOCUMENTS' not in text, 'methodology section must not appear on the same page as the findings table'
+    full_text=' '.join(p.extract_text() for p in pages).upper()
+    assert 'WHAT WE LOOKED AT' in full_text
+    assert 'REVIEWED PAGES AND DOCUMENTS' in full_text

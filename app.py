@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_60_beer_brewing_sector_keyword_fix"
-APP_RELEASE_LABEL="v93.60"
+APP_VERSION="hostable_v93_61_company_report_pdf_fixes"
+APP_RELEASE_LABEL="v93.61"
 APP_RELEASE_DATE="2026-09-16"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))

@@ -107,7 +107,7 @@ _DANGLING_TRAIL_WORDS = {
 }
 
 
-def bounded_text(value, max_chars: int, suffix: str = ".") -> str:
+def bounded_text(value, max_chars: int, suffix: str = "…") -> str:
     text = clean_text(value)
     if len(text) <= max_chars:
         return text
@@ -196,8 +196,22 @@ def risk_soft(risk):
 
 
 def risk_rank(claim):
-    risk = str(claim.get("risk_level") or claim.get("risk") or "").lower()
-    return 4 if "very" in risk else 3 if "high" in risk else 2 if ("medium" in risk or "elev" in risk) else 1
+    # v93.61: "very" in risk alone treated "Very low" identically to "Very high" (both matched
+    # the same substring check and got rank 4) -- confirmed live. "Very high"/"Very low" are
+    # now told apart, and an unrecognised/unassessed value gets its own lowest rank instead of
+    # silently collapsing to the same rank as a genuine "Low".
+    risk = str(claim.get("risk_level") or claim.get("risk") or "").strip().lower()
+    if "very" in risk and "low" in risk:
+        return 0
+    if "very" in risk and "high" in risk:
+        return 4
+    if "high" in risk:
+        return 3
+    if "medium" in risk or "elev" in risk or "moderate" in risk:
+        return 2
+    if "low" in risk:
+        return 1
+    return -1
 
 
 def is_material(claim):
@@ -260,16 +274,41 @@ def claim_excerpt(claim, max_chars=220):
     if phrase:
         i = text.lower().find(phrase.lower())
         if i >= 0:
-            start = max(0, i - 80)
+            # v93.61: the before/after context windows here used to be a FIXED 80/110 chars
+            # regardless of max_chars. For a small budget (e.g. the appendix table's
+            # max_chars=100), "Context: " (9 chars) plus even a modest before-window could by
+            # itself eat most of the budget, leaving bounded_text()'s final right-hand cut
+            # (which keeps the START of the snippet) nothing to preserve the phrase with --
+            # silently dropping the exact wording the excerpt exists to show. Reported live:
+            # "certified sustainable" missing from an excerpt built specifically around it.
+            # Scale both windows to what's actually left after reserving room for the phrase
+            # itself, and fall back to the bare phrase when the budget can't fit anything else.
+            if len(phrase) >= max_chars:
+                return phrase[:max_chars]
+            remaining = max_chars - len(phrase)
+            before_budget = min(80, (remaining * 2) // 5)
+            prefix_label = "Context: "
+            start = max(0, i - before_budget)
             if start:
                 next_space = text.find(" ", start)
                 if 0 <= next_space < i:
                     start = next_space + 1
-            end = min(len(text), i + len(phrase) + 110)
+            if start and before_budget > len(prefix_label):
+                after_budget = max(0, remaining - (i - start) - len(prefix_label))
+            else:
+                start = i
+                after_budget = remaining
+            end = min(len(text), i + len(phrase) + after_budget)
             snippet = text[start:end]
             if start:
-                snippet = "Context: " + snippet
-            return bounded_text(snippet, max_chars)
+                snippet = prefix_label + snippet
+            result = bounded_text(snippet, max_chars)
+            # Safety net: if the phrase still didn't survive (e.g. bounded_text's own
+            # word-boundary snapping ate further into the budget than estimated above), show
+            # the phrase itself rather than an excerpt that silently omits the flagged wording.
+            if phrase.lower() not in result.lower():
+                return bounded_text(text[i:i + len(phrase) + after_budget], max_chars)
+            return result
     return bounded_text(text, max_chars)
 
 
@@ -748,10 +787,16 @@ def reliability_panel(data):
     return t
 
 
-def risk_driver_table(clusters):
+def risk_driver_table(selected):
+    """v93.61: this used to receive the FULL clusters list and always take clusters[:3] --
+    the raw top-3 by group_priority, ignoring the dimension-balancing swap _build_once() can
+    apply to the [material]+additional set used for the page-2 detail cards. That let the
+    page-1 overview table and the page-2 detail cards disagree on which 3 findings are "top"
+    (confirmed by inspection). Callers now pass that same already-selected list directly, so
+    the two pages always show the same set."""
     headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("WORDING FOUND", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
     rows = [headers]
-    for idx, c in enumerate(clusters[:3], 1):
+    for idx, c in enumerate(selected[:3], 1):
         claim = c["representative"]
         title = claim_title(claim) + occurrence_count_label(c, compact=True)
         sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
@@ -964,7 +1009,16 @@ def claim_card(cluster, excerpt_chars=220, material=False):
 
 
 def compact_action(action, company):
+    # v93.61: this used to check the title for a handful of keywords FIRST and, on any match,
+    # always show a generic canned sentence -- the backend's real, specific action text
+    # (action/description) was only ever used as a fallback for the rare title that matched
+    # none of them. Since a title virtually always contains one of these common words, the
+    # real text was routinely discarded. The real text is now the primary source; the generic
+    # templates only apply when there genuinely is none.
     title = clean_text(action.get("title") or "Priority action")
+    raw = clean_text(action.get("action") or action.get("description") or "")
+    if raw:
+        return title, bounded_text(raw, 155)
     low = title.lower()
     if "green" in low or "empco" in low:
         return title, "Review exact consumer-facing wording and confirm scope, methodology, evidence, verification basis and limitations before reuse."
@@ -974,8 +1028,7 @@ def compact_action(action, company):
         return title, "Document product and supplier traceability, risk assessment, mitigation, grievance, remediation and response readiness."
     if "evidence file" in low or "evidence" in low:
         return title, "Create one evidence file per claim with approved wording, source, owner, evidence link, review status and next review date."
-    raw = clean_text(action.get("action") or action.get("description") or "")
-    return title, bounded_text(raw, 155) if raw else "Assign an owner, evidence file, review status and completion date."
+    return title, "Assign an owner, evidence file, review status and completion date."
 
 
 def actions_table(data):
@@ -1000,10 +1053,22 @@ def external_signal_card(signal, width):
     date = clean_text(signal.get("published_date") or "Date not available")
     content = first_sentence(signal.get("content") or "", 160)
     related = clean_text(signal.get("related_claim_area") or ("Environmental claims" if signal.get("dimension") == "green" else "Social / labour claims"))
-    rows = [[Paragraph(esc(title), ST["claim_title"])], [Paragraph(f'<b>{esc(source)}</b> · {esc(date)}<br/><font color="#AF3D43">{esc(status)}</font> · {esc(review)}', ST["source"])]]
+    # v93.61: make the title a clickable link to its source when a real http(s) URL is present,
+    # so a reader doesn't have to copy a source name into a search engine to find the item --
+    # confirmed missing entirely from the PDF. Restricted to http(s) to avoid ever emitting a
+    # javascript:/data: scheme from externally-sourced content into the link markup.
+    url = clean_text(signal.get("url"))
+    if url.lower().startswith(("http://", "https://")):
+        href = esc(url).replace('"', "&quot;")
+        title_html = f'<a href="{href}" color="#1C2D56"><u>{esc(title)}</u></a>'
+    else:
+        title_html = esc(title)
+    rows = [[Paragraph(title_html, ST["claim_title"])], [Paragraph(f'<b>{esc(source)}</b> · {esc(date)}<br/><font color="#AF3D43">{esc(status)}</font> · {esc(review)}', ST["source"])]]
     if content:
         rows.append([Paragraph(esc(content), ST["small"])])
-    rows.append([Paragraph(f'<b>Related claim area:</b> {esc(related)} · <b>Entity match:</b> {esc(signal.get("entity_match") or "Direct")}', ST["source"])])
+    # v93.61: a missing entity_match silently defaulted to "Direct" -- implying a confirmed
+    # entity match when none was actually determined. "Not verified" is honest about the gap.
+    rows.append([Paragraph(f'<b>Related claim area:</b> {esc(related)} · <b>Entity match:</b> {esc(signal.get("entity_match") or "Not verified")}', ST["source"])])
     inner = Table(rows, colWidths=[width-16])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
     card = Table([[inner]], colWidths=[width])
@@ -1062,6 +1127,31 @@ def _int_or(summary, key, default):
     return int(value) if value is not None else default
 
 
+def _methodology_access_note(data):
+    """v93.61: this text used to be a hardcoded, unconditional claim that some pages "could
+    not be reached at all" -- shown even on a scan where every page was fetched cleanly.
+    Derive the actual access caveat from the same crawl_diagnostics already used by
+    reliability_warning(), so the methodology text only claims what actually happened on
+    this scan."""
+    if _is_internal_document_scan(data):
+        return "Only the text actually reviewed supports the findings above."
+    diag = data.get("crawl_diagnostics") or {}
+    attempted = int(diag.get("pages_attempted") or 0)
+    failed = int(diag.get("pages_failed") or 0)
+    thin = int(diag.get("pages_thin") or 0)
+    fallback = int(diag.get("pages_retrieved_via_fallback") or 0)
+    parts = []
+    if failed:
+        parts.append(f"{failed} of {attempted} page fetch(es) failed" if attempted else f"{failed} page fetch(es) failed")
+    if thin:
+        parts.append(f"{thin} page(s) returned unusually little text")
+    if fallback:
+        parts.append(f"{fallback} page(s) needed a fallback extraction method")
+    if not parts:
+        return "Every reviewed page or document was successfully read; only the text actually reviewed supports the findings above."
+    return "; ".join(parts).capitalize() + " — only the text actually reviewed supports the findings above."
+
+
 def coverage_sources_methodology(data, limit=5):
     pages,documents,summary=scan_inventory_items(data)
     combined=pages+documents
@@ -1077,7 +1167,7 @@ def coverage_sources_methodology(data, limit=5):
           Paragraph(esc(count_line),ST["small_dark"]),
           Paragraph("<br/>".join(f'• {esc(x)}' for x in source_lines) if source_lines else "Source list not available.",ST["source"])]
     right=[Paragraph("<b>METHODOLOGY</b>",ST["card_label"]),
-           Paragraph("Not every page or document could always be read in full — some were only partially accessible, and a few could not be reached at all; only the text actually reviewed supports the findings above. This scan applies the EU's EmpCo Directive, the Forced Labour Regulation and Durably's own claim-risk methodology — see the full methodology PDF for details.",ST["source"])]
+           Paragraph(esc(_methodology_access_note(data)) + " This scan applies the EU's EmpCo Directive, the Forced Labour Regulation and Durably's own claim-risk methodology — see the full methodology PDF for details.",ST["source"])]
     t=Table([[left,right]],colWidths=[CONTENT_W*.58,CONTENT_W*.42])
     t.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.6,GREY_300),("LINEBEFORE",(1,0),(1,0),.4,GREY_300),("BACKGROUND",(0,0),(-1,-1),BLUE_SOFT),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
     return t
@@ -1193,14 +1283,28 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # findings" per direct user feedback on a live report -- "serious" as a section LABEL read
     # as more dramatic than intended; the actual severity is still stated plainly in the risk
     # badge, legal-basis label and this sentence's own "how serious it is" wording below.
+    # v93.61: fixed two overclaims a second reviewer caught in this sentence: (a) it always
+    # said "one as Top finding and two more under Additional findings" regardless of how many
+    # groups were actually in `additional` (0, 1 or 2 depending on cluster count or the
+    # auto-shrink ladder) -- confirmed by inspection; (b) "Nothing is left out... listed in
+    # full" overstated what the appendix actually provides, since full_claim_inventory_table
+    # caps at inventory_limit rows and shows only a ~100-character excerpt per row, not the
+    # full text.
+    if dimension_balanced:
+        detail_line = ", making sure both green and social risks are represented rather than only the highest-scoring group. "
+    elif len(additional) == 2:
+        detail_line = ": one as “Top finding” and two more under “Additional findings”. "
+    elif len(additional) == 1:
+        detail_line = ": one as “Top finding” and one more under “Additional findings”. "
+    else:
+        detail_line = ", shown in detail below as the “Top finding”. "
     selection_note = ("Similar claims are grouped together, and the top-priority groups are explained in detail below"
-        + (", making sure both green and social risks are represented rather than only the highest-scoring group. "
-           if dimension_balanced else
-           ": one as “Top finding” and two more under “Additional findings”. ")
-        + "For each group, we show the clearest example we found — first by how serious it is, then by how easy it is to check (an exact quote with its source), and only then by how common that wording is. Nothing is left out: every finding, including groups not detailed here, is listed in full in the Full list of findings at the end of this report.")
+        + detail_line
+        + "For each group, we show the clearest example we found — first by how serious it is, then by how easy it is to check (an exact quote with its source), and only then by how common that wording is. Every retained finding, including groups not detailed here, is indexed with a short excerpt and its source in the Full list of findings at the end of this report.")
     flow.append(Paragraph(selection_note, ST["small"]))
     flow.append(Spacer(1, 1.2*mm))
-    flow.append(risk_driver_table(clusters)); flow.append(Spacer(1, 2.8*mm))
+    top_selected = [material] + additional
+    flow.append(risk_driver_table(top_selected)); flow.append(Spacer(1, 2.8*mm))
     flow.append(section_title("Priority actions")); flow.append(actions_table(data))
     flow.append(PageBreak())
 
@@ -1219,7 +1323,14 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # sources say, and the scan's own coverage, confidence and regulatory basis.
     flow += header_block(data, "Company claim-risk report · External signals and context")
     flow.append(section_title("What external sources say")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
-    flow.append(assessment_basis(data))
+    flow.append(assessment_basis(data)); flow.append(Spacer(1, 1.8*mm))
+    # v93.61: "What we looked at" used to sit AFTER the (potentially long) full claim-inventory
+    # table on the appendix page -- confirmed by inspection to be able to land at the bottom of
+    # a full page, or spill onto a near-empty trailing page, depending on how many rows the
+    # inventory table needed. Moved here, onto the context page that already has the spare
+    # room, so the appendix page below is just the findings table with nothing else competing
+    # for space on it.
+    flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
 
     if include_inventory:
         # v93.34/v93.35: option 4 -- the narrative above only ever details the top 3 claim
@@ -1234,14 +1345,9 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         # v93.41: the appendix now always starts on its own page with its own header, clearly
         # separated from the read-through narrative above, per explicit reviewer feedback.
         flow.append(PageBreak())
-        flow += header_block(data, "Company claim-risk report · Full findings and methodology")
+        flow += header_block(data, "Company claim-risk report · Full findings")
         flow.append(section_title("Full list of findings"))
         flow += full_claim_inventory_table(data, max_rows=inventory_limit)
-        flow.append(Spacer(1, 1.6*mm))
-        flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
-    else:
-        flow.append(Spacer(1, 1.8*mm))
-        flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
 
