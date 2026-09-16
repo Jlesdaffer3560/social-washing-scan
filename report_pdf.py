@@ -992,7 +992,13 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
-        action_html += f'<br/><font color="#7A8A93">Example wording — verify and complete before use:</font> <font face="Courier">{esc(ready_rewrite)}</font>'
+        # v93.62: a monospaced Courier treatment for the example wording read as code/technical
+        # output rather than as suggested prose -- per reviewer feedback, replaced with a plain
+        # italic treatment, which is the calmer, more conventional way to present "wording you
+        # could use" in a business document. The backend's ready_to_use_rewrite text already
+        # comes wrapped in its own literal quote marks (see green/social_ready_to_use_rewrite()
+        # in app.py), so no quote marks are added here on top of those.
+        action_html += f'<br/><font color="#7A8A93">Example wording — verify and complete before use:</font> <i>{esc(ready_rewrite)}</i>'
     action = Paragraph(action_html, ST["small_dark"])
     rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[meaning], [action]]
     inner = Table(rows, colWidths=[inner_width])

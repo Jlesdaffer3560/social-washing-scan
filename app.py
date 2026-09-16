@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_62_regulatory_dates_and_garbled_content_qa"
-APP_RELEASE_LABEL="v93.62"
+APP_VERSION="hostable_v93_63_example_wording_fixes"
+APP_RELEASE_LABEL="v93.63"
 APP_RELEASE_DATE="2026-09-16"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3321,9 +3321,16 @@ def green_ready_to_use_rewrite(claim_type):
         return ('"Contains [X%] recycled [material] ([post-consumer/post-industrial]), verified per [standard, e.g. GRS], '
                  'covering [product/packaging scope]. Recyclable in [specific regions/facilities], subject to [conditions]."')
     if 'generic' in t:
-        return ('"[Product/product line] uses [specific verified attribute, e.g. \'70% recycled cotton\'], based on '
-                 '[methodology/standard], covering [this product only / this collection], as of [date]. Full methodology: '
-                 '[link]."')
+        # v93.63: "Generic environmental claim" is a broad catch-all covering claims about
+        # water, energy, packaging, sourcing, materials or anything else -- the fixed example
+        # "e.g. '70% recycled cotton'" shown here regardless of the claim's actual topic was
+        # confirmed as exactly the kind of mismatched, irrelevant example a second reviewer
+        # flagged (e.g. shown next to an energy-efficiency or biodegradable-packaging claim
+        # that has nothing to do with cotton or recycling). Describes the KIND of attribute
+        # needed instead of naming an unrelated one.
+        return ('"[Product/product line] has [a specific, verifiable attribute relevant to this claim — e.g. a measured '
+                 'percentage, test result or certification], based on [methodology/standard], covering [this product only / '
+                 'this collection], as of [date]. Full methodology: [link]."')
     if 'legal requirement' in t:
         return '"[Feature] complies with [specific law/regulation, e.g. EU REACH]."'
     if 'absolute' in t or 'purity' in t:

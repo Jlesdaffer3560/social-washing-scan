@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_62_regulatory_dates_and_garbled_content_qa'
+    assert app.APP_VERSION == 'hostable_v93_63_example_wording_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3808,6 +3808,41 @@ def test_selection_note_reflects_the_actual_number_of_additional_findings():
     assert 'two more' not in full_text.lower(), 'must not claim two additional findings when there are none'
     assert 'nothing is left out' not in full_text.lower()
     assert 'listed in full' not in full_text.lower()
+
+
+def test_claim_card_example_wording_is_not_monospaced_and_not_double_quoted():
+    """v93.62/v93.63: the "Example wording" line used a monospaced Courier font, which read as
+    code/technical output rather than suggested prose. Replaced with a plain italic treatment.
+    The backend's ready_to_use_rewrite text already comes wrapped in its own literal quote
+    marks (see green/social_ready_to_use_rewrite() in app.py), so the card must not add a
+    second pair of quote marks around it."""
+    import report_pdf as rp
+    claim = _pdf_finding(0, 'Generic environmental claim', 'High', 'Our products are sustainable.', 60, source='s0')
+    claim['ready_to_use_rewrite'] = '"[Product] has [a specific attribute]."'
+    cluster = {'representative': claim, 'occurrences': [claim]}
+    card = rp.claim_card(cluster, material=True)
+    from reportlab.platypus import SimpleDocTemplate
+    import io as _io
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=rp.A4)
+    doc.build([card])
+    import pypdf
+    text = pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    assert '""[Product]' not in text, 'must not double the backend-supplied quote marks'
+    assert '[Product] has [a specific attribute].' in text
+
+
+def test_generic_claim_rewrite_example_does_not_name_an_unrelated_attribute():
+    """v93.63: "Generic environmental claim" is a broad catch-all covering claims about water,
+    energy, packaging, sourcing, materials or anything else -- green_ready_to_use_rewrite()
+    always showed "e.g. '70% recycled cotton'" as the illustrative attribute regardless of
+    what the actual claim was about (reported: this example is nonsensical next to, say, an
+    energy-efficiency or biodegradable-packaging claim). The example must no longer name a
+    specific, unrelated commodity."""
+    example = app.green_ready_to_use_rewrite('Generic environmental claim')
+    assert 'cotton' not in example.lower()
+    assert 'recycled' not in example.lower() or 'attribute relevant to this claim' in example.lower()
+    assert '[' in example and ']' in example, 'still a fill-in-the-blank template, not a fixed statement'
 
 
 def test_clean_external_content_rejects_garbled_table_or_label_fragments():
