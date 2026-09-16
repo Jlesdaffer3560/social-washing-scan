@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_59_nace_sector_and_flagship_domain_fixes'
+    assert app.APP_VERSION == 'hostable_v93_60_beer_brewing_sector_keyword_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1569,6 +1569,29 @@ def test_nace_activity_code_overrides_misleading_keyword_text():
     sec4 = app.infer_sector(comp4, misleading_text3, nace_activities=None)
     app.apply_sector_name(comp4, sec4)
     assert comp4['sector'].endswith('(inferred)')
+
+
+def test_beer_and_brewing_are_recognised_as_food_and_beverage_keywords():
+    """v93.60: the High-tier food/beverage keyword group had "brewery" and "beverage" but not
+    the actual words a brewer's own marketing copy uses -- "beer" and "brewing". Reported live:
+    AB InBev's real homepage ("Passion for beer is at the heart of everything we do... inspired
+    by brewing the world's most loved beers...") matched neither, fell through to the Medium
+    tier on unrelated "digital"/"energy" mentions elsewhere on the site, and was shown on
+    /history as "Digital and technology services (NACE J)" for the world's largest brewer.
+    Reported by the user with this exact example, after AB InBev has no KBO company number in
+    play here so the v93.58 NACE-register path never applies -- this is a pure keyword-coverage
+    gap in the fallback path. "beer"/"brewing" (and their NL/FR equivalents) now resolve to the
+    same "Food and beverage manufacturing (NACE C)" name, at the same High tier as the existing
+    "brewery"/"beverage" terms."""
+    text = ("Our Purpose is to Dream Big to Create a Future with More Cheers. Passion for beer is "
+        "at the heart of everything we do. We are the proud makers of more than 500 iconic global "
+        "and local brands. We're seeking passionate people who'll be inspired by brewing the "
+        "world's most loved beers, building iconic brands and creating meaningful experiences.")
+    comp = {'sector': 'Sector not explicitly identified'}
+    sec = app.infer_sector(comp, text)
+    app.apply_sector_name(comp, sec)
+    assert sec['level'] == 'High'
+    assert comp['sector'] == 'Food and beverage manufacturing (NACE C) (inferred)'
 
 
 def test_infer_sector_expanded_taxonomy_covers_more_industries():

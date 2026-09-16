@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_59_nace_sector_and_flagship_domain_fixes"
-APP_RELEASE_LABEL="v93.59"
-APP_RELEASE_DATE="2026-09-15"
+APP_VERSION="hostable_v93_60_beer_brewing_sector_keyword_fix"
+APP_RELEASE_LABEL="v93.60"
+APP_RELEASE_DATE="2026-09-16"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -249,6 +249,7 @@ SECTOR_RULES=[
           "aquaculture","aquacultuur",
           "food manufacturing","voedingsproductie","fabrication alimentaire",
           "bakery","bakkerij","boulangerie","brewery","brouwerij","brasserie",
+          "beer","bier","bière","brewing","brouwen","brassage",
           "beverage","dranken","boisson","confectionery","banketbakkerij","confiserie",
           "fast fashion","apparel","textile","textiel","garment","kledingstuk","vêtement",
           "fashion","clothing","kleding","vêtements","habillement",
@@ -343,6 +344,8 @@ SECTOR_KEYWORD_NAMES={
  'fabrication alimentaire':'Food and beverage manufacturing (NACE C)',
  'bakery':'Food and beverage manufacturing (NACE C)','bakkerij':'Food and beverage manufacturing (NACE C)','boulangerie':'Food and beverage manufacturing (NACE C)',
  'brewery':'Food and beverage manufacturing (NACE C)','brouwerij':'Food and beverage manufacturing (NACE C)','brasserie':'Food and beverage manufacturing (NACE C)',
+ 'beer':'Food and beverage manufacturing (NACE C)','bier':'Food and beverage manufacturing (NACE C)','bière':'Food and beverage manufacturing (NACE C)',
+ 'brewing':'Food and beverage manufacturing (NACE C)','brouwen':'Food and beverage manufacturing (NACE C)','brassage':'Food and beverage manufacturing (NACE C)',
  'beverage':'Food and beverage manufacturing (NACE C)','dranken':'Food and beverage manufacturing (NACE C)','boisson':'Food and beverage manufacturing (NACE C)',
  'confectionery':'Food and beverage manufacturing (NACE C)','banketbakkerij':'Food and beverage manufacturing (NACE C)','confiserie':'Food and beverage manufacturing (NACE C)',
  'fast fashion':'Fast fashion and apparel retail (NACE G)','apparel':'Fast fashion and apparel retail (NACE G)',
