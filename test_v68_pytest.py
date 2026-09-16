@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_61_company_report_pdf_fixes'
+    assert app.APP_VERSION == 'hostable_v93_62_regulatory_dates_and_garbled_content_qa'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3808,6 +3808,38 @@ def test_selection_note_reflects_the_actual_number_of_additional_findings():
     assert 'two more' not in full_text.lower(), 'must not claim two additional findings when there are none'
     assert 'nothing is left out' not in full_text.lower()
     assert 'listed in full' not in full_text.lower()
+
+
+def test_clean_external_content_rejects_garbled_table_or_label_fragments():
+    """v93.62: scraped page chrome -- a status/label table row, breadcrumb or nav fragment --
+    can pass the existing noise-phrase filter (it contains none of those known phrases) yet
+    isn't a real sentence and actively misleads a reader when shown as if it were a factual
+    summary of the source. Reported live: "Czech Republic | Not yet" surfaced as a signal
+    summary."""
+    assert app._v62_clean_external_content('Czech Republic | Not yet') == ''
+    assert app._v62_clean_external_content('Home | About | Contact') == ''
+    # a genuine, reasonably long sentence must still pass through unaffected
+    real = 'Regulators opened a formal investigation into the company\'s environmental marketing claims last year.'
+    assert app._v62_clean_external_content(real) == real
+
+
+def test_regulatory_basis_text_frames_not_yet_applicable_dates_correctly():
+    """v93.62: the RELEVANT REGULATIONS text previously named EmpCo and the Forced Labour
+    Regulation with no applicability date at all -- EmpCo only becomes applicable from 27
+    September 2026 and the Forced Labour Regulation's product-import ban only from 14
+    December 2027, so a scan performed before either date should be framed as assessing
+    readiness for a standard about to apply, not as a finding under an already-applicable
+    rule."""
+    import report_pdf as rp
+    before = rp._regulatory_basis_text({'analysis_date': '2026-09-16'})
+    assert '27 September 2026' in before
+    assert 'not yet applicable' in before.lower() or 'readiness' in before.lower()
+    assert '14 December 2027' in before
+    after_empco = rp._regulatory_basis_text({'analysis_date': '2026-10-01'})
+    assert '27 September 2026' in after_empco
+    assert 'readiness' not in after_empco.lower()
+    after_both = rp._regulatory_basis_text({'analysis_date': '2028-01-01'})
+    assert 'not yet applicable' not in after_both.lower()
 
 
 def test_methodology_section_does_not_share_the_appendix_page_with_the_findings_table():

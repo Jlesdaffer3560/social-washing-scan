@@ -1113,10 +1113,33 @@ def external_panel(data, limit):
     return wrap
 
 
+def _regulatory_basis_text(data):
+    """v93.62: this text previously named both regulations with no applicability date at all,
+    which a second reviewer flagged as imprecise -- EmpCo only becomes applicable from 27
+    September 2026, and the Forced Labour Regulation's product-import ban only from 14
+    December 2027, so a scan performed before either date should be framed as assessing
+    readiness for a standard that is about to apply, not as a finding under a rule already in
+    force. Both dates are stated as plain facts regardless of when the scan ran (so this stays
+    correct after either date has passed); the "not yet applicable" framing is added only for
+    a scan whose analysis_date genuinely precedes it."""
+    analysis_date = clean_text(data.get("analysis_date") or "")[:10]
+    empco_note = ("EmpCo becomes applicable from 27 September 2026; this scan, performed before that date, assesses "
+        "claims against the substantiation standard EmpCo will require, as readiness preparation rather than a "
+        "finding under a rule already in force") if (analysis_date and analysis_date < "2026-09-27") else \
+        "applicable from 27 September 2026 for consumer-facing environmental and selected social claims"
+    flr_note = ("its ban on placing goods made with forced labour on the EU market applies only from 14 December "
+        "2027; a general supplier-conduct claim alone is not treated here as a forced-labour finding under that "
+        "not-yet-applicable ban") if (analysis_date and analysis_date < "2027-12-14") else \
+        "its ban on placing goods made with forced labour on the EU market, applicable from 14 December 2027"
+    return (f'The EU Empowering Consumers Directive (“EmpCo”, Directive (EU) 2024/825), {empco_note}; '
+        f'the EU Forced Labour Regulation (Regulation (EU) 2024/3015), {flr_note}, as the forced-labour and '
+        'supply-chain assurance lens.')
+
+
 def assessment_basis(data):
     meta = metadata(data)
     left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
-    right = [Paragraph("<b>RELEVANT REGULATIONS</b>", ST["card_label"]), Paragraph("The EU Empowering Consumers Directive (“EmpCo”, Directive (EU) 2024/825) for consumer-facing environmental and selected social claims; the EU Forced Labour Regulation (Regulation (EU) 2024/3015) as the forced-labour and supply-chain assurance lens.", ST["source"])]
+    right = [Paragraph("<b>RELEVANT REGULATIONS</b>", ST["card_label"]), Paragraph(esc(_regulatory_basis_text(data)), ST["source"])]
     t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     return t

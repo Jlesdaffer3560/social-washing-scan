@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_61_company_report_pdf_fixes"
-APP_RELEASE_LABEL="v93.61"
+APP_VERSION="hostable_v93_62_regulatory_dates_and_garbled_content_qa"
+APP_RELEASE_LABEL="v93.62"
 APP_RELEASE_DATE="2026-09-16"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -8187,7 +8187,18 @@ def _v62_clean_external_content(value):
            'cookie policy','accept cookies','all rights reserved','subscribe to our newsletter')
     parts=[p.strip() for p in re.split(r'(?<=[.!?])\s+',text) if p.strip()]
     kept=[p for p in parts if not any(n in p.lower() for n in noise)]
-    return ' '.join(kept or parts)[:420]
+    result=' '.join(kept or parts)[:420]
+    # v93.62: scraped page chrome -- a status/label table row, breadcrumb or nav fragment
+    # (e.g. "Czech Republic | Not yet", reported live) -- can pass the noise filter above
+    # because it contains none of those known phrases, yet isn't a real sentence and actively
+    # misleads a reader when shown as if it were a factual summary of the source. Reject
+    # anything that reads like a table/label fragment rather than prose, rather than let it
+    # reach the report.
+    if '|' in result and len(result) < 80:
+        return ''
+    if len(result.split()) < 5:
+        return ''
+    return result
 
 
 
