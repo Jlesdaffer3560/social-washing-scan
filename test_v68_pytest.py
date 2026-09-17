@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_63_example_wording_fixes'
+    assert app.APP_VERSION == 'hostable_v93_65_access_code_dash_tolerance'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1752,6 +1752,24 @@ def test_access_code_gate_rejects_wrong_or_missing_code_when_configured(monkeypa
     assert not app._access_code_ok({})
     assert not app._access_code_ok(None)
     assert not app._access_code_ok('letmein')  # a bare string, not a dict, must not match
+
+
+def test_access_code_gate_tolerates_smart_punctuation_dash_substitution(monkeypatch):
+    """v93.65: the access code is a date ("27-09-2026"); a phone keyboard, word processor or
+    messaging app's "smart punctuation" routinely swaps a plain hyphen for a visually similar
+    Unicode dash (en dash, em dash, minus sign, non-breaking hyphen) when a code is typed or
+    pasted through it -- invisible to the person doing it, but a hard mismatch against a
+    strict comparison. Reported live: an invited user with the objectively correct code could
+    not get in. Both sides must be normalised so this cosmetic substitution doesn't matter,
+    without weakening the actual code content required."""
+    monkeypatch.setattr(app,'ACCESS_CODE','27-09-2026')
+    assert app._access_code_ok({'access_code':'27–09–2026'})  # en dashes
+    assert app._access_code_ok({'access_code':'27—09—2026'})  # em dashes
+    assert app._access_code_ok({'access_code':'27−09−2026'})  # minus signs
+    assert app._access_code_ok({'access_code':' 27-09-2026 '})  # stray whitespace
+    # still a real check -- the digits themselves must match, not just the dash style
+    assert not app._access_code_ok({'access_code':'28–09–2026'})
+    assert not app._access_code_ok({'access_code':'27–10–2026'})
 
 
 def test_html_parser_keeps_short_negation_words():
@@ -3508,7 +3526,12 @@ def test_dimension_balance_swap_requires_a_materiality_floor():
     pdf_medium=rp.build_company_report_pdf(data_medium)
     text_medium=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_medium)).pages)
     assert 'Medium-severity social claim' in text_medium, 'a Medium-or-above missing dimension should still get a place'
-    assert 'both green and social' in text_medium.lower(), 'intro text must reflect that a balance substitution happened'
+    # v93.64: the larger font sizes (readability fix) shifted where this sentence wraps, so
+    # pypdf's extracted text can now contain a newline where a plain space used to be (e.g.
+    # "both green and\nsocial risks") -- normalise whitespace before the substring check so
+    # the test isn't fragile to exactly where a line happens to wrap.
+    normalised_medium = ' '.join(text_medium.split())
+    assert 'both green and social' in normalised_medium.lower(), 'intro text must reflect that a balance substitution happened'
 
 
 def _pdf_test_data(claims):
@@ -3573,13 +3596,22 @@ def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
     assert pdf_bytes.startswith(b'%PDF-')
     pages=pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages
     page_count=len(pages)
+    # v93.64: the "What needs attention" narrative sentence legitimately *mentions* "Full list
+    # of findings" by name (it points the reader ahead to it), so a naive search for that
+    # phrase false-matches on page 1 itself. Detect the appendix's actual start page by its
+    # page HEADER ("...Full findings", from header_block -- no "list of" in it, so it can't
+    # collide with the narrative sentence) instead.
     narrative_pages=0
     for p in pages:
         narrative_pages+=1
-        if 'FULL LIST OF FINDINGS' in p.extract_text().upper():
+        if 'FULL FINDINGS' in p.extract_text().upper():
             break
-    assert narrative_pages<=3, f"core narrative (overview/evidence/context) should fit in 3 dedicated pages, was {narrative_pages}"
-    assert page_count<=6, f"a modest scan's total report (narrative + appendix) should not run away, was {page_count}"
+    # v93.64: was <=3 -- the font-size increase (readability fix) means the same 3-hard-page-
+    # break narrative structure can now genuinely need a 4th page for a normal, moderate scan
+    # like this one; build_company_report_pdf's auto-shrink ceiling was widened to match (see
+    # its v93.64 comment).
+    assert narrative_pages<=4, f"core narrative (overview/evidence/context) should fit in 4 dedicated pages, was {narrative_pages}"
+    assert page_count<=7, f"a modest scan's total report (narrative + appendix) should not run away, was {page_count}"
     full_text=' '.join(p.extract_text() for p in pages)
     assert 'FULL LIST OF FINDINGS' in full_text.upper()
     assert 'occurrences' in full_text and 'milieuvriendelijk' in full_text
@@ -3830,6 +3862,46 @@ def test_claim_card_example_wording_is_not_monospaced_and_not_double_quoted():
     text = pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
     assert '""[Product]' not in text, 'must not double the backend-supplied quote marks'
     assert '[Product] has [a specific attribute].' in text
+
+
+def test_entity_context_is_a_distinct_bar_not_a_fourth_score_card():
+    """v93.64: entity context (whether the scanned entity was clearly identified) used to
+    render as a fourth card in the same row and visual style as the three numeric 0-100 risk
+    scores, implying it was a comparable fourth score. It measures something different and
+    must now render as its own, visually distinct element rather than inside the score row."""
+    import report_pdf as rp
+    data = _pdf_test_data([])
+    data['entity_context_indicator'] = {'level': 'Direct', 'note': 'The scanned domain matches the company name closely.'}
+    row = rp.score_row(data)
+    assert len(row._cellvalues[0]) == 3, 'score_row must contain only the three risk-score cards, not entity context'
+    bar = rp.entity_context_bar(data)
+    from reportlab.platypus import SimpleDocTemplate
+    import io as _io, pypdf
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=rp.A4)
+    doc.build([bar])
+    text = pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    assert 'ENTITY CONTEXT' in text.upper()
+    assert 'Direct' in text
+
+
+def test_external_panel_and_review_status_use_plain_language_not_pipeline_jargon():
+    """v93.64: "Retained -- manual verification required" and an "Entity match" label showing
+    app.py's raw internal entity_match_details() string (e.g. "Direct - target named in title,
+    target named in URL") read as internal-process jargon to a report reader, not something a
+    non-specialist would say. Both are now plain language."""
+    import report_pdf as rp
+    signal = {'title': 'Some negative coverage', 'url': 'https://news.example/article',
+              'source_name': 'News Example', 'entity_match': 'Direct - target named in title, target named in URL'}
+    card = rp.external_signal_card(signal, rp.CONTENT_W)
+    from reportlab.platypus import SimpleDocTemplate
+    import io as _io, pypdf
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=rp.A4)
+    doc.build([card])
+    text = pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    assert 'target named in title' not in text.lower(), 'must not surface the raw internal entity-match reasoning string'
+    assert 'Included' in text and 'needs a human check' in text
 
 
 def test_generic_claim_rewrite_example_does_not_name_an_unrelated_attribute():

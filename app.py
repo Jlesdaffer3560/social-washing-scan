@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_63_example_wording_fixes"
-APP_RELEASE_LABEL="v93.63"
-APP_RELEASE_DATE="2026-09-16"
+APP_VERSION="hostable_v93_65_access_code_dash_tolerance"
+APP_RELEASE_LABEL="v93.65"
+APP_RELEASE_DATE="2026-09-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -4956,15 +4956,33 @@ def _client_ip(handler):
     return handler.client_address[0] if handler.client_address else 'unknown'
 
 
+# v93.65: the access code is a date ("27-09-2026"), and a plain ASCII hyphen typed or pasted
+# through a word processor, phone keyboard or messaging app's "smart punctuation" is routinely
+# auto-replaced with a visually near-identical but different Unicode dash (en dash "-", em
+# dash, minus sign, non-breaking hyphen) -- invisible to the person typing it, but a hard
+# mismatch against a strict "==" comparison. Reported live: an invited user with the correct
+# code could not get in. Normalising these to a plain hyphen before comparing does not weaken
+# the gate (the code's actual digits still have to match exactly) -- it only forgives a
+# cosmetic substitution neither side can see happened.
+_DASH_VARIANTS = str.maketrans({c: '-' for c in '‐‑‒–—―−'})
+
+
+def _normalize_access_code(value):
+    return str(value or '').strip().translate(_DASH_VARIANTS)
+
+
 def _access_code_ok(data):
     """v93.43: beta-access gate for the scan endpoints. When ACCESS_CODE is configured, the
     request's JSON body must carry a matching 'access_code' field; a wrong or missing code is
     rejected before it can consume a rate-limit slot or a concurrency slot (checked ahead of
     both in do_POST). A no-op (always True) when ACCESS_CODE is not configured, so local
-    development and any deployment that hasn't opted into gated access stays unaffected."""
+    development and any deployment that hasn't opted into gated access stays unaffected.
+    v93.65: compares after _normalize_access_code() on both sides (see its docstring)."""
     if not ACCESS_CODE:
         return True
-    return isinstance(data, dict) and data.get('access_code', '') == ACCESS_CODE
+    if not isinstance(data, dict):
+        return False
+    return _normalize_access_code(data.get('access_code', '')) == _normalize_access_code(ACCESS_CODE)
 
 
 def _v93_read_form_body(handler):
@@ -8695,7 +8713,10 @@ def compact_sources(results,limit=6,dimension=None):
             'content':_v62_clean_external_content(r.get('content',''))[:320],
             'category':kind,'source_kind':kind,'credibility':source_credibility(r),'provider':r.get('provider',''),
             'published_date':r.get('published_date','') or 'Date not available','status':_source_status(txt),
-            'severity':_source_severity(txt),'review_status':'Verified' if manual else 'Retained — manual verification required',
+            # v93.64: "Retained -- manual verification required" read as internal-process
+            # jargon to a report reader; "Included" plainly says what happened to the source,
+            # "needs a human check" plainly says what's still outstanding.
+            'severity':_source_severity(txt),'review_status':'Verified' if manual else 'Included — needs a human check',
             'entity_match':r.get('entity_match','Direct — target in source'),'entity_match_reason':r.get('entity_match_reason',''),
             'dimension':dim,'relevance':relevance,'polarity':'negative',
             'polarity_reason':r.get('_negative_reason','Explicit adverse event or criticism linked to the assessed company'),

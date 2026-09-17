@@ -1,8 +1,10 @@
 """Readable native Durably company claim-risk report (v93).
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). Main body text is
-9 pt; several secondary elements (source lines, legal-basis badges, table/appendix text,
-the footer) are intentionally smaller, down to 6.5 pt, and are not covered by that figure.
+9.6 pt; most reading content (claim cards, methodology) is 8.8 pt, and the appendix table is
+8.0 pt to keep a many-row inventory manageable. Several secondary/chrome elements (card
+labels, legal-basis badges, the footer) are intentionally smaller, down to 6.5 pt, and are
+not covered by those figures.
 The report's CORE narrative targets 2-4 pages, protected by reducing the amount of detail
 rather than shrinking fonts (see the pagination note on build_company_report_pdf further
 down); the full claim-inventory appendix is then always added IN FULL on top of that, so
@@ -58,7 +60,14 @@ def _style(name: str, **kwargs) -> ParagraphStyle:
     return ParagraphStyle(name, **base)
 
 
-# No report content is set below 7.5 pt. The footer is 6.5 pt.
+# v93.64: bumped body/secondary sizes per explicit reviewer feedback that the report read as
+# visually dense -- most of the report's actual reading content (claim cards, methodology)
+# used the "small" style at 8.5 pt, below even the "secondary" range a reviewer suggested
+# (8.5-9 pt), while "body" (9 pt) is only used once, for the page-1 opening conclusion, and
+# is bumped further since it's meant to stand out. The appendix table ("table") is left at
+# 8.0 pt -- it can hold up to hundreds of rows, so its size is a genuine space/legibility
+# tradeoff, not an oversight. Chrome/label styles (badges, card labels, footer) are left
+# as-is -- they're short, fixed-width UI text, not reading content.
 ST = {
     "brand": _style("brand", fontName="Helvetica-Bold", fontSize=8.2, leading=9.6, textColor=TEAL_DARK),
     "title": _style("title", fontName="Helvetica-Bold", fontSize=20.0, leading=21.5, textColor=NAVY),
@@ -66,12 +75,12 @@ ST = {
     "meta": _style("meta", fontSize=8.0, leading=9.5, textColor=GREY_700, alignment=TA_RIGHT),
     "meta_b": _style("meta_b", fontName="Helvetica-Bold", fontSize=7.5, leading=8.7, textColor=GREY_500, alignment=TA_RIGHT),
     "section": _style("section", fontName="Helvetica-Bold", fontSize=10.5, leading=12.0, textColor=NAVY, spaceBefore=3, spaceAfter=3),
-    "body": _style("body", fontSize=9.0, leading=11.4, textColor=GREY_700),
-    "body_dark": _style("body_dark", fontSize=9.0, leading=11.4, textColor=GREY_900),
-    "small": _style("small", fontSize=8.5, leading=10.6, textColor=GREY_700),
-    "small_dark": _style("small_dark", fontSize=8.5, leading=10.6, textColor=GREY_900),
-    "source": _style("source", fontSize=7.7, leading=9.3, textColor=GREY_500),
-    "quote": _style("quote", fontSize=8.5, leading=10.6, textColor=GREY_900, backColor=colors.HexColor("#FFFDF6")),
+    "body": _style("body", fontSize=9.6, leading=12.0, textColor=GREY_700),
+    "body_dark": _style("body_dark", fontSize=9.6, leading=12.0, textColor=GREY_900),
+    "small": _style("small", fontSize=8.8, leading=11.0, textColor=GREY_700),
+    "small_dark": _style("small_dark", fontSize=8.8, leading=11.0, textColor=GREY_900),
+    "source": _style("source", fontSize=7.9, leading=9.5, textColor=GREY_500),
+    "quote": _style("quote", fontSize=8.8, leading=11.0, textColor=GREY_900, backColor=colors.HexColor("#FFFDF6")),
     "card_label": _style("card_label", fontName="Helvetica-Bold", fontSize=7.5, leading=8.8, textColor=TEAL_DARK),
     "card_num": _style("card_num", fontName="Helvetica-Bold", fontSize=18.0, leading=19.0, textColor=NAVY),
     "claim_title": _style("claim_title", fontName="Helvetica-Bold", fontSize=9.4, leading=11.2, textColor=NAVY),
@@ -752,27 +761,27 @@ def score_card(label, value, risk, note="", card_width=None):
 
 
 
-def context_card(level, note, card_width=None):
-    risk_col = risk_color(level)
-    card_width = card_width or (CONTENT_W * .25 - 4)
-    inner_width = card_width - 14
-    rows = [
-        [Paragraph("ENTITY CONTEXT", ST["card_label"])],
-        [Paragraph(esc(level), ST["card_num"])],
-        [Paragraph(esc(bounded_text(note, 115)), ST["source"])],
-    ]
-    inner = Table(rows, colWidths=[inner_width])
-    inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
-    card = Table([[inner]], colWidths=[card_width])
-    card.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (0, 0), (0, 0), 2.6, risk_col), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-    return card
+def entity_context_bar(data):
+    """v93.64: entity context (whether the scanned entity was clearly identified -- e.g.
+    "Direct" / "Ambiguous" / "Not assessed") used to render as a fourth card in the same
+    row and visual style as the three numeric 0-100 risk scores, implying it was another
+    score of the same kind and directly comparable to them. It measures something different
+    (identity confidence, not claim risk) and is now a distinct, full-width strip below the
+    score row, so it can't be mistaken for a fourth risk score."""
+    ctx = data.get("entity_context_indicator") or {}
+    level = clean_text(ctx.get("level") or "Not assessed")
+    note = clean_text(ctx.get("note") or "")
+    left = Paragraph(f'<b>ENTITY CONTEXT</b>&nbsp;&nbsp;<font color="{risk_color(level).hexval()}"><b>{esc(level)}</b></font>', ST["card_label"])
+    right = Paragraph(esc(bounded_text(note, 230)) if note else "No additional entity-context note.", ST["source"])
+    t = Table([[left, right]], colWidths=[CONTENT_W * .28, CONTENT_W * .72])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    return t
 
 def score_row(data):
-    ctx = data.get("entity_context_indicator") or {}
-    column_width = CONTENT_W * .25
+    column_width = CONTENT_W / 3
     card_width = column_width - 4
-    cards = [score_card("Overall claims risk", data.get("global_score", data.get("overall_score", "—")), data.get("global_risk", data.get("overall_risk", "Not assessed")), card_width=card_width), score_card("Green claims risk", data.get("green_score", "—"), data.get("green_risk", "Not assessed"), card_width=card_width), score_card("Social claims risk", data.get("social_score", "—"), data.get("social_risk", "Not assessed"), card_width=card_width), context_card(clean_text(ctx.get("level") or "Not assessed"), ctx.get("note") or "", card_width=card_width)]
-    t = Table([cards], colWidths=[column_width] * 4)
+    cards = [score_card("Overall claims risk", data.get("global_score", data.get("overall_score", "—")), data.get("global_risk", data.get("overall_risk", "Not assessed")), card_width=card_width), score_card("Green claims risk", data.get("green_score", "—"), data.get("green_risk", "Not assessed"), card_width=card_width), score_card("Social claims risk", data.get("social_score", "—"), data.get("social_risk", "Not assessed"), card_width=card_width)]
+    t = Table([cards], colWidths=[column_width] * 3)
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     return t
 
@@ -1051,10 +1060,26 @@ def actions_table(data):
     return t
 
 
+def _plain_entity_match(raw):
+    """v93.64: the raw entity_match value is an internal label from app.py's
+    entity_match_details() -- e.g. "Direct - target named in title, target named in URL" --
+    written for debugging, not for a report reader. Renders the same underlying fact in plain
+    language instead of surfacing that internal string verbatim."""
+    text = clean_text(raw)
+    if not text:
+        return "Not verified"
+    low = text.lower()
+    if low.startswith("direct"):
+        return "Yes — clearly about this company"
+    if low.startswith("rejected") or low.startswith("not verified"):
+        return "Not verified"
+    return "Not verified"
+
+
 def external_signal_card(signal, width):
     title = bounded_text(signal.get("title") or "External public-source signal", 90)
     status = bounded_text(signal.get("status") or "Status unclear", 38)
-    review = bounded_text(signal.get("review_status") or "Retained — manual verification required", 50)
+    review = bounded_text(signal.get("review_status") or "Included — needs a human check", 50)
     source = signal.get("source_name") or urlparse(clean_text(signal.get("url"))).netloc.replace("www.", "") or clean_text(signal.get("category") or "External source")
     date = clean_text(signal.get("published_date") or "Date not available")
     content = first_sentence(signal.get("content") or "", 160)
@@ -1073,8 +1098,11 @@ def external_signal_card(signal, width):
     if content:
         rows.append([Paragraph(esc(content), ST["small"])])
     # v93.61: a missing entity_match silently defaulted to "Direct" -- implying a confirmed
-    # entity match when none was actually determined. "Not verified" is honest about the gap.
-    rows.append([Paragraph(f'<b>Related claim area:</b> {esc(related)} · <b>Entity match:</b> {esc(signal.get("entity_match") or "Not verified")}', ST["source"])])
+    # entity match when none was actually determined; fixed to fall back honestly.
+    # v93.64: "Entity match" plus app.py's raw internal label (e.g. "Direct - target named in
+    # title, target named in URL") is process jargon exposed straight to the reader --
+    # rephrased as a plain yes/no-style question a non-specialist reader would actually ask.
+    rows.append([Paragraph(f'<b>Related claim area:</b> {esc(related)} · <b>About this company:</b> {esc(_plain_entity_match(signal.get("entity_match")))}', ST["source"])])
     inner = Table(rows, colWidths=[width-16])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
     card = Table([[inner]], colWidths=[width])
@@ -1088,7 +1116,12 @@ def external_signal_card(signal, width):
 
 def external_panel(data, limit):
     signals = external_signals(data, limit)
-    note = Paragraph("Negative external stakeholder signals only. Positive, neutral and company-owned sources are excluded. Automated retained signals require manual verification of status, entity link and claim relevance.", ST["source"])
+    # v93.64: "Negative external stakeholder signals... Automated retained signals require
+    # manual verification of status, entity link and claim relevance" was internal
+    # process/pipeline language, not something a report reader would naturally say. Restated
+    # in plain terms without changing what it actually claims: only critical sources are
+    # shown, and a person should still check each one before relying on it.
+    note = Paragraph("Only critical or negative external sources are shown here — positive, neutral and the company's own sources are left out. These were found automatically, so a person should still check that each one is accurate, about the right company, and relevant to the claim.", ST["source"])
     if not signals:
         empty_text = ("External-source screening was not performed for this internal-document scan."
                       if _is_internal_document_scan(data) else
@@ -1286,7 +1319,8 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # PAGE 1 -- overview: what's wrong, how serious, what to do about it first.
     flow += header_block(data, "Company claim-risk report · Assessment overview")
     flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))
-    flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 2.5*mm))
+    flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 1.6*mm))
+    flow.append(entity_context_bar(data)); flow.append(Spacer(1, 2.5*mm))
     rp = reliability_panel(data)
     if rp is not None:
         # Kept on page 1, not moved to the later context page: a genuine coverage limitation
@@ -1327,9 +1361,13 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         detail_line = ": one as “Top finding” and one more under “Additional findings”. "
     else:
         detail_line = ", shown in detail below as the “Top finding”. "
-    selection_note = ("Similar claims are grouped together, and the top-priority groups are explained in detail below"
+    # v93.64: shortened for plain readability per reviewer feedback -- the previous version
+    # correctly described the selection logic but spelled out all three tiebreak criteria
+    # (severity, verifiability, frequency) in one dense sentence, more detail than a report
+    # reader needs up front.
+    selection_note = ("Similar claims are grouped together, and the highest-priority groups are explained in detail below"
         + detail_line
-        + "For each group, we show the clearest example we found — first by how serious it is, then by how easy it is to check (an exact quote with its source), and only then by how common that wording is. Every retained finding, including groups not detailed here, is indexed with a short excerpt and its source in the Full list of findings at the end of this report.")
+        + "For each group, we show the clearest example we found: the most serious occurrence, preferring an exact, sourced quote when there's a choice. Every other finding still appears — with a short excerpt and its source — in the Full list of findings at the end of this report.")
     flow.append(Paragraph(selection_note, ST["small"]))
     flow.append(Spacer(1, 1.2*mm))
     top_selected = [material] + additional
@@ -1393,8 +1431,10 @@ def build_company_report_pdf(data: dict) -> bytes:
     """Build the company claim-risk report PDF.
 
     The CORE narrative (score overview, most material finding, additional material findings,
-    external signals, priority actions) targets a concise 2-4 pages, protected by the
-    auto-shrink ladder below rather than by cutting content that matters. The "Full claim
+    external signals, priority actions) targets a concise 3-5 pages (v93.64: widened from 2-4
+    to accommodate the larger, more readable font sizes above without losing detail such as
+    the green/social dimension balance or longer excerpts), protected by the auto-shrink
+    ladder below rather than by cutting content that matters. The "Full claim
     inventory" appendix (v93.34) is then always appended IN FULL -- per explicit product
     decision, a mailed/downloaded PDF is often the recipient's only lasting record of the
     scan, so "the rest remains available online" is not an adequate substitute for a claim
@@ -1427,7 +1467,14 @@ def build_company_report_pdf(data: dict) -> bytes:
             # full-appendix PDF directly with the most generous variant rather than guessing.
             return _build_once(deepcopy(data), **variants[0])
         chosen = variant
-        if count <= 4:
+        # v93.64: was <= 4 -- the font-size increase above (readability fix) means the same
+        # content now needs a little more vertical space, so the fixed 3-hard-page-break
+        # narrative structure (see _build_once) can genuinely need a 4th page for a normal,
+        # moderate scan instead of only for an unusually large one. Loosened by one page so a
+        # normal scan still gets the more generous variants (dimension balance, longer
+        # excerpts) instead of being forced to the most compact one just to claw back the
+        # space the larger fonts now use.
+        if count <= 5:
             break
     final_probe = _build_once(deepcopy(data), **chosen)
     final_count = _page_count(final_probe)
