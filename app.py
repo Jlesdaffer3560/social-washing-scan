@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_65_access_code_dash_tolerance"
-APP_RELEASE_LABEL="v93.65"
-APP_RELEASE_DATE="2026-09-17"
+APP_VERSION="hostable_v93_66_reduce_false_positive_claims"
+APP_RELEASE_LABEL="v93.66"
+APP_RELEASE_DATE="2026-09-18"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -679,7 +679,16 @@ NON_OFFICIAL_SITE_DOMAINS = {
     'youtube.com','tiktok.com','bloomberg.com','crunchbase.com','glassdoor.com','indeed.com','reuters.com',
     'forbes.com','wsj.com','ft.com','nytimes.com','yahoo.com','google.com','duckduckgo.com','bing.com',
     'trustpilot.com','pitchbook.com','owler.com','zoominfo.com','apple.com','play.google.com','amazon.com',
-    'ecosia.org','yelp.com','github.com','medium.com','pinterest.com'
+    'ecosia.org','yelp.com','github.com','medium.com','pinterest.com',
+    # v93.66: third-party ESG/CSR report AGGREGATOR/DIRECTORY sites -- they host or index
+    # thousands of companies' own reports and describe their own database/search service
+    # ("Search 26,288 responsibility reports... from 4,488 global companies"), not the
+    # scanned company's own claims. Reported live: Kinepolis's scan attributed
+    # responsibilityreports.com's own marketing copy to Kinepolis as if it were Kinepolis's
+    # claim, because _v65_discover_related_official_sites() found it via search and it
+    # trivially satisfied the relation-term check (it repeats "sustainability report"/"ESG"
+    # throughout by its very nature as a report directory).
+    'responsibilityreports.com','annualreports.com','corporateregister.com','csrhub.com',
 }
 
 def slugify_company_name(name):
@@ -7334,6 +7343,24 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # e.g. "The industry average is 30% recycled content" -- has neither "we/our/us" nor "our
     # industry" and slipped through untouched.
     if any(n in c for n in ['our industry','industry average','industry-wide average','sector average','sector-wide average']) and not any(x in c for x in ['we ensure','we guarantee','we comply','our operations','our supply chain','our products','our business']):
+        return False
+    # v93.66: background/context commentary about what an external INSTITUTION (government,
+    # regulators, lawmakers, the EU) is doing is not a claim the company is making about
+    # itself, even when it happens to contain a green/social trigger word inside that
+    # institution's own clause -- e.g. "This is largely due to the fact that the government
+    # has placed an emphasis on eco-friendly initiatives which will require significant
+    # changes in the system" (reported live, InTwo: matched on "eco-friendly", but the
+    # sentence is explaining regulatory/market background, not asserting anything about the
+    # company). Mirrors the existing industry-average guard just above; excluded unless the
+    # company also makes its own first-person assurance in the same passage.
+    external_institution_subjects=['the government has','the government is','the government will',
+        'governments have','governments are','national governments have','the eu has','the eu is',
+        'the european union has','the european union is','regulators have','regulators are',
+        'lawmakers have','lawmakers are','policymakers have','policymakers are',
+        'the authorities have','the authorities are',
+        'de overheid heeft','de overheid is','regeringen hebben','wetgevers hebben','beleidsmakers hebben',
+        'le gouvernement a','les gouvernements ont','les autorités ont','les régulateurs ont']
+    if any(n in c for n in external_institution_subjects) and not any(x in c for x in ['we ensure','we guarantee','we comply','our operations','our supply chain','our products','our business','we are already','we have already']):
         return False
     # v84: a claim the company is merely REPORTING that a third party said (a supplier, a
     # certifier, a customer) is not the company's own assertion -- but the only existing guard

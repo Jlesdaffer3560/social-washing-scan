@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_65_access_code_dash_tolerance'
+    assert app.APP_VERSION == 'hostable_v93_66_reduce_false_positive_claims'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2835,6 +2835,41 @@ def test_short_genuine_ecologisch_claim_is_not_rejected_as_a_heading(monkeypatch
     assert app._v55_claim_context_ok('Ons pensioenstelsel wordt duurzamer.', 'duurzamer', 'green') is False
     assert app._v55_claim_context_ok('Onze aanpak is fair.', 'fair', 'green') is False
     assert app._v55_claim_context_ok('Our approach is green.', 'green', 'green') is False
+
+
+def test_claim_context_rejects_third_person_government_policy_commentary():
+    """v93.66: background commentary about what an external institution (government,
+    regulators, lawmakers) is doing is not a claim the company makes about itself, even when
+    it happens to contain a green/social trigger word inside that institution's own clause.
+    Reported live on InTwo: "eco-friendly" matched inside "the government has placed an
+    emphasis on eco-friendly initiatives which will require significant changes in the
+    system" -- background explaining regulatory context, not anything about InTwo itself."""
+    government_context = ('This is largely due to the fact that the government has placed an emphasis on '
+        'eco-friendly initiatives which will require significant changes in the system.')
+    assert app._v55_claim_context_ok(government_context, 'eco-friendly', 'green') is False
+    # a genuine first-person claim mentioning the same government context alongside the
+    # company's own assurance must still be retained
+    genuine = ('The government has placed an emphasis on eco-friendly initiatives, and we ensure our '
+        'own operations are fully eco-friendly.')
+    assert app._v55_claim_context_ok(genuine, 'eco-friendly', 'green') is True
+
+
+def test_non_official_site_domains_excludes_esg_report_aggregators():
+    """v93.66: responsibilityreports.com is a third-party ESG-report AGGREGATOR/DIRECTORY --
+    it indexes thousands of companies' own reports and describes its own database service,
+    not any one company's claim. Reported live: Kinepolis's scan attributed
+    responsibilityreports.com's own marketing copy ("Search 26,288 responsibility reports...
+    from 4,488 global companies") to Kinepolis as if it were Kinepolis's own claim, because
+    _v65_discover_related_official_sites() found it via search and it trivially satisfied
+    the relation-term check (it repeats "sustainability report"/"ESG" throughout by its very
+    nature as a report directory). Both the resolver's own scoring and the shared exclusion
+    set must reject it."""
+    result = {'url': 'https://www.responsibilityreports.com/Companies?search=kinepolis',
+              'title': 'Kinepolis sustainability reports',
+              'content': 'Search 26,288 responsibility reports from 4,488 global companies.'}
+    assert app._v65_official_candidate_score(result, 'Kinepolis') == -999
+    for domain in ('responsibilityreports.com', 'annualreports.com', 'corporateregister.com', 'csrhub.com'):
+        assert domain in app.NON_OFFICIAL_SITE_DOMAINS
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
