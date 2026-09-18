@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_66_reduce_false_positive_claims'
+    assert app.APP_VERSION == 'hostable_v93_67_block_contact_lookup_platforms'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2870,6 +2870,29 @@ def test_non_official_site_domains_excludes_esg_report_aggregators():
     assert app._v65_official_candidate_score(result, 'Kinepolis') == -999
     for domain in ('responsibilityreports.com', 'annualreports.com', 'corporateregister.com', 'csrhub.com'):
         assert domain in app.NON_OFFICIAL_SITE_DOMAINS
+
+
+def test_discover_related_sites_rejects_third_party_contact_lookup_platforms(monkeypatch):
+    """v93.67: confirmed live immediately after the v93.66 aggregator-domain fix -- with
+    responsibilityreports.com now excluded, the SAME weak-coverage fallback for Kinepolis
+    instead picked up rocketreach.co and leadiq.com (both B2B contact-lookup platforms),
+    neither of which is Kinepolis in any sense, and wasted most of the scan's crawl budget
+    guessing dozens of paths against them (52 fetch attempts, 46 failures). Both are now in
+    NON_OFFICIAL_SITE_DOMAINS directly; a new self-description check also catches the whole
+    class -- any site describing ITSELF as a contact/lead/company database -- even for a
+    domain not yet individually blocklisted, since a genuine company's own official site
+    never describes itself that way."""
+    assert 'rocketreach.co' in app.NON_OFFICIAL_SITE_DOMAINS
+    assert 'leadiq.com' in app.NON_OFFICIAL_SITE_DOMAINS
+    monkeypatch.setattr(app, 'external_search_configured', lambda: True)
+    fake_result = {'url': 'https://unknownleadtool.example/kinepolis',
+        'title': 'Kinepolis - Company Profile | UnknownLeadTool',
+        'content': 'UnknownLeadTool is a sales intelligence and lead generation platform. '
+                   'Search our b2b contact database for Kinepolis sustainability and ESG contacts.'}
+    monkeypatch.setattr(app, '_v60_run_queries', lambda queries: ([fake_result], [], [], {}))
+    monkeypatch.setattr(app, '_v60_source_kind', lambda r: 'Other public source')
+    result = app._v65_discover_related_official_sites('Kinepolis', 'https://www.kinepolis.com')
+    assert result == [], 'a self-described contact/lead database must never be treated as a related official site'
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):

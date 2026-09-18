@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_66_reduce_false_positive_claims"
-APP_RELEASE_LABEL="v93.66"
+APP_VERSION="hostable_v93_67_block_contact_lookup_platforms"
+APP_RELEASE_LABEL="v93.67"
 APP_RELEASE_DATE="2026-09-18"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -689,6 +689,14 @@ NON_OFFICIAL_SITE_DOMAINS = {
     # trivially satisfied the relation-term check (it repeats "sustainability report"/"ESG"
     # throughout by its very nature as a report directory).
     'responsibilityreports.com','annualreports.com','corporateregister.com','csrhub.com',
+    # v93.67: B2B contact-lookup / lead-generation platforms -- confirmed live immediately
+    # after the v93.66 fix above: with responsibilityreports.com now excluded, the SAME
+    # weak-coverage fallback for Kinepolis instead picked up rocketreach.co and leadiq.com,
+    # neither of which is Kinepolis in any sense. Both host thousands of generic per-company
+    # profile pages that happen to repeat "sustainability"/"ESG"/company names often enough
+    # to pass the relation-term check below -- the same underlying weakness now also guarded
+    # by the self-description check in _v65_discover_related_official_sites().
+    'rocketreach.co','leadiq.com',
 }
 
 def slugify_company_name(name):
@@ -9396,6 +9404,26 @@ def source_mentions_company(result,company_name,reviewed_pages=None):
     return entity_match_details(result,company_name,reviewed_pages).get('matched',False)
 
 
+# v93.67: NON_OFFICIAL_SITE_DOMAINS is a manually curated blocklist -- adequate for a
+# specific site once confirmed live (see responsibilityreports.com/rocketreach.co/leadiq.com
+# above), but a new name in the same GENRE (report directories, B2B contact/lead databases,
+# company-profile aggregators) surfaces every time coverage of the real site is weak enough
+# to trigger this fallback, since that whole genre aggregates thousands of companies' data
+# and so trivially repeats "sustainability"/"ESG"/company names. These sites routinely
+# describe THEMSELVES, in their own title/content, as exactly that kind of tool/database --
+# a description no genuine company's own official site would use about itself -- so this
+# catches the class rather than one name at a time.
+    # These are checked against text already passed through _v64_norm() (which strips all
+    # punctuation, apostrophes included), so every marker here is written in that same
+    # punctuation-free form -- a marker containing an apostrophe would never match.
+_V93_THIRD_PARTY_PLATFORM_SELF_DESCRIPTIONS=(
+    'sales intelligence','lead generation','prospecting platform','prospecting tool',
+    'find verified emails','find anyone s email','email finder',
+    'contact database','people search','b2b database','b2b contact','company database',
+    'business database','search for any company','sign up for free to find',
+)
+
+
 def _v65_discover_related_official_sites(company_name,primary_url,limit=2):
     """Conservatively discover an additional official sustainability/group site.
 
@@ -9422,6 +9450,8 @@ def _v65_discover_related_official_sites(company_name,primary_url,limit=2):
         if _v60_source_kind(r)!='Other public source':
             continue
         title_content=_v64_norm((r.get('title','') or '')+' '+(r.get('content','') or ''))
+        if any(marker in title_content for marker in _V93_THIRD_PARTY_PLATFORM_SELF_DESCRIPTIONS):
+            continue
         title_count,_=_v64_alias_occurrences(r.get('title','') or '',aliases)
         content_count,_=_v64_alias_occurrences(r.get('content','') or '',aliases)
         relation=any(term in title_content for term in V65_RELATED_TERMS)
