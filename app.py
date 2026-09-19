@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_67_block_contact_lookup_platforms"
-APP_RELEASE_LABEL="v93.67"
-APP_RELEASE_DATE="2026-09-18"
+APP_VERSION="hostable_v93_68_highlight_dutch_adjective_inflection"
+APP_RELEASE_LABEL="v93.68"
+APP_RELEASE_DATE="2026-09-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))

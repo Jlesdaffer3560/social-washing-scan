@@ -404,7 +404,16 @@ function renderScores(d){
 function renderDrivers(d){let det=d.score_driver_details||{},html='';if(det.green?.summary)html+=driverCard('Green claim risk',det.green);if(det.social?.summary)html+=driverCard('Social claim risk',det.social);$('drivers').innerHTML=html||'<p class="empty">No material score driver was retained.</p>';}
 function driverCard(title,obj){let raw=arr(obj.key_drivers).slice(0,4);let items=raw.map(item=>{let text=String(item||''),parts=text.split(/\s+[—–-]\s+/,2);return parts.length===2?`<li><span class="driver-label">${esc(parts[0])}:</span> ${esc(parts[1])}</li>`:`<li>${esc(text)}</li>`});return `<div class="subtlebox"><h3>${esc(title)}</h3><p>${esc(obj.summary||'')}</p>${items.length?`<ul class="list">${items.join('')}</ul>`:''}</div>`}
 function _escRe(s){return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}
-function _wordBoundaryRe(term){return new RegExp('(?<![\\p{L}\\p{N}])('+_escRe(term)+')(?![\\p{L}\\p{N}])','giu')}
+// v93.68: a Dutch (and most French) adjective directly preceding a noun takes an extra "-e"
+// ("milieuvriendelijk" -> "milieuvriendelijke landbouwmethoden", "ecologisch" -> "ecologische
+// kwesties") that the backend's stored matched_phrase never includes (it stores the bare,
+// predicative form). The old strict boundary required a non-letter immediately after the
+// term, so it silently produced NO highlight at all for every claim quoted in that
+// grammatical position -- reported live on a Delhaize scan, two of three shown excerpts had
+// nothing highlighted for exactly this reason. The optional trailing "e" is included INSIDE
+// the capture group so the whole inflected word gets highlighted, and a true word boundary is
+// still required right after it, so this doesn't loosen matching in any other way.
+function _wordBoundaryRe(term){return new RegExp('(?<![\\p{L}\\p{N}])('+_escRe(term)+'e?)(?![\\p{L}\\p{N}])','giu')}
 function _hasWord(lowText,term){try{return _wordBoundaryRe(term).test(lowText)}catch(e){return lowText.includes(term)}}
 function termsInText(text){let low=String(text||'').toLowerCase();return PROBLEM_TERMS.filter(t=>_hasWord(low,t)).slice(0,10)}
 function highlightTerms(text, explicit){let html=esc(text||'');let terms=arr(explicit).concat(termsInText(text)).filter(Boolean);terms=[...new Set(terms.map(x=>String(x).trim()).filter(x=>x.length>1))].sort((a,b)=>b.length-a.length).slice(0,12);for(let term of terms){try{html=html.replace(_wordBoundaryRe(term),'<strong>$1</strong>')}catch(e){}}return {html,terms};}

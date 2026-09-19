@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_67_block_contact_lookup_platforms'
+    assert app.APP_VERSION == 'hostable_v93_68_highlight_dutch_adjective_inflection'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -145,6 +145,21 @@ def test_frontend_score_bands_and_privacy():
     assert "if(n>=25)return 'Medium" in text
     assert 'Document privacy:' in text
     assert 'Analysis status' in text
+
+
+def test_frontend_highlight_tolerates_dutch_inflected_adjective_form():
+    """v93.68: a Dutch (and most French) adjective directly preceding a noun takes an extra
+    "-e" ("milieuvriendelijk" -> "milieuvriendelijke landbouwmethoden", "ecologisch" ->
+    "ecologische kwesties") that the backend's stored matched_phrase never includes (it
+    stores the bare, predicative form). The old strict word-boundary regex
+    (`(?<![\\p{L}\\p{N}])(term)(?![\\p{L}\\p{N}])`) required a non-letter immediately after
+    the matched term, so it silently produced NO highlight at all for every claim quoted in
+    that grammatical position -- reported live on a Delhaize scan, two of three shown
+    excerpts had nothing highlighted for exactly this reason. The optional trailing "e" must
+    sit INSIDE the capture group (so the whole inflected word gets highlighted), with a real
+    word boundary still required right after it."""
+    text=Path('frontend.html').read_text(encoding='utf-8')
+    assert "'(?<![\\\\p{L}\\\\p{N}])('+_escRe(term)+'e?)(?![\\\\p{L}\\\\p{N}])'" in text
 
 
 def test_placeholder_finding_not_counted_as_real_claim():
