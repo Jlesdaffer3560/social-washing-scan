@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_69_legal_basis_short_carried_through"
-APP_RELEASE_LABEL="v93.69"
+APP_VERSION="hostable_v93_70_exclude_company_self_disclosure_signals"
+APP_RELEASE_LABEL="v93.70"
 APP_RELEASE_DATE="2026-09-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -9707,7 +9707,23 @@ _V71_COMPANY_DOCUMENT_MARKERS=(
     # Dutch
     'transparantieverklaring','jaarverslag','duurzaamheidsverslag','mensenrechtenbeleid',
     'gedragscode leveranciers','leveranciersgedragscode','gedragscode',
-    'beleid verantwoorde inkoop','raamovereenkomst','collectieve overeenkomst'
+    'beleid verantwoorde inkoop','raamovereenkomst','collectieve overeenkomst',
+    # v93.70: human-rights-tracking platforms (Business & Human Rights Resource Centre,
+    # KnowTheChain) host BOTH genuine third-party allegations AND the company's own
+    # self-reported response/questionnaire disclosure addressing those allegations -- the
+    # latter is again the company describing its own actions, not an independent adverse
+    # finding, even though it is hosted on the NGO's domain right alongside real allegations
+    # about the same company. Reported live: Ahold Delhaize's own KnowTheChain "Additional
+    # Disclosure" PDF (announcing its own Chief Sustainability Officer appointment) was
+    # retained as a negative external signal purely because the platform's OTHER pages about
+    # the same company (a real OECD complaint) supplied enough "recognised independent
+    # source"/adverse vocabulary to the broader relevance check, while this specific document
+    # is the company's own account of itself.
+    # v93.70: 'knowthechain' alone is deliberately NOT included here -- it is a benchmark
+    # PROGRAM name that can appear on a page merely listing which benchmarks cover a company
+    # (e.g. a general NGO company-profile page), which is not itself a company-authored
+    # document and must still be eligible as an independent source.
+    'additional disclosure','company response','company statement'
 )
 _V71_DOCUMENT_OVERRIDE_TITLE_TERMS=(
     'fined','fine over','investigation','investigates','regulator','authority finds',

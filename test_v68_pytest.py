@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_69_legal_basis_short_carried_through'
+    assert app.APP_VERSION == 'hostable_v93_70_exclude_company_self_disclosure_signals'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2926,6 +2926,46 @@ def test_claim_inventory_builders_carry_legal_basis_short_through():
     assert social_out[0]['legal_basis_short'] == finding['legal_basis_short']
     green_out = app.build_green_claim_inventory([finding])
     assert green_out[0]['legal_basis_short'] == finding['legal_basis_short']
+
+
+def test_company_own_disclosure_on_ngo_platform_is_not_a_negative_external_signal():
+    """v93.70: human-rights-tracking platforms (Business & Human Rights Resource Centre,
+    KnowTheChain) host BOTH genuine third-party allegations AND the company's own
+    self-reported response/questionnaire disclosure addressing those allegations. Reported
+    live: Ahold Delhaize's own KnowTheChain "Additional Disclosure" PDF -- describing its own
+    Chief Sustainability Officer appointment, no adverse content at all -- was retained as a
+    negative external signal and shown to a reader as if it were independent criticism,
+    purely because it happens to be hosted on the same NGO domain as a real OECD complaint
+    about the company. The company's own disclosure must be excluded; a real allegation
+    hosted on the same domain, or a general company-profile page merely mentioning the
+    KnowTheChain benchmark by name, must both still be retained."""
+    own_disclosure = {
+        'title': '[PDF] Ahold Delhaize Date: April 2, 2023 Guidanc',
+        'url': 'https://media.business-humanrights.org/media/documents/KTC-2023-Additional-Disclosure_Ahold-Delhaize.pdf',
+        'content': ('workers or relevant stakeholders (such as civil society, unions, and workers or their '
+            'representatives) informed board discussions. On August 3, 2022, Ahold Delhaize announced the '
+            'appointment of a Chief Sustainability Officer, who is part of the Executive Committee, '
+            'accountable for all aspects of human rights. That incl'),
+    }
+    assert app.is_negative_external_source(own_disclosure) is False
+
+    real_allegation = {
+        'title': 'USA: Ahold Delhaize agrees to mediation with NGO Migrant Justice after OECD complaint alleging "grave" abuses',
+        'url': 'https://www.business-humanrights.org/en/latest-news/usa-oecd-complaint-filed-against-ahold-delhaize',
+        'content': ("The complaint says Hannaford (part of Ahold Delhaize)'s milk is processed by HP Hood, sourced "
+            'from cooperatives... migrants on farms in this supply chain have been subjected to labour rights '
+            'violations, including'),
+    }
+    assert app.is_negative_external_source(real_allegation) is True
+
+    profile_page = {
+        'title': 'Ahold Delhaize - Business and Human Rights Centre',
+        'url': 'https://www.business-humanrights.org/en/companies/ahold-delhaize',
+        'content': ('#### Supply Chains #### Labour Rights #### Forced Labour & Modern Slavery #### Migrants & '
+            'Immigrants #### Benchmark rankings ##### KnowTheChain Food and beverage 2020'),
+    }
+    assert app.is_negative_external_source(profile_page) is True, (
+        'a general profile page merely mentioning the KnowTheChain benchmark by name must not be excluded')
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
