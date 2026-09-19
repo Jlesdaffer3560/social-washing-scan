@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_68_highlight_dutch_adjective_inflection"
-APP_RELEASE_LABEL="v93.68"
+APP_VERSION="hostable_v93_69_legal_basis_short_carried_through"
+APP_RELEASE_LABEL="v93.69"
 APP_RELEASE_DATE="2026-09-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -2206,7 +2206,13 @@ def build_claim_inventory(findings):
     # -- see assign_claim_sources()'s v93.55 fix, which needs it to match a finding to its
     # actual source page instead of the truncated display text two similar long claims can
     # share once their distinguishing wording falls outside the truncation window.
-    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite","")} for f in findings]
+    # v93.69: classify_legal_basis() (called from enrich_social_finding()) always sets a
+    # substantive 'legal_basis_short' explanation on the internal finding dict, but this
+    # inventory builder -- the one that actually feeds the frontend's claim cards -- copied
+    # 'legal_basis_category' and 'legal_basis_label' yet dropped 'legal_basis_short' entirely,
+    # so every claim card's "Legal basis" detail box (and the legal-basis badge's own hover
+    # tooltip, which reads the same field) rendered empty. Reported live on Delhaize.
+    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite","")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -3632,7 +3638,12 @@ def build_green_claim_inventory(findings):
     for f in findings:
         # v93.55: full_claim_text carries the untruncated excerpt alongside the display
         # claim_text -- see assign_claim_sources()'s v93.55 fix.
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        # v93.69: same omission as build_claim_inventory() (the social-claim equivalent) --
+        # classify_legal_basis() always sets 'legal_basis_short' on the internal finding, but
+        # this builder dropped it when assembling the frontend-facing claim, so every green
+        # claim card's "Legal basis" box (and the badge's hover tooltip) rendered empty.
+        # Reported live on Delhaize.
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):

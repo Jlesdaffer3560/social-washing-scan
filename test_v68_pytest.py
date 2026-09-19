@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_68_highlight_dutch_adjective_inflection'
+    assert app.APP_VERSION == 'hostable_v93_69_legal_basis_short_carried_through'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2908,6 +2908,24 @@ def test_discover_related_sites_rejects_third_party_contact_lookup_platforms(mon
     monkeypatch.setattr(app, '_v60_source_kind', lambda r: 'Other public source')
     result = app._v65_discover_related_official_sites('Kinepolis', 'https://www.kinepolis.com')
     assert result == [], 'a self-described contact/lead database must never be treated as a related official site'
+
+
+def test_claim_inventory_builders_carry_legal_basis_short_through():
+    """v93.69: classify_legal_basis() (called from enrich_green_finding()/
+    enrich_social_finding()) always sets a substantive 'legal_basis_short' explanation on the
+    internal finding dict, but build_claim_inventory() and build_green_claim_inventory() --
+    the functions that actually build the claim objects the frontend renders -- copied
+    'legal_basis_category' and 'legal_basis_label' but dropped 'legal_basis_short' entirely,
+    so every claim card's "Legal basis" detail box (and the legal-basis badge's own hover
+    tooltip, which reads the same field) rendered empty. Reported live on Delhaize."""
+    finding = {'claim': 'Test claim text.', 'type': 'Sustainability label / certification claim',
+        'risk': 'Medium', 'legal_basis_category': 'problematic',
+        'legal_basis_label': 'Problematic, not automatically prohibited (case-by-case)',
+        'legal_basis_short': 'Not on the fixed Annex I list, so not automatically unfair.'}
+    social_out = app.build_claim_inventory([finding])
+    assert social_out[0]['legal_basis_short'] == finding['legal_basis_short']
+    green_out = app.build_green_claim_inventory([finding])
+    assert green_out[0]['legal_basis_short'] == finding['legal_basis_short']
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
