@@ -60,14 +60,16 @@ def _style(name: str, **kwargs) -> ParagraphStyle:
     return ParagraphStyle(name, **base)
 
 
-# v93.64: bumped body/secondary sizes per explicit reviewer feedback that the report read as
-# visually dense -- most of the report's actual reading content (claim cards, methodology)
-# used the "small" style at 8.5 pt, below even the "secondary" range a reviewer suggested
-# (8.5-9 pt), while "body" (9 pt) is only used once, for the page-1 opening conclusion, and
-# is bumped further since it's meant to stand out. The appendix table ("table") is left at
-# 8.0 pt -- it can hold up to hundreds of rows, so its size is a genuine space/legibility
-# tradeoff, not an oversight. Chrome/label styles (badges, card labels, footer) are left
-# as-is -- they're short, fixed-width UI text, not reading content.
+# v93.64/v93.71: bumped body/secondary sizes per explicit reviewer feedback that the report
+# read as visually dense. v93.71 pushes the rest of the way to the reviewer's own suggested
+# ranges ("~10-10.5 pt for running text, at least 8.5-9 pt for relevant explanations"): body
+# to 10.0 pt (used for the page-1 opening conclusion), "small"/"quote" (claim cards,
+# methodology -- most of the report's actual reading content) to 9.0 pt, and "source" (source
+# lines, badges) to 8.0 pt, the low end of what the reviewer flagged as too small at 7.7-7.9.
+# The appendix table ("table") is left at 8.0 pt -- it can hold up to hundreds of rows, so its
+# size is a genuine space/legibility tradeoff, not an oversight. Chrome/label styles (badges,
+# card labels, footer) are left as-is -- they're short, fixed-width UI text, not reading
+# content.
 ST = {
     "brand": _style("brand", fontName="Helvetica-Bold", fontSize=8.2, leading=9.6, textColor=TEAL_DARK),
     "title": _style("title", fontName="Helvetica-Bold", fontSize=20.0, leading=21.5, textColor=NAVY),
@@ -75,12 +77,12 @@ ST = {
     "meta": _style("meta", fontSize=8.0, leading=9.5, textColor=GREY_700, alignment=TA_RIGHT),
     "meta_b": _style("meta_b", fontName="Helvetica-Bold", fontSize=7.5, leading=8.7, textColor=GREY_500, alignment=TA_RIGHT),
     "section": _style("section", fontName="Helvetica-Bold", fontSize=10.5, leading=12.0, textColor=NAVY, spaceBefore=3, spaceAfter=3),
-    "body": _style("body", fontSize=9.6, leading=12.0, textColor=GREY_700),
-    "body_dark": _style("body_dark", fontSize=9.6, leading=12.0, textColor=GREY_900),
-    "small": _style("small", fontSize=8.8, leading=11.0, textColor=GREY_700),
-    "small_dark": _style("small_dark", fontSize=8.8, leading=11.0, textColor=GREY_900),
-    "source": _style("source", fontSize=7.9, leading=9.5, textColor=GREY_500),
-    "quote": _style("quote", fontSize=8.8, leading=11.0, textColor=GREY_900, backColor=colors.HexColor("#FFFDF6")),
+    "body": _style("body", fontSize=10.0, leading=12.6, textColor=GREY_700),
+    "body_dark": _style("body_dark", fontSize=10.0, leading=12.6, textColor=GREY_900),
+    "small": _style("small", fontSize=9.0, leading=11.2, textColor=GREY_700),
+    "small_dark": _style("small_dark", fontSize=9.0, leading=11.2, textColor=GREY_900),
+    "source": _style("source", fontSize=8.0, leading=9.6, textColor=GREY_500),
+    "quote": _style("quote", fontSize=9.0, leading=11.2, textColor=GREY_900, backColor=colors.HexColor("#FFFDF6")),
     "card_label": _style("card_label", fontName="Helvetica-Bold", fontSize=7.5, leading=8.8, textColor=TEAL_DARK),
     "card_num": _style("card_num", fontName="Helvetica-Bold", fontSize=18.0, leading=19.0, textColor=NAVY),
     "claim_title": _style("claim_title", fontName="Helvetica-Bold", fontSize=9.4, leading=11.2, textColor=NAVY),
@@ -254,7 +256,9 @@ def legal_basis_label(claim):
         color = RED if str(claim.get("legal_basis_category") or "").lower() == "prohibited" else AMBER
         return stored, color
     if str(claim.get("legal_basis_category") or "").lower() == "prohibited":
-        return "Potentially Prohibited (EmpCo Annex I)", RED
+        # v93.71: "EmpCo Annex I" is legally imprecise -- EmpCo amends the Unfair Commercial
+        # Practices Directive; the new per-se-unfair practices sit in THAT directive's Annex I.
+        return "Potentially Prohibited (UCPD Annex I, as amended by EmpCo)", RED
     return "Problematic, not automatically prohibited (case-by-case)", AMBER
 
 
@@ -511,11 +515,15 @@ def wording_distribution_text(cluster, max_terms=5, compact=False):
         phrase, count = dist[0]
         more = len(dist) - 1
         return f"{phrase} ({count}/{sum(c for _, c in dist)})" + (f" +{more} more" if more > 0 else "")
+    # v93.71: "ecologisch 6 · duurzaam 6" read as a raw frequency dump; written out as a plain
+    # sentence a person would say ("'ecologisch' 6 times; 'duurzaam' 6 times").
+    def _times(n):
+        return "once" if n == 1 else "twice" if n == 2 else f"{n} times"
     shown = dist[:max_terms]
-    text = " · ".join(f"{phrase} {count}" for phrase, count in shown)
+    text = "; ".join(f"‘{phrase}’ {_times(count)}" for phrase, count in shown)
     remaining = len(dist) - len(shown)
     if remaining > 0:
-        text += f" · + {remaining} other wording{'s' if remaining != 1 else ''}"
+        text += f"; + {remaining} other wording{'s' if remaining != 1 else ''}"
     return text
 
 
@@ -551,12 +559,23 @@ def metadata(data):
     reason_text = ". ".join(_cap(x) for x in reasons if clean_text(x))
     if reason_text:
         reason_text += "."
+    # v93.71: "9 page(s)/document(s) across 2 domain(s)" read as a system-generated count
+    # dump rather than a sentence a person would write. Spelled out as plain English, and
+    # pages/documents are now named separately since they aren't the same kind of thing.
     if is_internal_doc:
         coverage = f"{len(documents_list)} document(s) reviewed" if documents_list else "Coverage not available"
     else:
         domains = int(inv_summary.get("domains_reviewed") or 0)
-        total = len(pages_list) + len(documents_list)
-        coverage = f"{total} page(s)/document(s) across {domains} domain(s)" if total else "Coverage not available"
+        n_pages, n_docs = len(pages_list), len(documents_list)
+        if n_pages or n_docs:
+            parts = []
+            if n_pages:
+                parts.append(f"{n_pages} web page{'s' if n_pages != 1 else ''}")
+            if n_docs:
+                parts.append(f"{n_docs} document{'s' if n_docs != 1 else ''}")
+            coverage = f"{' and '.join(parts)} reviewed across {domains} domain{'s' if domains != 1 else ''}"
+        else:
+            coverage = "Coverage not available"
     return {
         "source": clean_text(data.get("source_label") or data.get("original_url") or "Reviewed material"),
         "date": clean_text(data.get("analysis_date") or "")[:10],
@@ -970,7 +989,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # group (see cluster_claims()'s selection order: severity first, then verifiability, then
     # frequency, then a fixed tiebreak).
     dist_text = wording_distribution_text(cluster)
-    dist_row = [Paragraph(f'<font color="#7A8A93">Common phrases:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
+    dist_row = [Paragraph(f'<font color="#7A8A93">Wording detected:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
     source = Paragraph(f'<font color="#7A8A93">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
     reason = claim.get("_selection_reason")
@@ -997,7 +1016,10 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # changes how many separate boxes they render as, not their wording.
     why_body = why_text(claim, 155 if material else 130)
     gap_body = evidence_gap_text(claim, 130 if material else 110)
-    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)} <font color="#7A8A93">What\'s missing:</font> {esc(gap_body)}', ST["small_dark"])
+    # v93.71: "What's missing" asserted the evidence doesn't exist; the scan can only say it
+    # wasn't found in the material actually reviewed, which "Evidence to verify" states
+    # honestly without that stronger, unproven claim.
+    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)} <font color="#7A8A93">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
@@ -1175,9 +1197,31 @@ def _regulatory_basis_text(data):
         'supply-chain assurance lens.')
 
 
+def _assessment_scope_text(data):
+    """v93.71: a report named e.g. "Lidl" that quotes both a national site and group-level
+    material under a single European regulatory lens needs an explicit statement of what was
+    actually assessed -- a domain match alone doesn't establish the entity, market or
+    audience. Names the entity, the reviewed domain and, where known, the audience the
+    material addresses."""
+    company = company_name(data)
+    source = clean_text(data.get("original_url") or data.get("source_label") or "")
+    host = ""
+    if source:
+        parsed = urlparse(source if "://" in source else f"//{source}")
+        host = (parsed.hostname or "").removeprefix("www.")
+    audience = clean_text((data.get("document_audience") or {}).get("audience") or "")
+    scope = f"Assessed: {company}"
+    if host:
+        scope += f" ({host})"
+    if audience:
+        scope += f" — {audience[:1].lower()}{audience[1:]}"
+    scope += ". Other markets, brands, group entities or languages are covered only where directly quoted in a finding above."
+    return scope
+
+
 def assessment_basis(data):
     meta = metadata(data)
-    left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"])]
+    left = [Paragraph("<b>COVERAGE AND CONFIDENCE</b>", ST["card_label"]), Paragraph(f'{esc(meta["coverage"])} · {esc(meta["confidence"])}', ST["small_dark"]), Paragraph(esc(meta["confidence_reason"]), ST["source"]), Paragraph(esc(_assessment_scope_text(data)), ST["source"])]
     right = [Paragraph("<b>RELEVANT REGULATIONS</b>", ST["card_label"]), Paragraph(esc(_regulatory_basis_text(data)), ST["source"])]
     t = Table([[left, right]], colWidths=[CONTENT_W*.52, CONTENT_W*.48])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("LINEBEFORE", (1, 0), (1, 0), .4, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), BLUE_SOFT), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
@@ -1219,9 +1263,17 @@ def coverage_sources_methodology(data, limit=5):
     combined=pages+documents
     shown=combined[:max(1,limit)]
     total=len(combined)
-    count_line=(f'{_int_or(summary,"website_pages_reviewed",len(pages))} website page(s) · '
-                f'{_int_or(summary,"documents_reviewed",len(documents))} document(s) / PDF(s) · '
-                f'{_int_or(summary,"domains_reviewed",0)} domain(s)')
+    # v93.71: "9 website page(s) · 2 document(s) / PDF(s) · 2 domain(s)" read as a raw system
+    # count dump rather than a sentence. Spelled out in plain English; a zero-count part is
+    # left out rather than shown as "0 document(s)".
+    _n_pages=_int_or(summary,"website_pages_reviewed",len(pages))
+    _n_docs=_int_or(summary,"documents_reviewed",len(documents))
+    _n_domains=_int_or(summary,"domains_reviewed",0)
+    _count_parts=[]
+    if _n_pages: _count_parts.append(f"{_n_pages} website page{'s' if _n_pages != 1 else ''}")
+    if _n_docs: _count_parts.append(f"{_n_docs} document{'s' if _n_docs != 1 else ''}")
+    count_line=(f"{' and '.join(_count_parts)} reviewed across {_n_domains} domain{'s' if _n_domains != 1 else ''}"
+                if _count_parts else "Coverage not available")
     source_lines=[inventory_source_label(x) for x in shown]
     if total>len(shown):
         source_lines.append(f'+ {total-len(shown)} additional reviewed source(s) listed in the online scan')
@@ -1320,7 +1372,17 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     flow += header_block(data, "Company claim-risk report · Assessment overview")
     flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))
     flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 1.6*mm))
-    flow.append(entity_context_bar(data)); flow.append(Spacer(1, 2.5*mm))
+    flow.append(entity_context_bar(data)); flow.append(Spacer(1, 1.8*mm))
+    # v93.71: added per reviewer feedback -- the appendix can show every retained finding as
+    # "High" while the overview score reads lower, which looks contradictory without knowing
+    # that wording severity is weighted far more heavily than repetition, and that repeated
+    # findings raise but don't multiply the result. Also discloses that one quoted passage can
+    # legitimately appear under more than one claim category.
+    scoring_note = ("Scores weight the wording of retained claims most heavily, then evidence gaps, external context and "
+        "sector exposure; several findings of the same type raise the result but are capped so one repeated wording "
+        "pattern cannot dominate it. The same quoted passage can appear under more than one claim category when it "
+        "raises more than one distinct issue — this is not double-counted evidence of a single wording problem.")
+    flow.append(Paragraph(scoring_note, ST["source"])); flow.append(Spacer(1, 2.2*mm))
     rp = reliability_panel(data)
     if rp is not None:
         # Kept on page 1, not moved to the later context page: a genuine coverage limitation
@@ -1389,7 +1451,10 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # PAGE 3 -- context that supports, but doesn't gate, the findings above: what outside
     # sources say, and the scan's own coverage, confidence and regulatory basis.
     flow += header_block(data, "Company claim-risk report · External signals and context")
-    flow.append(section_title("What external sources say")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
+    # v93.71: "What external sources say" reads as a neutral, broad survey, but the panel
+    # beneath it is deliberately negative-only (see external_panel's own note) -- "External
+    # concerns identified" names what's actually shown instead of implying a balanced summary.
+    flow.append(section_title("External concerns identified")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
     flow.append(assessment_basis(data)); flow.append(Spacer(1, 1.8*mm))
     # v93.61: "What we looked at" used to sit AFTER the (potentially long) full claim-inventory
     # table on the appendix page -- confirmed by inspection to be able to land at the bottom of

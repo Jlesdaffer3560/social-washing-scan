@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_70_exclude_company_self_disclosure_signals"
-APP_RELEASE_LABEL="v93.70"
+APP_VERSION="hostable_v93_71_visual_and_legal_precision_pass"
+APP_RELEASE_LABEL="v93.71"
 APP_RELEASE_DATE="2026-09-19"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3277,10 +3277,16 @@ def classify_legal_basis(f):
     if bool(f.get('blacklisted_practice_indicator')):
         return {
             'legal_basis_category': 'prohibited',
-            'legal_basis_label': 'Potentially Prohibited (EmpCo Annex I)',
-            'legal_basis_short': ('On the fixed EmpCo Annex I list: automatically treated as unfair once EmpCo '
-                                   'applies (27 September 2026) if the described conditions are met. No case-by-case '
-                                   'balancing test is needed -- only whether the wording fits the listed practice.'),
+            # v93.71: "EmpCo Annex I" is legally imprecise as a shorthand -- EmpCo (Directive
+            # (EU) 2024/825) is the AMENDING directive; the new per-se-unfair practices it adds
+            # sit in Annex I of the Unfair Commercial Practices Directive (2005/29/EC), which is
+            # the instrument actually amended. Reported by an external review.
+            'legal_basis_label': 'Potentially Prohibited (UCPD Annex I, as amended by EmpCo)',
+            'legal_basis_short': ('On the fixed list added to Annex I of the Unfair Commercial Practices Directive '
+                                   '(2005/29/EC) by EmpCo (Directive (EU) 2024/825): automatically treated as unfair '
+                                   'once EmpCo applies (27 September 2026) if the described conditions are met. No '
+                                   'case-by-case balancing test is needed -- only whether the wording fits the listed '
+                                   'practice.'),
         }
     return {
         'legal_basis_category': 'problematic',
@@ -3806,7 +3812,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
         # review, which specifically found this exact remaining inconsistency after the
         # green_conclusion text (a different string) had already been fixed. Name the band the
         # floor actually produced, using the same band(green_score) already computed above.
-        g_summary+=f' Automatically floored to at least {band(green_score)} because a retained claim matches the fixed EmpCo Annex I blacklist, regardless of the blended calculation below.'
+        g_summary+=f' Automatically floored to at least {band(green_score)} because a retained claim matches the fixed list EmpCo adds to UCPD Annex I, regardless of the blended calculation below.'
     if snames:
         s_summary=f'Social risk is {social_score}/100 ({band(social_score)}). Main contribution: {s_top}.'
     else:
@@ -3816,7 +3822,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
             'score': green_score,
             'summary': g_summary,
             'key_drivers': [
-                *([f'EmpCo Annex I blacklist match — automatically floors this score to at least {band(green_score)}, overriding the blended calculation below.'] if g_blacklisted else []),
+                *([f'UCPD Annex I match (as amended by EmpCo) — automatically floors this score to at least {band(green_score)}, overriding the blended calculation below.'] if g_blacklisted else []),
                 f'Claim wording — {material_count(green_fs)} relevant occurrence(s) across {len(gnames)} claim type(s).',
                 f'Evidence support — {gap_label(green_splits.get("substantiation_risk",0))} visible evidence gap ({green_splits.get("substantiation_risk",0)}/100).',
                 f'External context — {external_line(g_ext_n)}',
@@ -3893,8 +3899,22 @@ def _strip_pdf_glyph_artifacts(txt):
     safely guess the intended character (observed live as both a lost "ff" ligature and an
     em dash for the same artifact pattern), so this only removes the artifact rather than
     substituting a guess -- confirmed live on Colruyt Group's annual report PDF, where a
-    lost ligature surfaced verbatim as "o\\036er" in a quoted claim on the results page."""
-    return re.sub(r'\\[0-7]{1,3}', '', txt)
+    lost ligature surfaced verbatim as "o\\036er" in a quoted claim on the results page.
+
+    v93.71: a missing/dropped glyph (most often an accented letter, or a ligature/kerning
+    quirk in the source font) can also leave a stray space directly beside a hyphen inside
+    what was originally one hyphenated word -- "value-added" -> "value -added", "co-founder"
+    -> "co- founder". Reported live (external review): "value -added" surfaced verbatim in a
+    quoted claim. A space next to a hyphen with a letter immediately on the other side is
+    never a genuine word gap in English/Dutch/French prose (a real "word - word" dash has a
+    space on BOTH sides, which this leaves untouched), so collapsing it is a safe,
+    unambiguous fix -- unlike an arbitrary stray space INSIDE a word with no punctuation cue
+    (e.g. "supp ly"), which cannot be fixed without a dictionary and risks merging genuinely
+    separate words, so that class of artifact is not attempted here."""
+    txt = re.sub(r'\\[0-7]{1,3}', '', txt)
+    txt = re.sub(r'([A-Za-zÀ-ÿ])\s+-([A-Za-zÀ-ÿ])', r'\1-\2', txt)
+    txt = re.sub(r'([A-Za-zÀ-ÿ])-\s+([A-Za-zÀ-ÿ])', r'\1-\2', txt)
+    return txt
 
 def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False):
     """PDF text extraction. Tries pypdf first, which correctly handles FlateDecode
@@ -4133,10 +4153,10 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
         'legal_basis_breakdown':{
             'prohibited_count':len(prohibited),
             'problematic_count':len(problematic),
-            'prohibited_label':'Potentially Prohibited (EmpCo Annex I)',
+            'prohibited_label':'Potentially Prohibited (UCPD Annex I, as amended by EmpCo)',
             'problematic_label':'Problematic, not automatically prohibited (case-by-case)',
             'explanation':('Two different legal tests apply to sustainability claims. "Potentially Prohibited" claims match the '
-                            'wording of a fixed list in EmpCo Annex I (self-declared labels, generic claims, offset-based neutrality '
+                            'wording of a fixed list EmpCo adds to Annex I of the Unfair Commercial Practices Directive (self-declared labels, generic claims, offset-based neutrality '
                             'claims, legal compliance presented as a benefit) as detected by this automated screening; practices that '
                             'actually meet the described conditions become automatically unfair once EmpCo applies on 27 September '
                             '2026, with no case-by-case balancing test -- but this flags the wording pattern only, not a confirmed '
@@ -4254,7 +4274,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
         # Very high", a direct contradiction. Reported by a third-party code review, which
         # specifically warned this exact inconsistency could result from the audience-scaled
         # floor. Name the band the floor actually produced.
-        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
+        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed practice EmpCo adds to UCPD Annex I. '+green_conclusion
     # v93.31: green_fs/social_fs are the FULL analysis lists -- only the
     # 'green_findings'/'social_findings' keys below get a display-only top-12 selection.
     green_findings_display=green_fs[:12]; social_findings_display=social_fs[:12]
@@ -4422,7 +4442,7 @@ def analyse_url_v27(raw, company_number=''):
         # Very high", a direct contradiction. Reported by a third-party code review, which
         # specifically warned this exact inconsistency could result from the audience-scaled
         # floor. Name the band the floor actually produced.
-        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed EmpCo Annex I blacklisted practice. '+green_conclusion
+        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed practice EmpCo adds to UCPD Annex I. '+green_conclusion
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
@@ -4472,10 +4492,10 @@ def analyse_url_v27(raw, company_number=''):
         # earlier and the level(green_score) already computed for screening_conclusion itself.
         # Reported by a third-party code review, which found this exact remaining
         # inconsistency after the (separate) green_conclusion string had already been fixed.
-        summary=summary+f" A retained claim matches a fixed EmpCo Annex I blacklisted practice, which automatically raises the green and overall scores to at least the {level(green_score)} band regardless of the blended score."
+        summary=summary+f" A retained claim matches a fixed practice EmpCo adds to UCPD Annex I, which automatically raises the green and overall scores to at least the {level(green_score)} band regardless of the blended score."
     screening_conclusion=f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}'
     if empco_blacklist_floor:
-        screening_conclusion=f'EmpCo Annex I blacklist match: automatic {level(green_score)} | '+screening_conclusion
+        screening_conclusion=f'UCPD Annex I match (as amended by EmpCo): automatic {level(green_score)} | '+screening_conclusion
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)

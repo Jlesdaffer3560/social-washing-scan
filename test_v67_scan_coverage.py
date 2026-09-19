@@ -61,8 +61,9 @@ assert len(reader.pages)>=3,len(reader.pages)
 text='\n'.join((p.extract_text() or '') for p in reader.pages)
 assert 'WHAT WE LOOKED AT' in text,text[-2000:]  # v93.40: renamed from "ASSESSMENT COVERAGE"
 assert 'REVIEWED PAGES AND DOCUMENTS' in text,text[-2000:]
-assert '4 website page(s)' in text,text[-2000:]
-assert '2 document(s) / PDF(s)' in text,text[-2000:]
+# v93.71: "4 website page(s) ... 2 document(s) / PDF(s)" was rewritten as plain English.
+assert '4 website pages' in text,text[-2000:]
+assert '2 documents' in text,text[-2000:]
 
 # Geometric preflight: no words outside A4 page boxes.
 doc=fitz.open(stream=pdf,filetype='pdf')

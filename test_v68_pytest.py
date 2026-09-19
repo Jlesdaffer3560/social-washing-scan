@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_70_exclude_company_self_disclosure_signals'
+    assert app.APP_VERSION == 'hostable_v93_71_visual_and_legal_precision_pass'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3526,7 +3526,12 @@ def test_wording_distribution_text_shows_tied_wordings_not_one_dominant_phrase()
     for f in findings[8:]: f['matched_phrase']='duurzaam'
     cluster=rp.cluster_claims({'claim_inventory':findings})[0]
     text=rp.wording_distribution_text(cluster)
-    assert 'ecologisch 6' in text and 'duurzaam 6' in text and 'milieuvriendelijk 2' in text
+    # v93.71: the frequency dump ("ecologisch 6 · duurzaam 6") was rewritten as a plain
+    # sentence ("'ecologisch' 6 times; 'duurzaam' 6 times; 'milieuvriendelijk' twice") -- the
+    # tie between "ecologisch" and "duurzaam" must still be visible, just phrased naturally.
+    assert 'ecologisch' in text and '6 times' in text
+    assert 'duurzaam' in text
+    assert 'milieuvriendelijk' in text and 'twice' in text
 
 
 def test_cluster_representative_is_chosen_by_severity_before_frequency():
@@ -3809,8 +3814,10 @@ def test_legal_basis_label_prefers_the_stored_backend_label():
     text,_color=rp.legal_basis_label({'legal_basis_category':'prohibited','legal_basis_label':'Potentially Prohibited (EmpCo Annex I)'})
     assert text=='Potentially Prohibited (EmpCo Annex I)'
     # falls back to a derived label when the stored one is absent (e.g. an older cached result)
+    # -- v93.71: the derived fallback itself now uses the legally precise "UCPD Annex I, as
+    # amended by EmpCo" wording (see classify_legal_basis()'s matching fix in app.py).
     text2,_color2=rp.legal_basis_label({'legal_basis_category':'prohibited'})
-    assert text2=='Potentially Prohibited (EmpCo Annex I)'
+    assert text2=='Potentially Prohibited (UCPD Annex I, as amended by EmpCo)'
 
 
 def test_bounded_text_uses_an_ellipsis_not_a_period_when_actually_truncated():
