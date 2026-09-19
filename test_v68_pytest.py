@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_71_visual_and_legal_precision_pass'
+    assert app.APP_VERSION == 'hostable_v93_72_the_ledger_visual_redesign'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2966,6 +2966,39 @@ def test_company_own_disclosure_on_ngo_platform_is_not_a_negative_external_signa
     }
     assert app.is_negative_external_source(profile_page) is True, (
         'a general profile page merely mentioning the KnowTheChain benchmark by name must not be excluded')
+
+
+def test_ledger_slab_font_registers_from_bundled_files():
+    """v93.72: "The Ledger" visual redesign relies on Roboto Slab (bundled under fonts/,
+    Apache-2.0) for headings, scores and claim titles -- a deliberate, specific part of the
+    chosen design, not a cosmetic nice-to-have. Registration is wrapped in a try/except that
+    falls back to Times-Bold/Times-Roman if the font files are ever missing (so report
+    generation can never crash on this), but the fonts/ directory must actually ship with the
+    deployment and register correctly -- if it silently fell back, every report would render
+    in the wrong typeface with no visible error."""
+    import report_pdf as rp
+    assert rp.SLAB_BOLD == 'RobotoSlab-Bold', 'font files under fonts/ did not register -- check they are committed and deployed'
+    assert rp.SLAB_MEDIUM == 'RobotoSlab-Medium'
+    assert rp.SLAB_REGULAR == 'RobotoSlab-Regular'
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    assert stringWidth('75', rp.SLAB_BOLD, 20) > 0
+
+
+def test_risk_stamp_renders_for_every_risk_label_without_error():
+    """v93.72: The Ledger replaces the coloured risk badge pill with a rotated, double-ringed
+    stamp (_RiskStamp) -- a custom Flowable that draws its own multi-line centred text inside
+    a rotated circle. Must not crash for any real risk label, including edge cases (empty,
+    unusual casing, a bare fallback like "Review")."""
+    import report_pdf as rp
+    from reportlab.platypus import SimpleDocTemplate
+    import io as _io
+    for label in ['High', 'Very high', 'Medium', 'Low', 'Review', '', 'Not assessed']:
+        stamp = rp._RiskStamp(label, rp.risk_color(label))
+        assert stamp.lines, f'stamp for {label!r} produced no text lines'
+        buf = _io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=rp.A4)
+        doc.build([stamp])
+        assert buf.getvalue().startswith(b'%PDF-')
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
