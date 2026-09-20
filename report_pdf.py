@@ -1,14 +1,14 @@
 """Readable native Durably company claim-risk report (v93).
 
-v93.72 visual identity -- "The Ledger": chosen by explicit user selection from three concept
-mockups (an audit/official-record register, over a field-notebook or a dark tech-dashboard
-direction). Sage-toned paper background, near-black ink, Roboto Slab for headings/numbers/
-labels (registered from fonts/, falling back to Times-Bold if the font files are ever
-unavailable -- see SLAB_BOLD/SLAB_MEDIUM/SLAB_REGULAR), and risk rendered as a rotated,
-double-ringed stamp (_RiskStamp) instead of a coloured badge pill -- the vocabulary of a
-notarised document, not a marketing dashboard. Colour is reserved for the stamp and specific
-risk-labelled text; card/table borders and accents are neutral ink-grey throughout, so colour
-stays a meaningful signal rather than decoration repeated on every card.
+v93.73 visual identity -- "Signal": replaces v93.72's "The Ledger" after direct user feedback
+that its muted sage/ink palette read as "grey and dull" and that text throughout felt too
+cramped. Crisp near-white background, deep indigo-navy ink, Manrope for headings/numbers/
+labels (registered from fonts/, falling back to Helvetica-Bold if the font files are ever
+unavailable -- see DISPLAY_BOLD/DISPLAY_MEDIUM/DISPLAY_REGULAR), and risk rendered as a solid,
+vividly-coloured rounded pill (_RiskBadge) with white bold text -- a live signal rather than a
+recorded verdict. Colour is bolder and more saturated throughout (coral-red/amber/emerald risk
+colours, indigo-tinted "greys" instead of neutral ones), and spacing (paragraph leading, card
+padding, inter-section gaps) is more generous to address the "stuck together" complaint.
 
 The live /api/report/pdf endpoint calls build_company_report_pdf(data). Main body text is
 9.6 pt; most reading content (claim cards, methodology) is 8.8 pt, and the appendix table is
@@ -49,47 +49,48 @@ MARGIN_TOP = 10 * mm
 MARGIN_BOTTOM = 13 * mm
 CONTENT_W = PAGE_W - 2 * MARGIN_X
 
-# v93.72: "The Ledger" registers Roboto Slab (Apache-2.0, bundled under fonts/) for headings,
-# scores and claim titles -- ReportLab's built-in fonts have no slab serif, and that typeface
-# is a deliberate, specific part of the chosen design (a ledger/register feel), not a cosmetic
-# nice-to-have. Registration is wrapped in a try/except: a missing or unreadable font file
-# (e.g. a deploy that didn't carry the fonts/ directory) must degrade to a built-in bold serif
-# rather than take down report generation, since this runs on every /api/report/pdf request.
+# v93.73: "Signal" -- registers Manrope (SIL OFL, bundled under fonts/) for headings, scores
+# and claim titles. Replaces v93.72's "The Ledger" (Roboto Slab, muted sage/ink palette) after
+# direct user feedback that its low-saturation palette read as "grey and dull" rather than
+# official -- Manrope's confident, geometric extra-bold weight carries a vivid, high-contrast
+# palette (see the colour block below) much better than a slab serif suited to a muted one.
+# Registration is wrapped in a try/except: a missing or unreadable font file (e.g. a deploy
+# that didn't carry the fonts/ directory) must degrade to a built-in bold sans rather than take
+# down report generation, since this runs on every /api/report/pdf request.
 _FONT_DIR = Path(__file__).resolve().parent / "fonts"
 try:
-    pdfmetrics.registerFont(TTFont("RobotoSlab-Bold", str(_FONT_DIR / "RobotoSlab-Bold.ttf")))
-    pdfmetrics.registerFont(TTFont("RobotoSlab-Medium", str(_FONT_DIR / "RobotoSlab-Medium.ttf")))
-    pdfmetrics.registerFont(TTFont("RobotoSlab-Regular", str(_FONT_DIR / "RobotoSlab-Regular.ttf")))
-    SLAB_BOLD, SLAB_MEDIUM, SLAB_REGULAR = "RobotoSlab-Bold", "RobotoSlab-Medium", "RobotoSlab-Regular"
+    pdfmetrics.registerFont(TTFont("Manrope-ExtraBold", str(_FONT_DIR / "Manrope-ExtraBold.ttf")))
+    pdfmetrics.registerFont(TTFont("Manrope-Bold", str(_FONT_DIR / "Manrope-Bold.ttf")))
+    pdfmetrics.registerFont(TTFont("Manrope-Medium", str(_FONT_DIR / "Manrope-Medium.ttf")))
+    DISPLAY_BOLD, DISPLAY_MEDIUM, DISPLAY_REGULAR = "Manrope-ExtraBold", "Manrope-Bold", "Manrope-Medium"
 except Exception:
-    SLAB_BOLD, SLAB_MEDIUM, SLAB_REGULAR = "Times-Bold", "Times-Bold", "Times-Roman"
+    DISPLAY_BOLD, DISPLAY_MEDIUM, DISPLAY_REGULAR = "Helvetica-Bold", "Helvetica-Bold", "Helvetica"
 
-# v93.72: "The Ledger" -- a full visual redesign chosen by explicit user selection from three
-# concept mockups (an audit/official-record register, in preference to a field-notebook or a
-# dark tech-dashboard direction). Sage-toned paper, near-black ink, and risk rendered as a
-# stamped verdict rather than a coloured badge pill -- the vocabulary of a notarised document,
-# not a marketing dashboard. Every colour below is reassigned in place (old names kept where a
-# direct semantic successor exists, e.g. GREY_900 -> the same ink used for NAVY, since the
-# design collapses "primary heading colour" and "primary text colour" into one ink tone) so
-# this is the single place the whole report's palette is defined.
-NAVY = colors.HexColor("#132019")        # primary ink -- headings, numbers, strong text
-TEAL_DARK = colors.HexColor("#5A6B4F")   # muted sage -- eyebrow labels, card labels
-GREEN = colors.HexColor("#3F5A3F")       # Low risk
-GREEN_SOFT = colors.HexColor("#E4E9DE")
-AMBER = colors.HexColor("#8C6510")       # Medium risk (brass)
-AMBER_SOFT = colors.HexColor("#F1E9D6")
-RED = colors.HexColor("#8A3324")         # High / Very high risk (brick)
-RED_SOFT = colors.HexColor("#F1E3DE")
-BLUE_SOFT = colors.HexColor("#E8E9E0")   # neutral panel tint (methodology, regulations)
-GREY_900 = colors.HexColor("#132019")    # primary text -- same ink as NAVY
-GREY_700 = colors.HexColor("#3D4A3B")    # secondary text
-GREY_500 = colors.HexColor("#5A6B4F")    # muted sage -- tertiary text, source lines
-GREY_300 = colors.HexColor("#C7CABD")    # rules and borders
-GREY_100 = colors.HexColor("#E8E9E0")    # subtle panel tint
+# v93.73: "Signal" -- replaces v93.72's "The Ledger" after direct, explicit user feedback that
+# its muted sage/ink/brick palette read as "grey and dull", with a request to be bolder and
+# more colourful. Crisp near-white paper, deep indigo-navy ink, and vivid, high-saturation
+# risk colours (coral, amber, emerald) carried by solid rounded badges (see _RiskBadge) rather
+# than a subdued stamp. Every colour below is reassigned in place (old names kept -- e.g.
+# GREY_900 is the same ink as NAVY, GREY_500/700 are blue-tinted, not neutral, so text never
+# reads as plain grey) so this is the single place the whole report's palette is defined.
+NAVY = colors.HexColor("#1B2559")        # primary ink -- headings, numbers, strong text
+TEAL_DARK = colors.HexColor("#3D4A80")   # indigo-blue -- eyebrow labels, card labels
+GREEN = colors.HexColor("#0EA05F")       # Low risk (vivid emerald)
+GREEN_SOFT = colors.HexColor("#E1F8ED")
+AMBER = colors.HexColor("#E08A00")       # Medium risk (vivid amber)
+AMBER_SOFT = colors.HexColor("#FFF1D6")
+RED = colors.HexColor("#E5473B")         # High / Very high risk (vivid coral-red)
+RED_SOFT = colors.HexColor("#FDE9E7")
+BLUE_SOFT = colors.HexColor("#EEF1FC")   # panel tint (methodology, regulations)
+GREY_900 = colors.HexColor("#1B2559")    # primary text -- same ink as NAVY
+GREY_700 = colors.HexColor("#4A5578")    # secondary text -- indigo-tinted, not neutral grey
+GREY_500 = colors.HexColor("#6B7398")    # tertiary text, source lines -- indigo-tinted
+GREY_300 = colors.HexColor("#DBE0F2")    # rules and borders -- cool blue-lavender, not grey
+GREY_100 = colors.HexColor("#F2F4FD")    # subtle panel tint
 WHITE = colors.white
-PAPER = colors.HexColor("#F2F3EC")       # page background -- the "paper" the whole report sits on
-LINE_DASH = colors.HexColor("#B7BBA9")   # dashed section dividers between findings
-HIGHLIGHT_BG = "#E3D9A8"                 # warm tan mark background for a highlighted trigger phrase
+PAPER = colors.HexColor("#FDFDFF")       # page background -- crisp near-white, not tinted paper
+LINE_DASH = colors.HexColor("#C3CAE8")   # dashed section dividers between findings
+HIGHLIGHT_BG = "#FDE87A"                 # vivid highlighter-yellow mark background for a trigger phrase
 
 
 def _style(name: str, **kwargs) -> ParagraphStyle:
@@ -109,66 +110,62 @@ def _style(name: str, **kwargs) -> ParagraphStyle:
 # card labels, footer) are left as-is -- they're short, fixed-width UI text, not reading
 # content.
 ST = {
-    "brand": _style("brand", fontName=SLAB_BOLD, fontSize=8.0, leading=9.6, textColor=TEAL_DARK),
-    "title": _style("title", fontName=SLAB_BOLD, fontSize=21.0, leading=22.5, textColor=NAVY),
+    "brand": _style("brand", fontName=DISPLAY_BOLD, fontSize=8.0, leading=9.6, textColor=TEAL_DARK),
+    "title": _style("title", fontName=DISPLAY_BOLD, fontSize=21.0, leading=22.5, textColor=NAVY),
     "subtitle": _style("subtitle", fontSize=9.2, leading=11.0, textColor=GREY_700),
     "meta": _style("meta", fontSize=8.0, leading=9.5, textColor=GREY_700, alignment=TA_RIGHT),
-    "meta_b": _style("meta_b", fontName=SLAB_BOLD, fontSize=7.3, leading=8.7, textColor=GREY_500, alignment=TA_RIGHT),
-    "section": _style("section", fontName=SLAB_BOLD, fontSize=11.5, leading=13.0, textColor=NAVY, spaceBefore=3, spaceAfter=3),
+    "meta_b": _style("meta_b", fontName=DISPLAY_BOLD, fontSize=7.3, leading=8.7, textColor=GREY_500, alignment=TA_RIGHT),
+    "section": _style("section", fontName=DISPLAY_BOLD, fontSize=11.5, leading=13.0, textColor=NAVY, spaceBefore=3, spaceAfter=3),
     "body": _style("body", fontSize=10.0, leading=12.6, textColor=GREY_700),
     "body_dark": _style("body_dark", fontSize=10.0, leading=12.6, textColor=GREY_900),
     "small": _style("small", fontSize=9.0, leading=11.2, textColor=GREY_700),
     "small_dark": _style("small_dark", fontSize=9.0, leading=11.2, textColor=GREY_900),
     "source": _style("source", fontSize=8.0, leading=9.6, textColor=GREY_500),
     "quote": _style("quote", fontSize=9.0, leading=11.4, textColor=GREY_900),
-    "card_label": _style("card_label", fontName=SLAB_BOLD, fontSize=7.3, leading=8.6, textColor=TEAL_DARK),
-    "card_num": _style("card_num", fontName=SLAB_BOLD, fontSize=19.0, leading=20.0, textColor=NAVY),
-    "claim_title": _style("claim_title", fontName=SLAB_BOLD, fontSize=10.2, leading=12.2, textColor=NAVY),
-    "claim_risk": _style("claim_risk", fontName=SLAB_BOLD, fontSize=8.5, leading=10.0, alignment=TA_RIGHT, wordWrap="LTR"),
-    "claim_risk_badge": _style("claim_risk_badge", fontName=SLAB_BOLD, fontSize=8.2, leading=9.4, alignment=TA_CENTER, textColor=NAVY, wordWrap="LTR"),
+    "card_label": _style("card_label", fontName=DISPLAY_BOLD, fontSize=7.3, leading=8.6, textColor=TEAL_DARK),
+    "card_num": _style("card_num", fontName=DISPLAY_BOLD, fontSize=19.0, leading=20.0, textColor=NAVY),
+    "claim_title": _style("claim_title", fontName=DISPLAY_BOLD, fontSize=10.2, leading=12.2, textColor=NAVY),
+    "claim_risk": _style("claim_risk", fontName=DISPLAY_BOLD, fontSize=8.5, leading=10.0, alignment=TA_RIGHT, wordWrap="LTR"),
+    "claim_risk_badge": _style("claim_risk_badge", fontName=DISPLAY_BOLD, fontSize=8.2, leading=9.4, alignment=TA_CENTER, textColor=NAVY, wordWrap="LTR"),
     "table": _style("table", fontSize=8.0, leading=9.8, textColor=GREY_700),
     "table_dark": _style("table_dark", fontSize=8.0, leading=9.8, textColor=GREY_900),
-    "table_head": _style("table_head", fontName=SLAB_BOLD, fontSize=8.0, leading=9.8, textColor=NAVY),
+    "table_head": _style("table_head", fontName=DISPLAY_BOLD, fontSize=8.0, leading=9.8, textColor=NAVY),
     "footer": _style("footer", fontName="Helvetica-Oblique", fontSize=6.5, leading=7.5, textColor=GREY_500),
 }
 
 
-class _RiskStamp(Flowable):
-    """A rotated, double-ringed 'official stamp' rendering of a risk verdict -- The Ledger
-    concept's signature replacement for a coloured badge pill. A stamp reads as a verdict
-    already reached and recorded, not a warning colour; it sits inline at the left of a claim
-    card's title row, matching the chosen concept mockup exactly."""
+class _RiskBadge(Flowable):
+    """A solid, rounded-rectangle risk pill in the risk's own vivid colour, with bold white
+    text -- "Signal"'s replacement for v93.72's neutral-ink _RiskStamp. Where a stamp read as
+    a subdued, already-recorded verdict, a solid colour pill is a live signal: it carries the
+    risk colour itself (not just a thin ink outline), matching the brief for a bolder, more
+    colourful report. Sits inline at the left of a claim card's title row."""
 
-    def __init__(self, label, ink_color, diameter=19 * mm):
+    def __init__(self, label, fill_color, width=22 * mm, height=13 * mm):
         Flowable.__init__(self)
         words = clean_text(label).upper().split()
-        self.lines = ([words[0], "RISK"] if len(words) <= 1 else [words[0], " ".join(words[1:]), "RISK"]) if words else ["REVIEW"]
-        self.ink = ink_color
-        self.diameter = diameter
-        self.width = diameter
-        self.height = diameter
+        self.lines = [" ".join(words)] if words else ["REVIEW"]
+        if len(self.lines[0]) > 9 and len(words) > 1:
+            self.lines = [words[0], " ".join(words[1:])]
+        self.fill = fill_color
+        self.width = width
+        self.height = height
 
     def wrap(self, availWidth, availHeight):
-        return (self.diameter, self.diameter)
+        return (self.width, self.height)
 
     def draw(self):
         c = self.canv
-        r = self.diameter / 2.0
         c.saveState()
-        c.translate(r, r)
-        c.rotate(-7)
-        c.setStrokeColor(self.ink)
-        c.setLineWidth(1.3)
-        c.circle(0, 0, r - 1.7, stroke=1, fill=0)
-        c.setLineWidth(0.6)
-        c.circle(0, 0, r - 4.3, stroke=1, fill=0)
-        c.setFillColor(self.ink)
-        font_size = 6.5 if len(self.lines) <= 2 else 5.7
-        c.setFont(SLAB_BOLD, font_size)
-        line_gap = font_size + 1.0
-        top = (len(self.lines) - 1) * line_gap / 2.0
+        c.setFillColor(self.fill)
+        c.roundRect(0, 0, self.width, self.height, 3.2, stroke=0, fill=1)
+        c.setFillColor(WHITE)
+        font_size = 8.2 if len(self.lines) == 1 else 6.6
+        c.setFont(DISPLAY_BOLD, font_size)
+        line_gap = font_size + 1.2
+        top = self.height / 2.0 + (len(self.lines) - 1) * line_gap / 2.0
         for i, line in enumerate(self.lines):
-            c.drawCentredString(0, top - i * line_gap - font_size * 0.32, line)
+            c.drawCentredString(self.width / 2.0, top - i * line_gap - font_size * 0.32, line)
         c.restoreState()
 
 
@@ -408,7 +405,7 @@ def highlighted_excerpt(claim, max_chars=220):
     if not phrase:
         return text
     try:
-        return re.sub(re.escape(esc(phrase)), lambda m: f'<b backColor="#E3D9A8">{m.group(0)}</b>', text, flags=re.I)
+        return re.sub(re.escape(esc(phrase)), lambda m: f'<b backColor="#FDE87A">{m.group(0)}</b>', text, flags=re.I)
     except re.error:
         return text
 
@@ -791,18 +788,39 @@ def inventory_source_label(item, max_chars=72):
 
 def header_block(data, subtitle):
     meta = metadata(data)
-    left = [Paragraph("DURABLY SUSTAINABILITY CLAIMS RISK SCAN", ST["brand"]), Spacer(1, 1 * mm), Paragraph(esc(company_name(data)), ST["title"]), Paragraph(esc(subtitle), ST["subtitle"])]
+    left = [Paragraph("DURABLY SUSTAINABILITY CLAIMS RISK SCAN", ST["brand"]), Spacer(1, 1.6 * mm), Paragraph(esc(company_name(data)), ST["title"]), Paragraph(esc(subtitle), ST["subtitle"])]
     right = [Paragraph("REVIEWED SOURCE", ST["meta_b"]), Paragraph(esc(bounded_text(meta["source"], 70)), ST["meta"]), Paragraph(f'{esc(meta["date"])} · {esc(meta["assessment"])}', ST["meta"]), Paragraph(esc(meta["coverage"]), ST["meta"]), Paragraph(f'Confidence: <b>{esc(meta["confidence"])}</b>', ST["meta"])]
     t = Table([[left, right]], colWidths=[CONTENT_W * .64, CONTENT_W * .36])
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, -1), 1.2, NAVY), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
-    return [t, Spacer(1, 2 * mm)]
+    return [t, Spacer(1, 3 * mm)]
 
 
 def section_title(text):
     return Paragraph(esc(text.upper()), ST["section"])
 
 
+def _pluralize_claim_area(label):
+    """claim_title() returns a claim-TYPE name in its singular catalog form (e.g. "Generic
+    environmental claim") -- correct as an individual card's title, but wrong when the same
+    name is used to list "areas of concern" spanning multiple findings, where English requires
+    the plural ("...are Generic environmental claims, Human-rights / labour-rights claims and
+    ..."). Pluralizes only the label's last word, which is always the noun the label is
+    naming ("claim", or the rare non-"claim" label such as "green benefit")."""
+    words = label.split(" ")
+    last = words[-1]
+    low = last.lower()
+    if low.endswith(("s", "x", "z", "ch", "sh")):
+        plural = last + "es"
+    elif low.endswith("y") and len(last) > 1 and low[-2] not in "aeiou":
+        plural = last[:-1] + "ies"
+    else:
+        plural = last + "s"
+    words[-1] = plural
+    return " ".join(words)
+
+
 def _joined_areas(types):
+    types = [_pluralize_claim_area(t) for t in types]
     if not types:
         return ""
     if len(types) == 1:
@@ -828,7 +846,7 @@ def summary_box(data, clusters):
         conclusion = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
     score_line = (f'Overall score: {esc(global_score)}/100 — {esc(global_risk)} claim risk. '
                   f'This reflects the wording and evidence gaps found, not a share of unlawful claims.')
-    left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#3D4A3B" size="8">{score_line}</font>', ST["body_dark"])
+    left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#4A5578" size="8">{score_line}</font>', ST["body_dark"])
     note = Paragraph(esc(bounded_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on the result.", 170)), ST["small"])
     t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
     # v93.41: the opening conclusion is shown regardless of how severe the findings are (it
@@ -846,7 +864,7 @@ def score_card(label, value, risk, note="", card_width=None):
     risk_col = risk_color(risk)
     card_width = card_width or (CONTENT_W * .25 - 4)
     inner_width = card_width - 14
-    rows = [[Paragraph(esc(label.upper()), ST["card_label"])], [Paragraph(f'{esc(value)}<font size="7.5" color="#5A6B4F">/100</font>' if isinstance(value, (int, float)) else esc(value), ST["card_num"])], [Paragraph(f'<font color="{risk_col.hexval()}"><b>{esc(risk)}</b></font>', ST["small_dark"])]]
+    rows = [[Paragraph(esc(label.upper()), ST["card_label"])], [Paragraph(f'{esc(value)}<font size="7.5" color="#6B7398">/100</font>' if isinstance(value, (int, float)) else esc(value), ST["card_num"])], [Paragraph(f'<font color="{risk_col.hexval()}"><b>{esc(risk)}</b></font>', ST["small_dark"])]]
     if note:
         rows.append([Paragraph(esc(bounded_text(note, 115)), ST["source"])])
     inner = Table(rows, colWidths=[inner_width])
@@ -914,7 +932,7 @@ def risk_driver_table(selected):
         # leaving a dangling, meaningless "+." or "+ 1." (reported live). The full distribution
         # is always shown in full on the detail card below.
         flagged_wording = wording_distribution_text(c, compact=True) or trigger_phrase(claim) or "Review retained wording"
-        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#5A6B4F">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
+        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#6B7398">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
     t = Table(rows, colWidths=[9*mm, 67*mm, 47*mm, CONTENT_W-123*mm], repeatRows=1)
@@ -943,7 +961,7 @@ def full_claim_inventory_table(data, max_rows=60):
     headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("EXCERPT", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
     rows = [headers]
     for idx, claim in enumerate(rows_data, 1):
-        area = f'<b>{esc(bounded_text(claim_title(claim), 44))}</b><br/><font color="#5A6B4F">{esc(claim_risk(claim))}</font>'
+        area = f'<b>{esc(bounded_text(claim_title(claim), 44))}</b><br/><font color="#6B7398">{esc(claim_risk(claim))}</font>'
         # v93.35: was bounded_text(claim_excerpt(claim, 4000), 100) -- claim_excerpt(claim,
         # 4000) returns the claim near-verbatim (well under 4000 chars), then bounded_text
         # blindly cuts the first ~100 chars from the START. For a claim with a long lead-in,
@@ -964,7 +982,7 @@ def full_claim_inventory_table(data, max_rows=60):
     if not truncated:
         return [t]
     note = Paragraph(f"Showing the {max_rows} highest-risk of {total_count} retained findings; the full list remains available in the online scan.", ST["small"])
-    return [t, Spacer(1, 1*mm), note]
+    return [t, Spacer(1, 2.4*mm), note]
 
 
 def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
@@ -1014,10 +1032,10 @@ def claim_card(cluster, excerpt_chars=220, material=False):
         outer_padding = 8
         safety_gutter = 2 * mm
         inner_width = CONTENT_W - (2 * outer_padding) - safety_gutter
-        # v93.72: The Ledger replaces the coloured badge pill with a rotated, double-ringed
-        # stamp -- a verdict already reached and recorded, not a warning colour.
-        stamp_width = 22 * mm
-        stamp = _RiskStamp(claim_risk(claim), risk_color(claim_risk(claim)))
+        # v93.73: "Signal" replaces v93.72's neutral-ink stamp with a solid, vividly-coloured
+        # risk pill -- see _RiskBadge.
+        stamp_width = 24 * mm
+        stamp = _RiskBadge(claim_risk(claim), risk_color(claim_risk(claim)))
         head = Table([[stamp, Paragraph(esc(title), ST["claim_title"])]], colWidths=[stamp_width, inner_width - stamp_width], hAlign="LEFT")
         head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 4), ("TOPPADDING", (0, 0), (0, 0), 0), ("BOTTOMPADDING", (0, 0), (0, 0), 0),
@@ -1040,12 +1058,12 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     outer_padding = 8  # points, must match the card TableStyle below
     safety_gutter = 2 * mm
     inner_width = CONTENT_W - (2 * outer_padding) - safety_gutter
-    # v93.72: The Ledger replaces the coloured badge pill with a rotated, double-ringed stamp
-    # -- a verdict already reached and recorded, not a warning colour. See _RiskStamp.
-    stamp_width = 22 * mm
+    # v93.73: "Signal" replaces v93.72's neutral-ink stamp with a solid, vividly-coloured risk
+    # pill -- see _RiskBadge.
+    stamp_width = 24 * mm
     title_width = inner_width - stamp_width
     risk_value = claim_risk(claim)
-    stamp = _RiskStamp(risk_value, risk_color(risk_value))
+    stamp = _RiskBadge(risk_value, risk_color(risk_value))
     lb_text, lb_color = legal_basis_label(claim)
     # v93.35: legal_basis_label() returns ("", None) for a non-material placeholder (no
     # legal-basis category applies when there is no retained claim) -- render the title alone.
@@ -1072,19 +1090,19 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # group (see cluster_claims()'s selection order: severity first, then verifiability, then
     # frequency, then a fixed tiebreak).
     dist_text = wording_distribution_text(cluster)
-    dist_row = [Paragraph(f'<font color="#5A6B4F">Wording detected:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
-    source = Paragraph(f'<font color="#5A6B4F">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
+    dist_row = [Paragraph(f'<font color="#6B7398">Wording detected:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
+    source = Paragraph(f'<font color="#6B7398">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
     reason = claim.get("_selection_reason")
-    reason_row = [Paragraph(f'<font color="#5A6B4F">Why this example:</font> {esc(reason)}', ST["source"])] if reason and len(cluster["occurrences"]) > 1 else None
+    reason_row = [Paragraph(f'<font color="#6B7398">Why this example:</font> {esc(reason)}', ST["source"])] if reason and len(cluster["occurrences"]) > 1 else None
     # v93.34: option 1 -- a couple of the OTHER distinct wordings in this cluster, so a
     # double-digit occurrence count isn't represented by only one example. Fewer/shorter for
     # non-material cards to keep the page budget in check (see build_company_report_pdf).
     extra_max_items = 2 if material else 1
     extra_max_chars = 130 if material else 95
     extra_rows = [
-        [Paragraph(f'<font color="#5A6B4F">Also:</font> {highlighted_excerpt(occ, extra_max_chars)} '
-                   f'<font color="#5A6B4F">&mdash; {esc(claim_source(occ))}'
+        [Paragraph(f'<font color="#6B7398">Also:</font> {highlighted_excerpt(occ, extra_max_chars)} '
+                   f'<font color="#6B7398">&mdash; {esc(claim_source(occ))}'
                    + (f' · {esc(claim_risk(occ))}, {esc(legal_basis_label(occ)[0])}' if (claim_risk(occ), str(occ.get("legal_basis_category") or "").lower()) != (claim_risk(claim), str(claim.get("legal_basis_category") or "").lower()) else '')
                    + '</font>', ST["source"])]
         for occ in other_occurrence_excerpts(cluster, max_items=extra_max_items, max_chars=extra_max_chars)
@@ -1102,7 +1120,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # v93.71: "What's missing" asserted the evidence doesn't exist; the scan can only say it
     # wasn't found in the material actually reviewed, which "Evidence to verify" states
     # honestly without that stronger, unproven claim.
-    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)} <font color="#5A6B4F">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
+    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)} <font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
@@ -1112,7 +1130,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
         # could use" in a business document. The backend's ready_to_use_rewrite text already
         # comes wrapped in its own literal quote marks (see green/social_ready_to_use_rewrite()
         # in app.py), so no quote marks are added here on top of those.
-        action_html += f'<br/><font color="#5A6B4F">Example wording — verify and complete before use:</font> <i>{esc(ready_rewrite)}</i>'
+        action_html += f'<br/><font color="#6B7398">Example wording — verify and complete before use:</font> <i>{esc(ready_rewrite)}</i>'
     action = Paragraph(action_html, ST["small_dark"])
     rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[meaning], [action]]
     inner = Table(rows, colWidths=[inner_width])
@@ -1199,10 +1217,10 @@ def external_signal_card(signal, width):
     url = clean_text(signal.get("url"))
     if url.lower().startswith(("http://", "https://")):
         href = esc(url).replace('"', "&quot;")
-        title_html = f'<a href="{href}" color="#132019"><u>{esc(title)}</u></a>'
+        title_html = f'<a href="{href}" color="#1B2559"><u>{esc(title)}</u></a>'
     else:
         title_html = esc(title)
-    rows = [[Paragraph(title_html, ST["claim_title"])], [Paragraph(f'<b>{esc(source)}</b> · {esc(date)}<br/><font color="#8A3324">{esc(status)}</font> · {esc(review)}', ST["source"])]]
+    rows = [[Paragraph(title_html, ST["claim_title"])], [Paragraph(f'<b>{esc(source)}</b> · {esc(date)}<br/><font color="#E5473B">{esc(status)}</font> · {esc(review)}', ST["source"])]]
     if content:
         rows.append([Paragraph(esc(content), ST["small"])])
     # v93.61: a missing entity_match silently defaulted to "Direct" -- implying a confirmed
@@ -1386,17 +1404,16 @@ def _fit_text_to_width(text, font, size, max_width):
 
 
 def _draw_page_paper(canvas):
-    """v93.72: The Ledger's tinted paper background and inset frame rule. ReportLab invokes
-    onFirstPage/onLaterPages at page-begin, before that page's flowable content is drawn, so
-    painting the background here leaves everything drawn afterwards sitting correctly on top
-    of it -- this is the standard ReportLab idiom for a full-page background/watermark."""
+    """v93.73: "Signal" drops v93.72's framed-document look (a full inset border rule on every
+    page, evoking a notarised register) for a plain near-white ground plus a bold navy masthead
+    bar across the very top edge -- a dashboard/report banner, not a paper frame. ReportLab
+    invokes onFirstPage/onLaterPages at page-begin, before that page's flowable content is
+    drawn, so painting here leaves everything drawn afterwards sitting correctly on top of it."""
     canvas.saveState()
     canvas.setFillColor(PAPER)
     canvas.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
-    inset = 7 * mm
-    canvas.setStrokeColor(GREY_300)
-    canvas.setLineWidth(0.7)
-    canvas.rect(inset, inset, PAGE_W - 2 * inset, PAGE_H - 2 * inset, stroke=1, fill=0)
+    canvas.setFillColor(NAVY)
+    canvas.rect(0, PAGE_H - 3 * mm, PAGE_W, 3 * mm, stroke=0, fill=1)
     canvas.restoreState()
 
 
@@ -1475,9 +1492,9 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     flow = []
     # PAGE 1 -- overview: what's wrong, how serious, what to do about it first.
     flow += header_block(data, "Company claim-risk report · Assessment overview")
-    flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 2.5*mm))
-    flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 1.6*mm))
-    flow.append(entity_context_bar(data)); flow.append(Spacer(1, 1.8*mm))
+    flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 3.6*mm))
+    flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 2.4*mm))
+    flow.append(entity_context_bar(data)); flow.append(Spacer(1, 2.6*mm))
     # v93.71: added per reviewer feedback -- the appendix can show every retained finding as
     # "High" while the overview score reads lower, which looks contradictory without knowing
     # that wording severity is weighted far more heavily than repetition, and that repeated
@@ -1487,13 +1504,13 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         "sector exposure; several findings of the same type raise the result but are capped so one repeated wording "
         "pattern cannot dominate it. The same quoted passage can appear under more than one claim category when it "
         "raises more than one distinct issue — this is not double-counted evidence of a single wording problem.")
-    flow.append(Paragraph(scoring_note, ST["source"])); flow.append(Spacer(1, 2.2*mm))
+    flow.append(Paragraph(scoring_note, ST["source"])); flow.append(Spacer(1, 3.2*mm))
     rp = reliability_panel(data)
     if rp is not None:
         # Kept on page 1, not moved to the later context page: a genuine coverage limitation
         # can make the very conclusion above less certain, so the reader needs to see it
         # immediately, not after already having acted on the headline result.
-        flow.append(rp); flow.append(Spacer(1, 2.2*mm))
+        flow.append(rp); flow.append(Spacer(1, 3.2*mm))
     flow.append(section_title("What needs attention"))
     # v93.37/v93.38: added per explicit user request -- readers otherwise couldn't tell why
     # one specific claim group and wording example was shown in detail (here, and in "Most
@@ -1536,19 +1553,19 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         + detail_line
         + "For each group, we show the clearest example we found: the most serious occurrence, preferring an exact, sourced quote when there's a choice. Every other finding still appears — with a short excerpt and its source — in the Full list of findings at the end of this report.")
     flow.append(Paragraph(selection_note, ST["small"]))
-    flow.append(Spacer(1, 1.2*mm))
+    flow.append(Spacer(1, 1.8*mm))
     top_selected = [material] + additional
-    flow.append(risk_driver_table(top_selected)); flow.append(Spacer(1, 2.8*mm))
+    flow.append(risk_driver_table(top_selected)); flow.append(Spacer(1, 4*mm))
     flow.append(section_title("Priority actions")); flow.append(actions_table(data))
     flow.append(PageBreak())
 
     # PAGE 2 -- the evidence itself: exact quotes, why they matter, what to do.
     flow += header_block(data, "Company claim-risk report · Findings in detail")
-    flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 2.5*mm))
+    flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 3.6*mm))
     flow.append(section_title("Additional findings"))
     if additional:
         for c in additional:
-            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 1.7*mm))
+            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 2.6*mm))
     else:
         flow.append(Paragraph("No additional finding is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
     flow.append(PageBreak())
@@ -1559,8 +1576,8 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # v93.71: "What external sources say" reads as a neutral, broad survey, but the panel
     # beneath it is deliberately negative-only (see external_panel's own note) -- "External
     # concerns identified" names what's actually shown instead of implying a balanced summary.
-    flow.append(section_title("External concerns identified")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 1.8*mm))
-    flow.append(assessment_basis(data)); flow.append(Spacer(1, 1.8*mm))
+    flow.append(section_title("External concerns identified")); flow.append(external_panel(data, external_limit)); flow.append(Spacer(1, 2.6*mm))
+    flow.append(assessment_basis(data)); flow.append(Spacer(1, 2.6*mm))
     # v93.61: "What we looked at" used to sit AFTER the (potentially long) full claim-inventory
     # table on the appendix page -- confirmed by inspection to be able to land at the bottom of
     # a full page, or spill onto a near-empty trailing page, depending on how many rows the

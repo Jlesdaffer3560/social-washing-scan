@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_72_the_ledger_visual_redesign'
+    assert app.APP_VERSION == 'hostable_v93_73_signal_visual_redesign'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2968,37 +2968,54 @@ def test_company_own_disclosure_on_ngo_platform_is_not_a_negative_external_signa
         'a general profile page merely mentioning the KnowTheChain benchmark by name must not be excluded')
 
 
-def test_ledger_slab_font_registers_from_bundled_files():
-    """v93.72: "The Ledger" visual redesign relies on Roboto Slab (bundled under fonts/,
-    Apache-2.0) for headings, scores and claim titles -- a deliberate, specific part of the
-    chosen design, not a cosmetic nice-to-have. Registration is wrapped in a try/except that
-    falls back to Times-Bold/Times-Roman if the font files are ever missing (so report
-    generation can never crash on this), but the fonts/ directory must actually ship with the
-    deployment and register correctly -- if it silently fell back, every report would render
-    in the wrong typeface with no visible error."""
+def test_signal_manrope_font_registers_from_bundled_files():
+    """v93.73: "Signal" visual redesign relies on Manrope (bundled under fonts/, SIL OFL) for
+    headings, scores and claim titles -- a deliberate, specific part of the chosen design, not
+    a cosmetic nice-to-have. Registration is wrapped in a try/except that falls back to
+    Helvetica-Bold/Helvetica if the font files are ever missing (so report generation can never
+    crash on this), but the fonts/ directory must actually ship with the deployment and
+    register correctly -- if it silently fell back, every report would render in the wrong
+    typeface with no visible error."""
     import report_pdf as rp
-    assert rp.SLAB_BOLD == 'RobotoSlab-Bold', 'font files under fonts/ did not register -- check they are committed and deployed'
-    assert rp.SLAB_MEDIUM == 'RobotoSlab-Medium'
-    assert rp.SLAB_REGULAR == 'RobotoSlab-Regular'
+    assert rp.DISPLAY_BOLD == 'Manrope-ExtraBold', 'font files under fonts/ did not register -- check they are committed and deployed'
+    assert rp.DISPLAY_MEDIUM == 'Manrope-Bold'
+    assert rp.DISPLAY_REGULAR == 'Manrope-Medium'
     from reportlab.pdfbase.pdfmetrics import stringWidth
-    assert stringWidth('75', rp.SLAB_BOLD, 20) > 0
+    assert stringWidth('75', rp.DISPLAY_BOLD, 20) > 0
 
 
-def test_risk_stamp_renders_for_every_risk_label_without_error():
-    """v93.72: The Ledger replaces the coloured risk badge pill with a rotated, double-ringed
-    stamp (_RiskStamp) -- a custom Flowable that draws its own multi-line centred text inside
-    a rotated circle. Must not crash for any real risk label, including edge cases (empty,
-    unusual casing, a bare fallback like "Review")."""
+def test_risk_badge_renders_for_every_risk_label_without_error():
+    """v93.73: "Signal" replaces v93.72's neutral-ink stamp with a solid, vividly-coloured
+    rounded risk pill (_RiskBadge) -- a custom Flowable that draws its own centred white text
+    inside a filled rounded rectangle. Must not crash for any real risk label, including edge
+    cases (empty, unusual casing, a bare fallback like "Review")."""
     import report_pdf as rp
     from reportlab.platypus import SimpleDocTemplate
     import io as _io
     for label in ['High', 'Very high', 'Medium', 'Low', 'Review', '', 'Not assessed']:
-        stamp = rp._RiskStamp(label, rp.risk_color(label))
-        assert stamp.lines, f'stamp for {label!r} produced no text lines'
+        badge = rp._RiskBadge(label, rp.risk_color(label))
+        assert badge.lines, f'badge for {label!r} produced no text lines'
         buf = _io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=rp.A4)
-        doc.build([stamp])
+        doc.build([badge])
         assert buf.getvalue().startswith(b'%PDF-')
+
+
+def test_summary_box_areas_of_concern_are_pluralized():
+    """User feedback: the opening summary's "The main areas of concern are ..." sentence
+    joined claim-TYPE catalog names in their singular card-title form ("Generic environmental
+    claim, Human-rights / labour-rights claim and ..."), which reads as ungrammatical since
+    "areas" is plural and each named area can span many findings. _joined_areas() must
+    pluralize each label's last word before joining."""
+    import report_pdf as rp
+    joined = rp._joined_areas(['Generic environmental claim', 'Human-rights / labour-rights claim',
+                                'Sustainability label / certification claim'])
+    assert joined == ('Generic environmental claims, Human-rights / labour-rights claims and '
+                       'Sustainability label / certification claims')
+    # A label that doesn't end in "claim" still pluralizes its last word correctly.
+    assert rp._pluralize_claim_area('Legal requirement presented as green benefit') == \
+        'Legal requirement presented as green benefits'
+    assert rp._pluralize_claim_area('Broad social-impact claim') == 'Broad social-impact claims'
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
