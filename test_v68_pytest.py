@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_73_signal_visual_redesign'
+    assert app.APP_VERSION == 'hostable_v93_74_bhrrc_company_response_exclusion'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4159,3 +4159,33 @@ def test_methodology_section_does_not_share_the_appendix_page_with_the_findings_
     full_text=' '.join(p.extract_text() for p in pages).upper()
     assert 'WHAT WE LOOKED AT' in full_text
     assert 'REVIEWED PAGES AND DOCUMENTS' in full_text
+
+
+def test_bhrrc_company_response_excluded_from_external_signals():
+    """Live-reproduced bug: a real scan of ikea.com retained "Response by IKEA - Business and
+    Human Rights Centre" (business-humanrights.org/en/latest-news/response-by-ikea) as a
+    negative external signal, quoting IKEA's own denial ("We are not aware of any forced
+    labour..."). That platform hosts both genuine third-party allegations AND a company's own
+    rebuttal under a fixed "Response by <Company>" title / "response-by-<slug>" URL
+    convention -- none of the existing _V71_COMPANY_DOCUMENT_MARKERS (generic "company
+    response"/"company statement" phrasing) matched this platform's actual wording, so the
+    company's own denial slipped through as if it were adverse third-party evidence."""
+    ikea_response = {
+        'title': 'Response by IKEA - Business and Human Rights Centre',
+        'url': 'https://www.business-humanrights.org/en/latest-news/response-by-ikea',
+        'content': ('Response by IKEA ...We are not aware of any forced labour among our sub '
+                    'suppliers in China and under no circumstance do we accept any form of '
+                    'forced labour in the IKEA value chain...'),
+    }
+    assert app._v71_company_document_without_adverse_finding(ikea_response) is True
+    polarity, reason = app._v69_external_polarity(ikea_response, 'social')
+    assert polarity is False
+    assert 'Company-authored' in reason
+    # A genuine third-party article that merely mentions a company's name near "response by"
+    # elsewhere must not be wrongly suppressed -- the check is anchored to the title's start.
+    genuine_allegation = {
+        'title': 'NGOs file complaint against IKEA over alleged forced labour',
+        'url': 'https://www.business-humanrights.org/en/latest-news/ngos-file-complaint-ikea',
+        'content': 'NGOs have filed a formal complaint alleging forced labour in IKEA supply chains.',
+    }
+    assert app._v71_company_document_without_adverse_finding(genuine_allegation) is False

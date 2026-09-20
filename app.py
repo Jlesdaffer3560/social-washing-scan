@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_73_signal_visual_redesign"
-APP_RELEASE_LABEL="v93.73"
+APP_VERSION="hostable_v93_74_bhrrc_company_response_exclusion"
+APP_RELEASE_LABEL="v93.74"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -9802,7 +9802,21 @@ def _v71_company_document_without_adverse_finding(result):
     """Reject a company's own policy/report even when hosted on a public register."""
     title=re.sub(r'\s+',' ',str((result or {}).get('title','') or '')).lower()
     content=re.sub(r'\s+',' ',str((result or {}).get('content','') or '')).lower()[:900]
-    url=str((result or {}).get('url','') or '').lower().replace('-',' ')
+    url_raw=str((result or {}).get('url','') or '').lower()
+    url=url_raw.replace('-',' ')
+    # v93.74: Business & Human Rights Resource Centre (and similar trackers) publish a
+    # company's own rebuttal under a fixed "Response by <Company>" title / "response-by-
+    # <company-slug>" URL convention, right alongside genuine third-party allegations about
+    # the same company. Live-reproduced against IKEA: "Response by IKEA - Business and Human
+    # Rights Centre" (business-humanrights.org/en/latest-news/response-by-ikea) was retained
+    # as a negative external signal quoting IKEA's own denial ("We are not aware of any
+    # forced labour...") -- none of the _V71_COMPANY_DOCUMENT_MARKERS below matched, since
+    # they only cover a generic "company response"/"company statement" phrasing, not this
+    # platform's actual "response by X" convention. Anchored at the title's start (rather
+    # than a bare substring) so a genuine third-party article merely mentioning "in response
+    # by IKEA to the allegations..." elsewhere in its title is not wrongly suppressed.
+    if title.startswith('response by ') or re.search(r'/response-by-[a-z0-9-]+', url_raw):
+        return True
     text=' '.join((title,content,url))
     if not any(_v62_term_present(text,marker) for marker in _V71_COMPANY_DOCUMENT_MARKERS):
         return False
