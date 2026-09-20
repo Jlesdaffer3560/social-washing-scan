@@ -21,9 +21,16 @@ sample = {
     'company_action_plan':[{'title':'Review client-facing green claims under EmpCo','action':'Review all consumer-facing claims.'},{'title':'Build a claim evidence file','action':'Create claim-specific files.'},{'title':'Align reporting and marketing language','action':'Add approval controls.'}],
     'report': {'pages_reviewed':['https://www.shein.com','https://www.shein.com/sustainability','https://www.sheingroup.com/report','https://www.sheingroup.com/people']},
     'confidence': {'level':'Medium','reasons':['several company pages were reviewed','external public-source search was active','claim-level signals were detected']},
+    # v93.73: both rows need 'polarity':'negative' -- the v69 safety gate in report_pdf.py's
+    # external_signals() only shows a source that carries this explicit field (set by the real
+    # backend at app.py:8787 on every genuinely retained negative source). This fixture predates
+    # that gate and was never updated, so it silently rendered as "no signal retained" without
+    # failing any assertion here -- caught only because a demo PDF built from this same fixture
+    # showed zero external signals for a company where two were clearly supplied, which is what
+    # exposed the gap.
     'external_research': {'green': {'targeted_negative_sources':[
-        {'title':'Shein faces greenwashing investigation in Italy','url':'https://example.com/shein-investigation','source_name':'ESG publication','published_date':'2026-06-01','status':'Investigation / regulatory review','review_status':'Retained - manual verification required','content':'The authority opened an investigation into environmental claims.','related_claim_area':'Environmental claims','entity_match':'Direct - target in title'},
-        {'title':'Shein fined for misleading environmental claims','url':'https://example.org/shein-fine','source_name':'News source','published_date':'2026-07-01','status':'Decision / ruling','review_status':'Retained - manual verification required','content':'The authority imposed a fine for misleading environmental claims.','related_claim_area':'Environmental claims','entity_match':'Direct - target in title'},
+        {'title':'Shein faces greenwashing investigation in Italy','url':'https://example.com/shein-investigation','source_name':'ESG publication','published_date':'2026-06-01','status':'Investigation / regulatory review','review_status':'Retained - manual verification required','polarity':'negative','content':'The authority opened an investigation into environmental claims.','related_claim_area':'Environmental claims','entity_match':'Direct - target in title'},
+        {'title':'Shein fined for misleading environmental claims','url':'https://example.org/shein-fine','source_name':'News source','published_date':'2026-07-01','status':'Decision / ruling','review_status':'Retained - manual verification required','polarity':'negative','content':'The authority imposed a fine for misleading environmental claims.','related_claim_area':'Environmental claims','entity_match':'Direct - target in title'},
     ]}, 'social': {'targeted_negative_sources':[]}},
 }
 
@@ -55,6 +62,12 @@ for page_no, page in enumerate(doc):
 assert risk_words, 'No claim-card risk words found'
 assert any(x0 < 130 for _,_,x0,_,_ in risk_words), risk_words
 assert all(x1 < page_w - 40 for _,_,_,x1,_ in risk_words), risk_words
+
+# v93.73: both supplied negative external sources must actually render somewhere in the PDF
+# (previously silently dropped -- see the 'polarity' comment on the fixture above).
+full_text = "".join(page.get_text() for page in doc)
+assert 'greenwashing investigation' in full_text.lower(), 'supplied external signal missing from rendered PDF'
+assert 'fined for misleading' in full_text.lower(), 'supplied external signal missing from rendered PDF'
 
 out = Path('PREVIEW_V66')
 out.mkdir(exist_ok=True)
