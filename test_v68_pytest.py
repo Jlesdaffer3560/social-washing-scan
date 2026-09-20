@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_74_bhrrc_company_response_exclusion'
+    assert app.APP_VERSION == 'hostable_v93_75_court_ruling_exoneration_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4189,3 +4189,35 @@ def test_bhrrc_company_response_excluded_from_external_signals():
         'content': 'NGOs have filed a formal complaint alleging forced labour in IKEA supply chains.',
     }
     assert app._v71_company_document_without_adverse_finding(genuine_allegation) is False
+
+
+def test_court_ruling_in_favor_of_company_not_treated_as_negative_signal():
+    """Live-reproduced bug: a real scan of ikea.com retained "A top European Union court ruled
+    in favor of IKEA in a lawsuit ..." as a NEGATIVE external signal -- the polarity gate's
+    generic adverse-word list matches "court"/"lawsuit"/"ruling" regardless of which side won,
+    and no exoneration term covered a company winning its own case. A court ruling FOR the
+    company is the opposite of an adverse finding against it."""
+    win = {
+        'title': 'A top European Union court ruled in favor of IKEA in a lawsuit against a Belgian company',
+        'url': 'https://www.facebook.com/example/posts/example',
+        'content': 'A top EU court ruled in favor of IKEA today.',
+    }
+    accepted, reason = app._v69_external_polarity(win, 'social')
+    assert accepted is False
+    assert 'Exoneration' in reason
+    # Known, accepted limitation: this is a title-text heuristic with no entity-relationship
+    # parsing (consistent with every other term list in this module), so it cannot tell "ruled
+    # in favor of <the scanned company>" from "ruled in favor of <the OTHER party>, against
+    # <the scanned company>" -- a title phrased the second way is a real adverse finding that
+    # this exoneration check will currently also (wrongly) suppress. Narrowing further would
+    # need the target company name threaded through this whole polarity pipeline, which no
+    # caller currently supplies. Documented here rather than silently assumed away.
+    unclear_direction = {
+        'title': 'A top European Union court ruled in favor of the NGO against IKEA',
+        'url': 'https://example.com/eu-court-ikea-ruling',
+        'content': 'The court ruled against IKEA in a landmark human rights case.',
+    }
+    accepted2, _ = app._v69_external_polarity(unclear_direction, 'social')
+    assert accepted2 is False, (
+        'if this now returns True, the direction-ambiguity limitation above has been fixed -- '
+        'update this test to assert True and remove the comment')

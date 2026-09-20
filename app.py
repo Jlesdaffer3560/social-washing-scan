@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_74_bhrrc_company_response_exclusion"
-APP_RELEASE_LABEL="v93.74"
+APP_VERSION="hostable_v93_75_court_ruling_exoneration_fix"
+APP_RELEASE_LABEL="v93.75"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -9607,7 +9607,18 @@ _V69_POSITIVE_HEADLINE_TERMS=(
 _V69_EXONERATION_TERMS=(
     'cleared of','acquitted','complaint dismissed','case dismissed','no evidence of',
     'found no evidence','not misleading','claims were compliant','investigation closed without action',
-    'charges dropped','allegations rejected','allegations unfounded'
+    'charges dropped','allegations rejected','allegations unfounded',
+    # v93.75: live-reproduced against ikea.com -- "A top European Union court ruled in favor
+    # of IKEA in a lawsuit ..." was retained as a NEGATIVE external signal (polarity_reason:
+    # "adverse event/finding in title, formal enforcement..."), because the polarity gate's
+    # generic adverse-word list (_V69_GENERIC_ADVERSE) matches "court"/"lawsuit"/"ruling" on
+    # their own, and no exoneration term covered a company winning a case -- only losing one.
+    # A court ruling FOR the defendant is the opposite of an adverse finding. Deliberately
+    # narrow to phrases that name the winner in the same breath ("ruled in favor of <target>")
+    # -- a bare "won the case"/"sided with" is directionally ambiguous (e.g. "NGO wins case
+    # against IKEA" or "court sided with plaintiffs against IKEA" would be genuinely adverse
+    # to the target despite containing "wins"/"sided with").
+    'ruled in favor of','ruled in favour of','ruling in favor of','ruling in favour of'
 )
 _V69_GENERIC_ADVERSE=(
     'accused','alleged','alleges','alleging','allegation','criticised','criticized','criticism','backlash','controversy',
