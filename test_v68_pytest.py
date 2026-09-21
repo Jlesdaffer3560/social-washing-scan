@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_75_court_ruling_exoneration_fix'
+    assert app.APP_VERSION == 'hostable_v93_76_legal_precision_review'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2122,10 +2122,16 @@ def test_offset_negation_flips_blacklist_indicator():
     assert 'blacklisted-practice indicator where product-level' in flagged
     not_flagged = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
         'Our product is carbon neutral without offsetting.')
-    assert 'offset basis not established' in not_flagged
+    # v93.76: not the 4c (offset-based) ground -- but an UNSPECIFIED neutrality claim is a generic
+    # environmental claim under Annex I point 4a (Commission ECGT FAQ Q6), so it is flagged on
+    # that ground instead of being waved through as merely case-by-case.
+    assert 'offset basis not established' in not_flagged.lower()
+    assert 'blacklisted-practice indicator where product-level' not in not_flagged
+    assert 'point 4a' in not_flagged
     dutch_not_flagged = app.green_blacklisted_indicator('Climate-neutrality claim', 'klimaatneutraal',
         'Ons product is klimaatneutraal zonder compensatie.')
-    assert 'offset basis not established' in dutch_not_flagged
+    assert 'offset basis not established' in dutch_not_flagged.lower()
+    assert 'blacklisted-practice indicator where product-level' not in dutch_not_flagged
 
 
 def test_offset_negation_handles_post_positioned_negation_and_repeated_terms():
@@ -2645,7 +2651,13 @@ def test_score_is_reconstructable_from_its_displayed_components():
     comps = result['score_components']['green']
     assert 'raw_before_cap' in comps and 'cap_applied' in comps and 'regulatory_signal_used' in comps
     reconstructed = min(comps['raw_before_cap'], comps['cap_applied'])
-    assert reconstructed == result['green_score']
+    # v93.76: an unspecified "carbon neutral" claim is a generic claim under Annex I point 4a
+    # (Commission ECGT FAQ Q6), so this exact text now also triggers the Annex I wording-match
+    # floor. The displayed score is then max(reconstructed, floor) and the floor is disclosed.
+    if result.get('empco_blacklist_floor_applied'):
+        assert result['green_score'] == max(reconstructed, 75)
+    else:
+        assert reconstructed == result['green_score']
     raw = round((comps['claim_wording_risk']*0.50 + comps['substantiation_risk']*0.22
         + comps['external_context_risk']*0.20 + comps['sector_baseline_risk']*0.08) * comps['audience_factor'])
     assert raw == comps['raw_before_cap']
@@ -4221,3 +4233,48 @@ def test_court_ruling_in_favor_of_company_not_treated_as_negative_signal():
     assert accepted2 is False, (
         'if this now returns True, the direction-ambiguity limitation above has been fixed -- '
         'update this test to assert True and remove the comment')
+
+
+def test_unspecified_neutrality_claim_is_generic_4a_even_at_company_level():
+    """Legal review (Commission ECGT FAQ Q6/Q10, recitals 9 and 12): bare "carbon/climate
+    neutral" wording is a GENERIC environmental claim under Annex I point 4a unless specified
+    clearly and prominently on the same medium -- also at company level (4c, offset-based
+    product claims, is the separate ground). Only wording that names its scope or basis leaves
+    the fixed list."""
+    bare_company = app.green_blacklisted_indicator('Climate-neutrality claim', 'climate neutral', 'We are climate neutral.')
+    assert 'blacklisted-practice indicator' in bare_company and 'point 4a' in bare_company
+    scoped = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
+        'Our direct operations reached carbon neutrality in 2025.')
+    assert 'blacklisted-practice indicator' not in scoped
+    specified = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
+        'This product is carbon neutral according to the GHG Protocol methodology, verified by a third party.')
+    assert 'blacklisted-practice indicator' not in specified
+    # company-level offset-based claim that names its scope stays off the 4c list (Q10)
+    f = app.enrich_green_finding({'type': 'Climate-neutrality or offsetting claim', 'risk': 'High',
+        'claim': 'Our operations are carbon neutral through offsetting.'}, 'carbon neutral')
+    assert f['blacklisted_practice_indicator'] is False
+
+
+def test_article_12_ucpd_described_as_discretionary_not_burden_reversal():
+    """Legal review: Art. 12 UCPD empowers courts/authorities, where appropriate in the
+    circumstances, to require evidence and to treat unsubstantiated factual claims as
+    inaccurate. It is not introduced/reinforced by EmpCo and is not an automatic reversal of the
+    burden of proof."""
+    text = app.classify_legal_basis({'blacklisted_practice_indicator': False})['legal_basis_short']
+    assert 'reinforced by EmpCo' not in text and 'burden falls on the company' not in text
+    assert 'Article 12(a) and (b) UCPD' in text and 'where appropriate' in text
+    import methodology_pdf, inspect
+    src = inspect.getsource(methodology_pdf)
+    assert 'reinforced by EmpCo' not in src and 'burden' not in src.split('Article 12(a)')[1][:900].lower()
+
+
+def test_annex_i_texts_are_framed_as_wording_matches_and_10a_is_not_environmental_only():
+    """Legal review: the keyword scan cannot confirm the legal conditions, so conclusions say
+    "resembles ... automated wording match", and point 10a concerns legal requirements applying
+    to ALL products of the category (not only environmental benefits; recital 15)."""
+    legal = app.green_blacklisted_indicator('Legal requirement presented as green benefit', 'legal', 'We comply with EU law.')
+    assert 'point 10a' in legal and 'ALL products' in legal and 'blacklisted-practice indicator' in legal
+    assert 'distinctive environmental benefit' not in legal
+    result = app.analyse_uploaded_document('t.txt', 'Our product is carbon neutral through offsetting.', 'TestCo')
+    assert 'matches a fixed practice' not in result['green_conclusion']
+    assert 'resembles a fixed practice' in result['green_conclusion']

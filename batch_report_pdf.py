@@ -336,7 +336,7 @@ def _analysis_text(agg, top_claims):
         comps = tc.get('companies') or 0
         parts.append(f'The most frequently flagged wording across this selection is &ldquo;{phrase}&rdquo;, '
                       f'appearing {occ} time{"s" if occ != 1 else ""} across {comps} compan{"y" if comps == 1 else "ies"}'
-                      + (', which also matches a fixed EmpCo Annex I blacklisted-practice pattern (automated match, '
+                      + (', which also resembles a fixed UCPD Annex I (as amended by EmpCo) blacklisted-practice pattern (automated match, '
                          'not a confirmed finding)' if tc.get('blacklisted') else '') + '.')
         if len(top_claims) > 1:
             others = ', '.join(f'&ldquo;{esc(clean_text(c.get("phrase")))}&rdquo;' for c in top_claims[1:4])

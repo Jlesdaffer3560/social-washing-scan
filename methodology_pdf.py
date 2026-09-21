@@ -153,18 +153,22 @@ def build_methodology_pdf():
                    'environmental performance, offset-based claims that a specific <b>product</b> has a climate neutral/reduced/'
                    'positive impact, and presenting a legal requirement as a distinguishing sustainability feature. Once EmpCo '
                    'applies (27 September 2026), these practices are automatically unfair if the described conditions are met '
-                   '&mdash; no separate case-by-case materiality or consumer-impact test is required. A company- or '
-                   'operations-wide neutrality claim, or a generic claim that already carries same-medium specification, falls '
-                   'outside this fixed list and is assessed case-by-case instead.', STY['td'])),
+                   '&mdash; no separate case-by-case materiality or consumer-impact test is required. The scan only detects '
+                   'the <i>wording pattern</i>; it cannot confirm the legal conditions (a B2C commercial practice, an environmental '
+                   'claim about a product, brand or trader, absence of clear and prominent same-medium specification, absence of '
+                   'recognised excellent environmental performance). An unspecified neutrality claim (&ldquo;carbon neutral&rdquo;) '
+                   'is treated as a generic claim under point 4a, even at company level; only wording that names its scope or '
+                   'basis (or carries clear same-medium specification) falls outside this fixed list and is assessed case-by-case.', STY['td'])),
         (Paragraph('<b>Problematic (case-by-case)</b>', ParagraphStyle('lb2', parent=STY['td_b'], textColor=AMBER)),
          Paragraph('Not on the Annex I list, so not automatically unfair &mdash; but not a free pass either. It may '
                    'still be found misleading after an individual assessment under general UCPD unfair-commercial-'
                    'practice rules (Art. 6/7, or Art. 6(2)(d) for future environmental-performance claims). Under '
-                   'UCPD Article 12(a) and (b) (reinforced by EmpCo), an authority or court can require the company to '
-                   'substantiate the claim\'s factual accuracy, and the claim is treated as inaccurate for that '
-                   'assessment if adequate evidence is not supplied &mdash; in practice, once challenged, the burden '
-                   'falls on the company to produce evidence, not on the enforcer to disprove the claim. Whether it '
-                   'is ultimately found misleading still depends on context and likely consumer impact, and is not '
+                   'UCPD Article 12(a) and (b) (an existing UCPD provision, not introduced by EmpCo), Member States '
+                   'must empower courts and authorities, where appropriate in the circumstances of the case, to require the trader to '
+                   'furnish evidence of the accuracy of factual claims and to treat the claims as inaccurate if that evidence is not '
+                   'furnished or is deemed insufficient. Traders should therefore be able to substantiate factual claims; how this '
+                   'operates in practice depends on national procedure. Whether the wording is ultimately found misleading still '
+                   'depends on context and likely consumer impact, and is not '
                    'determined by this scan.', STY['td'])),
     ]
     flow.append(section_table(legal_basis_rows, [W * 0.26, W * 0.74]))
@@ -172,8 +176,8 @@ def build_methodology_pdf():
     flow.append(Paragraph(
         '<b>Automatic minimum score.</b> When at least one retained green claim is classified <b>Potentially '
         'Prohibited (Annex I)</b>, the green score and the overall score are automatically raised to a minimum, '
-        'regardless of what the blended scoring formula in Section 6 would otherwise produce. A confirmed match '
-        'against the fixed Annex I list is treated as categorically more severe than a case-by-case claim, so it '
+        'regardless of what the blended scoring formula in Section 6 would otherwise produce. A wording match '
+        'against the fixed Annex I list (an automated indicator, not a confirmed legal finding) is treated as categorically more severe than a case-by-case claim, so it '
         'is not diluted by averaging with claim wording, evidence-gap, external-context or sector-modifier '
         'components that were designed for the broader, non-blacklisted case. For client- or consumer-facing '
         'material, that minimum is 75/100 (the Very high band), since EmpCo/UCPD apply most directly there. For '

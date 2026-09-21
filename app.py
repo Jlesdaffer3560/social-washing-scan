@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_75_court_ruling_exoneration_fix"
-APP_RELEASE_LABEL="v93.75"
+APP_VERSION="hostable_v93_76_legal_precision_review"
+APP_RELEASE_LABEL="v93.76"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -2620,7 +2620,7 @@ def classify_page_audience(url, text=''):
             'audience':'Client-facing / consumer-facing communication',
             'group':'client_facing',
             'empco_relevance':'Direct / high',
-            'interpretation':'Assessed as external market-facing wording. EmpCo-style scrutiny is directly relevant for green claims and the wording burden is higher.'
+            'interpretation':'Assessed as external market-facing wording. EmpCo/UCPD scrutiny is directly relevant where this wording is directed at consumers (B2C); it does not apply to purely business-to-business communication. The wording burden is higher.'
         }
     return {
         'audience':'Mixed or unclear external communication',
@@ -2699,7 +2699,7 @@ def classify_document_audience(url, text, pages=None):
         counts[c['group']]=counts.get(c['group'],0)+1
     if counts.get('client_facing',0)>0 and counts.get('investor',0)==0 and counts.get('internal',0)==0:
         aud='Client-facing / consumer-facing communication'; emp='Direct / high'; group='client_facing'
-        note='The reviewed material is mainly market-facing. Green claims should be assessed with stronger EmpCo-style consumer-communication controls.'
+        note='The reviewed material is mainly market-facing. Green claims directed at consumers (B2C) should be assessed with stronger EmpCo-style controls; EmpCo/UCPD do not cover purely business-to-business communication, so confirm the actual audience.'
     elif counts.get('investor',0)>0 and counts.get('client_facing',0)==0:
         aud='Investor reporting'; emp='Indirect / evidence source'; group='investor'
         note='The reviewed material is mainly annual reports, sustainability reports, ESG reports or investor reporting. Treat it primarily as evidence or context, not as consumer advertising, unless the same claims are reused externally.'
@@ -3213,28 +3213,44 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
     # rules may already be relevant today, independent of EmpCo's own applicability date.
     date_note=' (EmpCo readiness indicator, Directive (EU) 2024/825 applies from 27 September 2026)'
     if 'climate-neutrality' in t or 'offset' in t:
-        # Annex I point 4c specifically targets a PRODUCT-level neutral/reduced/positive climate
-        # claim that is BASED ON OFFSETTING -- a bare "climate/carbon neutral" claim with no
-        # offset basis established in the retained wording is not automatically that practice;
-        # it is still a case-by-case UCPD question until offsetting is confirmed as the basis.
+        # Two DIFFERENT Annex I grounds, per the Commission's ECGT FAQ (Q6, Q10) and recitals 9
+        # and 12: (4c) a PRODUCT-level neutral/reduced/positive greenhouse-gas claim BASED ON
+        # OFFSETTING; and (4a) a GENERIC environmental claim -- and the Commission expressly
+        # lists bare "carbon neutral"/"climate neutral"/"carbon compensated" wording as generic
+        # -- which is prohibited unless specified in clear and prominent terms on the same
+        # medium or backed by recognised excellent environmental performance. So an unspecified
+        # neutrality claim is NOT merely a case-by-case question just because offsetting is not
+        # (yet) established from the wording. Only a claim that actually specifies its scope or
+        # basis (a scoped company-level statement, or same-medium specification) leaves Annex I.
         offset_established=_offset_basis_confirmed(c)
         if offset_established:
-            return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting.'+date_note
-        return ('Potential Annex I relevance -- offset basis not established from the retained wording alone. EmpCo Annex I point 4c '
-                'specifically targets product-level neutral/reduced/positive climate-impact claims based on greenhouse-gas offsetting; '
-                'this passage should be reviewed case-by-case under the general UCPD misleading-claims test unless an offset basis is confirmed.')
+            return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting (UCPD Annex I point 4c, inserted by Directive (EU) 2024/825).'+date_note
+        if not _has_strong_same_medium_specification(c) and not _is_scoped_corporate_claim(c):
+            return ('Potential EmpCo blacklisted-practice indicator: unspecified climate-neutrality wording is treated as a generic environmental claim '
+                    '(UCPD Annex I point 4a, Article 2(p)) unless its specification is clear and prominent on the same medium or recognised excellent '
+                    'environmental performance is demonstrated. Offset basis not established from the retained wording, so point 4c (product-level, '
+                    'offset-based) is not established from the wording alone.'+date_note)
+        return ('Potential Annex I relevance -- offset basis not established from the retained wording alone. UCPD Annex I point 4c (inserted by '
+                'Directive (EU) 2024/825) targets product-level neutral/reduced/positive greenhouse-gas claims based on offsetting; the wording '
+                'specifies its scope or basis, so this passage should be reviewed case-by-case under the general UCPD misleading-claims test '
+                'unless an offset basis is confirmed.')
     if 'label' in t or 'certification' in t:
         if _names_recognized_certification_scheme(c):
-            return ('Potential Annex I relevance -- a named, independent certification scheme is present in the retained '
-                     'wording, so this does not automatically match the self-declared-label practice (Annex I point 2a). '
-                     'Still review the exact scope, criteria, audit basis and validity period under general UCPD rules.')
+            return ('Potential Annex I relevance -- a named certification scheme is present in the retained wording, so this is not '
+                     'automatically the self-declared-label practice (Annex I point 2a). A scheme name alone does not establish that the '
+                     'scheme meets the "certification scheme" definition (Article 2(r): independent third-party verification, open to all '
+                     'traders on fair, reasonable and non-discriminatory terms, criteria set with stakeholder input, monitoring) or that the '
+                     'label shown is that scheme\'s. Still review scope, criteria, audit basis and validity period under general UCPD rules.')
         return 'Potential EmpCo blacklisted-practice indicator if the label/badge is not based on a qualifying certification scheme or not established by public authorities.'+date_note
     if 'generic environmental' in t:
         return 'Potential EmpCo blacklisted-practice indicator if the generic claim is not clearly specified on the same medium and not backed by recognised excellent environmental performance.'+date_note
     if 'legal requirement' in t:
-        return 'EmpCo blacklisted-practice indicator if legal compliance is presented as a distinctive environmental benefit.'+date_note
+        return ('Potential EmpCo blacklisted-practice indicator if a requirement imposed by law on ALL products of the relevant category on the Union market '
+                '(imports included) is presented as a distinctive feature of the trader\'s offer (UCPD Annex I point 10a; recital 15). Not caught where the '
+                'requirement applies only to some competing products.')+date_note
     if 'absolute' in t:
-        return 'High overstatement indicator; can become misleading where the absolute claim is not fully substantiated for the full scope implied.'
+        return ('High overstatement indicator; can become misleading where the absolute claim is not fully substantiated for the full scope implied. '
+                'Where a claim about the whole product or business rests on only one aspect, Annex I point 4b may also be relevant (not assessed automatically).')
     if 'comparative' in t:
         return 'High-risk comparison indicator where comparison method, comparator, source data and update process are missing.'
     return 'No direct blacklisted-practice indicator identified, but claim-specific substantiation is still required.'
@@ -3247,12 +3263,16 @@ def classify_legal_basis(f):
     "is this wording automatically unfair, or does it depend on a case-by-case test?"
 
     - 'prohibited': the claim wording matches one of the fixed, per-se-unfair
-      practices listed in EmpCo Annex I (self-declared sustainability labels
+      practices listed in UCPD Annex I as amended by EmpCo (self-declared sustainability labels
       without independent certification -- point 2a; unspecified generic
-      environmental claims -- point 4a; aggregate/whole-product benefit claims
-      based on only one aspect -- point 4b; product-level climate-neutral/
-      reduced/positive claims based on offsetting -- point 4c; legal
-      compliance presented as a distinctive feature -- point 10a). Once EmpCo
+      environmental claims -- point 4a; whole-product/business claims based on only one
+      aspect -- point 4b, not auto-detected; product-level climate-neutral/
+      reduced/positive claims based on offsetting -- point 4c; a legal
+      requirement applying to all products of the category presented as a distinctive
+      feature -- point 10a). The scan only detects the WORDING pattern; the legal
+      conditions (B2C commercial practice, environmental claim about a product, brand or
+      trader, same-medium specification, absence of recognised excellent performance)
+      need human confirmation. Once EmpCo
       applies (27 September 2026), these practices are automatically unfair if
       the described conditions are met -- no individual balancing test is
       needed, only whether the wording fits the listed practice.
@@ -3262,17 +3282,17 @@ def classify_legal_basis(f):
       found misleading after an individual, case-by-case assessment under the
       general UCPD provisions (Article 6 misleading actions, Article 7
       misleading omissions, or Article 6(2)(d) specifically for forward-looking
-      claims). Critically, UCPD Article 12(a) and (b) (reinforced by EmpCo)
-      lets a court or authority REQUIRE the company to substantiate the claim's factual
-      accuracy, and treats the claim as inaccurate/misleading for that
-      assessment if adequate evidence is not supplied -- so once a claim is
-      challenged, the evidentiary burden in practice sits with the company,
-      not with the enforcer. This covers social/human-rights/labour claims,
+      claims). UCPD Article 12(a) and (b) (an existing provision, not introduced
+      by EmpCo) requires Member States to empower courts and authorities, where
+      appropriate in the circumstances of the case, to require the trader to
+      furnish evidence of the accuracy of factual claims and to treat them as
+      inaccurate if that evidence is not furnished or is deemed insufficient --
+      a discretionary procedural power under national procedure, not an
+      automatic reversal of the burden of proof. This covers social/human-rights/labour claims,
       forced-labour readiness wording, absolute and comparative overstatements,
       and future environmental-performance claims -- the ultimate outcome
       still depends on context, evidence and consumer impact, not on a fixed
-      rule, but "no evidence on hand" is a real liability here, not a neutral
-      gap.
+      rule, but having no evidence on hand is a real risk, not a neutral gap.
     """
     if bool(f.get('blacklisted_practice_indicator')):
         return {
@@ -3291,13 +3311,14 @@ def classify_legal_basis(f):
     return {
         'legal_basis_category': 'problematic',
         'legal_basis_label': 'Problematic, not automatically prohibited (case-by-case)',
-        'legal_basis_short': ('Not on the fixed Annex I list, so not automatically unfair -- but under UCPD Article '
-                               '12(a) and (b) (reinforced by EmpCo), an authority or court can require the company to '
-                               "substantiate the claim's factual accuracy, and the claim is treated as inaccurate/"
-                               'misleading for that assessment if adequate evidence is not supplied. In practice, once '
-                               'challenged, the burden falls on the company to produce evidence, not on the enforcer to '
-                               'disprove the claim. Whether it is ultimately found misleading still depends on context, '
-                               'evidence and consumer impact, and is not determined by this scan.'),
+        'legal_basis_short': ('Not on the fixed Annex I list, so not automatically unfair -- but it can still be found misleading '
+                               'after an individual assessment under UCPD Articles 6 and 7 (Article 6(2)(d) for future '
+                               'environmental-performance claims). Under Article 12(a) and (b) UCPD, courts and authorities '
+                               'can, where appropriate in the circumstances, require the trader to furnish evidence of the '
+                               'accuracy of factual claims and treat them as inaccurate if that evidence is not furnished or '
+                               'is deemed insufficient, so the company should be able to substantiate the claim. Whether it '
+                               'is ultimately found misleading depends on context, evidence and consumer impact, and '
+                               'is not determined by this scan.'),
     }
 
 def green_specification_check(claim_type, claim_text):
@@ -3398,6 +3419,14 @@ _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our
 def _is_corporate_level_claim(claim_text):
     return any(m in (claim_text or '').lower() for m in _CORPORATE_LEVEL_MARKERS)
 
+# A bare "we are carbon neutral" statement is company-level but still UNSPECIFIED, i.e. still a
+# generic environmental claim under Annex I point 4a (Commission ECGT FAQ Q6/Q10) -- only a
+# marker that actually names a scope (operations, sites, scope 1 and 2, ...) counts as scoping.
+_BARE_NEUTRALITY_STEMS=('neutral','neutre','neutraal')
+def _is_scoped_corporate_claim(claim_text):
+    c=(claim_text or '').lower()
+    return any(m in c for m in _CORPORATE_LEVEL_MARKERS if not any(w in m for w in _BARE_NEUTRALITY_STEMS))
+
 # Deliberately a narrower, stronger list than green_specification_check()'s general
 # specificity_terms (which also counts a bare '%' or 'made from' -- fine for the informational
 # "specification check" shown in the report, but too weak to safely downgrade a claim off the
@@ -3454,7 +3483,7 @@ def enrich_green_finding(f, trigger=''):
     # reduced or positive climate impact based on offsetting -- a company- or operations-wide
     # neutrality claim (e.g. "our direct operations reached carbon neutrality") is not on that
     # fixed list and remains a case-by-case UCPD assessment instead.
-    if f['blacklisted_practice_indicator'] and ('climate' in t_low or 'offset' in t_low) and _is_corporate_level_claim(analysis_text):
+    if f['blacklisted_practice_indicator'] and ('climate' in t_low or 'offset' in t_low) and _is_scoped_corporate_claim(analysis_text):
         f['blacklisted_practice_indicator']=False
     # v93.36: fixing the Annex I misclassification (v93.33) for a label/certification claim
     # that names a real, independent certifier only touched the legal-basis category -- the
@@ -3601,7 +3630,7 @@ def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings,
     Prohibited (Annex I)" vs "Problematic (case-by-case)" distinction used throughout
     this tool). That is categorically more severe than the blended 0-100 formula (claim
     wording + evidence gap + external context + sector modifier) was designed to capture
-    on its own -- the blend can dilute a confirmed Annex I match down into the Medium or
+    on its own -- the blend can dilute an Annex I wording match down into the Medium or
     High band, indistinguishable from claims that are merely "problematic, case-by-case".
 
     v93.21: added after a real scan batch showed EVERY company landing in Low/Medium/High
@@ -3620,7 +3649,7 @@ def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings,
     says as much, but the SCORE itself did not reflect it) still had its score floored to the
     full 75 "Very high" threshold, identical to a confirmed client-facing violation. Reported
     by a third-party code review. Scale the floor by the same audience_factor used throughout
-    calc_green_score/calc_score so a confirmed Annex I match in mostly-internal material still
+    calc_green_score/calc_score so an Annex I wording match in mostly-internal material still
     lands solidly in the elevated "High" band rather than being ignored, without overstating
     it as automatically "Very high" the way genuinely client-facing material is."""
     has_blacklisted=any(f.get('blacklisted_practice_indicator') for f in green_findings or [])
@@ -3822,7 +3851,7 @@ def score_driver_details(green_score, social_score, green_fs, social_fs, green_s
             'score': green_score,
             'summary': g_summary,
             'key_drivers': [
-                *([f'UCPD Annex I match (as amended by EmpCo) — automatically floors this score to at least {band(green_score)}, overriding the blended calculation below.'] if g_blacklisted else []),
+                *([f'UCPD Annex I wording match (as amended by EmpCo) — automatically floors this score to at least {band(green_score)}, overriding the blended calculation below.'] if g_blacklisted else []),
                 f'Claim wording — {material_count(green_fs)} relevant occurrence(s) across {len(gnames)} claim type(s).',
                 f'Evidence support — {gap_label(green_splits.get("substantiation_risk",0))} visible evidence gap ({green_splits.get("substantiation_risk",0)}/100).',
                 f'External context — {external_line(g_ext_n)}',
@@ -4274,7 +4303,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
         # Very high", a direct contradiction. Reported by a third-party code review, which
         # specifically warned this exact inconsistency could result from the audience-scaled
         # floor. Name the band the floor actually produced.
-        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed practice EmpCo adds to UCPD Annex I. '+green_conclusion
+        green_conclusion=f'Automatic {level(green_score)}: the wording of a retained claim resembles a fixed practice EmpCo adds to UCPD Annex I (automated wording match, not a confirmed legal finding). '+green_conclusion
     # v93.31: green_fs/social_fs are the FULL analysis lists -- only the
     # 'green_findings'/'social_findings' keys below get a display-only top-12 selection.
     green_findings_display=green_fs[:12]; social_findings_display=social_fs[:12]
@@ -4442,7 +4471,7 @@ def analyse_url_v27(raw, company_number=''):
         # Very high", a direct contradiction. Reported by a third-party code review, which
         # specifically warned this exact inconsistency could result from the audience-scaled
         # floor. Name the band the floor actually produced.
-        green_conclusion=f'Automatic {level(green_score)}: a retained claim matches a fixed practice EmpCo adds to UCPD Annex I. '+green_conclusion
+        green_conclusion=f'Automatic {level(green_score)}: the wording of a retained claim resembles a fixed practice EmpCo adds to UCPD Annex I (automated wording match, not a confirmed legal finding). '+green_conclusion
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     all_claims=assign_claim_sources(all_claims,page_segments,documents_checked)
     for c in all_claims:
@@ -4492,10 +4521,10 @@ def analyse_url_v27(raw, company_number=''):
         # earlier and the level(green_score) already computed for screening_conclusion itself.
         # Reported by a third-party code review, which found this exact remaining
         # inconsistency after the (separate) green_conclusion string had already been fixed.
-        summary=summary+f" A retained claim matches a fixed practice EmpCo adds to UCPD Annex I, which automatically raises the green and overall scores to at least the {level(green_score)} band regardless of the blended score."
+        summary=summary+f" The wording of a retained claim resembles a fixed practice EmpCo adds to UCPD Annex I (an automated wording match, not a confirmed legal finding), which automatically raises the green and overall scores to at least the {level(green_score)} band regardless of the blended score."
     screening_conclusion=f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}'
     if empco_blacklist_floor:
-        screening_conclusion=f'UCPD Annex I match (as amended by EmpCo): automatic {level(green_score)} | '+screening_conclusion
+        screening_conclusion=f'UCPD Annex I wording match (as amended by EmpCo): automatic {level(green_score)} | '+screening_conclusion
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
@@ -4832,7 +4861,7 @@ _PERCENT_RECYCLED_FR_RE=re.compile(r'\b\d{1,3}\s?%\s+(?:de\s+\w+\s+)?recycl[ée]
 GREEN_CLAIMS=[
  (['eco-friendly','environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','ecological','climate friendly','climate-friendly','green product','green products','green choice','eco choice','eco product','eco products','sustainable product','sustainable products','sustainable choice','sustainable collection','sustainable range','sustainable materials','100% sustainable','fully sustainable','natural product','natural products','biobased product','bio-based product',
    'milieuvriendelijk','milieuvriendelijke','ecologisch','ecologische','klimaatvriendelijk','klimaatvriendelijke','beter voor het milieu','beter voor de planeet','goed voor het milieu','goed voor de planeet','groen product','groene producten','groene keuze','eco product','eco producten','duurzaam product','duurzame producten','duurzame keuze','duurzame collectie','duurzaam assortiment','duurzame materialen','100% duurzaam','volledig duurzaam','natuurlijk product','natuurlijke producten','biogebaseerd product',
-   "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé'],'Generic environmental claim','High','EmpCo risk: generic environmental claims can be prohibited in consumer-facing communication where the claim is not clearly and prominently specified on the same medium or backed by recognised excellent environmental performance relevant to the claim as a whole.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
+   "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé'],'Generic environmental claim','High','EmpCo risk: a generic environmental claim (not clearly and prominently specified on the same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
  (['carbon neutral','climate neutral','co2 neutral','co₂ neutral','net zero product','carbon negative','carbon positive','climate positive','carbon compensated','climate compensated','offset-based','offsetting','compensated emissions','reduced climate impact',
    'klimaatneutraal','koolstofneutraal','co2-neutraal','co₂-neutraal','netto nul product','klimaatpositief','koolstofpositief','klimaatgecompenseerd','koolstofgecompenseerd','gecompenseerde emissies','gecompenseerde uitstoot','verminderde klimaatimpact','emissiecompensatie',
    'neutre en carbone','carboneutre','neutralité carbone','co2 neutre','co₂ neutre','net zéro produit','climat positif','carbone positif','émissions compensées','compensation carbone','impact climatique réduit'],'Climate-neutrality or offsetting claim','High','EmpCo risk: product-level claims that state or imply neutral, reduced or positive climate impact based on greenhouse-gas offsetting are high-priority blacklisted-practice indicators.','Avoid product-level neutrality wording based on offsets. Separate actual emissions reductions from offsets and disclose scopes, baseline, methodology, residual emissions and progress.'),
@@ -4850,7 +4879,7 @@ GREEN_CLAIMS=[
    'tout naturel','100% naturel','sans produits chimiques','aucun impact','impact zéro','zéro déchet','sans déchets','sans pollution','entièrement recyclable','100% recyclable','entièrement biodégradable','sans plastique','100% recyclé'],'Absolute or purity environmental wording','High','EmpCo risk: absolute environmental wording creates a high evidence burden and can mislead when scope, conditions or limitations are missing.','Qualify the claim and specify exact attribute, scope, conditions, test method, limitations and evidence.'),
  (['compliant with environmental law','meets legal requirements','according to legal standards','required by law','legal requirement','eu compliant','regulation compliant',
    'conform milieuwetgeving','voldoet aan wettelijke vereisten','volgens wettelijke normen','wettelijk verplicht','wettelijke vereiste','eu-conform','conform de regelgeving',
-   'conforme à la législation environnementale','répond aux exigences légales','selon les normes légales','requis par la loi','exigence légale','conforme ue','conforme à la réglementation'],'Legal requirement presented as green benefit','High','EmpCo risk: presenting requirements imposed by law as a distinctive environmental feature is a blacklisted-practice indicator.','Do not present legal compliance as a differentiating sustainability benefit. Separate legal compliance from voluntary improvements.'),
+   'conforme à la législation environnementale','répond aux exigences légales','selon les normes légales','requis par la loi','exigence légale','conforme ue','conforme à la réglementation'],'Legal requirement presented as green benefit','High','EmpCo risk: presenting a requirement imposed by law on all products of the category on the Union market as a distinctive feature of the trader’s offer is a blacklisted-practice indicator (Annex I point 10a).','Do not present legal compliance as a differentiating sustainability benefit. Separate legal compliance from voluntary improvements.'),
  (['green leaf','leaf icon','tree icon','water drop','waterdrop','planet icon','earth icon','eco badge','green badge','environmental icon','recycled badge','sustainability badge',
    'groen blad','blad icoon','boom icoon','waterdruppel','planeet icoon','aarde icoon','milieu icoon','recyclagebadge','duurzaamheidsbadge',
    'feuille verte',"icône feuille","icône arbre","goutte d'eau","icône planète","icône terre","icône environnement","badge recyclage","badge durabilité"],'Visual green-claim indicator','Medium','EmpCo risk: pictorial, graphic or symbolic representations can imply environmental benefits and should be assessed like written claims.','Check whether the icon or badge implies a specific environmental benefit and connect it to clear, prominent and evidenced wording.'),
