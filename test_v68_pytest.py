@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_79_unresolvable_host_message'
+    assert app.APP_VERSION == 'hostable_v93_80_home_invest_belgium_group_domain'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4337,3 +4337,25 @@ def test_unresolvable_domain_does_not_report_as_private_local_blocked():
         assert False, 'expected a ValueError for an unresolvable host'
     except ValueError as e:
         assert 'could not be resolved' in str(e)
+
+
+def test_home_invest_belgium_widens_to_its_real_corporate_domain():
+    """Live-reproduced coverage gap: a scan of homeinvestbelgium.be (the company's own domain)
+    reviewed only that one thin landing page -- every internal nav link on it (About us,
+    Investors, Publications incl. annual/financial reports, Corporate Governance) actually
+    points to a DIFFERENT domain, corporate.homeinvest.be, where the real investor/ESG content
+    lives. same_domain() correctly treats these as different domains, so the crawler never
+    followed those links on its own. Checks the exact lookup crawl_with_related_sites() performs
+    (KNOWN_GROUP_DOMAINS + _host_has_brand_label()), not just that the dict entry exists."""
+    known = []
+    for brand, domains in app.KNOWN_GROUP_DOMAINS.items():
+        if app._host_has_brand_label('homeinvestbelgium.be', brand):
+            known.extend(domains)
+    assert 'https://corporate.homeinvest.be' in known
+    # Must NOT leak into the unrelated US company sharing the shorter "homeinvest" label
+    # (homeinvest.com, "Home Invest | Believe In More" -- see the alias-truncation fix above).
+    known_us = []
+    for brand, domains in app.KNOWN_GROUP_DOMAINS.items():
+        if app._host_has_brand_label('homeinvest.com', brand):
+            known_us.extend(domains)
+    assert 'https://corporate.homeinvest.be' not in known_us

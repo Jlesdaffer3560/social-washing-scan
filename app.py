@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_79_unresolvable_host_message"
-APP_RELEASE_LABEL="v93.79"
+APP_VERSION="hostable_v93_80_home_invest_belgium_group_domain"
+APP_RELEASE_LABEL="v93.80"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -8700,6 +8700,19 @@ KNOWN_GROUP_DOMAINS.update({
     'hm.com':['https://hmgroup.com'],
     'www2.hm.com':['https://hmgroup.com'],
     'hmgroup':['https://www2.hm.com'],
+    # v93.80: live-reproduced -- scanning homeinvestbelgium.be (the listed Belgian residential
+    # REIT's own domain) reviewed only that one thin landing page; every internal nav link on
+    # it (About us, Investors, Publications incl. annual/financial reports, Corporate
+    # Governance) actually points to a DIFFERENT domain, corporate.homeinvest.be, which is
+    # where the real investor/ESG content (and any sustainability claims) actually lives.
+    # same_domain() correctly treats these as different domains (not a subdomain relationship),
+    # so the crawler never followed those links. Deliberately keyed on the specific
+    # "homeinvestbelgium" label only, NOT the shorter "homeinvest" -- that shorter label is
+    # also a dot-label of the entirely unrelated US company at homeinvest.com (see the
+    # _v64_brand_aliases fix above), and this map has no brand/entity check of its own, so a
+    # broader "homeinvest" key here would wrongly suggest corporate.homeinvest.be as a
+    # "related site" when scanning that unrelated company too.
+    'homeinvestbelgium':['https://corporate.homeinvest.be'],
 })
 
 V64_OTHER_BRANDS={
