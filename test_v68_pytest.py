@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_77_coverage_discovery_labels'
+    assert app.APP_VERSION == 'hostable_v93_78_geo_qualifier_alias_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4278,3 +4278,32 @@ def test_annex_i_texts_are_framed_as_wording_matches_and_10a_is_not_environmenta
     result = app.analyse_uploaded_document('t.txt', 'Our product is carbon neutral through offsetting.', 'TestCo')
     assert 'matches a fixed practice' not in result['green_conclusion']
     assert 'resembles a fixed practice' in result['green_conclusion']
+
+
+def test_home_invest_belgium_does_not_resolve_to_the_unrelated_us_homeinvest_com():
+    """Live-reproduced mis-identification, same failure class as the Gaasch Packaging incident
+    above but via a different mechanism: entering "Home Invest Belgium" (the listed Belgian
+    residential REIT, homeinvestbelgium.be) resolved to homeinvest.com, an unrelated US
+    real-estate platform ("Home Invest | Believe In More"). Root cause: _v64_brand_aliases()
+    silently truncated the name to its first two tokens ("home invest") whenever 3+ meaningful
+    tokens remained, discarding "Belgium" -- exactly the word added to disambiguate -- and that
+    truncated alias exactly matched the unrelated site's root domain label, scoring it +80 in
+    _v65_official_candidate_score()."""
+    aliases = app._v64_brand_aliases('Home Invest Belgium')
+    assert 'home invest' not in aliases, 'the disambiguating "Belgium" token must not be silently dropped'
+    assert 'homeinvest' not in {app._v64_compact(a) for a in aliases}
+    wrong = {'url': 'https://homeinvest.com', 'title': 'Home Invest | Believe In More', 'content': 'Invest with us.'}
+    right = {'url': 'https://homeinvestbelgium.be', 'title': 'Home Invest Belgium - Corporate',
+             'content': 'Home Invest Belgium HOMI is a Belgian REIT specialised in residential real estate.'}
+    wrong_score = app._v65_official_candidate_score(wrong, 'Home Invest Belgium')
+    right_score = app._v65_official_candidate_score(right, 'Home Invest Belgium')
+    assert right_score > wrong_score, (right_score, wrong_score)
+
+
+def test_truncated_two_token_alias_removed_without_losing_two_word_names():
+    """The removed alias line was redundant whenever exactly 2 meaningful tokens remained (it
+    just repeated the full joined-tokens alias already added) and harmful whenever 3+ remained
+    (see the Home Invest Belgium case above) -- so a genuine two-word brand name must still
+    resolve via its full-name alias with nothing lost."""
+    aliases = app._v64_brand_aliases('Ahold Delhaize')
+    assert 'ahold delhaize' in aliases

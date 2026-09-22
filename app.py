@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_77_coverage_discovery_labels"
-APP_RELEASE_LABEL="v93.77"
+APP_VERSION="hostable_v93_78_geo_qualifier_alias_fix"
+APP_RELEASE_LABEL="v93.78"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -8710,6 +8710,17 @@ def _v64_compact(value):
 
 
 def _v64_brand_aliases(company_name):
+    """Live-reproduced mis-identification: a scan for "Home Invest Belgium" (the listed
+    Belgian residential REIT, homeinvestbelgium.be) resolved instead to homeinvest.com, an
+    unrelated US real-estate platform -- confirmed via _v65_official_candidate_score() scoring
+    homeinvest.com +80 for a root-label match against the alias "home invest", which this
+    function used to generate by silently truncating the name to its first two tokens whenever
+    3+ meaningful tokens remained (dropping "Belgium" -- exactly the word the user added to
+    disambiguate). That truncated alias is either redundant (when only 2 tokens remain, it
+    equals the full joined-tokens alias already added above) or actively harmful (when 3+
+    tokens remain, it manufactures a shorter name the company was never actually known by), so
+    it is no longer generated at all -- see test_home_invest_belgium_does_not_resolve_to_the_
+    unrelated_us_homeinvest_com."""
     raw=_v64_norm(company_name)
     tokens=[t for t in raw.split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
     aliases=[]
@@ -8717,7 +8728,6 @@ def _v64_brand_aliases(company_name):
     if tokens:
         aliases.append(' '.join(tokens))
         aliases.append(tokens[0])
-        if len(tokens)>=2: aliases.append(' '.join(tokens[:2]))
     # Normalise common display/group names.
     if 'shein' in tokens: aliases.extend(['shein','shein group'])
     if ('h' in tokens and 'm' in tokens) or raw in {'hm','h m','h and m'}: aliases.extend(['h&m','h & m','hm','h m'])
