@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_78_geo_qualifier_alias_fix"
-APP_RELEASE_LABEL="v93.78"
+APP_VERSION="hostable_v93_79_unresolvable_host_message"
+APP_RELEASE_LABEL="v93.79"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -943,7 +943,7 @@ def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,app
     if p.scheme not in ('http','https') or not p.hostname:
         raise ValueError('Invalid URL.')
     if is_private(p.hostname):
-        raise ValueError('Private/local URLs are blocked.')
+        raise ValueError(_blocked_host_message(p.hostname))
     last_error=None
     for idx,ua in enumerate(BROWSER_USER_AGENTS):
         try:
@@ -991,7 +991,7 @@ def fetch_reader_text(url,timeout=9):
     if p.scheme not in ('http','https') or not p.hostname:
         raise ValueError('Invalid URL.')
     if is_private(p.hostname):
-        raise ValueError('Private/local URLs are blocked.')
+        raise ValueError(_blocked_host_message(p.hostname))
     headers={
         'User-Agent': CRAWLER_USER_AGENT,
         'Accept': 'text/plain,text/markdown;q=0.9,*/*;q=0.5',
@@ -1060,6 +1060,29 @@ def is_private(host):
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved: return True
     except Exception: return True
     return False
+
+
+def _blocked_host_message(host):
+    """Live-reproduced: a scan of homeinvestbelgium.be discovered a linked
+    www.homeinvestbelgium.com reference (a domain the company does not actually own -- it
+    simply does not exist, confirmed via direct DNS lookup: NXDOMAIN) and reported it in the
+    Coverage tab as "Private/local URLs are blocked." -- alarming and misleading, since there
+    is no private-address/SSRF concern here at all, just a URL that does not resolve.
+    is_private() itself is deliberately fail-closed on ANY resolution error (v93.31, a real
+    security fix, left untouched here) since a genuine private/loopback/link-local address and
+    an unresolvable name must both be refused -- but the two are very different situations for
+    a REPORT READER, so this produces the display text separately, phrased the same way
+    _describe_fetch_error() already phrases a live fetch-time DNS failure, instead of
+    defaulting to the alarming SSRF wording for a host that simply does not exist."""
+    if host in {'localhost','127.0.0.1','0.0.0.0'}:
+        return 'Private/local URLs are blocked.'
+    try:
+        socket.getaddrinfo(host,None)
+    except socket.gaierror:
+        return 'The domain name could not be resolved (it may not exist, or may be misspelled).'
+    except Exception:
+        return 'This host could not be checked for safety and was blocked as a precaution.'
+    return 'Private/local URLs are blocked.'
 
 
 class _SSRFSafeRedirectHandler(HTTPRedirectHandler):

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_78_geo_qualifier_alias_fix'
+    assert app.APP_VERSION == 'hostable_v93_79_unresolvable_host_message'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4307,3 +4307,33 @@ def test_truncated_two_token_alias_removed_without_losing_two_word_names():
     resolve via its full-name alias with nothing lost."""
     aliases = app._v64_brand_aliases('Ahold Delhaize')
     assert 'ahold delhaize' in aliases
+
+
+def test_unresolvable_domain_does_not_report_as_private_local_blocked():
+    """Live-reproduced: a scan of homeinvestbelgium.be discovered a linked
+    www.homeinvestbelgium.com reference that does not actually exist (confirmed via direct DNS
+    lookup: NXDOMAIN). is_private() correctly fails closed on ANY resolution error (v93.31,
+    left untouched -- a genuine private/loopback address and an unresolvable name must both be
+    refused), but the Coverage tab showed "Private/local URLs are blocked." for this, which
+    alarmingly implies an SSRF/private-address concern where there is none -- the domain simply
+    doesn't exist. _blocked_host_message() must phrase this the same way a live fetch-time DNS
+    failure is already phrased in _describe_fetch_error()."""
+    import socket
+    fake_host = 'this-domain-should-never-exist-durably-test.invalid'
+    try:
+        socket.getaddrinfo(fake_host, None)
+        assert False, 'test fixture assumption broken: this host unexpectedly resolves'
+    except socket.gaierror:
+        pass
+    assert app.is_private(fake_host) is True, 'must still fail closed and block the fetch'
+    msg = app._blocked_host_message(fake_host)
+    assert 'could not be resolved' in msg
+    assert 'Private/local' not in msg
+    # A genuine private/loopback address must still read as a real security block.
+    assert app._blocked_host_message('127.0.0.1') == 'Private/local URLs are blocked.'
+    assert app._blocked_host_message('localhost') == 'Private/local URLs are blocked.'
+    try:
+        app._open_public_url(f'https://{fake_host}')
+        assert False, 'expected a ValueError for an unresolvable host'
+    except ValueError as e:
+        assert 'could not be resolved' in str(e)
