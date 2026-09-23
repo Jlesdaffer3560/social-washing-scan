@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_82_engineering_review_batch_2'
+    assert app.APP_VERSION == 'hostable_v93_83_engineering_review_batch_3'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4556,3 +4556,49 @@ def test_related_site_reserve_is_not_conditional_on_known_group_domains(monkeypa
     app.crawl_with_related_sites('https://acmecorp.example', overall_deadline=overall_deadline,
                                   company_name_hint='Acme Corp')
     assert 'related_domain' in calls, 'related-site discovery never got a chance to run'
+
+
+def test_french_apostrophe_trigger_extracts_real_sentence_not_whole_corpus():
+    """Full engineering review, batch 3: _v55_all_matches_sentences() searched the RAW,
+    un-normalised text for the trigger, but detection itself normalises apostrophes first, so a
+    French trigger written with a plain apostrophe ("chaine d'approvisionnement responsable")
+    still correctly FIRES against real web/PDF text (which almost always uses the typographic
+    apostrophe, U+2019). This function then found no sentence containing the un-normalised
+    trigger and fell through to returning the ENTIRE crawled corpus as the "exact claim
+    passage". Live-reproduced against a page with a cookie banner repeated 30 times, boilerplate,
+    and exactly one genuine French sourcing claim using a curly apostrophe."""
+    corpus = ('Cookies. Nous utilisons des cookies pour ameliorer votre experience. ' * 30
+              + 'Notre entreprise fabrique des emballages depuis 1920. ' * 20
+              + 'Nous garantissons une chaîne d’approvisionnement responsable pour tous nos produits. '
+              + 'Merci de votre visite. ' * 20)
+    findings = app.detect_claims(corpus)
+    matches = [f for f in findings if 'approvisionnement' in (f.get('claim') or '').lower()]
+    assert matches, 'the sourcing claim was not detected at all'
+    for f in matches:
+        assert len(f['claim']) < 200, f"excerpt is {len(f['claim'])} chars -- looks like the whole corpus, not a sentence"
+        assert 'cookies' not in f['claim'].lower()
+
+
+def test_negation_checks_every_trigger_occurrence_and_recognises_cannot():
+    """Full engineering review, batch 3: _v55_claim_context_ok()'s negation check only ever
+    inspected the FIRST occurrence of the trigger in the excerpt (same bug class already fixed
+    for _offset_basis_confirmed(), v93.53) -- a negated earlier mention killed a distinct,
+    genuinely affirmative later claim in the same sentence. Also recognises "cannot" (glued
+    directly onto "can" with no word boundary, unlike "can't" which the generic n't match
+    already covers). A third, only-now-exposed gap: the comma-before-"but" contrastive clause
+    boundary wasn't among the punctuation marks that stop a negation window from bleeding into
+    the next clause."""
+    r1 = app.detect_green_claims(
+        'We are not carbon neutral today, but our Brussels bakery is carbon neutral since 2022.')
+    assert any(f['type'] == 'Climate-neutrality or offsetting claim' for f in r1), r1
+    r2 = app.detect_green_claims(
+        'We do not use recycled plastic in caps, but our bottles use 100% recycled plastic.')
+    assert any('Recycled' in f['type'] or 'recyclable' in f['type'].lower() for f in r2), r2
+    r3 = app.detect_green_claims('We cannot claim that our products are eco-friendly.')
+    assert all(app.is_placeholder_finding(f['type']) for f in r3), r3
+    # sanity: a genuine, single, un-negated claim is still detected
+    r4 = app.detect_green_claims('Our products are eco-friendly and sustainable.')
+    assert any(f['type'] == 'Generic environmental claim' for f in r4), r4
+    # sanity: a genuinely, purely negated claim is still rejected
+    r5 = app.detect_green_claims('Our product is not carbon neutral.')
+    assert all(app.is_placeholder_finding(f['type']) for f in r5), r5

@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_82_engineering_review_batch_2"
-APP_RELEASE_LABEL="v93.82"
+APP_VERSION="hostable_v93_83_engineering_review_batch_3"
+APP_RELEASE_LABEL="v93.83"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -7368,8 +7368,25 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # were previously flagged as ordinary affirmative claims. Only look in a short window around
     # the trigger itself (not the whole excerpt) so a negation modifying an unrelated clause
     # elsewhere in a longer sentence doesn't suppress a genuine, separate claim.
-    trig_pos=c.find(trig)
-    if trig_pos != -1:
+    # v93.83: this used to run once, against ONLY trig_pos=c.find(trig) -- the FIRST occurrence
+    # of the trigger in the excerpt. "We are not carbon neutral today, but our Brussels bakery is
+    # carbon neutral since 2022." has its first "carbon neutral" negated and its second one
+    # affirmative -- the whole excerpt was rejected, silently dropping the genuine second claim.
+    # Same bug class already fixed for _offset_basis_confirmed() (v93.53): now checks EVERY
+    # occurrence and only rejects if ALL of them are negated or conditional -- one genuine,
+    # affirmative, non-conditional occurrence is enough to accept the excerpt. Also adds
+    # "cannot" -- "We cannot claim that our products are eco-friendly" was not caught because
+    # \b(not|...)\b requires a word boundary before "not", and "cannot" glues it directly onto
+    # "can" with no boundary there (unlike "can't", already covered via the generic n't match).
+    found_any_occurrence=False
+    found_valid_occurrence=False
+    search_start=0
+    while True:
+        trig_pos=c.find(trig,search_start)
+        if trig_pos==-1:
+            break
+        found_any_occurrence=True
+        search_start=trig_pos+len(trig)
         # v84: two real gaps found in this window's negation matching. (1) "\bn't\b" requires a
         # word boundary BEFORE "n", but a real contraction glues the "n" onto the previous letter
         # ("isn't", "aren't", "doesn't", "wasn't", "can't", "won't") -- there is no boundary
@@ -7390,7 +7407,18 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # PAS 100% recyclable"), "pas" sits BEFORE the trigger too, not only after it -- the
         # previous version only ever looked for "pas" in the AFTER window, so this extremely
         # common, unambiguous negation was never caught. Check both windows for the pas-family.
-        last_boundary=max(neg_before.rfind(';'),neg_before.rfind('.'),neg_before.rfind('!'),neg_before.rfind('?'))
+        # v93.83: a THIRD gap, exposed only once this function started checking more than the
+        # first trigger occurrence (see the multi-occurrence fix above) -- a contrastive comma
+        # clause ("...not carbon neutral today, BUT our Brussels bakery IS carbon neutral...")
+        # has no semicolon/period/!/? between the two clauses, only a comma before "but", so the
+        # negation from the FIRST clause bled all the way into the SECOND, genuinely affirmative
+        # occurrence's window and wrongly negated it too. Also truncate at the last contrastive
+        # conjunction (but/however/although/yet), not just hard sentence punctuation.
+        contrastive=re.search(r',\s*(?:but|however|although|yet)\b',neg_before)
+        boundary_positions=[neg_before.rfind(ch) for ch in ';.!?']
+        if contrastive:
+            boundary_positions.append(contrastive.end()-1)
+        last_boundary=max(boundary_positions)
         if last_boundary != -1:
             neg_before=neg_before[last_boundary+1:]
         fr_negator=re.search(r"\bne\b|\bn'",neg_before)
@@ -7402,8 +7430,9 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # claim itself were negated. Reported by a third-party code review; these two idioms are
         # excluded from the negation match with a lookahead rather than removed from it entirely,
         # so an unrelated negation elsewhere in the same window still works normally.
-        if re.search(r"\b(not|never|no)\b(?!\s+(only|doubt))|n't|niet(?!\s+alleen)|geen(?!\s+twijfel)|nooit",neg_before) or (fr_negator and fr_pas):
-            return False
+        is_negated=bool(re.search(r"\b(not|never|no|cannot)\b(?!\s+(only|doubt))|n't|niet(?!\s+alleen)|geen(?!\s+twijfel)|nooit",neg_before)) or bool(fr_negator and fr_pas)
+        if is_negated:
+            continue
         # v87: a conditional/hypothetical sentence ("If our packaging were fully recyclable, it
         # would reduce waste", "Should we become carbon neutral, we would be proud") is not an
         # assertion that the current state is already true -- nothing else in this function
@@ -7412,9 +7441,15 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # since the conditional clause can come before or after the claim clause), not just
         # "if" alone, to avoid firing on an unrelated "if you have questions..." aside.
         cond_window=neg_before+' '+neg_after
-        if (re.search(r'\bif\b',cond_window) and re.search(r'\b(would|were|could)\b',cond_window)) or \
-           re.search(r'\bshould (we|our|they)\b',cond_window) or re.search(r'\bwere (we|our|they) to\b',cond_window):
-            return False
+        is_conditional=bool((re.search(r'\bif\b',cond_window) and re.search(r'\b(would|were|could)\b',cond_window)) or
+           re.search(r'\bshould (we|our|they)\b',cond_window) or re.search(r'\bwere (we|our|they) to\b',cond_window))
+        if is_conditional:
+            continue
+        found_valid_occurrence=True
+        break  # this occurrence is genuinely affirmative and non-conditional -- accept
+    if found_any_occurrence and not found_valid_occurrence:
+        # every occurrence of the trigger in this excerpt was either negated or conditional
+        return False
     # v57e: previously this rejected ANY excerpt merely containing one of these phrases
     # anywhere, with no length check -- so a genuine claim sentence immediately following a
     # document heading in the same "sentence" (very common in PDF-extracted text, which often
@@ -8161,8 +8196,18 @@ def _v55_all_matches_sentences(text, trigger):
     wording near the trigger. Returns the FULL, untruncated excerpt now; truncation for
     DISPLAY happens in _v55_add_finding(), after the dedup signature is already computed from
     the full text."""
-    raw=' '.join((text or '').replace('\r',' ').replace('\n','. ').split())
-    trig=(trigger or '').lower()
+    # v93.83: this searched the RAW, un-normalised text -- but detection itself (_trigger_present,
+    # via detect_claims()/detect_green_claims()) normalises apostrophes first, so a French
+    # trigger written with a plain apostrophe ("chaîne d'approvisionnement responsable") still
+    # correctly FIRES against real web/PDF text, which almost always uses the typographic
+    # apostrophe (U+2019). This function then searched for that same plain-apostrophe trigger in
+    # un-normalised text, found no sentence containing it, and fell through to `return [raw]`
+    # below -- the ENTIRE crawled corpus (cookie banners, unrelated boilerplate, everything)
+    # returned as if it were the "exact claim passage". 21 triggers were affected, including the
+    # single most common French generic green claim. Live-reproduced against a 3.7k-char page;
+    # on a real crawl this silently substitutes the WHOLE 100k+ character corpus as the excerpt.
+    raw=_normalize_apostrophes(' '.join((text or '').replace('\r',' ').replace('\n','. ').split()))
+    trig=_normalize_apostrophes(trigger or '').lower()
     if not raw or not trig:
         return [raw] if raw else []
     parts=[p.strip() for p in re.split(r'(?<=[.!?])\s+', raw) if p.strip()]
