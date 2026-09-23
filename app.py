@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_81_engineering_review_batch_1"
-APP_RELEASE_LABEL="v93.81"
+APP_VERSION="hostable_v93_82_engineering_review_batch_2"
+APP_RELEASE_LABEL="v93.82"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -9524,6 +9524,47 @@ def _v93_target_named_as_non_accused_party(text,aliases,window=90):
     return False
 
 
+# v93.82: a handful of well-known company names are ALSO ordinary dictionary words, and
+# _v64_alias_occurrences() (bare word-boundary matching, no capitalisation/context awareness)
+# cannot tell "Shell" the oil major from "shell" in "shell companies" (a standard term for an
+# empty legal entity), or "Orange" the telecom operator from "orange" in "orange juice
+# producer". Live-reproduced: entity_match_details('Shell', ...) scored an article titled
+# "Shell companies used to hide forced labour in global supply chains" as a Direct match with
+# the highest confidence label, purely because "shell" appears in the title -- the article is
+# about anonymous shell companies in general, not Shell plc. Same for "Orange Belgium" +
+# "Orange juice producer fined over child labour on Brazilian farms". A general NLP solution
+# is out of scope for a keyword-matching tool; this instead vetoes a match for a KNOWN
+# ambiguous single-word alias when EVERY occurrence of that word is immediately followed by
+# one of its common generic-phrase continuations -- if even one occurrence is a genuine
+# standalone reference (not followed by a disqualifying word), the match still stands.
+_V93_GENERIC_ALIAS_DISQUALIFYING_CONTINUATIONS={
+    'shell':('compan','corporat','entit','firm','game','shock','script'),
+    'orange':('juice','peel','grove','tree','fruit','county','blossom','marmalade'),
+    'apple':('juice','pie','orchard','tree','sauce','cider','crumble'),
+    'target':('audience','market','group','date','practice'),
+    'delta':('variant','force','region','wave','wing','airlines'),
+    'dove':('bird','birds'),
+}
+def _v93_generic_alias_only_match(text,aliases):
+    """True when every occurrence of a KNOWN ambiguous single-word alias in `text` is
+    immediately followed by one of its common generic-phrase continuations (see the module
+    comment above) -- i.e. the word never appears as a genuine standalone company reference."""
+    norm=_v64_norm(text)
+    for alias in aliases:
+        continuations=_V93_GENERIC_ALIAS_DISQUALIFYING_CONTINUATIONS.get(alias)
+        if not continuations:
+            continue
+        matches=list(re.finditer(r'(?<![a-z0-9])'+re.escape(alias)+r'(?![a-z0-9])',norm,flags=re.I))
+        if not matches:
+            continue
+        for m in matches:
+            following=norm[m.end():m.end()+20].strip()
+            if not any(following.startswith(c) for c in continuations):
+                return False  # at least one genuine standalone reference exists
+        return True  # this alias's every occurrence was a generic-phrase continuation
+    return False
+
+
 def entity_match_details(result,company_name,reviewed_pages=None):
     """Conservative generic direct-entity match.
 
@@ -9558,6 +9599,12 @@ def entity_match_details(result,company_name,reviewed_pages=None):
     direct=bool(title_count or url_count)
     body_only=bool(content_count>=3 and first_pos<=280 and near_negative)
     matched=(direct and score>=6) or (body_only and score>=6)
+    # v93.82: veto a match that is entirely explained by a KNOWN ambiguous alias appearing in
+    # its ordinary dictionary sense -- "Shell" in "shell companies", "Orange" in "orange juice
+    # producer" -- see _v93_generic_alias_only_match()'s module comment above.
+    if matched and _v93_generic_alias_only_match(title+' '+content,aliases):
+        return {'matched':False,'score':score,'label':'Rejected - alias matches only in its ordinary dictionary sense, not as the company name',
+                'reason':'The apparent match is fully explained by a common non-brand use of the name (e.g. "shell company", "orange juice"); no standalone reference to the company itself was found.'}
     if not matched and not direct and content_count:
         return {'matched':False,'score':score,'label':'Rejected - incidental/body-only mention','reason':'The target is absent from the title and URL and is not sufficiently prominent in the source summary.'}
     # v93.51: a source naming the target prominently (e.g. in the title) was retained as
@@ -9658,8 +9705,23 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
     for brand,domains in KNOWN_GROUP_DOMAINS.items():
         if _host_has_brand_label(host,brand):
             known.extend(domains)
-    reserve=8 if known else 0
-    primary_deadline=max(time.time()+6,overall_deadline-reserve) if reserve else overall_deadline
+    # v93.82: `reserve` used to be 0 for every company NOT in the small, hardcoded
+    # KNOWN_GROUP_DOMAINS map -- i.e. almost every company ever scanned. With reserve=0,
+    # primary_deadline==overall_deadline, so a slow/thin primary site could burn the ENTIRE
+    # crawl budget before the checks below ever ran: `limited and time.time()<overall_deadline-5`
+    # (line below) and the related-site fetch loop's own `time.time()>=overall_deadline-2`
+    # would already be past deadline, silently disabling the whole "widen to a related domain
+    # when coverage is thin" mechanism -- including its OWN discovery-based fallback
+    # (_v65_discover_related_official_sites/related_company_sites), which needs no KNOWN_GROUP_
+    # DOMAINS entry at all and was starved of time regardless. This is exactly the general
+    # version of the coverage gap the homeinvestbelgium.be fix (v93.80) had to patch by hand
+    # for one specific company; every other company with real content on a different domain
+    # (its own investor/corporate site, a parent group's domain) had no automatic protection.
+    # Reserving a modest, fixed buffer regardless of `known` costs a small, usually-unused
+    # margin off the primary site's own budget when its coverage is already good, in exchange
+    # for actually giving the discovery fallback a chance to run when it is not.
+    reserve=8
+    primary_deadline=max(time.time()+6,overall_deadline-reserve)
     try:
         txt,pages,chunks=crawl(original_url,max_extra_pages=CRAWL_TARGET_EXTRA_PAGES,deadline=primary_deadline,log=crawl_log)
         if txt.strip():
@@ -9825,7 +9887,16 @@ _V69_SOCIAL_ANCHORS_STRICT=(
 )
 _V69_STRONG_ACTION_PATTERNS=(
     r'\b(fined|penalised|penalized|sanctioned|banned|prohibited|convicted|found liable)\b',
-    r'\b(regulator|authority|watchdog|court|prosecutor)\b.{0,80}\b(investigat|accus|fine|penalt|sanction|rule|complaint)',
+    # v93.82: group 2 used bare, unanchored stems -- 'rule' (no trailing \b) matched "rules"/
+    # "ruling"/"rulebook" regardless of direction, and 'fine' matched the adjective ("that's
+    # fine") as readily as the verb. Live-reproduced: "Company X wins award from the
+    # environmental authority under new carbon labelling rules" matched via "authority...
+    # rules", classifying an AWARD headline as "formal enforcement/legal action" -- which also
+    # disarms the positive-headline gate a few lines below, since strong_action is one of its
+    # escapes. 'rule' is replaced with the specific, directionally-unambiguous "ruled/rules/
+    # ruling AGAINST"; the other stems now require a real word boundary (fine/fines/fined, not
+    # the adjective "fine").
+    r'\b(regulator|authority|watchdog|court|prosecutor)\b.{0,80}\b(investigat\w*|accus\w*|fine[ds]?\b|penalt\w*|sanction\w*|complaint\w*|rul(?:ed|es|ing)\s+against)',
     r'\b(lawsuit|legal action|formal complaint|criminal investigation|regulatory investigation)\b',
     r'\b(found|documented|reported)\b.{0,80}\b(forced labour|forced labor|child labour|child labor|illegal working hours|wage theft|unsafe working conditions)\b',
 )
@@ -9969,6 +10040,25 @@ _V71_ADVERSE_EVENT_TERMS=(
     'misleidend','misleidende','onderzoek','boete','overtreding','beschuldigd',
     'trompeur','trompeuse','enquête','amende','violation','accusé'
 )
+# v93.82: several members above are ordinary, polarity-NEUTRAL words that show up constantly in
+# entirely positive or neutral coverage of a company's own programme -- "concern"/"concerns",
+# "risk"/"risks", "found", "reveals"/"revealed", "fails"/"failed"/"failure", "court", "ruling".
+# Live-reproduced: a headline "How Company X manages human rights risks in its supply chain"
+# matched 'risks' and was retained as adverse purely on that; "Company X reveals plan to improve
+# working conditions for 10,000 workers" matched 'reveals' the same way; a Reuters piece "Company
+# X opens low-carbon steel plant" whose body merely said "...reduces climate risk...cuts
+# emissions" was retained via 'risk' alone plus a recognised-source bonus; a Guardian piece
+# "The group found that its carbon emissions fell 12 percent" (a GOOD-news figure) matched
+# 'found'. These words remain valid CORROBORATING evidence alongside a genuinely adverse
+# signal (kept in the full list above, used where already gated behind an explicit adverse/
+# green/social-specific phrase), but must never be treated as sufficient EVIDENCE ON THEIR OWN
+# that a headline or passage is adverse -- see _v69_external_polarity's use of this strong-only
+# subset in place of the full list for its "no other requirement" acceptance branches.
+_V71_ADVERSE_EVENT_TERMS_WEAK={
+    'concern','concerns','found','report finds','report found','reveals','revealed',
+    'fails','failed','failure','risk','risks','court','ruling',
+}
+_V71_ADVERSE_EVENT_TERMS_STRONG=tuple(t for t in _V71_ADVERSE_EVENT_TERMS if t not in _V71_ADVERSE_EVENT_TERMS_WEAK)
 _V71_GREEN_EXPLICIT=(
     'greenwashing','misleading environmental claim','misleading environmental claims',
     'misleading sustainability claim','misleading sustainability claims',
@@ -10035,6 +10125,12 @@ def _v69_external_polarity(result,dimension='social'):
     positive_title=_v69_term_hits(title,_V69_POSITIVE_HEADLINE_TERMS)
     adverse_title=_v69_term_hits(title,_V71_ADVERSE_EVENT_TERMS)
     adverse_body=_v69_term_hits(first_content,_V71_ADVERSE_EVENT_TERMS)
+    # v93.82: used ONLY where the full (weak+strong) list above would otherwise be sufficient
+    # ON ITS OWN with no other corroborating requirement -- see _V71_ADVERSE_EVENT_TERMS_WEAK's
+    # docstring. Everywhere else, a weak term is still fine as corroboration alongside an
+    # already-explicit signal (explicit_title/explicit_body/recognised).
+    adverse_title_strong=_v69_term_hits(title,_V71_ADVERSE_EVENT_TERMS_STRONG)
+    adverse_body_strong=_v69_term_hits(first_content,_V71_ADVERSE_EVENT_TERMS_STRONG)
     strong_action=_v69_strong_action(title+' '+first_content)
     recognised=_v60_source_kind(result)!='Other public source'
     if dimension=='green':
@@ -10056,9 +10152,18 @@ def _v69_external_polarity(result,dimension='social'):
         # the last fallback below still does for unrecognised sources, was silently dropping
         # legitimate NGO/investigative reporting that never happens to repeat itself twice in
         # a short search snippet.
-        accepted=bool(explicit_title) or strong_action or (bool(explicit_body) and (bool(adverse_title) or bool(adverse_body) or recognised)) or (bool(anchors) and recognised and bool(adverse_body)) or (bool(anchors) and len(set(adverse_body))>=2)
+        # v93.82: the two clauses that used to accept on a bare weak adverse_body/adverse_title
+        # hit now require the STRONG-only subset instead (see _V71_ADVERSE_EVENT_TERMS_WEAK) --
+        # live-reproduced: a Reuters piece "Company X opens low-carbon steel plant" whose body
+        # only said "...reduces climate risk...cuts emissions" was retained purely via
+        # anchors+recognised+the weak word 'risk'; a Guardian piece "...found that its carbon
+        # emissions fell 12 percent" (good news) matched via 'found' the same way. The
+        # len(set(...))>=2 fallback (for an unrecognised source) is tightened the same way:
+        # two weak words together (e.g. "found"+"risk"+"concerns" in an upbeat climate report)
+        # is not corroboration, so at least one of the two-or-more distinct hits must be strong.
+        accepted=bool(explicit_title) or strong_action or (bool(explicit_body) and (bool(adverse_title) or bool(adverse_body) or recognised)) or (bool(anchors) and recognised and bool(adverse_body_strong)) or (bool(anchors) and len(set(adverse_body))>=2 and bool(adverse_body_strong))
     else:
-        accepted=strong_action or bool(adverse_title) or (bool(explicit_title) and recognised) or (bool(explicit_body) and (bool(adverse_body) or recognised)) or (bool(anchors) and recognised and len(set(adverse_body))>=2)
+        accepted=strong_action or bool(adverse_title_strong) or (bool(explicit_title) and recognised) or (bool(explicit_body) and (bool(adverse_body) or recognised)) or (bool(anchors) and recognised and len(set(adverse_body))>=2 and bool(adverse_body_strong))
     if not accepted:
         return False,'No sufficiently explicit adverse event, allegation, criticism or finding'
     reasons=[]

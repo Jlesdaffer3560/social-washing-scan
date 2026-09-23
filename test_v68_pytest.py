@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_81_engineering_review_batch_1'
+    assert app.APP_VERSION == 'hostable_v93_82_engineering_review_batch_2'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4486,3 +4486,73 @@ def test_active_voice_exoneration_headlines_not_treated_as_adverse():
         {'title': 'Regulator fines Acme for misleading environmental claims', 'content': '',
          'url': 'https://www.reuters.com/legal/acme'}, 'green')
     assert loss is True
+
+
+def test_polarity_gate_still_rejects_weak_words_that_only_ever_pair_with_recognised_source():
+    """Batch 2: the tightened green-dimension clause requires a STRONG adverse word, not just
+    any weak one, even when paired with anchors+a recognised source -- confirms the fix didn't
+    accidentally leave the weak-word-alone path reachable through a different combination."""
+    r = {'title': 'Company X sustainability strategy explained',
+         'content': 'The group found that its carbon emissions fell 12 percent.',
+         'url': 'https://www.theguardian.com/env/x'}
+    accepted, reason = app._v69_external_polarity(r, 'green')
+    assert accepted is False, reason
+
+
+def test_shell_and_orange_generic_word_false_entity_matches_rejected():
+    """Full engineering review, batch 2: entity_match_details() had no guard for a company
+    name that is also an ordinary dictionary word. Live-reproduced: an article titled "Shell
+    companies used to hide forced labour in global supply chains" scored as a Direct match for
+    "Shell" (the oil major), and "Orange juice producer fined over child labour on Brazilian
+    farms" scored as a Direct match for "Orange Belgium" -- both purely from the word itself,
+    with no genuine reference to the actual company anywhere in the article."""
+    shell_fp = {'title': 'Shell companies used to hide forced labour in global supply chains',
+                'content': 'Investigators found forced labour linked to anonymous shell companies.',
+                'url': 'https://www.theguardian.com/global/shell-companies-forced-labour'}
+    assert app.entity_match_details(shell_fp, 'Shell', ['https://www.shell.com'])['matched'] is False
+    orange_fp = {'title': 'Orange juice producer fined over child labour on Brazilian farms',
+                 'content': 'A major orange juice producer was fined for child labour violations.',
+                 'url': 'https://www.reuters.com/business/orange-juice-fine'}
+    assert app.entity_match_details(orange_fp, 'Orange Belgium', ['https://www.orange.be'])['matched'] is False
+    # a genuine article about the real company must still match
+    shell_real = {'title': 'Shell accused of greenwashing in new ad campaign',
+                  'content': 'NGOs criticised Shell for misleading claims about renewable investments.',
+                  'url': 'https://www.reuters.com/business/shell-greenwashing'}
+    assert app.entity_match_details(shell_real, 'Shell', ['https://www.shell.com'])['matched'] is True
+    orange_real = {'title': 'Orange Belgium fined by regulator over misleading advertising',
+                   'content': 'The Belgian telecom regulator fined Orange Belgium for its ad claims.',
+                   'url': 'https://www.reuters.com/business/orange-belgium-fine'}
+    assert app.entity_match_details(orange_real, 'Orange Belgium', ['https://www.orange.be'])['matched'] is True
+
+
+def test_related_site_reserve_is_not_conditional_on_known_group_domains(monkeypatch):
+    """Full engineering review, batch 2: crawl_with_related_sites()'s time reserve for
+    related-site discovery/crawling used to be 0 for any company NOT in the small, hardcoded
+    KNOWN_GROUP_DOMAINS map -- i.e. almost every company ever scanned. With reserve=0, a slow
+    or thin primary site could consume the entire crawl budget before the discovery-based
+    fallback (_v65_discover_related_official_sites/related_company_sites, which needs no
+    KNOWN_GROUP_DOMAINS entry) ever got a chance to run. This is the general version of the
+    coverage gap the homeinvestbelgium.be fix (v93.80) had to patch by hand for one company."""
+    monkeypatch.setattr(app, 'KNOWN_GROUP_DOMAINS', {})  # company not in the curated map
+    monkeypatch.setattr(app, '_v65_discover_related_official_sites', lambda *a, **k: ['https://related.example'])
+    monkeypatch.setattr(app, 'related_company_sites', lambda *a, **k: [])
+    calls = []
+    # A fake, controllable clock -- avoids a real multi-second sleep in the test while still
+    # exercising the real deadline-comparison arithmetic in crawl_with_related_sites().
+    clock = {'now': 1_000_000.0}
+    monkeypatch.setattr(app.time, 'time', lambda: clock['now'])
+
+    def fake_crawl(url, max_extra_pages=None, deadline=None, log=None, candidate_source='primary'):
+        calls.append(candidate_source)
+        if candidate_source == 'related_domain':
+            text = 'Acme Corp official reporting mentions Acme Corp twice for verification.'
+            return text, [url], [text]
+        # simulate a slow primary site that uses up its whole allotted (capped) time
+        clock['now'] = deadline if deadline is not None else clock['now']
+        return 'thin', [url], ['thin']
+
+    monkeypatch.setattr(app, 'crawl', fake_crawl)
+    overall_deadline = clock['now'] + 30
+    app.crawl_with_related_sites('https://acmecorp.example', overall_deadline=overall_deadline,
+                                  company_name_hint='Acme Corp')
+    assert 'related_domain' in calls, 'related-site discovery never got a chance to run'
