@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_85_engineering_review_batch_5"
-APP_RELEASE_LABEL="v93.85"
-APP_RELEASE_DATE="2026-09-20"
+APP_VERSION="hostable_v93_86_engineering_review_batch_6"
+APP_RELEASE_LABEL="v93.86"
+APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -3300,8 +3300,24 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
         # (yet) established from the wording. Only a claim that actually specifies its scope or
         # basis (a scoped company-level statement, or same-medium specification) leaves Annex I.
         offset_established=_offset_basis_confirmed(c)
-        if offset_established:
+        # v93.86: point 4c specifically targets a PRODUCT-level claim based on offsetting.
+        # When the wording is explicitly scoped to the company/operations level (e.g. "our
+        # company achieved carbon neutrality across all operations through verified carbon
+        # offsets"), offset language being present does not by itself put the claim on the
+        # fixed Annex I list -- it is a company-wide claim, not a product-level one. Returning
+        # the "High-priority ... blacklisted-practice indicator" text here regardless of scope
+        # previously left the human-readable regulatory_signal asserting a point 4c match even
+        # though enrich_green_finding's own scoped-corporate-claim check (below) already
+        # demoted blacklisted_practice_indicator to False for exactly this case -- a
+        # text/boolean mismatch reported by an engineering review. The two must agree.
+        if offset_established and not _is_scoped_corporate_claim(c):
             return 'High-priority EmpCo blacklisted-practice indicator where product-level neutral/reduced/positive climate impact is based on offsetting (UCPD Annex I point 4c, inserted by Directive (EU) 2024/825).'+date_note
+        if offset_established and _is_scoped_corporate_claim(c):
+            return ('Potential Annex I relevance -- offsetting is referenced in the retained wording, but UCPD Annex I point 4c '
+                    '(inserted by Directive (EU) 2024/825) specifically targets PRODUCT-level neutral/reduced/positive '
+                    'greenhouse-gas claims based on offsetting. This wording instead presents a company- or operations-level '
+                    'claim, so point 4c is not automatically established from the wording alone; review case-by-case under '
+                    'the general UCPD misleading-claims test.')
         if not _has_strong_same_medium_specification(c) and not _is_scoped_corporate_claim(c):
             return ('Potential EmpCo blacklisted-practice indicator: unspecified climate-neutrality wording is treated as a generic environmental claim '
                     '(UCPD Annex I point 4a, Article 2(p)) unless its specification is clear and prominent on the same medium or recognised excellent '

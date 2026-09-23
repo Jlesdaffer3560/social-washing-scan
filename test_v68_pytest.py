@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_85_engineering_review_batch_5'
+    assert app.APP_VERSION == 'hostable_v93_86_engineering_review_batch_6'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4739,3 +4739,28 @@ def test_recognised_scheme_suppression_scoped_to_label_triggers_only():
     # sanity: a genuine same-clause backing (the label trigger's own basis) is still suppressed
     r3 = app.detect_green_claims('Our eco label is backed by the EU Ecolabel certification.')
     assert all(app.is_placeholder_finding(f['type']) for f in r3), r3
+
+
+def test_corporate_scoped_offset_claim_text_matches_downgraded_flag():
+    """Full engineering review, batch 6: enrich_green_finding() already demoted
+    blacklisted_practice_indicator to False for a company-/operations-wide climate-neutrality
+    claim that names an offset basis (point 4c only targets PRODUCT-level claims), but
+    green_blacklisted_indicator() still returned the "High-priority EmpCo blacklisted-practice
+    indicator ... point 4c" text regardless of that scoping -- a text/boolean mismatch reported
+    by an engineering review. The displayed regulatory_signal must agree with the boolean flag
+    and the legal_basis_category shown elsewhere in the report."""
+    corporate_text = ('Our company achieved carbon neutrality across all operations through '
+                       'verified carbon offset credits purchased from certified projects.')
+    sig = app.green_blacklisted_indicator('Climate-neutrality or offsetting claim', 'carbon neutral', corporate_text)
+    assert 'blacklisted-practice indicator' not in sig.lower(), sig
+    f = app.enrich_green_finding({'type': 'Climate-neutrality or offsetting claim', 'claim': corporate_text, 'excerpt': corporate_text}, trigger='carbon neutral')
+    assert f['blacklisted_practice_indicator'] is False
+    assert f['legal_basis_category'] == 'problematic'
+    assert 'blacklisted-practice indicator' not in f['regulatory_signal'].lower(), f['regulatory_signal']
+    # sanity: a genuine PRODUCT-level offset claim (not corporate-scoped) must still be flagged
+    product_text = 'This product is carbon neutral, achieved through verified carbon offset credits.'
+    sig2 = app.green_blacklisted_indicator('Climate-neutrality or offsetting claim', 'carbon neutral', product_text)
+    assert 'blacklisted-practice indicator' in sig2.lower(), sig2
+    f2 = app.enrich_green_finding({'type': 'Climate-neutrality or offsetting claim', 'claim': product_text, 'excerpt': product_text}, trigger='carbon neutral')
+    assert f2['blacklisted_practice_indicator'] is True
+    assert f2['legal_basis_category'] == 'prohibited'
