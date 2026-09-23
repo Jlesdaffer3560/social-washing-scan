@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_88_engineering_review_batch_8'
+    assert app.APP_VERSION == 'hostable_v93_89_engineering_review_batch_9'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2790,6 +2790,55 @@ def test_crawl_batch_does_not_overrun_deadline_when_a_fetch_hangs(monkeypatch):
     elapsed2 = _time.time() - start2
     assert elapsed2 < 9, f'mixed-batch crawl() budgeted 6s but took {elapsed2:.1f}s'
     assert len(pages) > 1, 'fast fetches in the same batch as a hung one must still be recorded'
+
+
+def test_crawl_deduplicates_pages_sharing_the_same_post_redirect_final_url(monkeypatch):
+    """Full engineering review, batch 8: two different pre-redirect candidate URLs (e.g.
+    "/sustainability-old" and "/sustainability-new") can both redirect to the exact same final
+    page. crawl()'s `seen` set only deduplicates the pre-redirect candidate URLs used to build
+    the worklist, so both candidates were still fetched and BOTH had their (identical) content
+    appended to `pages`/`chunks` -- wasting a page-budget slot and double-weighting that content
+    in the analysed text and any page-count-based coverage/confidence metric. Reported by an
+    engineering review (agent1 finding #8)."""
+    def fake_fetch_html(url, timeout=7):
+        html = ('<html><body><a href="/sustainability-old">Old link</a>'
+                '<a href="/sustainability-new">New link</a></body></html>')
+        return html, url
+    def fake_fetch_page_content(url, timeout=8):
+        final = 'https://example.com/en/sustainability-hub'
+        content = 'Our sustainability commitments and goals, same content regardless of URL. ' * 10
+        return (content, 'html', 'direct', [], final)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    monkeypatch.setattr(app, 'COMMON_PUBLIC_PATHS', [])
+    log = []
+    text, pages, chunks = app.crawl('https://example.com', max_extra_pages=5, deadline=None, log=log)
+    assert len(pages) == 2, f'expected homepage + exactly 1 unique content page, got {pages}'
+    dup_entries = [e for e in log if e.get('skipped_duplicate')]
+    assert len(dup_entries) == 1, log
+    assert dup_entries[0]['canonical_final_url'] == 'https://example.com/en/sustainability-hub'
+
+    inv = app.build_scan_inventory(pages, [], log, full_text='\n\n'.join(chunks))
+    assert inv['summary']['skipped_duplicate'] == 1
+    assert len(inv['skipped_duplicate']) == 1
+    # must not also appear as a normal reviewed page or a failed fetch
+    assert not any('sustainability-new' in p.get('url', '') for p in inv['website_pages'] + inv['documents'])
+    assert not any('sustainability-new' in f.get('url', '') for f in inv['failed_fetches'])
+
+    # sanity: genuinely distinct final URLs must NOT be deduplicated
+    def fake_fetch_html2(url, timeout=7):
+        html = '<html><body><a href="/sustainability-a">A</a><a href="/sustainability-b">B</a></body></html>'
+        return html, url
+    def fake_fetch_page_content2(url, timeout=8):
+        content = ('Distinct sustainability content for ' + url + '. ') * 10
+        return (content, 'html', 'direct', [], url + '-final')
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html2)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content2)
+    log2 = []
+    text2, pages2, chunks2 = app.crawl('https://example.com', max_extra_pages=5, deadline=None, log=log2)
+    assert len(pages2) == 3, f'expected homepage + 2 distinct pages, got {pages2}'
+    assert not any(e.get('skipped_duplicate') for e in log2)
 
 
 def test_frontend_claim_sources_are_labelled_and_linked():

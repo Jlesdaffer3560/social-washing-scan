@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_88_engineering_review_batch_8"
-APP_RELEASE_LABEL="v93.88"
+APP_VERSION="hostable_v93_89_engineering_review_batch_9"
+APP_RELEASE_LABEL="v93.89"
 APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1400,6 +1400,21 @@ def _log_fetch_skipped_outdated(log,url,chars,year,source='discovered',content_k
                     'thin':False,'error':None,'method':'skipped_outdated','source':source,'content_kind':content_kind})
 
 
+def _log_fetch_skipped_duplicate(log,url,chars,canonical_final_url,source='discovered',content_kind='html'):
+    """A page WAS successfully retrieved, but its POST-REDIRECT final URL is one the crawl has
+    already captured content for under a different starting URL (e.g. "/about-us" and "/about"
+    both redirecting to "/en/about-company"). Without this, crawl() counted each such candidate
+    as a separate page and appended its (duplicate) content to both `pages` and `chunks`,
+    wasting a page-budget slot and double-weighting that content in the analysed text and any
+    page-count-based coverage/confidence metric. Distinct from both _log_fetch_success() (a
+    genuinely new page) and _log_fetch_failure() (could not be retrieved at all) -- this WAS
+    retrieved fine, it just isn't new content, so build_scan_inventory() can surface it
+    honestly rather than silently dropping it or mislabelling it as inaccessible."""
+    if log is not None:
+        log.append({'url':url,'ok':True,'skipped_duplicate':True,'canonical_final_url':canonical_final_url,'chars':chars,
+                    'thin':False,'error':None,'method':'skipped_duplicate','source':source,'content_kind':content_kind})
+
+
 def _candidate_score(item):
     url,source=item
     low=url.lower(); score=0
@@ -1508,6 +1523,11 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     # redirect, despite the link itself resolving to the correct address.
     host=urlparse(homepage_trusted_host_base).hostname or urlparse(url).hostname or ''
     pages=[url]; chunks=[text]
+    # v93.89: tracks each fetched page's POST-REDIRECT final URL (not the pre-fetch candidate
+    # URL used elsewhere for `seen`) -- see _log_fetch_skipped_duplicate()'s docstring. Seeded
+    # with the homepage's own final URL so a later candidate that redirects back to the
+    # homepage is recognised as a duplicate too.
+    seen_final={_canonical_url(homepage_trusted_host_base or url)}
 
     candidates=[]; seen={_canonical_url(url)}
     def add_candidate(candidate,source,allow_cross_domain=False):
@@ -1592,21 +1612,36 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                         # the coverage register shows it as knowingly excluded, not silently
                         # missing or "failed to access".
                         stale_year=_v93_extract_report_year(link,t)
-                        if stale_year is not None and stale_year<DOCUMENT_SCREENING_CUTOFF_YEAR:
+                        # v93.89: two different pre-redirect candidate URLs (e.g. "/about-us"
+                        # and "/about") can both redirect to the exact same final page. `seen`
+                        # only deduplicates the pre-redirect candidate URLs used to BUILD the
+                        # worklist, so both candidates were still fetched and BOTH had their
+                        # (identical) content appended to `pages`/`chunks` -- wasting a
+                        # page-budget slot and double-weighting that content in the analysed
+                        # text and any page-count-based coverage/confidence metric. Live-
+                        # reproduced with two links redirecting to the same canonical page.
+                        # Reported by an engineering review (agent1 finding #8).
+                        final_canon=_canonical_url((link_base or link).split('#')[0])
+                        is_duplicate_final=bool(final_canon) and final_canon in seen_final
+                        if is_duplicate_final:
+                            _log_fetch_skipped_duplicate(log,link,len(t),final_canon,source=source,content_kind=kind)
+                        elif stale_year is not None and stale_year<DOCUMENT_SCREENING_CUTOFF_YEAR:
                             _log_fetch_skipped_outdated(log,link,len(t),stale_year,source=source,content_kind=kind)
                         else:
+                            if final_canon: seen_final.add(final_canon)
                             _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
                             if successful<max_extra_pages:
                                 label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
                                 chunks.append('\n\n'+label+link+'\n'+t)
                                 pages.append(link); successful+=1
-                        for href in page_links:
-                            full=urljoin(link_base,href)
-                            is_pdf=full.lower().split('?')[0].endswith('.pdf')
-                            if relevant(full) or is_pdf:
-                                cand=_canonical_url(full.split('#')[0])
-                                if cand and cand not in seen and (is_pdf or same_domain(cand,host)):
-                                    seen.add(cand); discovered.append((cand,'linked_2nd'))
+                        if not is_duplicate_final:
+                            for href in page_links:
+                                full=urljoin(link_base,href)
+                                is_pdf=full.lower().split('?')[0].endswith('.pdf')
+                                if relevant(full) or is_pdf:
+                                    cand=_canonical_url(full.split('#')[0])
+                                    if cand and cand not in seen and (is_pdf or same_domain(cand,host)):
+                                        seen.add(cand); discovered.append((cand,'linked_2nd'))
                     else:
                         _log_fetch_failure(log,link,ValueError('The page returned insufficient usable text.'),source=source)
                 except Exception as e:
@@ -2929,6 +2964,21 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
             'detected_year':year,'reason':f'Dated {year} -- excluded because it predates the {DOCUMENT_SCREENING_CUTOFF_YEAR} screening cutoff for the company\'s own communication.' if year else 'Excluded as outdated.',
             'discovery_source':entry.get('source') or 'discovered'})
 
+    # v93.89: a page that redirected to the exact same final URL as one already captured under
+    # a different starting link (see _log_fetch_skipped_duplicate()) was retrieved successfully
+    # but is neither a normal "reviewed" source (it never entered chunks/pages) nor a "failed"
+    # one (ok=True) -- surface it explicitly so it doesn't look like coverage simply vanished.
+    skipped_duplicate=[]; skipped_dup_seen=set()
+    for entry in crawl_log:
+        if not isinstance(entry,dict) or not entry.get('skipped_duplicate') or not entry.get('url'): continue
+        key=canon(entry.get('url'))
+        if key in skipped_dup_seen: continue
+        skipped_dup_seen.add(key)
+        skipped_duplicate.append({'url':entry.get('url'),'name':page_name_from_url(entry.get('url')),
+            'canonical_final_url':entry.get('canonical_final_url'),
+            'reason':'This link redirects to a page already covered under a different address, so its content was not counted again.',
+            'discovery_source':entry.get('source') or 'discovered'})
+
     page_items=[x for x in reviewed if x.get('source_type')=='Website page']
     document_items=[x for x in reviewed if x.get('source_type')!='Website page']
     domains=sorted({x.get('domain') for x in reviewed if x.get('domain')})
@@ -2941,9 +2991,10 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
                        'partially_analysed':status_counts.get('Retrieved and partially analysed',0),
                        'limited_text':status_counts.get('Limited text extracted',0),
                        'retrieved_not_analysed':status_counts.get('Retrieved but not analysed due to budget',0),
-                       'skipped_outdated':len(skipped_outdated)},
+                       'skipped_outdated':len(skipped_outdated),
+                       'skipped_duplicate':len(skipped_duplicate)},
             'website_pages':page_items,'documents':document_items,'failed_fetches':failed,'domains':domains,
-            'skipped_outdated':skipped_outdated,
+            'skipped_outdated':skipped_outdated,'skipped_duplicate':skipped_duplicate,
             'note':''}
 
 
