@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_86_engineering_review_batch_6'
+    assert app.APP_VERSION == 'hostable_v93_87_engineering_review_batch_7'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4764,3 +4764,26 @@ def test_corporate_scoped_offset_claim_text_matches_downgraded_flag():
     f2 = app.enrich_green_finding({'type': 'Climate-neutrality or offsetting claim', 'claim': product_text, 'excerpt': product_text}, trigger='carbon neutral')
     assert f2['blacklisted_practice_indicator'] is True
     assert f2['legal_basis_category'] == 'prohibited'
+
+
+def test_source_kind_not_promoted_from_body_text_alone():
+    """Full engineering review, batch 6: _v60_source_kind() used to classify a source as
+    'Legal / complaint', 'Academic / research' or 'Union / worker organisation' whenever the
+    BODY TEXT contained a matching word ('lawsuit', 'university', 'trade union', ...),
+    regardless of which host actually published the page. This let the target company's OWN
+    press release or policy page inherit a higher-credibility source kind -- which
+    _v69_external_polarity treats as a "recognised independent source" and uses to accept a
+    finding as adverse evidence with a lower bar -- purely by mentioning one of those words in
+    passing. Reported by an engineering review (agent2 finding #7)."""
+    company_union_text = {'url': 'https://www.examplecorp.com/press/community', 'title': 'ExampleCorp community update',
+                           'content': 'ExampleCorp values open dialogue with any trade union representing our staff.'}
+    assert app._v60_source_kind(company_union_text) == 'Other public source'
+    company_legal_academic_text = {'url': 'https://www.examplecorp.com/press/partnership', 'title': 'ExampleCorp partners with a university',
+                                    'content': 'We also successfully defended a minor lawsuit last year.'}
+    assert app._v60_source_kind(company_legal_academic_text) == 'Other public source'
+    # sanity: genuine host-based classification for each category must still work
+    assert app._v60_source_kind({'url': 'https://www.ituc-csi.org/report', 'title': 'ITUC report', 'content': 'Union report.'}) == 'Union / worker organisation'
+    assert app._v60_source_kind({'url': 'https://www.reuters.com/article', 'title': 'Reuters investigation', 'content': 'An investigation.'}) == 'Press / investigative media'
+    assert app._v60_source_kind({'url': 'https://www.mit.edu/research/paper', 'title': 'MIT research paper', 'content': 'Academic research.'}) == 'Academic / research'
+    assert app._v60_source_kind({'url': 'https://www.hrw.org/report', 'title': 'HRW report', 'content': 'A report.'}) == 'NGO / civil society'
+    assert app._v60_source_kind({'url': 'https://ec.europa.eu/notice', 'title': 'Commission notice', 'content': 'A notice.'}) == 'Government / regulator'

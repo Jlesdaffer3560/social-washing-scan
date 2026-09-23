@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_86_engineering_review_batch_6"
-APP_RELEASE_LABEL="v93.86"
+APP_VERSION="hostable_v93_87_engineering_review_batch_7"
+APP_RELEASE_LABEL="v93.87"
 APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -8493,19 +8493,30 @@ def _v60_host_matches_marker(host, marker):
 
 
 def _v60_source_kind(result):
+    # v93.87: this classification feeds _v69_external_polarity's "recognised independent
+    # source" acceptance factor -- it must reflect WHO is publishing (the host), not what
+    # words happen to appear in the page's own body text. Text-only fallbacks here (previously
+    # "court"/"lawsuit" anywhere in the text -> Legal / complaint; "university"/"research
+    # institute" anywhere in the text -> Academic / research; "trade union"/"workers union"
+    # anywhere in the text -> Union / worker organisation) let ANY page, including the target
+    # company's own press release or policy page, inherit a higher-credibility source kind
+    # merely by mentioning one of those words in passing (e.g. "we work closely with the trade
+    # union" or "in partnership with a university"). Live-reproduced: a company's own page
+    # ("examplecorp.com") describing routine stakeholder dialogue with "any trade union
+    # representing our staff" was classified as "Union / worker organisation" -- a source kind
+    # meant for the union's OWN site -- purely from that one phrase. Removed; host-based
+    # detection (union-domain markers, .edu/.ac. for academic) is kept, since that is what
+    # actually identifies the publisher. Reported by an engineering review (agent2 finding #7).
     host=_v60_host(result)
-    text=_external_signal_text(result)
     if any(_v60_host_matches_marker(host,m) for m in _V60_OFFICIAL_HOST_MARKERS) or host.endswith('.gov') or '.gov.' in host:
         return 'Government / regulator'
     if any(_v60_host_matches_marker(host,m) for m in _V60_NGO_HOST_MARKERS):
         return 'NGO / civil society'
-    if any(_v60_host_matches_marker(host,m) for m in _V60_UNION_HOST_MARKERS) or any(x in text for x in ['trade union','workers union','labour union','labor union']):
+    if any(_v60_host_matches_marker(host,m) for m in _V60_UNION_HOST_MARKERS):
         return 'Union / worker organisation'
     if any(_v60_host_matches_marker(host,m) for m in _V60_MEDIA_HOST_MARKERS):
         return 'Press / investigative media'
-    if any(x in text for x in ['court','lawsuit','legal action','class action','complaint filed']):
-        return 'Legal / complaint'
-    if host.endswith('.edu') or '.ac.' in host or 'university' in text or 'research institute' in text:
+    if host.endswith('.edu') or '.ac.' in host:
         return 'Academic / research'
     return 'Other public source'
 
