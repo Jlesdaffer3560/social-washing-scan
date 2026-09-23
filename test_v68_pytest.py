@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_89_engineering_review_batch_9'
+    assert app.APP_VERSION == 'hostable_v93_90_engineering_review_batch_10'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2839,6 +2839,55 @@ def test_crawl_deduplicates_pages_sharing_the_same_post_redirect_final_url(monke
     text2, pages2, chunks2 = app.crawl('https://example.com', max_extra_pages=5, deadline=None, log=log2)
     assert len(pages2) == 3, f'expected homepage + 2 distinct pages, got {pages2}'
     assert not any(e.get('skipped_duplicate') for e in log2)
+
+
+def test_second_hop_links_do_not_jump_queue_ahead_of_better_first_hop_candidates(monkeypatch):
+    """Full engineering review, batch 9: newly discovered second-hop links were sorted only
+    relative to EACH OTHER, then spliced in immediately at the crawl loop's cursor -- jumping
+    the queue ahead of every not-yet-processed first-hop candidate regardless of that
+    candidate's own score, since the full candidate list was only ever sorted once, up front.
+    Live-reproduced: a weak, governance-only second-hop link jumped ahead of two much
+    better-scoring first-hop candidates ("report", "impact") purely because of when it was
+    discovered. Reported by an engineering review (agent1 finding #10)."""
+    monkeypatch.setattr(app, 'CRAWL_FETCH_WORKERS', 1)  # one fetch at a time -> deterministic order
+    monkeypatch.setattr(app, 'COMMON_PUBLIC_PATHS', [])
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+
+    def fake_fetch_html(url, timeout=7):
+        html = ('<html><body><a href="/supplier-code">Supplier code</a>'
+                '<a href="/report">Report</a><a href="/impact">Impact</a></body></html>')
+        return html, url
+    fetch_order = []
+    def fake_fetch_page_content(url, timeout=8):
+        fetch_order.append(url)
+        content = ('Content for ' + url + '. ') * 15
+        # /supplier-code discovers a weak second-hop link (only the lowest-weighted keyword,
+        # 'governance', and no source-type score bonus) that must NOT outrank the still-queued
+        # better first-hop candidates "report" and "impact".
+        links = ['/governance-weak'] if 'supplier-code' in url else []
+        return (content, 'html', 'direct', links, url)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
+    app.crawl('https://example.com', max_extra_pages=10, deadline=None)
+    urls = [u.rsplit('/', 1)[-1] for u in fetch_order]
+    assert urls == ['supplier-code', 'report', 'impact', 'governance-weak'], fetch_order
+
+    # sanity: a genuinely BETTER-scoring second-hop link must still be prioritised correctly
+    # ahead of a worse still-queued first-hop candidate (no over-correction the other way)
+    def fake_fetch_html2(url, timeout=7):
+        html = '<html><body><a href="/supplier-code">Supplier code</a><a href="/impact">Impact</a></body></html>'
+        return html, url
+    fetch_order2 = []
+    def fake_fetch_page_content2(url, timeout=8):
+        fetch_order2.append(url)
+        content = ('Content for ' + url + '. ') * 15
+        links = ['/sustainability-report'] if 'supplier-code' in url else []
+        return (content, 'html', 'direct', links, url)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html2)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content2)
+    app.crawl('https://example.com', max_extra_pages=10, deadline=None)
+    urls2 = [u.rsplit('/', 1)[-1] for u in fetch_order2]
+    assert urls2 == ['supplier-code', 'sustainability-report', 'impact'], fetch_order2
 
 
 def test_frontend_claim_sources_are_labelled_and_linked():

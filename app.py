@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_89_engineering_review_batch_9"
-APP_RELEASE_LABEL="v93.89"
+APP_VERSION="hostable_v93_90_engineering_review_batch_10"
+APP_RELEASE_LABEL="v93.90"
 APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1658,8 +1658,21 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         finally:
             executor.shutdown(wait=False)
         if discovered:
+            # v93.90: newly discovered second-hop links were sorted only relative to EACH
+            # OTHER, then spliced in immediately at the cursor -- jumping the queue ahead of
+            # every not-yet-processed first-hop candidate regardless of that candidate's own
+            # score, since the full `candidates` list was only ever sorted once, up front.
+            # Live-reproduced: a weak, governance-only second-hop link jumped ahead of two
+            # much better-scoring first-hop candidates ("report", "impact") purely because of
+            # when it happened to be discovered, pushing genuinely more relevant pages later
+            # in the queue (or past the max_attempts cutoff entirely). Reported by an
+            # engineering review (agent1 finding #10). Merge the newly discovered links into
+            # their correctly ranked position among the REMAINING candidates instead -- the
+            # discovered[:N] cap (limiting how many new links get added at all when few
+            # attempts remain) is applied first, to the best-scoring ones, before merging.
             discovered.sort(key=_candidate_score)
-            candidates[cursor:cursor]=discovered[:max(0,max_attempts-attempts)]
+            capped_discovered=discovered[:max(0,max_attempts-attempts)]
+            candidates[cursor:]=sorted(candidates[cursor:]+capped_discovered,key=_candidate_score)
     # v93.31: also return the raw per-page chunks (chunks[i] always corresponds to pages[i] --
     # both are appended together, nowhere separately) alongside the already-distributed,
     # joined `text`, so a caller crawling MULTIPLE sites (crawl_with_related_sites()) can
