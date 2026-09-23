@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_84_engineering_review_batch_4"
-APP_RELEASE_LABEL="v93.84"
+APP_VERSION="hostable_v93_85_engineering_review_batch_5"
+APP_RELEASE_LABEL="v93.85"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4778,7 +4778,29 @@ def _looks_like_generic_green_claim(excerpt, trigger):
         return False
     return True
 
+# v93.85: present-tense-style green claim types that should NOT also fire for an excerpt
+# already recognised as a future/target-framed claim (see _looks_like_future_environmental_claim
+# and its use in detect_green_claims() below) -- these are exactly the types whose trigger words
+# ("carbon neutral", "100% recyclable", "eco-friendly", a named label) can appear inside a
+# forward-looking sentence just as easily as an already-achieved one.
+_GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING={
+    'Climate-neutrality or offsetting claim','Absolute or purity environmental wording',
+    'Generic environmental claim','Recycled / recyclable material claim',
+    'Sustainability label / certification claim','Comparative environmental claim',
+}
+
 def _looks_like_future_environmental_claim(excerpt):
+    """Deliberately narrow (climate/net-zero-specific) so this doubles safely as BOTH the
+    positive gate for 'Future environmental-performance claim' (GREEN_CLAIMS has trigger phrases
+    for this exact pattern) AND the suppression check for present-tense-style types (see
+    _GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING below) -- broadening this to catch
+    every possible future-goal phrasing (e.g. "our goal is that our packaging becomes 100%
+    recyclable by 2030", which names no climate keyword at all) would also suppress those wider
+    cases from their present-tense type with NO corresponding "Future" trigger phrase to take
+    their place, making a genuine claim invisible instead of merely mis-typed -- a net loss of
+    coverage the narrower scope here deliberately avoids. This wider pattern is a known,
+    documented remaining gap (see the full engineering review), not something this function
+    silently gets wrong -- it simply never claims to detect it."""
     c=(excerpt or '').lower()
     if any(x in c for x in ['net zero by','carbon neutral by','climate neutral by','climate positive by','we will be net zero','we aim to be net zero','committed to net zero','towards net zero']):
         return True
@@ -4986,7 +5008,13 @@ GREEN_CLAIMS=[
  (['compliant with environmental law','meets legal requirements','according to legal standards','required by law','legal requirement','eu compliant','regulation compliant',
    'conform milieuwetgeving','voldoet aan wettelijke vereisten','volgens wettelijke normen','wettelijk verplicht','wettelijke vereiste','eu-conform','conform de regelgeving',
    'conforme à la législation environnementale','répond aux exigences légales','selon les normes légales','requis par la loi','exigence légale','conforme ue','conforme à la réglementation'],'Legal requirement presented as green benefit','High','EmpCo risk: presenting a requirement imposed by law on all products of the category on the Union market as a distinctive feature of the trader’s offer is a blacklisted-practice indicator (Annex I point 10a).','Do not present legal compliance as a differentiating sustainability benefit. Separate legal compliance from voluntary improvements.'),
- (['green leaf','leaf icon','tree icon','water drop','waterdrop','planet icon','earth icon','eco badge','green badge','environmental icon','recycled badge','sustainability badge',
+ # v93.85: 'eco badge'/'green badge'/'sustainability badge' removed -- exact duplicates of
+ # phrases already in "Sustainability label / certification claim" above, so the same sentence
+ # produced two separate findings under two different type names (same underlying bug fixed for
+ # the supplier-responsibility/no-child-labour overlaps below). "Recycled badge"/"environmental
+ # icon" are distinct enough to stay -- a recycling symbol without the word "sustainability"/
+ # "eco"/"green" in front of "badge" isn't caught by the other list.
+ (['green leaf','leaf icon','tree icon','water drop','waterdrop','planet icon','earth icon','environmental icon','recycled badge',
    'groen blad','blad icoon','boom icoon','waterdruppel','planeet icoon','aarde icoon','milieu icoon','recyclagebadge','duurzaamheidsbadge',
    'feuille verte',"icône feuille","icône arbre","goutte d'eau","icône planète","icône terre","icône environnement","badge recyclage","badge durabilité"],'Visual green-claim indicator','Medium','EmpCo risk: pictorial, graphic or symbolic representations can imply environmental benefits and should be assessed like written claims.','Check whether the icon or badge implies a specific environmental benefit and connect it to clear, prominent and evidenced wording.'),
 ]
@@ -7212,9 +7240,14 @@ V55_GREEN_EXTRA_PATTERNS = [
      'énergie durable','banque durable','investissement durable','finance durable'],
      'EmpCo risk: broad environmental wording such as sustainable, eco, conscious, preferred or lower-impact can be misleading where the exact environmental attribute, scope and evidence are not clear on the same medium.',
      'Specify the exact attribute, product/material scope, baseline, method, evidence, reporting period and limitations.'),
-    ('Recycled / recyclable material claim', 'Medium', ['recycled polyester','recycled cotton','recycled plastic','recycled aluminium','recycled aluminum','recycled steel','recycled glass','recycled paper','recycled cardboard','recycled metal','recycled electronics','recycled material','recycled materials','made from recycled','made with recycled','recyclable packaging','recycled packaging','recyclable materials','circular material','circular materials','is recyclable','are recyclable','fully recyclable','widely recyclable','easily recyclable','recyclable bottle','recyclable container',
+    # v93.85: 'fully recyclable'/'entièrement recyclable' removed -- exact duplicates of phrases
+    # already in "Absolute or purity environmental wording" (GREEN_CLAIMS), so the same sentence
+    # produced two separate findings under two different type names/risk levels. Kept in the
+    # Absolute-wording list (High risk) rather than here (Medium), since that is the more
+    # protective classification for an unqualified "fully"/"entirely" recyclability claim.
+    ('Recycled / recyclable material claim', 'Medium', ['recycled polyester','recycled cotton','recycled plastic','recycled aluminium','recycled aluminum','recycled steel','recycled glass','recycled paper','recycled cardboard','recycled metal','recycled electronics','recycled material','recycled materials','made from recycled','made with recycled','recyclable packaging','recycled packaging','recyclable materials','circular material','circular materials','is recyclable','are recyclable','widely recyclable','easily recyclable','recyclable bottle','recyclable container',
      'gerecycleerd polyester','gerecycleerd katoen','gerecycleerd plastic','gerecycleerd aluminium','gerecycleerd staal','gerecycleerd glas','gerecycleerd papier','gerecycleerd karton','gerecycleerd metaal','gerecycleerde elektronica','gerecycleerd materiaal','gerecycleerde materialen','gemaakt van gerecycleerd','gemaakt met gerecycleerd','recycleerbare verpakking','gerecycleerde verpakking','recycleerbare materialen','circulair materiaal','circulaire materialen','is recycleerbaar','zijn recycleerbaar','volledig recycleerbaar','breed recycleerbaar','gemakkelijk recycleerbaar','recycleerbare fles',
-     'polyester recyclé','coton recyclé','plastique recyclé','aluminium recyclé','acier recyclé','verre recyclé','papier recyclé','carton recyclé','métal recyclé','électronique recyclée','matériau recyclé','matériaux recyclés','fabriqué à partir de matériaux recyclés','fabriqué avec des matériaux recyclés','emballage recyclable','emballage recyclé','matériaux recyclables','matériau circulaire','matériaux circulaires','est recyclable','sont recyclables','entièrement recyclable','largement recyclable','facilement recyclable','bouteille recyclable','contenant recyclable'],
+     'polyester recyclé','coton recyclé','plastique recyclé','aluminium recyclé','acier recyclé','verre recyclé','papier recyclé','carton recyclé','métal recyclé','électronique recyclée','matériau recyclé','matériaux recyclés','fabriqué à partir de matériaux recyclés','fabriqué avec des matériaux recyclés','emballage recyclable','emballage recyclé','matériaux recyclables','matériau circulaire','matériaux circulaires','est recyclable','sont recyclables','largement recyclable','facilement recyclable','bouteille recyclable','contenant recyclable'],
      'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
      'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.'),
     ('Generic environmental claim', 'High', ['environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','eco-friendly','climate friendly','green choice','eco choice','green product','eco product',
@@ -7225,14 +7258,28 @@ V55_GREEN_EXTRA_PATTERNS = [
 ]
 
 V55_SOCIAL_EXTRA_PATTERNS = [
-    ('Supplier-responsibility / sourcing claim', 'High', ['responsible sourcing','responsibly sourced','ethical sourcing','ethically sourced','supplier code','supplier code of conduct','supplier standards','audited suppliers','certified suppliers','traceable suppliers','traceable supply chain','supply chain traceability','responsible supply chain','sustainable sourcing','all suppliers comply','all suppliers meet','supplier due diligence',
-     'verantwoorde inkoop','verantwoord ingekocht','ethische inkoop','ethisch ingekocht','leverancierscode','gedragscode voor leveranciers','leveranciersnormen','geauditeerde leveranciers','gecertificeerde leveranciers','traceerbare leveranciers','traceerbare toeleveringsketen','traceerbaarheid van de toeleveringsketen','verantwoorde toeleveringsketen','duurzame inkoop','alle leveranciers voldoen','zorgvuldigheidsplicht leveranciers',
-     'approvisionnement responsable','sourcing responsable','approvisionnement éthique','sourcé de manière éthique','code fournisseur','code de conduite des fournisseurs','normes fournisseurs','fournisseurs audités','fournisseurs certifiés','fournisseurs traçables','chaîne d\'approvisionnement traçable','traçabilité de la chaîne d\'approvisionnement','chaîne d\'approvisionnement responsable','sourcing durable','tous les fournisseurs sont conformes','devoir de vigilance fournisseurs'],
+    # v93.85: removed phrases that exactly duplicated ones already in "Supply-chain or
+    # supplier-responsibility claim" (CLAIMS) -- 'responsible sourcing', 'responsibly sourced',
+    # 'ethical sourcing', 'ethically sourced', 'audited suppliers', 'certified suppliers',
+    # 'traceable suppliers', 'all suppliers comply', 'all suppliers meet' and their NL/FR
+    # equivalents -- so the same sentence produced two separate findings under two different
+    # type names, inflating the claim count and double-weighting the same underlying wording in
+    # scoring. Kept here only the phrases genuinely UNIQUE to this list (supplier code/
+    # standards/due-diligence, traceable-supply-CHAIN phrasing rather than traceable-SUPPLIERS,
+    # sustainable sourcing).
+    ('Supplier-responsibility / sourcing claim', 'High', ['supplier code','supplier code of conduct','supplier standards','traceable supply chain','supply chain traceability','responsible supply chain','sustainable sourcing','supplier due diligence',
+     'leverancierscode','gedragscode voor leveranciers','leveranciersnormen','traceerbare toeleveringsketen','traceerbaarheid van de toeleveringsketen','verantwoorde toeleveringsketen','duurzame inkoop','zorgvuldigheidsplicht leveranciers',
+     'code fournisseur','code de conduite des fournisseurs','normes fournisseurs','chaîne d\'approvisionnement traçable','traçabilité de la chaîne d\'approvisionnement','chaîne d\'approvisionnement responsable','sourcing durable','devoir de vigilance fournisseurs'],
      'Supplier and sourcing claims can imply control over supply-chain conduct, audit quality, traceability, due diligence or compliance. They require scope, coverage, methodology, limitations and remediation evidence.',
      'State supplier tiers covered, audit/assessment method, traceability limits, worker voice, corrective-action closure and remediation approach.'),
-    ('Human-rights / labour-rights claim', 'High', ['human rights due diligence','respect human rights','protect human rights','labour rights','labor rights','worker rights','fair wages','living wage','decent work','no child labour','no child labor',
-     'zorgvuldigheidsplicht mensenrechten','respecteren mensenrechten','beschermen mensenrechten','arbeidsrechten','rechten van werknemers','eerlijke lonen','leefbaar loon','waardig werk','geen kinderarbeid',
-     'devoir de vigilance droits humains','respect des droits humains','protection des droits humains','droits du travail','droits des travailleurs','salaires équitables','salaire vital','travail décent','aucun travail des enfants'],
+    # v93.85: 'no child labour'/'no child labor'/'geen kinderarbeid'/'aucun travail des enfants'
+    # removed -- exact duplicates of phrases already in "Forced-labour product or supply-chain
+    # claim" (CLAIMS), so the same sentence produced two separate findings under two different
+    # type names. Kept only under the Forced-labour type, the more topically specific of the two
+    # (child labour is assessed under the EU Forced Labour Regulation lens specifically).
+    ('Human-rights / labour-rights claim', 'High', ['human rights due diligence','respect human rights','protect human rights','labour rights','labor rights','worker rights','fair wages','living wage','decent work',
+     'zorgvuldigheidsplicht mensenrechten','respecteren mensenrechten','beschermen mensenrechten','arbeidsrechten','rechten van werknemers','eerlijke lonen','leefbaar loon','waardig werk',
+     'devoir de vigilance droits humains','respect des droits humains','protection des droits humains','droits du travail','droits des travailleurs','salaires équitables','salaire vital','travail décent'],
      'Human-rights or labour-rights wording is a high-sensitivity social claim where due diligence, salient risks, grievance channels and remedy are not visible.',
      'Connect the claim to salient-risk assessment, governance, grievance channels, tracking and remedy.'),
     ('Forced-labour product or supply-chain claim', 'High', ['forced labour free','forced labor free','free from forced labour','free from forced labor','modern slavery free','no forced labour','no forced labor','forced-labour due diligence','forced labor due diligence',
@@ -7712,11 +7759,23 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # marker recognised here this whole excerpt (a genuine self-declared-label claim) was
     # rejected before the separate, already-existing contrast-detection mechanism
     # (_names_recognized_certification_scheme) ever got a chance to run.
+    # v93.85: two more real gaps. (1) This check ran for EVERY green trigger, not just
+    # label/certification ones -- the whole point ("a recognised scheme backs the SELF-DECLARED
+    # LABEL the trigger names") only makes sense when the trigger itself IS a label/certification
+    # phrase. Live-reproduced: "Our EU Ecolabel cleaning spray is carbon neutral for the whole
+    # life cycle stage of use" lost its genuine, unrelated climate-neutrality claim entirely,
+    # purely because "EU Ecolabel" is named earlier in the same sentence describing the PRODUCT,
+    # not the neutrality claim. Now scoped to only fire when `trig` is itself one of the
+    # self-declared-label trigger phrases (GREEN_CLAIMS' "Sustainability label / certification
+    # claim" list). (2) The boundary-word list still missed ordinary additive connectors --
+    # "Our own green badge appears on every pack ALONGSIDE the FSC certified recycling logo" made
+    # a genuine self-declared-badge claim vanish entirely, since "alongside" introduces a
+    # separate, second attribute (the FSC logo) just as much as "and"/"with" does.
     recognised_schemes=['eu ecolabel','ecolabel logo','emas','regulation (ec) no 66/2010','regulation (ec) no 1221/2009',
         'nordic swan','blue angel','fairtrade certified','fair trade certified','gots certified','oeko-tex',
         'cradle to cradle','forest stewardship council','fsc certified','iso 14024','certified b corporation',
         'b corp certified','rainforest alliance certified']
-    if dimension == 'green':
+    if dimension == 'green' and trig in GREEN_CLAIMS[3][0]:
         scheme_pos=-1
         for s in recognised_schemes:
             idx=c.find(s)
@@ -7727,7 +7786,7 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
             if trig_pos != -1:
                 lo,hi=(trig_pos,scheme_pos) if trig_pos<=scheme_pos else (scheme_pos,trig_pos)
                 between=c[lo:hi]
-                if not re.search(r'[.;!?]|\band\b|\ben\b|\bet\b|\bmaar\b|\bmais\b|,\s*(with|met|avec)\b|\bunlike\b|in tegenstelling tot|contrairement à',between):
+                if not re.search(r'[.;!?]|\band\b|\ben\b|\bet\b|\bmaar\b|\bmais\b|,\s*(with|met|avec)\b|\bunlike\b|\balongside\b|\bnext to\b|\bas well as\b|\btogether with\b|\balong with\b|naast|en outre|à côté de|in tegenstelling tot|contrairement à',between):
                     return False
             else:
                 return False
@@ -8094,7 +8153,20 @@ def detect_green_claims(text):
     # 1) direct / high-priority taxonomy from previous versions
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
         hits=0
-        extra_check=_looks_like_future_environmental_claim if typ=='Future environmental-performance claim' else None
+        if typ=='Future environmental-performance claim':
+            extra_check=_looks_like_future_environmental_claim
+        elif typ in _GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING:
+            # v93.85: a claim explicitly framed as a future target ("we aim to be net zero by
+            # 2040 and to be carbon neutral by 2045") was ALSO counted as a present-tense,
+            # already-achieved "Climate-neutrality or offsetting claim" purely because the
+            # trigger word "carbon neutral" appears in the same sentence -- double-counting one
+            # forward-looking ambition as if it were two separate claims, one of them (the
+            # Annex-I-blacklisted present-tense type) far more severe than the actual wording
+            # supports. Suppressed here for exactly the same excerpt this trigger matched in;
+            # a genuinely separate, present-tense claim elsewhere on the page is unaffected.
+            extra_check=lambda c: not _looks_like_future_environmental_claim(c)
+        else:
+            extra_check=None
         for trig in triggers:
             if _trigger_present(trig, low):
                 score=74 if typ in ['Climate-neutrality or offsetting claim','Sustainability label / certification claim','Generic environmental claim','Legal requirement presented as green benefit'] else (68 if risk=='High' else 40)

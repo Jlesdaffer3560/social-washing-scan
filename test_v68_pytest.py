@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_84_engineering_review_batch_4'
+    assert app.APP_VERSION == 'hostable_v93_85_engineering_review_batch_5'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2179,8 +2179,13 @@ def test_recognised_scheme_in_unrelated_clause_does_not_suppress_other_claim():
     packaging. A genuine same-clause scheme reference must still be recognised and suppressed."""
     mixed_claim = 'Our products are carbon neutral through offsetting and our paper packaging is FSC certified.'
     assert app._v55_claim_context_ok(mixed_claim, 'carbon neutral', 'green') is True
-    same_clause_claim = 'Our product is eco-label certified, carrying the EU Ecolabel.'
-    assert app._v55_claim_context_ok(same_clause_claim, 'eco-label', 'green') is False
+    # v93.85: 'eco-label' (hyphenated) isn't itself one of GREEN_CLAIMS' canonical label trigger
+    # phrases -- this suppression is now scoped to only fire for an actual label/certification
+    # trigger (see the v93.85 note in _v55_claim_context_ok), so the trigger here must be one of
+    # those exact phrases ('eco label', with a space) for the same-clause-backing scenario to
+    # still apply.
+    same_clause_claim = 'Our product is eco label certified, carrying the EU Ecolabel.'
+    assert app._v55_claim_context_ok(same_clause_claim, 'eco label', 'green') is False
 
 
 def test_certification_boundary_recognises_comma_with_and_unlike_contrast():
@@ -4659,3 +4664,78 @@ def test_environmental_certification_does_not_downgrade_forced_labour_claim():
     assert any(f['type'] == 'Forced-labour product or supply-chain claim' and f['risk'] == 'High' for f in r1), r1
     r2 = app.detect_claims('All our cotton is Fairtrade certified and free from forced labour.')
     assert any(f['type'] == 'Forced-labour product or supply-chain claim' and f['risk'] == 'Medium' for f in r2), r2
+
+
+def test_no_cross_type_duplicate_trigger_phrases_remain():
+    """Full engineering review, batch 5: 31 trigger phrases (5 green, 26 social) appeared in TWO
+    pattern lists under two DIFFERENT type names -- the dedup key in _v55_add_finding() is
+    (type, excerpt), so cross-type overlaps don't dedup, and one sentence produced two separate
+    findings. Live-reproduced: "We source responsibly and our responsible sourcing programme
+    covers tier 1 factories" produced both "Supply-chain or supplier-responsibility claim" and
+    "Supplier-responsibility / sourcing claim" for the same sentence and matched phrase. Checks
+    the full pattern-list set programmatically rather than one example, so a future addition
+    can't silently reintroduce this."""
+    def flatten_green():
+        out = {}
+        for phrases, typ, *_ in app.GREEN_CLAIMS:
+            for p in phrases:
+                out.setdefault(p, set()).add(typ)
+        for typ, risk, phrases, *_ in app.V55_GREEN_EXTRA_PATTERNS:
+            for p in phrases:
+                out.setdefault(p, set()).add(typ)
+        return out
+
+    def flatten_social():
+        out = {}
+        for phrases, typ, *_ in app.CLAIMS:
+            for p in phrases:
+                out.setdefault(p, set()).add(typ)
+        for typ, risk, phrases, *_ in app.V55_SOCIAL_EXTRA_PATTERNS:
+            for p in phrases:
+                out.setdefault(p, set()).add(typ)
+        return out
+
+    green_dupes = {p: t for p, t in flatten_green().items() if len(t) > 1}
+    social_dupes = {p: t for p, t in flatten_social().items() if len(t) > 1}
+    assert not green_dupes, green_dupes
+    assert not social_dupes, social_dupes
+    # end-to-end: the exact reproduction now produces exactly one finding
+    r = app.detect_claims('We source responsibly and our responsible sourcing programme covers tier 1 factories.')
+    material = [f for f in r if not app.is_placeholder_finding(f['type'])]
+    assert len(material) == 1, material
+
+
+def test_future_framed_claim_not_double_counted_as_present_tense():
+    """Full engineering review, batch 5: a claim explicitly framed as a future target ("we aim
+    to be net zero by 2040 and to be carbon neutral by 2045") was ALSO counted as a present-
+    tense, already-achieved "Climate-neutrality or offsetting claim" purely because the trigger
+    word "carbon neutral" appears in the same sentence -- double-counting one forward-looking
+    ambition as two separate claims, one of them (the Annex-I-blacklisted present-tense type)
+    far more severe than the wording actually supports."""
+    r1 = app.detect_green_claims('We aim to be net zero by 2040 and to be carbon neutral by 2045 across the group.')
+    assert [f['type'] for f in r1] == ['Future environmental-performance claim'], r1
+    # sanity: a genuine present-tense claim, unrelated to any future framing, is unaffected
+    r2 = app.detect_green_claims('Our product is carbon neutral and fully recyclable.')
+    assert {'Climate-neutrality or offsetting claim', 'Absolute or purity environmental wording'} <= {f['type'] for f in r2}
+    # sanity: a genuine present-tense claim and a SEPARATE future claim in different sentences
+    # of the same text are both still detected (this fix is scoped per-excerpt, not per-page)
+    r3 = app.detect_green_claims(
+        'Our flagship product is carbon neutral today. Separately, we aim to be net zero by 2040 for our whole group.')
+    assert {'Climate-neutrality or offsetting claim', 'Future environmental-performance claim'} <= {f['type'] for f in r3}
+
+
+def test_recognised_scheme_suppression_scoped_to_label_triggers_only():
+    """Full engineering review, batch 5: _v55_claim_context_ok()'s recognised-scheme guard (see
+    the v93.51/v93.53 notes above) applied to EVERY green trigger, not just label/certification
+    ones -- "Our EU Ecolabel cleaning spray is carbon neutral for the whole life cycle stage of
+    use" lost its genuine, unrelated climate-neutrality claim entirely purely because "EU
+    Ecolabel" describes the PRODUCT earlier in the same sentence. Also the boundary-word list
+    missed ordinary additive connectors: "Our own green badge appears on every pack ALONGSIDE
+    the FSC certified recycling logo" made a genuine self-declared-badge claim vanish."""
+    r1 = app.detect_green_claims('Our EU Ecolabel cleaning spray is carbon neutral for the whole life cycle stage of use.')
+    assert any(f['type'] == 'Climate-neutrality or offsetting claim' for f in r1), r1
+    r2 = app.detect_green_claims('Our own green badge appears on every pack alongside the FSC certified recycling logo.')
+    assert any(f['type'] == 'Sustainability label / certification claim' for f in r2), r2
+    # sanity: a genuine same-clause backing (the label trigger's own basis) is still suppressed
+    r3 = app.detect_green_claims('Our eco label is backed by the EU Ecolabel certification.')
+    assert all(app.is_placeholder_finding(f['type']) for f in r3), r3
