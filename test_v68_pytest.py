@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_87_engineering_review_batch_7'
+    assert app.APP_VERSION == 'hostable_v93_88_engineering_review_batch_8'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2749,6 +2749,47 @@ def test_crawl_excludes_stale_report_and_surfaces_it_in_scan_inventory(monkeypat
     # must not also appear as a normal reviewed page or a failed fetch
     assert not any('2023-sustainability-report' in p.get('url', '') for p in inv['website_pages'] + inv['documents'])
     assert not any('2023-sustainability-report' in f.get('url', '') for f in inv['failed_fetches'])
+
+
+def test_crawl_batch_does_not_overrun_deadline_when_a_fetch_hangs(monkeypatch):
+    """Full engineering review, batch 8: fetch_page_content()'s own `timeout` argument only
+    bounds ONE internal attempt -- _open_public_url retries across multiple browser user-agents
+    at close to that same timeout each, and fetch_page_content then ALSO tries a full separate
+    Reader-fallback request on top when the direct attempt fails. So a single slow/blocked URL
+    can, in the worst case, take several times its nominal per-url timeout, and crawl()'s
+    as_completed() call previously had no timeout of its own, so it simply waited for it --
+    consuming crawl budget the outer loop never accounted for. Live-reproduced: a crawl given a
+    6s deadline took 12.1s once one candidate hung past its nominal per-url timeout. Reported by
+    an engineering review (agent1 finding #7)."""
+    import time as _time
+    def fake_fetch_html(url, timeout=7):
+        html = '<html><body>' + ''.join(f'<a href="/sustainability/page{i}">p{i}</a>' for i in range(6)) + '</body></html>'
+        return html, url
+    def hanging_fetch_page_content(url, timeout=7):
+        _time.sleep(12)
+        raise ValueError('simulated slow failure')
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', hanging_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    deadline = _time.time() + 6
+    start = _time.time()
+    app.crawl('https://example.com', max_extra_pages=5, deadline=deadline)
+    elapsed = _time.time() - start
+    assert elapsed < 9, f'crawl() budgeted 6s but took {elapsed:.1f}s -- a hung fetch overran the deadline'
+
+    # sanity: a mixed batch (one hanging URL, others fast) must still return the fast pages
+    def mixed_fetch_page_content(url, timeout=7):
+        if 'page0' in url:
+            _time.sleep(12)
+            raise ValueError('slow')
+        return 'Our sustainability report content. ' * 50, 'html', 'direct', [], url
+    monkeypatch.setattr(app, 'fetch_page_content', mixed_fetch_page_content)
+    deadline2 = _time.time() + 6
+    start2 = _time.time()
+    text, pages, chunks = app.crawl('https://example.com', max_extra_pages=5, deadline=deadline2)
+    elapsed2 = _time.time() - start2
+    assert elapsed2 < 9, f'mixed-batch crawl() budgeted 6s but took {elapsed2:.1f}s'
+    assert len(pages) > 1, 'fast fetches in the same batch as a hung one must still be recorded'
 
 
 def test_frontend_claim_sources_are_labelled_and_linked():

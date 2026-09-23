@@ -7,7 +7,7 @@ from html.parser import HTMLParser
 from html import escape as html_escape, unescape as html_unescape
 from pathlib import Path
 import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FuturesTimeoutError
 
 def _get_build_company_report_pdf():
     """Lazily import the ReportLab-based PDF generator on first use, instead of at
@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_87_engineering_review_batch_7"
-APP_RELEASE_LABEL="v93.87"
+APP_VERSION="hostable_v93_88_engineering_review_batch_8"
+APP_RELEASE_LABEL="v93.88"
 APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1563,9 +1563,22 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         batch=candidates[cursor:cursor+CRAWL_FETCH_WORKERS]; cursor+=len(batch); attempts+=len(batch)
         per_timeout=min(8,max(3,remaining()-1))
         discovered=[]
-        with ThreadPoolExecutor(max_workers=min(CRAWL_FETCH_WORKERS,len(batch))) as executor:
-            futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
-            for future in as_completed(futures):
+        executor=ThreadPoolExecutor(max_workers=min(CRAWL_FETCH_WORKERS,len(batch)))
+        futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
+        try:
+            # v93.88: fetch_page_content's own `timeout` argument only bounds ONE internal
+            # attempt -- _open_public_url retries across multiple browser user-agents at close
+            # to that same timeout each, and fetch_page_content then ALSO tries a full separate
+            # Reader-fallback request on top when the direct attempt fails or returns a thin
+            # page. So a single slow/blocked URL can, in the worst case, take several times its
+            # nominal per_timeout, and as_completed() with no timeout of its own simply waits
+            # for it -- consuming crawl budget the outer loop never accounted for. Live-
+            # reproduced: a crawl given a 6s deadline took 12.1s once one candidate hung past
+            # its nominal per-url timeout. Bound the wait explicitly to the deadline actually
+            # remaining, so one stuck fetch can no longer make the whole batch -- and therefore
+            # the whole crawl -- run over its time budget. Reported by an engineering review
+            # (agent1 finding #7).
+            for future in as_completed(futures,timeout=max(1,deadline-time.time())):
                 link,source=futures[future]
                 try:
                     t,kind,method,page_links,link_base=future.result()
@@ -1598,6 +1611,17 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                         _log_fetch_failure(log,link,ValueError('The page returned insufficient usable text.'),source=source)
                 except Exception as e:
                     _log_fetch_failure(log,link,e,source=source)
+        except _FuturesTimeoutError:
+            # One or more fetches in this batch are still running past the remaining crawl
+            # budget. Log each as an explicit, distinct timeout (instead of letting it vanish
+            # silently from the coverage register) and stop waiting on it -- its thread keeps
+            # running to completion in the background (shutdown(wait=False) below), but the
+            # crawl itself moves on.
+            for future,(link,source) in futures.items():
+                if not future.done():
+                    _log_fetch_failure(log,link,TimeoutError('Fetch exceeded the remaining crawl time budget and was abandoned.'),source=source)
+        finally:
+            executor.shutdown(wait=False)
         if discovered:
             discovered.sort(key=_candidate_score)
             candidates[cursor:cursor]=discovered[:max(0,max_attempts-attempts)]
