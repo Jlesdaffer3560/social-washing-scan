@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_92_engineering_review_batch_11"
-APP_RELEASE_LABEL="v93.92"
+APP_VERSION="hostable_v93_93_external_review_fixes"
+APP_RELEASE_LABEL="v93.93"
 APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -955,11 +955,23 @@ def _browser_headers(url, accept='text/html,application/xhtml+xml,application/pd
     }
 
 
-def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8', max_bytes=2000000):
+def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8', max_bytes=2000000, deadline=None):
     """Open a public URL with browser-like headers and one conservative UA retry.
 
     The retry is useful for sites that reject one generic browser signature but allow
     another. It does not attempt to bypass authentication, robots rules or access controls.
+
+    v93.93: `deadline` (an absolute time.time() value) is optional and additive -- every
+    existing caller that omits it keeps the exact previous behaviour (each retry gets its own
+    full `timeout`). External review pointed out that fetch_page_content()'s own per-URL
+    `timeout` was only ever handed down as a PER-ATTEMPT budget: with up to len(BROWSER_USER_
+    AGENTS) retries here, each allowed close to the full `timeout`, the real worst-case time for
+    one call could be several times the caller's intended budget (this is what the v93.88 crawl-
+    batch fix worked around from the OUTSIDE, by bounding how long the caller waits -- it did not
+    make the retries themselves stop early). When `deadline` is given, each retry's own timeout
+    is capped to whatever time is actually left before it, and no further retry is attempted
+    once the deadline has passed -- making the caller's intended budget a real ceiling on this
+    function's own total retry time, not just on how long something else waits for it.
     """
     p=urlparse(url)
     if p.scheme not in ('http','https') or not p.hostname:
@@ -968,9 +980,12 @@ def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,app
         raise ValueError(_blocked_host_message(p.hostname))
     last_error=None
     for idx,ua in enumerate(BROWSER_USER_AGENTS):
+        if deadline is not None and time.time()>=deadline:
+            break
+        attempt_timeout=max(2,min(timeout,deadline-time.time())) if deadline is not None else max(2,timeout)
         try:
             req=Request(url,headers=_browser_headers(url,accept,user_agent=ua))
-            with _SAFE_OPENER.open(req,timeout=max(2,timeout)) as r:
+            with _SAFE_OPENER.open(req,timeout=attempt_timeout) as r:
                 return r.read(max_bytes), r.headers.get('content-type','').lower(), r.geturl()
         except HTTPError as e:
             last_error=e
@@ -980,10 +995,14 @@ def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,app
                 break
             if e.code not in (408,425,429,500,502,503,504) or idx==len(BROWSER_USER_AGENTS)-1:
                 break
+            if deadline is not None and time.time()+0.15>=deadline:
+                break
             time.sleep(0.15)
         except (URLError, TimeoutError, socket.timeout) as e:
             last_error=e
             if idx==len(BROWSER_USER_AGENTS)-1:
+                break
+            if deadline is not None and time.time()+0.15>=deadline:
                 break
             time.sleep(0.15)
     raise last_error or ValueError('The page could not be retrieved.')
@@ -1159,30 +1178,54 @@ def _link_resolution_base(requested_url,final_url,base_href):
 
 def fetch_page_content(url,timeout=7):
     """Retrieve an HTML/PDF page, with an optional Reader fallback for blocked or
-    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method, links, link_base).
+    JavaScript-heavy public pages. Returns (text, content_kind, fetch_method, links, link_base,
+    final_url).
 
     ``links`` carries the hrefs found on a directly-fetched HTML page (empty for PDFs and
     for Reader-fallback text, which has no reliable link list) so the caller can discover
     pages one hop beyond the initial candidate set -- e.g. a PDF sustainability report that
     is only linked from a "Sustainability" hub page, not from the homepage or the sitemap.
     ``link_base`` is the URL those relative ``links`` must be joined against -- the page's
-    final URL after redirects, or its <base href> when present -- not necessarily ``url``."""
+    final URL after redirects, or its <base href> when present -- not necessarily ``url``.
+
+    v93.93: ``final_url`` is returned SEPARATELY from ``link_base`` -- external review
+    (ChatGPT, reviewing v93.92) reproduced that crawl()'s post-redirect duplicate-page
+    detection used ``link_base`` as if it were the genuine final URL, but ``link_base`` can
+    also be overridden by the page's own <base href> tag. A site-wide/SPA <base href> value
+    (e.g. every page declaring <base href="/">) would then make EVERY page on that site
+    compute the same "final URL", so genuinely different pages were wrongly treated as
+    duplicates of each other and their content dropped. ``final_url`` is the actual
+    HTTP-level redirect target only, unaffected by <base href>, and is what duplicate
+    detection must use; ``link_base`` continues to be used only for resolving this page's own
+    relative hrefs, exactly as before.
+
+    v93.93: `timeout` is now also enforced as a real TOTAL budget for this call, not just a
+    per-attempt one. Previously the direct attempt (with its own multi-user-agent retry inside
+    _open_public_url) could each take close to the full `timeout`, and the Reader fallback
+    below was then handed a FRESH `timeout+2` on top of that -- so one call could in the worst
+    case run several times longer than the `timeout` its caller intended (the v93.88 crawl-batch
+    fix bounds how long a CALLER waits for this, but does not make this function's own internal
+    retries stop any earlier). A single absolute `deadline` is computed once, at the very start
+    of this call, and threaded into the direct attempt's own retries; the Reader fallback below
+    only gets whatever of that same budget is actually left, and is skipped rather than given a
+    fresh allowance once there is not meaningfully any time left."""
+    deadline=time.time()+timeout
     direct_error=None
     direct_short_links=[]
     direct_short_base=url
     try:
-        data,ctype,final_url=_open_public_url(url,timeout=timeout,max_bytes=5000000)
+        data,ctype,final_url=_open_public_url(url,timeout=timeout,max_bytes=5000000,deadline=deadline)
         if 'pdf' in ctype or url.lower().split('?')[0].endswith('.pdf'):
             text=extract_pdf_text_best_effort(data)
             if len(text)>=80:
-                return text,'pdf','direct',[],final_url
+                return text,'pdf','direct',[],final_url,final_url
             direct_error=ValueError('PDF text extraction returned insufficient content.')
         elif 'html' in ctype:
             raw=data.decode('utf-8',errors='ignore')
             text,page_links,base_href=parse_html(raw)
             link_base=_link_resolution_base(url,final_url,base_href)
             if len(text)>=THIN_CONTENT_CHARS:
-                return text,'html','direct',page_links,link_base
+                return text,'html','direct',page_links,link_base,final_url
             # Keep usable short text, but first try to enrich a likely JS shell via Reader.
             direct_short=text
             direct_short_links=page_links
@@ -1193,13 +1236,16 @@ def fetch_page_content(url,timeout=7):
     except Exception as e:
         direct_error=e
         direct_short=''
-    if ENABLE_READER_FALLBACK and not url.lower().split('?')[0].endswith(('.xml','.txt')):
+    remaining_for_reader=deadline-time.time()
+    if ENABLE_READER_FALLBACK and remaining_for_reader>1.5 and not url.lower().split('?')[0].endswith(('.xml','.txt')):
         try:
-            return fetch_reader_text(url,timeout=max(5,min(10,timeout+2))), 'reader', 'reader_fallback', [], url
+            # Reader returns extracted text only, with no reliable redirect information of its
+            # own -- the best available "final URL" here is the requested url itself.
+            return fetch_reader_text(url,timeout=max(3,min(10,remaining_for_reader))), 'reader', 'reader_fallback', [], url, url
         except Exception:
             pass
     if 'direct_short' in locals() and len(direct_short)>=120:
-        return direct_short,'html','direct_thin',direct_short_links,direct_short_base
+        return direct_short,'html','direct_thin',direct_short_links,direct_short_base,(final_url if 'final_url' in locals() else url)
     raise direct_error or ValueError('The page could not be retrieved.')
 
 
@@ -1598,22 +1644,31 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         executor=ThreadPoolExecutor(max_workers=min(CRAWL_FETCH_WORKERS,len(batch)))
         futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
         try:
-            # v93.88: fetch_page_content's own `timeout` argument only bounds ONE internal
-            # attempt -- _open_public_url retries across multiple browser user-agents at close
-            # to that same timeout each, and fetch_page_content then ALSO tries a full separate
-            # Reader-fallback request on top when the direct attempt fails or returns a thin
-            # page. So a single slow/blocked URL can, in the worst case, take several times its
-            # nominal per_timeout, and as_completed() with no timeout of its own simply waits
-            # for it -- consuming crawl budget the outer loop never accounted for. Live-
-            # reproduced: a crawl given a 6s deadline took 12.1s once one candidate hung past
-            # its nominal per-url timeout. Bound the wait explicitly to the deadline actually
-            # remaining, so one stuck fetch can no longer make the whole batch -- and therefore
-            # the whole crawl -- run over its time budget. Reported by an engineering review
-            # (agent1 finding #7).
+            # v93.88: at the time of this fix, fetch_page_content's own `timeout` argument only
+            # bounded ONE internal attempt -- _open_public_url retried across multiple browser
+            # user-agents at close to that same timeout each, and fetch_page_content then ALSO
+            # tried a full separate Reader-fallback request on top when the direct attempt
+            # failed or returned a thin page. A single slow/blocked URL could, in the worst
+            # case, take several times its nominal per_timeout, and as_completed() with no
+            # timeout of its own simply waited for it -- consuming crawl budget the outer loop
+            # never accounted for. Live-reproduced: a crawl given a 6s deadline took 12.1s once
+            # one candidate hung past its nominal per-url timeout. Reported by an engineering
+            # review (agent1 finding #7).
+            # v93.93: fetch_page_content()/_open_public_url() were separately fixed to actually
+            # enforce `timeout` as a real total budget across their own retries and fallback
+            # (external review; see their docstrings), so the scenario above is now much less
+            # likely to occur at all. This as_completed() timeout stays in place as the outer
+            # safety net regardless -- it bounds how long THIS BATCH of follow-up-page fetches
+            # is waited on, not the whole crawl (the initial homepage fetch and sitemap
+            # discovery earlier in this function already manage their own budgets via
+            # remaining()/timeout= parameters, not this mechanism) -- and a future still
+            # pending when it fires keeps running in its own thread in the background
+            # (shutdown(wait=False) below can't forcibly stop it; only Python-level cooperative
+            # timeouts, now enforced deeper in the call chain, actually bound its total runtime).
             for future in as_completed(futures,timeout=max(1,deadline-time.time())):
                 link,source=futures[future]
                 try:
-                    t,kind,method,page_links,link_base=future.result()
+                    t,kind,method,page_links,link_base,final_url=future.result()
                     min_chars=80 if kind=='pdf' else 120
                     if len(t)>min_chars:
                         # v93.58: a report/press item clearly dated before the screening cutoff
@@ -1633,7 +1688,17 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                         # text and any page-count-based coverage/confidence metric. Live-
                         # reproduced with two links redirecting to the same canonical page.
                         # Reported by an engineering review (agent1 finding #8).
-                        final_canon=_canonical_url((link_base or link).split('#')[0])
+                        # v93.93: this originally deduplicated on `link_base`, but link_base can
+                        # also be overridden by the page's own <base href> tag (see
+                        # fetch_page_content()'s v93.93 docstring note) -- a site-wide/SPA
+                        # <base href> value shared across many pages made EVERY page on that
+                        # site compute the same "final URL", wrongly treating genuinely
+                        # different pages as duplicates and dropping their content. Reported by
+                        # an external review with a live reproduction. Use `final_url` (the
+                        # actual HTTP-level redirect target, unaffected by <base href>) instead;
+                        # `link_base` is still used below only to resolve this page's own
+                        # relative hrefs.
+                        final_canon=_canonical_url((final_url or link).split('#')[0])
                         is_duplicate_final=bool(final_canon) and final_canon in seen_final
                         if is_duplicate_final:
                             _log_fetch_skipped_duplicate(log,link,len(t),final_canon,source=source,content_kind=kind)
@@ -2415,10 +2480,16 @@ def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None)
     if n_pages>=3: pts+=2; reasons.append("several company pages were reviewed")
     elif n_pages>=1: pts+=1; reasons.append("at least the main company page was reviewed")
     ext_search_failed=bool(ext.get("search_failed"))
+    # v93.93: external review -- a search where only SOME provider/query attempts failed (not
+    # all) previously fell through to the ordinary "was active" branch below with no confidence
+    # or reliability impact at all, the same as a fully successful search.
+    ext_search_partially_failed=bool(ext.get("search_partially_failed"))
     if ext.get("enabled") and len(ext.get("results",[]))>=5: pts+=2; reasons.append("external public-source search returned several results")
     elif ext.get("enabled") and not ext_search_failed: pts+=1; reasons.append("external public-source search was active")
     elif ext_search_failed: reasons.append("external public-source search failed to run (provider error/quota, not a clean result)")
     else: reasons.append("external public-source search was not active")
+    if ext_search_partially_failed:
+        reasons.append(f"external public-source search partially failed ({ext.get('search_attempts_ok',0)}/{ext.get('search_attempts_ok',0)+ext.get('search_attempts_failed',0)} attempts succeeded)")
     no_findings=not findings or is_placeholder_finding(findings[0].get("type",""))
     if not no_findings: pts+=1; reasons.append("claim-level signals were detected")
 
@@ -2466,6 +2537,12 @@ def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None)
                               "limit or usage quota) rather than returning zero results. Any 'no external negative "
                               "signal' conclusion in this scan is not confirmation of a clean external record -- the "
                               "search simply did not execute. " + (reliability_warning or ""))
+    elif ext_search_partially_failed:
+        ok_n=ext.get('search_attempts_ok',0); failed_n=ext.get('search_attempts_failed',0)
+        reliability_warning=(f"External public-source search only partially ran ({ok_n} of {ok_n+failed_n} provider/query "
+                              "attempts succeeded, the rest errored on a rate limit or usage quota). Any 'no external "
+                              "negative signal' conclusion in this scan reflects incomplete search coverage, not a full "
+                              "check. " + (reliability_warning or ""))
     if no_findings and (blocked or thin):
         reliability_warning=reliability_warning or ("No claims were detected, and part of the crawl did not return usable content. "
                                                       "This scan result should be treated as inconclusive rather than 'low risk'.")
@@ -3411,6 +3488,17 @@ def green_blacklisted_indicator(claim_type, trigger, claim_text):
                      'label shown is that scheme\'s. Still review scope, criteria, audit basis and validity period under general UCPD rules.')
         return 'Potential EmpCo blacklisted-practice indicator if the label/badge is not based on a qualifying certification scheme or not established by public authorities.'+date_note
     if 'generic environmental' in t:
+        # v93.93: enrich_green_finding() already demotes blacklisted_practice_indicator to
+        # False for a generic claim once _has_strong_same_medium_specification() finds genuine
+        # same-medium specification -- but this text kept asserting "blacklisted-practice
+        # indicator" regardless, the same text/flag mismatch already fixed for the climate/
+        # offset branch above (v93.86). Once specification is actually present, say so instead
+        # of repeating the unconditional Annex I framing.
+        if _has_strong_same_medium_specification(c):
+            return ('Potential Annex I relevance -- the retained wording includes some specification (a named certification scheme, a figure, '
+                    'or a methodology/comparison reference), so this is not automatically the unspecified generic-claim practice (UCPD Annex I '
+                    'point 4a). Review case-by-case under the general UCPD misleading-claims test whether the specification is clear and prominent '
+                    'enough, and whether the scope, criteria and evidence actually support it.')
         return 'Potential EmpCo blacklisted-practice indicator if the generic claim is not clearly specified on the same medium and not backed by recognised excellent environmental performance.'+date_note
     if 'legal requirement' in t:
         return ('Potential EmpCo blacklisted-practice indicator if a requirement imposed by law on ALL products of the relevant category on the Union market '
@@ -3597,12 +3685,25 @@ def _is_scoped_corporate_claim(claim_text):
 # "specification check" shown in the report, but too weak to safely downgrade a claim off the
 # EmpCo Annex I 4a blacklist: "100% eco-friendly, made from sustainable materials" contains both
 # a '%' and "made from" without actually specifying a verifiable attribute, methodology or scope).
-_STRONG_SAME_MEDIUM_SPECIFICATION_TERMS=['according to','methodology','life cycle','lca','verified','certified',
-    'compared with','compared to','baseline','valid until','iso ',' standard','third-party','independently verified',
-    'volgens','methodologie','levenscyclus','geverifieerd','gecertificeerd','vergeleken met','nulmeting','geldig tot',
-    ' norm','onafhankelijk geverifieerd','door derden geverifieerd',
-    'selon','méthodologie','cycle de vie','vérifié','certifié','par rapport à','année de référence',
-    "valable jusqu'au",' norme','vérifié par un tiers','vérifié de manière indépendante']
+_STRONG_SAME_MEDIUM_SPECIFICATION_TERMS=['according to','methodology','life cycle','lca',
+    'compared with','compared to','baseline','valid until','iso ',' standard',
+    'volgens','methodologie','levenscyclus','vergeleken met','nulmeting','geldig tot',
+    ' norm',
+    'selon','méthodologie','cycle de vie','par rapport à','année de référence',
+    "valable jusqu'au",' norme']
+
+# v93.93: external review (ChatGPT, reviewing v93.92) reproduced that a BARE verification
+# adjective -- "certified", "verified", "third-party", with no named scheme, no percentage and
+# no other concrete detail -- was on its own enough to clear a "Generic environmental claim"
+# off the EmpCo Annex I 4a blacklist. "Our product is eco-friendly." correctly kept the
+# blacklist indicator; "Our product is eco-friendly and certified." cleared it entirely, with
+# nothing about WHAT it is certified by, under WHICH standard, or to what criteria -- exactly
+# the kind of vague self-declaration Annex I 4a/2a and EmpCo recital 9 target, not evidence
+# against it. These terms now only count as specification when paired with a concrete anchor:
+# a named recognised certification scheme, or a percentage/figure.
+_WEAK_VERIFICATION_TERMS=['verified','certified','third-party','independently verified',
+    'geverifieerd','gecertificeerd','onafhankelijk geverifieerd','door derden geverifieerd',
+    'vérifié','certifié','vérifié par un tiers','vérifié de manière indépendante']
 
 def _has_strong_same_medium_specification(claim_text):
     """v93.53: was a bare substring check, sharing the exact same bug class already fixed for
@@ -3612,9 +3713,18 @@ def _has_strong_same_medium_specification(claim_text):
     methodology" was read as if a real methodology reference were present. Reported by a
     third-party code review with both exact reproductions, confirmed end-to-end to still
     incorrectly clear the Annex I generic-claim blacklist indicator via enrich_green_finding().
-    Reuses the same word-boundary + negation-window helper as the evidence-score fix."""
+    Reuses the same word-boundary + negation-window helper as the evidence-score fix.
+
+    v93.93: see _WEAK_VERIFICATION_TERMS above -- a bare "certified"/"verified"/"third-party"
+    mention, with no named scheme and no figure to back it, is not itself specification and no
+    longer counts on its own."""
     text=(claim_text or '').lower()
-    return any(_evidence_term_hit(term.strip(), text) for term in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS)
+    if any(_evidence_term_hit(term.strip(), text) for term in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS):
+        return True
+    if any(_evidence_term_hit(term.strip(), text) for term in _WEAK_VERIFICATION_TERMS):
+        if _names_recognized_certification_scheme(text) or re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%',text):
+            return True
+    return False
 
 def _v93_analysis_text(f):
     """v93.54: enrich_green_finding()/enrich_social_finding() decide the actual legal
@@ -3805,6 +3915,14 @@ def _v93_ext_verification_status(ext, targeted):
         return 'Not performed (no external search source was configured for this scan)'
     if (ext or {}).get('search_failed'):
         return 'Attempted but failed (provider error or quota) — not a verified-clean result'
+    # v93.93: a FOURTH state -- some, but not all, provider/query attempts failed. Reported by
+    # an external review: as soon as a single attempt among several succeeded, this fell
+    # through to the ordinary "Performed" branches below with no indication that the search was
+    # only partially completed, which could look like a full, clean check when it wasn't.
+    if (ext or {}).get('search_partially_failed'):
+        ok_n=ext.get('search_attempts_ok',0); failed_n=ext.get('search_attempts_failed',0)
+        found=f'{len(targeted)} relevant external signal(s) retained' if targeted else 'no relevant external signal identified'
+        return f'Partially performed ({ok_n}/{ok_n+failed_n} provider/query attempts succeeded) — {found}, not a complete check'
     if targeted:
         return f'Performed — {len(targeted)} relevant external signal(s) retained'
     return 'Performed — no relevant external signal identified'
@@ -4876,6 +4994,37 @@ _GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING={
     'Generic environmental claim','Recycled / recyclable material claim',
     'Sustainability label / certification claim','Comparative environmental claim',
 }
+
+# v93.93: external review (ChatGPT, reviewing v93.92) reproduced a real regression in the
+# v93.85 fix above: the suppression check ran _looks_like_future_environmental_claim() against
+# the WHOLE sentence excerpt, not just the present-tense trigger's own clause. "Our product is
+# carbon neutral through offsetting today, and we aim to be net zero by 2040." has a genuine,
+# CURRENT climate-neutrality claim in its first clause and a separate, forward-looking ambition
+# in its second -- but because both clauses share one sentence/excerpt, the future pattern in
+# the second clause suppressed the genuine present-tense claim in the first, making a real
+# claim invisible rather than merely mis-typed (the opposite of what v93.85 tried to fix, and a
+# net loss of coverage). Confirmed by reproduction: without the second clause, the same present-
+# tense claim IS detected. Scope the check to the trigger's own clause instead of the whole
+# excerpt, bounded by sentence punctuation or a comma before a coordinating conjunction
+# (and/but/however/...) in either direction.
+_V93_CLAUSE_BOUNDARY_RE=re.compile(r'[.;!?]|,\s*(?:and|but|however|although|yet|en|maar|et|mais)\b',re.I)
+
+def _v93_clause_around_trigger(excerpt,trig):
+    """Extract just the local clause containing `trig` within `excerpt`, bounded by sentence
+    punctuation or a comma-before-conjunction in either direction -- so a check meant to apply
+    to ONE clause doesn't get contaminated by an unrelated clause elsewhere in the same
+    (possibly multi-clause) sentence. See _GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING
+    above for the bug this fixes."""
+    c=excerpt or ''
+    pos=c.lower().find((trig or '').lower())
+    if pos==-1:
+        return c
+    before=c[:pos]; after=c[pos:]
+    b_matches=list(_V93_CLAUSE_BOUNDARY_RE.finditer(before))
+    start=b_matches[-1].end() if b_matches else 0
+    a_match=_V93_CLAUSE_BOUNDARY_RE.search(after)
+    end=pos+a_match.start() if a_match else len(c)
+    return c[start:end]
 
 def _looks_like_future_environmental_claim(excerpt):
     """Deliberately narrow (climate/net-zero-specific) so this doubles safely as BOTH the
@@ -8241,22 +8390,32 @@ def detect_green_claims(text):
     # 1) direct / high-priority taxonomy from previous versions
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
         hits=0
-        if typ=='Future environmental-performance claim':
-            extra_check=_looks_like_future_environmental_claim
-        elif typ in _GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING:
-            # v93.85: a claim explicitly framed as a future target ("we aim to be net zero by
-            # 2040 and to be carbon neutral by 2045") was ALSO counted as a present-tense,
-            # already-achieved "Climate-neutrality or offsetting claim" purely because the
-            # trigger word "carbon neutral" appears in the same sentence -- double-counting one
-            # forward-looking ambition as if it were two separate claims, one of them (the
-            # Annex-I-blacklisted present-tense type) far more severe than the actual wording
-            # supports. Suppressed here for exactly the same excerpt this trigger matched in;
-            # a genuinely separate, present-tense claim elsewhere on the page is unaffected.
-            extra_check=lambda c: not _looks_like_future_environmental_claim(c)
-        else:
-            extra_check=None
         for trig in triggers:
             if _trigger_present(trig, low):
+                if typ=='Future environmental-performance claim':
+                    extra_check=_looks_like_future_environmental_claim
+                elif typ in _GREEN_PRESENT_TENSE_TYPES_SUPPRESSED_BY_FUTURE_FRAMING:
+                    # v93.85: a claim explicitly framed as a future target ("we aim to be net
+                    # zero by 2040 and to be carbon neutral by 2045") was ALSO counted as a
+                    # present-tense, already-achieved "Climate-neutrality or offsetting claim"
+                    # purely because the trigger word "carbon neutral" appears in the same
+                    # sentence -- double-counting one forward-looking ambition as if it were two
+                    # separate claims, one of them (the Annex-I-blacklisted present-tense type)
+                    # far more severe than the actual wording supports.
+                    # v93.93: the v93.85 fix ran the future-pattern check against the WHOLE
+                    # excerpt, not just this trigger's own clause -- "Our product is carbon
+                    # neutral through offsetting today, and we aim to be net zero by 2040." has
+                    # a genuine, CURRENT claim in its first clause and a separate ambition in its
+                    # second, but the future pattern in the second clause suppressed the first
+                    # clause's genuine claim too, making it invisible entirely. Reported by an
+                    # external review with a live reproduction. Scope the check to this
+                    # trigger's own clause via _v93_clause_around_trigger() instead of the whole
+                    # excerpt -- a genuinely separate, present-tense claim in its own clause (or
+                    # elsewhere on the page) is retained; a trigger whose OWN clause is the
+                    # future-framed one is still suppressed.
+                    extra_check=lambda c,t=trig: not _looks_like_future_environmental_claim(_v93_clause_around_trigger(c,t))
+                else:
+                    extra_check=None
                 score=74 if typ in ['Climate-neutrality or offsetting claim','Sustainability label / certification claim','Generic environmental claim','Legal requirement presented as green benefit'] else (68 if risk=='High' else 40)
                 # v93.28: only count this trigger towards the per-type hit budget if a finding
                 # was actually added -- see _v55_add_finding's docstring. Previously incremented
@@ -9241,7 +9400,18 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
     # 'failed' outright. That is just as much "the search did not actually run" as a
     # live failure -- treating only 'failed' as disqualifying would silently let a
     # cooldown-skipped provider count as a clean, confirmed-empty result.
-    search_failed=bool(attempts) and not any(a.get('status')=='ok' for a in attempts) and any(a.get('status') in ('failed','skipped_cooldown') for a in attempts)
+    ok_attempts=sum(1 for a in attempts if a.get('status')=='ok')
+    failed_attempts=sum(1 for a in attempts if a.get('status') in ('failed','skipped_cooldown'))
+    search_failed=bool(attempts) and ok_attempts==0 and failed_attempts>0
+    # v93.93: external review (ChatGPT, reviewing v93.92) pointed out that `search_failed` only
+    # became True when EVERY attempt failed -- as soon as a single query/provider combination
+    # among several succeeded, the whole search was reported the same as a fully clean run, even
+    # if most of its other attempts failed on quota/rate-limit grounds. A scan issues several
+    # queries per dimension across up to 3 providers; one lucky success among many failures
+    # previously produced "Performed -- no relevant external signal identified" (or, if that one
+    # success happened to retain a result, a summary with no mention of the failures at all),
+    # silently understating how much of the intended search coverage actually ran.
+    search_partially_failed=bool(attempts) and ok_attempts>0 and failed_attempts>0
     if ranked:
         summary=(summarise_green_ext(ranked) if dimension=='green' else summarise_ext(ranked))
     elif search_failed:
@@ -9255,10 +9425,16 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
         summary=f"External search returned {diagnostics['raw_result_count']} result(s), but none passed the direct-entity, external-ownership, negative-polarity and {dimension}-relevance checks."
     else:
         summary='No external public-source result was returned by the configured providers.'
+    if search_partially_failed:
+        summary+=(f' Note: only {ok_attempts} of {ok_attempts+failed_attempts} provider/query attempt(s) actually '
+                   f'ran ({failed_attempts} failed on a provider error or quota limit) -- this reflects partial '
+                   'search coverage, not a complete check.')
     if diagnostics.get('competitor_primary_rejected_count'):
         summary+=f" {diagnostics['competitor_primary_rejected_count']} competitor-primary result(s) were excluded."
     if providers: summary+=' Search provider(s) used: '+', '.join(sorted(providers))+'.'
-    return {'enabled':True,'summary':summary,'search_failed':search_failed,'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),
+    return {'enabled':True,'summary':summary,'search_failed':search_failed,'search_partially_failed':search_partially_failed,
+        'search_attempts_ok':ok_attempts,'search_attempts_failed':failed_attempts,
+        'results':ranked,'compact_sources':compact_sources(ranked,5,dimension),
         'providers_used':sorted(providers),'provider_attempts':attempts,'query_themes':themes,
         'queries_run':list(dict.fromkeys(run_queries)),'raw_result_count':len(allr),'search_diagnostics':diagnostics}
 

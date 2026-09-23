@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_92_engineering_review_batch_11'
+    assert app.APP_VERSION == 'hostable_v93_93_external_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1851,13 +1851,16 @@ def test_link_resolution_base_prefers_final_url_and_base_href():
 def test_fetch_page_content_returns_final_url_based_link_base(monkeypatch):
     """v93.28: fetch_page_content() must surface the link-resolution base (final URL, not
     the requested one) as its 5th return value so crawl() can resolve that page's relative
-    links correctly."""
+    links correctly. v93.93: it now also returns the plain final URL as a 6th, separate value
+    (see fetch_page_content()'s v93.93 docstring) -- here link_base and final_url are the same
+    since no <base href> is present."""
     html='<html><body><a href="report.pdf">Report</a></body></html>' + 'x'*200
     def fake_open(url,timeout=8,max_bytes=None,**k):
         return html.encode(),'text/html','https://example.com/en/sustainability/'
     monkeypatch.setattr(app,'_open_public_url',fake_open)
-    text,kind,method,links,link_base=app.fetch_page_content('https://example.com/sustainability')
+    text,kind,method,links,link_base,final_url=app.fetch_page_content('https://example.com/sustainability')
     assert link_base=='https://example.com/en/sustainability/'
+    assert final_url=='https://example.com/en/sustainability/'
     assert links==['report.pdf']
 
 
@@ -1942,7 +1945,7 @@ def test_crawl_follows_links_after_a_cross_domain_redirect(monkeypatch):
     def fake_fetch_page_content(url,timeout=7):
         fetched_pages.append(url)
         if url=='https://new.example/en/sustainability':
-            return 'Real sustainability content here, plenty of usable text.'*10,'html','direct',[],url
+            return 'Real sustainability content here, plenty of usable text.'*10,'html','direct',[],url,url
         raise ValueError('not found')
     monkeypatch.setattr(app,'fetch_html',fake_fetch_html)
     monkeypatch.setattr(app,'fetch_page_content',fake_fetch_page_content)
@@ -1967,7 +1970,7 @@ def test_crawl_base_href_does_not_expand_the_trusted_domain(monkeypatch):
     fetched_pages=[]
     def fake_fetch_page_content(url,timeout=7):
         fetched_pages.append(url)
-        return 'Should never be fetched.'*10,'html','direct',[],url
+        return 'Should never be fetched.'*10,'html','direct',[],url,url
     monkeypatch.setattr(app,'fetch_html',fake_fetch_html)
     monkeypatch.setattr(app,'fetch_page_content',fake_fetch_page_content)
     monkeypatch.setattr(app,'discover_sitemap_urls',lambda *a,**k: [])
@@ -2760,9 +2763,9 @@ def test_crawl_excludes_stale_report_and_surfaces_it_in_scan_inventory(monkeypat
         return html, url
     def fake_fetch_page_content(url, timeout=8):
         if '2023-sustainability-report' in url:
-            return ('SHEIN 2023 Sustainability and Social Impact Report. ' * 20, 'pdf', 'direct', [], url)
+            return ('SHEIN 2023 Sustainability and Social Impact Report. ' * 20, 'pdf', 'direct', [], url, url)
         if 'sustainability' in url:
-            return ('This is our current sustainable product page with genuine claims. ' * 20, 'html', 'direct', [], url)
+            return ('This is our current sustainable product page with genuine claims. ' * 20, 'html', 'direct', [], url, url)
         raise Exception('not found')
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
@@ -2817,7 +2820,7 @@ def test_crawl_batch_does_not_overrun_deadline_when_a_fetch_hangs(monkeypatch):
         if 'page0' in url:
             _time.sleep(12)
             raise ValueError('slow')
-        return 'Our sustainability report content. ' * 50, 'html', 'direct', [], url
+        return 'Our sustainability report content. ' * 50, 'html', 'direct', [], url, url
     monkeypatch.setattr(app, 'fetch_page_content', mixed_fetch_page_content)
     deadline2 = _time.time() + 6
     start2 = _time.time()
@@ -2842,7 +2845,7 @@ def test_crawl_deduplicates_pages_sharing_the_same_post_redirect_final_url(monke
     def fake_fetch_page_content(url, timeout=8):
         final = 'https://example.com/en/sustainability-hub'
         content = 'Our sustainability commitments and goals, same content regardless of URL. ' * 10
-        return (content, 'html', 'direct', [], final)
+        return (content, 'html', 'direct', [], final, final)
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
     monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
@@ -2867,7 +2870,7 @@ def test_crawl_deduplicates_pages_sharing_the_same_post_redirect_final_url(monke
         return html, url
     def fake_fetch_page_content2(url, timeout=8):
         content = ('Distinct sustainability content for ' + url + '. ') * 10
-        return (content, 'html', 'direct', [], url + '-final')
+        return (content, 'html', 'direct', [], url + '-final', url + '-final')
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html2)
     monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content2)
     log2 = []
@@ -2900,7 +2903,7 @@ def test_second_hop_links_do_not_jump_queue_ahead_of_better_first_hop_candidates
         # 'governance', and no source-type score bonus) that must NOT outrank the still-queued
         # better first-hop candidates "report" and "impact".
         links = ['/governance-weak'] if 'supplier-code' in url else []
-        return (content, 'html', 'direct', links, url)
+        return (content, 'html', 'direct', links, url, url)
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
     app.crawl('https://example.com', max_extra_pages=10, deadline=None)
@@ -2917,7 +2920,7 @@ def test_second_hop_links_do_not_jump_queue_ahead_of_better_first_hop_candidates
         fetch_order2.append(url)
         content = ('Content for ' + url + '. ') * 15
         links = ['/sustainability-report'] if 'supplier-code' in url else []
-        return (content, 'html', 'direct', links, url)
+        return (content, 'html', 'direct', links, url, url)
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html2)
     monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content2)
     app.crawl('https://example.com', max_extra_pages=10, deadline=None)
@@ -4961,3 +4964,222 @@ def test_source_kind_not_promoted_from_body_text_alone():
     assert app._v60_source_kind({'url': 'https://www.mit.edu/research/paper', 'title': 'MIT research paper', 'content': 'Academic research.'}) == 'Academic / research'
     assert app._v60_source_kind({'url': 'https://www.hrw.org/report', 'title': 'HRW report', 'content': 'A report.'}) == 'NGO / civil society'
     assert app._v60_source_kind({'url': 'https://ec.europa.eu/notice', 'title': 'Commission notice', 'content': 'A notice.'}) == 'Government / regulator'
+
+
+def test_future_clause_does_not_suppress_a_genuine_current_claim_in_the_same_sentence():
+    """External review (ChatGPT, reviewing v93.92) reproduced a real regression in the v93.85
+    fix: "Our product is carbon neutral through offsetting today, and we aim to be net zero by
+    2040." has a genuine, CURRENT climate-neutrality/offsetting claim in its first clause and a
+    separate, forward-looking ambition in its second -- but the future-framing suppression check
+    ran against the WHOLE excerpt, so the future pattern in the second clause suppressed the
+    genuine claim in the first, making it invisible entirely (a net loss of a real claim, not
+    fewer false positives). Fixed in v93.93 by scoping the suppression check to the trigger's
+    own clause via _v93_clause_around_trigger()."""
+    text = 'Our product is carbon neutral through offsetting today, and we aim to be net zero by 2040.'
+    r = app.detect_green_claims(text)
+    types = [f['type'] for f in r]
+    assert 'Climate-neutrality or offsetting claim' in types, r
+    assert 'Future environmental-performance claim' in types, r
+    # the future clause preceding the present-tense clause must work symmetrically
+    text_reversed = 'We aim to be net zero by 2040, and our product is carbon neutral through offsetting today.'
+    r2 = app.detect_green_claims(text_reversed)
+    types2 = [f['type'] for f in r2]
+    assert 'Climate-neutrality or offsetting claim' in types2, r2
+    assert 'Future environmental-performance claim' in types2, r2
+    # sanity: the ORIGINAL v93.85 regression case (a single, purely future-framed claim with no
+    # separate present-tense clause) must still be suppressed down to just the Future type
+    pure_future = 'We aim to reach net zero by 2040 and to be carbon neutral by 2045.'
+    r3 = app.detect_green_claims(pure_future)
+    assert [f['type'] for f in r3] == ['Future environmental-performance claim'], r3
+    # sanity: a genuine present-tense-only claim (no future framing anywhere) is unaffected
+    present_only = 'Our operations are carbon neutral today, verified by an independent auditor.'
+    r4 = app.detect_green_claims(present_only)
+    assert [f['type'] for f in r4] == ['Climate-neutrality or offsetting claim'], r4
+
+
+def test_redirect_deduplication_uses_final_url_not_base_href_overridden_link_base(monkeypatch):
+    """External review (ChatGPT, reviewing v93.92) reproduced that crawl()'s post-redirect
+    duplicate-page detection (v93.89) used fetch_page_content()'s `link_base` as if it were the
+    genuine final URL -- but link_base can also be overridden by the page's own <base href> tag.
+    A site-wide/SPA <base href> value (e.g. every page declaring <base href="/">) made EVERY
+    page on that site compute the same "final URL", so genuinely different pages were wrongly
+    treated as duplicates of each other and their content dropped. Fixed in v93.93 by returning
+    `final_url` (the actual HTTP-level redirect target, unaffected by <base href>) SEPARATELY
+    from `link_base`, and using only `final_url` for duplicate detection."""
+    def fake_fetch_html(url, timeout=7):
+        html = '<html><body><a href="/sustainability-a">A</a><a href="/sustainability-b">B</a></body></html>'
+        return html, url
+    def fake_fetch_page_content(url, timeout=8):
+        content = ('Distinct real content for ' + url + '. ') * 15
+        link_base = 'https://example.com/'  # identical for every page due to a shared <base href="/">
+        final_url = url  # genuinely distinct per page
+        return (content, 'html', 'direct', [], link_base, final_url)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    monkeypatch.setattr(app, 'COMMON_PUBLIC_PATHS', [])
+    log = []
+    text, pages, chunks = app.crawl('https://example.com', max_extra_pages=5, deadline=None, log=log)
+    assert len(pages) == 3, f'expected homepage + 2 distinct pages, got {pages}'
+    assert not any(e.get('skipped_duplicate') for e in log), log
+
+    # sanity: a genuine same-final-url duplicate (no <base href> involved) must still be caught
+    def fake_fetch_page_content2(url, timeout=8):
+        content = 'Same content regardless of URL. ' * 15
+        return (content, 'html', 'direct', [], 'https://example.com/', 'https://example.com/en/sustainability-hub')
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content2)
+    log2 = []
+    text2, pages2, chunks2 = app.crawl('https://example.com', max_extra_pages=5, deadline=None, log=log2)
+    assert len(pages2) == 2, f'expected homepage + 1 unique page, got {pages2}'
+    assert len([e for e in log2 if e.get('skipped_duplicate')]) == 1, log2
+
+
+def test_bare_certification_word_does_not_clear_generic_claim_blacklist_indicator():
+    """External review (ChatGPT, reviewing v93.92) reproduced that _has_strong_same_medium_
+    specification() treated a BARE verification adjective -- "certified", "verified", with no
+    named scheme, no percentage and no other concrete detail -- as sufficient same-medium
+    specification to clear a "Generic environmental claim" off the EmpCo Annex I 4a blacklist.
+    "Our product is eco-friendly." correctly kept the blacklist indicator; "Our product is
+    eco-friendly and certified." cleared it entirely with nothing about WHAT it is certified by
+    or under which standard -- exactly the kind of vague self-declaration Annex I 4a/2a and
+    EmpCo recital 9 target, not evidence against it. Fixed in v93.93: these terms only count
+    when paired with a concrete anchor (a named recognised scheme or a percentage/figure)."""
+    bare = 'Our product is eco-friendly.'
+    f_bare = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': bare, 'excerpt': bare}, trigger='eco-friendly')
+    assert f_bare['blacklisted_practice_indicator'] is True
+    assert f_bare['legal_basis_category'] == 'prohibited'
+
+    bare_certified = 'Our product is eco-friendly and certified.'
+    f_bc = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': bare_certified, 'excerpt': bare_certified}, trigger='eco-friendly')
+    assert f_bc['blacklisted_practice_indicator'] is True, 'a bare "certified" with no scheme/figure must not clear the Annex I indicator'
+    assert f_bc['legal_basis_category'] == 'prohibited'
+    assert 'blacklisted-practice indicator' in f_bc['regulatory_signal'].lower()
+
+    # sanity: certification NAMING A REAL SCHEME must still correctly downgrade
+    named_scheme = 'Our product is eco-friendly, certified by Fairtrade.'
+    f_scheme = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': named_scheme, 'excerpt': named_scheme}, trigger='eco-friendly')
+    assert f_scheme['blacklisted_practice_indicator'] is False
+    assert f_scheme['legal_basis_category'] == 'problematic'
+    assert 'blacklisted-practice indicator' not in f_scheme['regulatory_signal'].lower(), f_scheme['regulatory_signal']
+
+    # sanity: "verified" backed by a concrete percentage must still correctly downgrade
+    with_figure = 'Our product is eco-friendly, verified to contain 40% recycled content.'
+    f_fig = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': with_figure, 'excerpt': with_figure}, trigger='eco-friendly')
+    assert f_fig['blacklisted_practice_indicator'] is False
+    assert f_fig['legal_basis_category'] == 'problematic'
+
+    # sanity: a genuinely concrete term (methodology) is unaffected by this change
+    with_methodology = 'Our product is eco-friendly, according to our internal methodology.'
+    f_method = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': with_methodology, 'excerpt': with_methodology}, trigger='eco-friendly')
+    assert f_method['blacklisted_practice_indicator'] is False
+    assert f_method['legal_basis_category'] == 'problematic'
+
+
+def test_open_public_url_retries_stop_at_deadline_instead_of_full_timeout_each():
+    """External review (ChatGPT, reviewing v93.92): the v93.88 crawl-batch deadline fix bounded
+    how long a CALLER waits for fetch_page_content(), but fetch_page_content()'s own internal
+    retries (_open_public_url()'s multi-user-agent retry loop, plus a separate Reader-fallback
+    attempt) were each still granted a fresh, full `timeout` regardless of how much of the
+    caller's intended budget had already been spent -- so one call could, in the worst case,
+    take several times longer than its nominal `timeout`. Fixed in v93.93 by threading a single
+    absolute deadline through both the direct attempt's retries and the Reader fallback."""
+    class _FakeOpener:
+        def open(self, req, timeout):
+            time.sleep(min(timeout, 0.2))
+            raise app.URLError('simulated network failure')
+    real_opener = app._SAFE_OPENER
+    real_uas = app.BROWSER_USER_AGENTS
+    real_is_private = app.is_private
+    try:
+        app._SAFE_OPENER = _FakeOpener()
+        app.BROWSER_USER_AGENTS = ['UA1', 'UA2', 'UA3']
+        app.is_private = lambda h: False
+        start = time.time()
+        try:
+            app._open_public_url('https://example.com/slow', timeout=5, deadline=time.time() + 1.0)
+        except Exception:
+            pass
+        elapsed = time.time() - start
+        assert elapsed < 2.5, f'retries ran past the given deadline: took {elapsed:.2f}s'
+    finally:
+        app._SAFE_OPENER = real_opener
+        app.BROWSER_USER_AGENTS = real_uas
+        app.is_private = real_is_private
+
+    # sanity: omitting `deadline` entirely must preserve the exact previous per-attempt behaviour
+    class _FakeOpenerOk:
+        def open(self, req, timeout):
+            class _Resp:
+                def read(self, n): return b'<html>ok</html>'
+                headers = {'content-type': 'text/html'}
+                def geturl(self): return req.full_url
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            return _Resp()
+    try:
+        app._SAFE_OPENER = _FakeOpenerOk()
+        app.is_private = lambda h: False
+        data, ctype, final_url = app._open_public_url('https://example.com/', timeout=5)
+        assert data == b'<html>ok</html>'
+    finally:
+        app._SAFE_OPENER = real_opener
+        app.is_private = real_is_private
+
+
+def test_partial_external_search_failure_is_surfaced_not_reported_as_clean():
+    """External review (ChatGPT, reviewing v93.92): `search_failed` only became True when EVERY
+    provider/query attempt failed -- as soon as a single attempt among several succeeded, a scan
+    with mostly-failed attempts was reported the same as a fully clean, complete search, with no
+    mention that most of its intended coverage never actually ran. Fixed in v93.93 by adding a
+    distinct `search_partially_failed` state, surfaced in both the summary text and
+    _v93_ext_verification_status()."""
+    def fake_partial(company_name, findings, dimension, reviewed_pages=None):
+        attempts = [{'provider': 'tavily', 'status': 'ok', 'results': 0},
+                    {'provider': 'serper', 'status': 'failed', 'error': 'quota exceeded'},
+                    {'provider': 'google', 'status': 'failed', 'error': 'quota exceeded'}]
+        diagnostics = {'raw_result_count': 0, 'company_matched_count': 0, 'negative_candidate_count': 0,
+                       'retained_count': 0, 'fallback_used': False, 'competitor_primary_rejected_count': 0,
+                       'providers_used': ['tavily'], 'queries_run': []}
+        return [], [], attempts, {'tavily'}, [], diagnostics
+    real_search_dim = app._v64_search_dimension
+    real_configured = app.external_search_configured
+    try:
+        app._v64_search_dimension = fake_partial
+        app.external_search_configured = lambda: True
+        ext = app._v64_external_response({'company': 'TestCo'}, [], 'green')
+        assert ext['search_failed'] is False
+        assert ext['search_partially_failed'] is True
+        assert ext['search_attempts_ok'] == 1 and ext['search_attempts_failed'] == 2
+        assert 'partial search coverage' in ext['summary'].lower()
+        status = app._v93_ext_verification_status(ext, [])
+        assert status.startswith('Partially performed'), status
+        assert '1/3' in status
+
+        # sanity: fully successful search must NOT be flagged as partial
+        def fake_ok(company_name, findings, dimension, reviewed_pages=None):
+            attempts = [{'provider': 'tavily', 'status': 'ok', 'results': 0}]
+            diagnostics = {'raw_result_count': 0, 'company_matched_count': 0, 'negative_candidate_count': 0,
+                           'retained_count': 0, 'fallback_used': False, 'competitor_primary_rejected_count': 0,
+                           'providers_used': ['tavily'], 'queries_run': []}
+            return [], [], attempts, {'tavily'}, [], diagnostics
+        app._v64_search_dimension = fake_ok
+        ext_ok = app._v64_external_response({'company': 'TestCo'}, [], 'green')
+        assert ext_ok['search_partially_failed'] is False
+        assert app._v93_ext_verification_status(ext_ok, []).startswith('Performed')
+
+        # sanity: a fully failed search must still use the original 'search_failed' path
+        def fake_all_failed(company_name, findings, dimension, reviewed_pages=None):
+            attempts = [{'provider': 'tavily', 'status': 'failed', 'error': 'quota'},
+                        {'provider': 'serper', 'status': 'failed', 'error': 'quota'}]
+            diagnostics = {'raw_result_count': 0, 'company_matched_count': 0, 'negative_candidate_count': 0,
+                           'retained_count': 0, 'fallback_used': False, 'competitor_primary_rejected_count': 0,
+                           'providers_used': [], 'queries_run': []}
+            return [], [], attempts, set(), [], diagnostics
+        app._v64_search_dimension = fake_all_failed
+        ext_failed = app._v64_external_response({'company': 'TestCo'}, [], 'green')
+        assert ext_failed['search_failed'] is True
+        assert ext_failed['search_partially_failed'] is False
+        assert app._v93_ext_verification_status(ext_failed, []).startswith('Attempted but failed')
+    finally:
+        app._v64_search_dimension = real_search_dim
+        app.external_search_configured = real_configured
