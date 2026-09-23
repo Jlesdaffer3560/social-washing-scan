@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_90_engineering_review_batch_10'
+    assert app.APP_VERSION == 'hostable_v93_92_engineering_review_batch_11'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1974,6 +1974,41 @@ def test_crawl_base_href_does_not_expand_the_trusted_domain(monkeypatch):
     txt,pages,chunks=app.crawl('https://real-company.example',max_extra_pages=5)
     assert not any('evil.example' in p for p in fetched_pages)
     assert not any('evil.example' in p for p in pages)
+
+
+def test_related_company_sites_excludes_bare_vs_www_duplicate_of_input():
+    """Full engineering review, batch 10 (minor items): the exclusion check in
+    related_company_sites() compared the candidate's RAW hostname against the input URL's raw
+    hostname -- for an input like "https://lidl.be" (no "www."), the generated
+    "https://www.lidl.be" candidate has hostname "www.lidl.be", not string-equal to "lidl.be",
+    so it was never excluded even though it is the exact same site as the one already being
+    scanned. This wasted one of the limited candidate-validation slots on a bare-vs-www
+    duplicate of the input instead of on a genuinely different national/TLD variant. Reported
+    by an engineering review (agent1 minor note)."""
+    for variant in ('https://lidl.be', 'https://www.lidl.be', 'https://m.lidl.be'):
+        result = app.related_company_sites(variant, max_sites=5)
+        assert 'https://www.lidl.be' not in result, (variant, result)
+        assert len(result) == 5, (variant, result)
+    # sanity: a genuinely different brand still gets its own normal TLD-variant candidates
+    other = app.related_company_sites('https://www.ikea.com', max_sites=5)
+    assert 'https://www.ikea.com' not in other
+    assert 'https://www.ikea.be' in other
+
+
+def test_strip_accents_handles_letters_with_no_canonical_decomposition():
+    """Full engineering review, batch 10 (minor items): a handful of Latin letters (O with
+    stroke, D with stroke, L with stroke, AE/OE ligatures, thorn) have NO canonical Unicode
+    decomposition into a plain base letter plus a combining accent -- they are distinct
+    letterforms, not accent+base -- so NFKD normalisation left them untouched and the
+    [^a-z0-9] stripping used throughout this file's name-normalisation helpers then treated
+    them as a bare separator instead of a letter. Live-reproduced: "Ørsted" normalised to
+    "rsted" (the leading letter lost entirely), which would silently break alias/domain-guess
+    generation and KBO name matching for this company. Reported by an engineering review
+    (agent1 minor note)."""
+    assert app._v65_strip_accents('Ørsted') == 'Orsted'
+    assert app._v60_company_terms('Ørsted')[2] == 'orsted'
+    # sanity: the original accented-letter case (combining-mark decomposition) still works
+    assert app._v65_strip_accents("L'Oréal") == "L'Oreal"
 
 
 def test_related_company_sites_requires_company_name_in_fetched_content(monkeypatch):

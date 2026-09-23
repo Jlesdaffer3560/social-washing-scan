@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_90_engineering_review_batch_10"
-APP_RELEASE_LABEL="v93.90"
+APP_VERSION="hostable_v93_92_engineering_review_batch_11"
+APP_RELEASE_LABEL="v93.92"
 APP_RELEASE_DATE="2026-09-23"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -875,10 +875,22 @@ def related_company_sites(url, max_sites=1):
     if len(core_parts)<2: return []
     brand=core_parts[-2]
     if not brand or len(brand)<3: return []
+    # v93.92: the exclusion check below compared the candidate's RAW hostname against the input
+    # URL's raw hostname -- for an input like "https://lidl.be" (no "www."), the generated
+    # "https://www.lidl.be" candidate has hostname "www.lidl.be", which is not string-equal to
+    # "lidl.be", so it was never excluded even though it is the exact same site as the one
+    # already being scanned. Live-reproduced: related_company_sites('https://lidl.be',
+    # max_sites=5) returned 'https://www.lidl.be' as a "related" candidate -- wasting one of the
+    # limited candidate-validation slots on a bare-vs-www duplicate of the input itself, instead
+    # of on a genuinely different national/TLD variant. Reported by an engineering review
+    # (agent1 minor note). Compare bare (www-stripped) hostnames instead.
+    def _bare(h):
+        return h[4:] if h.startswith('www.') else h[2:] if h.startswith('m.') else h
+    bare_host=_bare(host)
     candidates=[]
     for tld in ['com','eu','be','nl','fr','de']:
         cand=f"https://www.{brand}.{tld}"
-        if cand.rstrip('/') != url.rstrip('/') and (urlparse(cand).hostname or '') != host:
+        if _bare(urlparse(cand).hostname or '') != bare_host:
             candidates.append(cand)
     seen=[]
     for c in candidates:
@@ -2580,31 +2592,6 @@ OWNED_OR_NEUTRAL_DOC_TERMS = [
 def _external_signal_text(result):
     return (result.get("title","")+" "+result.get("content","")+" "+result.get("url","")).lower()
 
-def negative_compact_sources(results, limit=5):
-    filtered = [r for r in results if is_negative_external_source(r)]
-    if "compact_sources" in globals():
-        return compact_sources(filtered, limit)
-    return filtered[:limit]
-def company_specific_summary(company, sector, context, findings, external_research, score):
-    company_name = company.get("company", "The company")
-    claim_types = [f.get("type","") for f in findings if f.get("type")]
-    quoted = [f.get("claim","") for f in findings if f.get("claim")]
-    top_claim = quoted[0] if quoted else ""
-    negative_count = len([r for r in (external_research.get("results", []) if external_research else []) if is_negative_external_source(r)])
-    high_claims = [f for f in findings if f.get("risk") == "High"]
-    if findings and is_placeholder_finding(findings[0].get("type","")):
-        claim_sentence = "The scan did not identify a strong high-risk social-washing claim in the reviewed company pages."
-    elif high_claims:
-        claim_sentence = "The main risk comes from high-sensitivity wording around " + ", ".join(claim_types[:2]) + "."
-    else:
-        claim_sentence = "The main risk comes from moderate wording around " + ", ".join(claim_types[:2]) + "."
-    if top_claim:
-        claim_sentence += " The most relevant company wording reviewed was: “" + top_claim + "”."
-    if negative_count:
-        ext_sentence = f"The external-source layer retained {negative_count} negative or risk-relevant public-source signal(s), which should be verified before conclusions are drawn."
-    else:
-        ext_sentence = "No clearly negative external public-source signal was retained for the concise source section."
-    return f"{company_name} receives a social-washing risk score of {score}/100. {claim_sentence} Sector context is {sector.get('level','Medium').lower()} for {company.get('sector','the identified sector')}. {ext_sentence} The priority is to ensure that social, labour, human-rights, customer or supplier claims are specific, scoped, evidenced and not contradicted by relevant public information."
 def specific_claim_analysis(finding, company, sector):
     claim_type = finding.get("type","claim")
     claim = finding.get("claim","")
@@ -3596,9 +3583,6 @@ _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our
     'dans toute notre entreprise','nos opérations directes','notre chaîne de valeur','au niveau de l\'entreprise',
     'nos sites','nos usines','nous sommes une entreprise neutre en carbone','notre entreprise est neutre en carbone',
     'nous sommes neutres en carbone','en tant qu\'organisation']
-
-def _is_corporate_level_claim(claim_text):
-    return any(m in (claim_text or '').lower() for m in _CORPORATE_LEVEL_MARKERS)
 
 # A bare "we are carbon neutral" statement is company-level but still UNSPECIFIED, i.e. still a
 # generic environmental claim under Annex I point 4a (Commission ECGT FAQ Q6/Q10) -- only a
@@ -8609,13 +8593,32 @@ def _v60_source_kind(result):
     return 'Other public source'
 
 
+# v93.91: a handful of Latin letters have NO canonical Unicode decomposition into a plain base
+# letter plus a combining accent -- they are distinct letterforms, not accent+base -- so NFKD
+# normalisation leaves them untouched and the [^a-z0-9] stripping used throughout this file's
+# name-normalisation helpers then treats them as a bare separator instead of a letter.
+# Live-reproduced: "Ørsted" normalised to "rsted" (the leading letter lost entirely), which
+# would silently break alias/domain-guess generation and KBO name matching for this company.
+# Reported by an engineering review (agent1 minor note).
+_V65_NO_DECOMPOSITION_TRANSLITERATIONS={
+    'Ø':'O','ø':'o',      # Ø / ø (Danish/Norwegian)
+    'Đ':'D','đ':'d',      # Đ / đ (Croatian/Vietnamese)
+    'Ł':'L','ł':'l',      # Ł / ł (Polish)
+    'Æ':'AE','æ':'ae',    # Æ / æ (Danish/Norwegian)
+    'Œ':'OE','œ':'oe',    # Œ / œ (French)
+    'Þ':'Th','þ':'th',    # Þ / þ (Icelandic)
+}
+
 def _v65_strip_accents(value):
     """Transliterate accented letters instead of deleting them: the [^a-z0-9] stripping used
     throughout this file's name-normalisation helpers only recognises plain ASCII, so an
     accented company name like "L'Oréal" collapsed the "é" into a bare separator (norm
     "l or al", compact "loral") rather than "loreal" -- a false-negative source for matching
     French/Dutch company names against their own domains."""
-    return ''.join(c for c in unicodedata.normalize('NFKD', str(value or '')) if not unicodedata.combining(c))
+    text=str(value or '')
+    for src,dst in _V65_NO_DECOMPOSITION_TRANSLITERATIONS.items():
+        text=text.replace(src,dst)
+    return ''.join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
 
 
 def _v60_company_terms(company_name):
