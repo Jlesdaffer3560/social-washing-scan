@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_83_engineering_review_batch_3"
-APP_RELEASE_LABEL="v93.83"
+APP_VERSION="hostable_v93_84_engineering_review_batch_4"
+APP_RELEASE_LABEL="v93.84"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3179,9 +3179,25 @@ _CERTIFICATION_CONTRAST_MARKERS=(
     'contrairement à','à la différence de','par rapport à',
 )
 
-def _names_recognized_certification_scheme(claim_text):
+# v93.84: enrich_social_finding() reused the full, green-focused _RECOGNIZED_CERTIFICATION_
+# SCHEMES list to downgrade a SOCIAL/forced-labour claim's risk -- but most of those schemes
+# (ISO 14001 energy management, Energy Star, LEED/BREEAM building performance, Carbon Trust
+# Standard, EU Ecolabel, Nordic Swan, Blue Angel, Green Seal, Cradle to Cradle, Global Recycled
+# Standard) audit environmental performance only and say nothing about labour conditions.
+# Live-reproduced: "All our cotton is free from forced labour, and our Ghent plant holds ISO
+# 14001 for energy management" downgraded a forced-labour claim from High to Medium risk purely
+# because of an unrelated energy-management certificate. Only the schemes below have a genuine
+# labour/social-conditions component.
+_RECOGNIZED_SOCIAL_CERTIFICATION_SCHEMES=(
+    'fairtrade','fairtade','fair trade','rainforest alliance','utz certified','utz-certified',
+    'fair wear foundation','b corp','b corporation','cotton made in africa',
+    'better cotton initiative','bci cotton','global organic textile standard','gots',
+    'sa8000','sa 8000','wrap certified','amfori bsci',' bsci ','sedex','smeta',
+)
+
+def _names_recognized_certification_scheme(claim_text,schemes=_RECOGNIZED_CERTIFICATION_SCHEMES):
     c=' '+(claim_text or '').lower()+' '
-    for scheme in _RECOGNIZED_CERTIFICATION_SCHEMES:
+    for scheme in schemes:
         idx=c.find(scheme)
         if idx==-1:
             continue
@@ -3200,6 +3216,15 @@ _OFFSET_CLAUSE_BOUNDARY_RE=re.compile(r'[.,;!?]')
 # because the word "offset" appears, even though nothing about it concerns emissions.
 _OFFSET_UNRELATED_SENSES=('offset printing','offset press','offset lithography','offset account',
     'offset mortgage','offsetting entry','offsetting entries')
+# v93.84: "compensat" (the stem checked alongside "offset" below) is just as ambiguous outside a
+# climate context -- HR/payroll "compensation" (salary, overtime pay, benefits) has nothing to do
+# with carbon offsetting. Live-reproduced: "Our chocolate bar is carbon neutral and all our staff
+# receive fair compensation for overtime" escalated the claim from a 4a ("offset basis not
+# established") to the harshest 4c ("offset-based") classification purely because the sentence
+# mentions employee pay. Checked as nearby context, not an exact prefix like the offset senses
+# above, since "compensation" for pay varies too much in phrasing ("fair compensation", "overtime
+# compensation", "workers' compensation", "compensation package"...) to enumerate as fixed phrases.
+_COMPENSAT_HR_CONTEXT_RE=re.compile(r'\b(staff|employee|employees|worker|workers|overtime|wage|wages|salary|salaries|benefit|benefits|payroll|pension)\b')
 
 def _offset_basis_confirmed(claim_text):
     """v93.51: was a bare substring check (any of 'offset'/'compensat'/'carbon credit' present
@@ -3242,6 +3267,8 @@ def _offset_basis_confirmed(claim_text):
                 break
             start=idx+len(term)
             if any(c[idx:idx+len(sense)]==sense for sense in _OFFSET_UNRELATED_SENSES):
+                continue
+            if term=='compensat' and _COMPENSAT_HR_CONTEXT_RE.search(c[max(0,idx-40):idx+len(term)+40]):
                 continue
             window_before=c[max(0,idx-40):idx]
             boundary_before=max((window_before.rfind(ch) for ch in '.,;!?'), default=-1)
@@ -4792,16 +4819,28 @@ _ASPIRATIONAL_SOCIAL_VERBS=['working towards','working to build','work towards',
 _SOCIAL_ASPIRATION_TOPICS=['living wage','living wages','human rights','fair wage','fair wages','decent work',
     'decent working conditions','good working conditions','safe working conditions','working conditions',
     'workers rights',"workers' rights",
-    'worker rights','labour rights','labor rights','gender equality','equal opportunities','dignity',
-    'respected','well-being of workers','wellbeing of workers','fair treatment','social justice','worker welfare',
+    'worker rights','labour rights','labor rights','gender equality','equal opportunities',
+    # v93.84: bare 'respected'/'dignity' (and their NL/FR equivalents) used to be topic gates on
+    # their own -- every other entry in this list is already a multi-word social/labour phrase,
+    # but these two were single, generic words. Live-reproduced: "We are committed to being the
+    # most respected logistics partner in Belgium for our clients" has no social topic in it
+    # whatsoever, yet matched "committed to" (verb) + "respected" (topic) and was flagged as a
+    # High-risk aspirational social claim. Narrowed to the specific human-rights/labour phrasing
+    # these words were actually meant to catch ("human rights are respected", "treated with
+    # dignity"), matching this list's own established multi-word-phrase convention.
+    'rights are respected','rights respected','treated with dignity','human dignity','worker dignity',
+    'workers dignity',
+    'well-being of workers','wellbeing of workers','fair treatment','social justice','worker welfare',
     'workers welfare',
     'leefbaar loon','mensenrechten','eerlijk loon','waardig werk','goede arbeidsomstandigheden',
     'veilige arbeidsomstandigheden','arbeidsomstandigheden','rechten van werknemers','arbeidsrechten','gendergelijkheid','gelijke kansen',
-    'waardigheid','gerespecteerd','welzijn van werknemers','eerlijke behandeling','sociale rechtvaardigheid',
+    'rechten worden gerespecteerd','met waardigheid behandeld','menselijke waardigheid',
+    'welzijn van werknemers','eerlijke behandeling','sociale rechtvaardigheid',
     'werknemerswelzijn',
     'salaire vital','droits humains','salaire équitable','travail décent','bonnes conditions de travail',
     'conditions de travail sûres','conditions de travail','droits des travailleurs','droits du travail','égalité des genres',
-    'égalité des chances','dignité','respecté','bien-être des travailleurs','traitement équitable',
+    'égalité des chances','droits respectés','traité avec dignité','dignité humaine',
+    'bien-être des travailleurs','traitement équitable',
     'justice sociale']
 
 _SOCIAL_PROCESS_EVIDENCE_TERMS=['due diligence','grievance mechanism','grievance channel','grievance procedure',
@@ -7548,11 +7587,21 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # telling. Only exclude when the third-party role word appears immediately BEFORE the
     # specific reporting phrase (i.e. actually acting as its grammatical subject, "Our SUPPLIER
     # told us...") rather than anywhere else in the sentence.
+    # v93.84: two more real gaps, live-reproduced. (1) "Our supplier SAYS they are carbon neutral
+    # and we are reviewing that statement" and "One of our customers DESCRIBED our warehouse as
+    # eco-friendly during a site visit" were both flagged as the company's own per-se-prohibited
+    # claim -- the reporting verb ("says", "described") wasn't in this list at all. (2) "Unlike
+    # some COMPETITORS who claim to be carbon neutral, we focus on real reductions" -- this is
+    # literally a rebuttal of greenwashing, but "competitor"/"customer"/"client" weren't in
+    # third_party_roles, so the existing role-word-before-the-reporting-phrase check never even
+    # looked for them.
     reported_speech=['told us','informed us','told them','said their','claims that','stated that','assured us',
+        'says they','say they','said they','claim to be','claims to be','described','describes',
         'vertelde ons','meldde ons','verzekerde ons','nous a dit','nous a informé','nous a assuré']
-    third_party_roles=['supplier','vendor','buyer','distributor','wholesaler',
-        'leverancier','groothandel','distributeur',
-        'fournisseur','grossiste','distributeur']
+    third_party_roles=['supplier','vendor','buyer','distributor','wholesaler','customer','customers',
+        'client','clients','competitor','competitors',
+        'leverancier','groothandel','distributeur','klant','klanten','concurrent','concurrenten',
+        'fournisseur','grossiste','distributeur','client','clients','concurrent','concurrents']
     for _rs_phrase in reported_speech:
         _rs_pos=c.find(_rs_phrase)
         if _rs_pos==-1:
@@ -7928,7 +7977,7 @@ def enrich_social_finding(f, trigger=''):
     # The claim still needs scope/KPI/verification evidence either way -- this only reflects
     # that a named, independently-audited scheme is a materially different starting point than
     # zero named evidence.
-    if f.get('risk')=='High' and _names_recognized_certification_scheme(analysis_text):
+    if f.get('risk')=='High' and _names_recognized_certification_scheme(analysis_text,_RECOGNIZED_SOCIAL_CERTIFICATION_SCHEMES):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), analysis_text)

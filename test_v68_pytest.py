@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_83_engineering_review_batch_3'
+    assert app.APP_VERSION == 'hostable_v93_84_engineering_review_batch_4'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4602,3 +4602,60 @@ def test_negation_checks_every_trigger_occurrence_and_recognises_cannot():
     # sanity: a genuinely, purely negated claim is still rejected
     r5 = app.detect_green_claims('Our product is not carbon neutral.')
     assert all(app.is_placeholder_finding(f['type']) for f in r5), r5
+
+
+def test_hr_compensation_does_not_escalate_to_offset_based_annex_i_4c():
+    """Full engineering review, batch 4: _offset_basis_confirmed()'s 'compensat' stem matched
+    ordinary HR/payroll "compensation" (salary, overtime pay) with no climate-topic requirement,
+    escalating the claim from 4a ("offset basis not established") to the harshest 4c
+    ("offset-based") classification purely because the sentence also mentions employee pay."""
+    hr = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
+        'Our chocolate bar is carbon neutral and all our staff receive fair compensation for overtime.')
+    assert 'blacklisted-practice indicator where product-level' not in hr
+    assert 'point 4a' in hr
+    genuine = app.green_blacklisted_indicator('Climate-neutrality claim', 'carbon neutral',
+        'Our product is carbon neutral through carbon compensation projects in Brazil.')
+    assert 'blacklisted-practice indicator where product-level' in genuine
+
+
+def test_committed_to_respected_partner_is_not_a_social_claim():
+    """Full engineering review, batch 4: bare 'respected'/'dignity' were topic gates on their
+    own in _SOCIAL_ASPIRATION_TOPICS, unlike every other entry which is a multi-word
+    social/labour phrase. "We are committed to being the most respected logistics partner in
+    Belgium for our clients" has no social topic in it at all, yet matched "committed to" +
+    "respected" and was flagged as a High-risk aspirational social claim."""
+    r1 = app.detect_claims('We are committed to being the most respected logistics partner in Belgium for our clients.')
+    assert all(app.is_placeholder_finding(f['type']) for f in r1), r1
+    r2 = app.detect_claims('We are committed to ensuring human rights are respected throughout our supply chain.')
+    assert any(f['type'] == 'Aspirational or future social-performance claim' for f in r2), r2
+
+
+def test_third_party_claim_not_attributed_to_scanned_company():
+    """Full engineering review, batch 4: a competitor's, supplier's or customer's claim quoted
+    or contrasted in the company's own text was attributed to the scanned company itself.
+    "Unlike some competitors who claim to be carbon neutral, we focus on real reductions" is
+    literally a rebuttal of greenwashing; "Our supplier says they are carbon neutral..." and "One
+    of our customers described our warehouse as eco-friendly..." both report someone ELSE's
+    claim. All three were previously reported as the company's own per-se-prohibited claim."""
+    for text in (
+        'Unlike some competitors who claim to be carbon neutral, we focus on real reductions in our own factories.',
+        'Our supplier says they are carbon neutral and we are reviewing that statement.',
+        'One of our customers described our warehouse as eco-friendly during a site visit last year.',
+    ):
+        findings = app.detect_green_claims(text)
+        assert all(app.is_placeholder_finding(f['type']) for f in findings), (text, findings)
+    # sanity: the company's own genuine claim is still detected
+    genuine = app.detect_green_claims('Our products are eco-friendly and made from recycled materials.')
+    assert any(f['type'] == 'Generic environmental claim' for f in genuine), genuine
+
+
+def test_environmental_certification_does_not_downgrade_forced_labour_claim():
+    """Full engineering review, batch 4: enrich_social_finding() reused the green-focused
+    certification-scheme list to downgrade a social/forced-labour claim's risk -- an ISO 14001
+    energy-management certificate (or Energy Star, LEED, BREEAM, Carbon Trust Standard, ...) has
+    nothing to do with labour conditions, yet flipped the highest-stakes claim category in the
+    tool from High to Medium risk. A genuine social-audit scheme (Fairtrade) still downgrades."""
+    r1 = app.detect_claims('All our cotton is free from forced labour, and our Ghent plant holds ISO 14001 for energy management.')
+    assert any(f['type'] == 'Forced-labour product or supply-chain claim' and f['risk'] == 'High' for f in r1), r1
+    r2 = app.detect_claims('All our cotton is Fairtrade certified and free from forced labour.')
+    assert any(f['type'] == 'Forced-labour product or supply-chain claim' and f['risk'] == 'Medium' for f in r2), r2
