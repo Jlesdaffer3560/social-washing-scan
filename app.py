@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_80_home_invest_belgium_group_domain"
-APP_RELEASE_LABEL="v93.80"
+APP_VERSION="hostable_v93_81_engineering_review_batch_1"
+APP_RELEASE_LABEL="v93.81"
 APP_RELEASE_DATE="2026-09-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -818,11 +818,21 @@ def _v93_company_number_identity_check(kbo_info, analysed_text):
     casual copy) fixes that specific case: {"gaasch","packaging"} both present confirms;
     "gaasch" alone does not. A false "possible wrong company" warning on a legitimate site
     that just phrases its own name unusually is a minor inconvenience; a false silent
-    confirmation defeats the entire feature -- so this deliberately errs toward warning."""
+    confirmation defeats the entire feature -- so this deliberately errs toward warning.
+
+    v93.81: the "every token present" check itself was a bare substring test (`t in
+    haystack`), exactly the class of bug `_v62_term_present` exists to prevent elsewhere in
+    this file. Belgian legal names are dominated by short, common tokens (`van`, `den`,
+    `bos`, `berg`, `hool`...) that are substrings of ordinary words -- e.g. a KBO number for
+    "Van Hool NV" (tokens ['van','hool']) would falsely "confirm" against any page merely
+    containing "relevant" (contains the letters "van") and "school" (contains "hool"),
+    silently defeating the very check meant to catch a wrong-company scan. Now requires each
+    token to appear as a complete word, using the same word-boundary matcher already used
+    for controversy-term matching."""
     tokens=_v93_kbo_core_name_tokens(kbo_info.get('name',''))
     haystack=(analysed_text or '').lower()
     required=min(2,len(tokens))
-    matched=required>0 and sum(1 for t in tokens if t in haystack)>=required
+    matched=required>0 and sum(1 for t in tokens if _v62_term_present(haystack,t))>=required
     official=kbo_info.get('name','')
     number=kbo_info.get('number','')
     if matched:
@@ -1200,7 +1210,7 @@ _RELEVANT_SEGMENT_TERMS=('green','planet')
 # queries, not in-site crawl discovery. Direct .pdf links bypass this filter, but the HTML
 # hub page that LINKS to the PDF does not, so the PDF itself was often never reached either.
 # Includes both accented and unaccented forms since CMS URL slugs go either way.
-_RELEVANT_SUBSTRING_TERMS=('sustain','responsib','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','environment','climate','circular','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','decarbon','net-zero','net_zero',
+_RELEVANT_SUBSTRING_TERMS=('sustain','responsib','human','rights','divers','inclusion','supplier','ethic','impact','community','accessibility','safety','annual','report','esg','csr','environment','climate','circular','sourcing','governance','modern-slavery','modern_slavery','non-financial','investor','purpose','society','decarbon','net-zero','net_zero',
     # Dutch
     'duurzaam','verantwoord','mensenrecht','diversiteit','inclusie','leverancier','ethisch','gemeenschap','toegankelijkheid','veiligheid','jaarverslag','milieu','klimaat','circulair','bestuur','dwangarbeid','investeerder','maatschappij','koolstof','mvo',
     # French
@@ -1217,14 +1227,26 @@ def relevant(h):
     h=h.lower()
     path=urlparse(h).path if '://' in h else h
     last_segment=path.rstrip('/').rsplit('/',1)[-1]
-    if _CATALOG_ID_SEGMENT_RE.match(last_segment):
+    # v93.81: two separate bugs lived in this function.
+    # (1) The catalog-ID guard below excluded ANY compact "1-3 letters + 4+ digits" segment --
+    # including the exact abbreviation+year shape a real CSR/ESG hub page commonly uses with no
+    # separator (Dutch "mvo2024", English/French "csr2024"/"esg2025"/"rse2024"), silently
+    # dropping the company's own sustainability hub whenever its slug happened to omit a dash.
+    # Now only excluded when that same segment ISN'T itself a relevant keyword.
+    # (2) The keyword checks below matched against `h` (the whole URL, hostname included), not
+    # `path` (already computed just above but previously unused for this). On a domain whose
+    # own name contains a relevant term (e.g. "societegenerale.be", "duurzaamwonen.be"), every
+    # single link on the homepage -- /contact, /cookies, /jobs -- matched purely because of the
+    # HOSTNAME and became an equally-"relevant" candidate, diluting the crawl-attempt budget
+    # away from the genuinely relevant pages. Keyword matching now runs against `path` only.
+    if _CATALOG_ID_SEGMENT_RE.match(last_segment) and not any(k in last_segment for k in _RELEVANT_SUBSTRING_TERMS):
         return False
-    if any(k in h for k in _RELEVANT_SUBSTRING_TERMS):
+    if any(k in path for k in _RELEVANT_SUBSTRING_TERMS):
         return True
     # 'green' and 'planet' collide with ordinary grocery/retail product names (e.g.
     # "evergreen", "planetarium") when matched as a raw substring. Require them to appear
     # as a delimited path segment/token instead.
-    return any(re.search(r'(?:^|[/_.-])'+term+r'(?:$|[/_.-])',h) for term in _RELEVANT_SEGMENT_TERMS)
+    return any(re.search(r'(?:^|[/_.-])'+term+r'(?:$|[/_.-])',path) for term in _RELEVANT_SEGMENT_TERMS)
 
 
 COMMON_PUBLIC_PATHS=['/sustainability','/sustainability-report','/csr','/esg','/responsibility',
@@ -1965,9 +1987,14 @@ def problematic_terms_for_finding(claim_text, claim_type=''):
     terms=[
         'green','eco','ecological','environmentally friendly','natural','sustainable','sustainability','climate neutral','carbon neutral','co2 neutral','co₂ neutral','net zero','carbon positive','carbon negative','climate positive','offset','offsetting','climate compensated','reduced climate impact','biodegradable','recyclable','recycled','circular','renewable','green energy','energy efficient','water efficient','better for the planet','greener than','more sustainable than','lower emissions','reduced emissions','lowest emissions','best environmental','ethical','fair','responsible','socially responsible','trusted','human rights','labour rights','labor rights','forced labour','forced labor','child labour','child labor','modern slavery','living wage','supply chain','supplier','responsible sourcing','ethical sourcing','traceable','certified','audited','diversity','inclusion','inclusive','safe workplace','well-being','accessibility','vulnerable customers','for all','all suppliers','all employees','100%','always','never','guarantee','fully','zero'
     ]
+    # v93.81: was a bare substring test ("if t in low") -- the short single-word terms in
+    # `terms` (e.g. "green", "eco", "fair") matched inside completely unrelated words
+    # ("greenhouse", "economic", "affair"), showing "problematic terms" to the reader that
+    # don't actually appear in the passage as claim wording. Reuses the same word-boundary
+    # matcher already used for controversy-term matching elsewhere in this file.
     low=(claim_text or '').lower(); out=[]
     for t in terms:
-        if t in low and t not in out:
+        if _v62_term_present(low,t) and t not in out:
             out.append(t)
     # Add claim-type markers where the excerpt is too short or lacks the exact trigger term.
     ct=(claim_type or '').lower()
@@ -3645,6 +3672,29 @@ def _v93_score_calculation_note(material, regulatory_label):
         '10% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory '
         'signal (see raw_before_cap/cap_applied).')
 
+def _v93_ext_verification_status(ext, targeted):
+    """An external-context score of 0 can mean two very different things -- "we searched and
+    found no negative signal" (a genuine, informative result) or "external search was not
+    configured/enabled for this scan" (no information at all). v93.81: a THIRD state was
+    missing -- a search that was ENABLED but whose provider(s) all failed or were on cooldown
+    (ext['search_failed']=True, set at the point results are ranked -- see build_confidence()'s
+    own use of the same flag) fell through to the "no relevant external signal identified"
+    branch below, worded identically to a search that genuinely ran and found nothing. That
+    reads as a verified-clean result to anyone relying on external_verification_status (shown
+    directly in the report) when no check actually happened. Reproduced: a green-dimension
+    search that exhausts its Tavily/Google quota while the social-dimension search (a separate
+    set of queries, checked independently) still succeeds -- this is evaluated per dimension,
+    so the green side must say so even though the overall scan's `ext.get('enabled')` is
+    true. Promoted to module level (was a local closure) so it can be tested directly."""
+    if not (ext or {}).get('enabled'):
+        return 'Not performed (no external search source was configured for this scan)'
+    if (ext or {}).get('search_failed'):
+        return 'Attempted but failed (provider error or quota) — not a verified-clean result'
+    if targeted:
+        return f'Performed — {len(targeted)} relevant external signal(s) retained'
+    return 'Performed — no relevant external signal identified'
+
+
 def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings, audience=None):
     """A retained green claim with blacklisted_practice_indicator=True matches a FIXED
     pattern on EmpCo Annex I -- the Directive (EU) 2024/825 practices automatically
@@ -4470,13 +4520,7 @@ def analyse_url_v27(raw, company_number=''):
     # same "0" risk contribution overstates confidence in scans where no search ran. Surface
     # this explicitly rather than letting the numeric score imply a verification that did not
     # happen.
-    def _ext_verification_status(ext, targeted):
-        if not (ext or {}).get('enabled'):
-            return 'Not performed (no external search source was configured for this scan)'
-        if targeted:
-            return f'Performed \u2014 {len(targeted)} relevant external signal(s) retained'
-        return 'Performed \u2014 no relevant external signal identified'
-    external_verification_status={'green':_ext_verification_status(green_ext, green_targeted), 'social':_ext_verification_status(social_ext, social_targeted)}
+    external_verification_status={'green':_v93_ext_verification_status(green_ext, green_targeted), 'social':_v93_ext_verification_status(social_ext, social_targeted)}
     social_score, social_mod, social_mod_note, evidence_credit, social_components = calc_score(social_fs,sec,ctx,social_ext_scoring,txt,comp.get("company",""),audience,page_segments)
     social_external_context = strict_external_context_risk({'results':social_targeted}, comp.get('company',''))
     green_score, green_components, green_external_context = calc_green_score(green_fs,sec,green_ext_scoring,txt,audience,page_segments)
@@ -8697,8 +8741,15 @@ V64_COMPANY_DOMAIN_ALIASES={
 KNOWN_GROUP_DOMAINS.update({
     'shein':['https://www.sheingroup.com'],
     'sheingroup':['https://www.shein.com'],
-    'hm.com':['https://hmgroup.com'],
-    'www2.hm.com':['https://hmgroup.com'],
+    # v93.81: _host_has_brand_label() (added in v93.31 to stop a bare-substring false match)
+    # requires the brand to be an exact DOT-DELIMITED LABEL of the host -- but these two keys
+    # were written as multi-label strings ('hm.com', 'www2.hm.com'), which can never equal a
+    # single split('.') label of any host, so both entries were silently unreachable ever since
+    # v93.31 shipped: scanning hm.com or www2.hm.com never actually widened to hmgroup.com,
+    # where H&M's real sustainability reporting lives. Both collapse to the single label that
+    # is actually present on the host ('hm', shared by hm.com's ['hm','com'] and
+    # www2.hm.com's ['www2','hm','com']).
+    'hm':['https://hmgroup.com'],
     'hmgroup':['https://www2.hm.com'],
     # v93.80: live-reproduced -- scanning homeinvestbelgium.be (the listed Belgian residential
     # REIT's own domain) reviewed only that one thin landing page; every internal nav link on
@@ -8763,7 +8814,14 @@ def _v64_brand_aliases(company_name):
     if raw: aliases.append(raw)
     if tokens:
         aliases.append(' '.join(tokens))
-        aliases.append(tokens[0])
+    # v93.81: a bare tokens[0] alias used to be added here too -- the same-shaped bug as the
+    # tokens[:2] truncation fixed above, one token shorter. Live-reproduced: "Lotus Bakeries" ->
+    # tokens=['lotus','bakeries'] -> alias 'lotus' -> _v72_validate_guessed_domain('lotus.com',
+    # 'Lotus Bakeries') passes (root_label 'lotus' in compacts, title "Lotus Cars..." contains
+    # the alias 'lotus') even though lotuscars.com is a completely unrelated British sports-car
+    # maker. Exactly like the two-token case: when tokens has exactly 1 element this line was
+    # 100% redundant with the joined-tokens alias just above; when 2+ remain, it manufactures an
+    # unreliably short alias the company was never distinctively known by. Never uniquely useful.
     # Normalise common display/group names.
     if 'shein' in tokens: aliases.extend(['shein','shein group'])
     if ('h' in tokens and 'm' in tokens) or raw in {'hm','h m','h and m'}: aliases.extend(['h&m','h & m','hm','h m'])
@@ -9103,7 +9161,17 @@ _V72_TLD_PREFERENCE={tld:i for i,tld in enumerate(_V72_DOMAIN_GUESS_TLDS)}
 
 def _v72_guess_domain_bases(name):
     """Plausible bare-domain name bases for a company, derived from the name alone --
-    no external search API involved."""
+    no external search API involved.
+
+    v93.81: a bare tokens[0] base used to be added here too whenever it was >=4 chars --
+    live-reproduced: "Lotus Bakeries" -> tokens=['lotus','bakeries'] -> base 'lotus' ->
+    _v72_guess_domain_candidates() tries https://www.lotus.com, which
+    _v72_validate_guessed_domain() then confirms (root_label 'lotus' matches the equally
+    truncated alias 'lotus', see _v64_brand_aliases' matching fix) even though lotuscars.com
+    is a completely unrelated British sports-car maker, not a Lotus Bakeries site. Whenever
+    tokens has exactly 1 element this base was already identical to `joined`/`compact` above
+    (redundant); whenever 2+ remain it manufactures an unreliably short guess the company's
+    real domain was never actually based on. Never uniquely useful, so it is not generated."""
     norm=_v64_norm(name)
     tokens=[t for t in norm.split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
     bases=[]
@@ -9114,8 +9182,6 @@ def _v72_guess_domain_bases(name):
         joined=''.join(tokens)
         if joined and joined not in bases:
             bases.append(joined)
-        if len(tokens[0])>=4 and tokens[0] not in bases:
-            bases.append(tokens[0])
     # v89: a leading definite article ("Le Pain Cotidien", "La Redoute", "Het Financieele
     # Dagblad") was never stripped, so the ONLY base tried was e.g. "lepaincotidien" -- if the
     # real domain omits the article ("paincotidien.com"), it was never even attempted.
@@ -9695,6 +9761,32 @@ _V69_EXONERATION_TERMS=(
     # to the target despite containing "wins"/"sided with").
     'ruled in favor of','ruled in favour of','ruling in favor of','ruling in favour of'
 )
+# v93.81: every _V69_EXONERATION_TERMS entry above is either passive voice ('complaint
+# dismissed') or the v93.75 winner-naming addition -- the ACTIVE-voice form of the same
+# event, which is how headlines are actually written most of the time, matched none of them.
+# A literal-phrase entry doesn't cover this either: real headlines put the subject/adjective
+# between the verb and its object ("Court dismisses GREENWASHING complaint against Acme",
+# "Appeal court overturns ACME GREENWASHING fine"), so a bounded-gap regex is needed instead
+# of another exact string. Live-reproduced: all four of "Court dismisses greenwashing
+# complaint against Acme", "Appeal court overturns Acme greenwashing fine", "Watchdog drops
+# investigation into Acme sustainability claims" and "Regulator dismisses complaint over Acme
+# environmental claims" were retained as adverse (matching _V71_ADVERSE_EVENT_TERMS'
+# "accused"/"court"/"investigation" etc. with nothing to exonerate them) -- a company that
+# WON its case was scored as if it lost. Each pattern names an action an authority takes FOR
+# the accused, directionally unambiguous regardless of word order -- unlike the deliberately-
+# excluded bare "won the case"/"sided with" (see the note on _V69_EXONERATION_TERMS above).
+_V69_EXONERATION_PATTERNS=(
+    r'\bdismiss(?:es|ed)?\b(?:\s+\w+){0,3}\s+(?:complaint|case|charges|appeal)\b',
+    r'\breject(?:s|ed)?\b(?:\s+\w+){0,3}\s+(?:complaint|allegations?)\b',
+    r'\bden(?:ies|ied)\b(?:\s+\w+){0,3}\s+allegations?\b',
+    r'\bdrop(?:s|ped)?\b(?:\s+\w+){0,3}\s+(?:complaint|case|investigation|charges)\b',
+    r'\bwithdr(?:aws|ew|awn)\b(?:\s+\w+){0,3}\s+complaint\b',
+    r'\boverturn(?:s|ed)?\b(?:\s+\w+){0,3}\s+(?:fine|ruling|decision)\b',
+    r'\bannul(?:s|led)?\b(?:\s+\w+){0,3}\s+fine\b',
+    r'\bquash(?:es|ed)?\b(?:\s+\w+){0,3}\s+fine\b',
+    r'\bupholds?\s+appeal\b',
+    r'\bno\s+(?:breach|violation)\s+found\b',
+)
 _V69_GENERIC_ADVERSE=(
     'accused','alleged','alleges','alleging','allegation','criticised','criticized','criticism','backlash','controversy',
     'complaint','lawsuit','sued','court','investigation','investigating','probe','inquiry','watchdog',
@@ -9829,7 +9921,22 @@ _V71_COMPANY_DOCUMENT_MARKERS=(
     # PROGRAM name that can appear on a page merely listing which benchmarks cover a company
     # (e.g. a general NGO company-profile page), which is not itself a company-authored
     # document and must still be eligible as an independent source.
-    'additional disclosure','company response','company statement'
+    'additional disclosure','company response','company statement',
+    # v93.81: this list and OWNED_OR_NEUTRAL_DOC_TERMS (used by a separate, older check,
+    # is_company_owned_source()) both name "the company's own report/policy document", but
+    # had drifted apart -- eight terms already present in the other list were missing here,
+    # so a company's own Integrated/Impact Report, Sustainability Statement, Non-Financial
+    # Report, Corporate Responsibility Report, Due Diligence Statement, Human Rights
+    # Statement or Supplier Policy/Standards -- hosted on a third-party ESG register rather
+    # than the company's own domain (so is_company_owned_source's host check doesn't apply
+    # either) -- fell straight through to the adverse-vocabulary check below, which then
+    # flags the document's own ordinary risk-disclosure language ("forced labour",
+    # "excessive working hours") as if it were an independent adverse finding. Same failure
+    # shape as the v91.2 and v93.70 gaps above. 'communication on progress' (the UN Global
+    # Compact's standard annual company self-report) added for the same reason.
+    'integrated report','impact report','sustainability statement','non-financial report',
+    'corporate responsibility report','due diligence statement','human rights statement',
+    'supplier policy','supplier standards','communication on progress'
 )
 _V71_DOCUMENT_OVERRIDE_TITLE_TERMS=(
     'fined','fine over','investigation','investigates','regulator','authority finds',
@@ -9922,7 +10029,8 @@ def _v69_external_polarity(result,dimension='social'):
     first_content=content[:900]
     if _v71_company_document_without_adverse_finding(result):
         return False,'Company-authored policy/report without an independent adverse finding'
-    if any(_v62_term_present(title,term) for term in _V69_EXONERATION_TERMS):
+    if any(_v62_term_present(title,term) for term in _V69_EXONERATION_TERMS) or \
+       any(re.search(pattern,title,re.I) for pattern in _V69_EXONERATION_PATTERNS):
         return False,'Exoneration or dismissal headline, not negative stakeholder news'
     positive_title=_v69_term_hits(title,_V69_POSITIVE_HEADLINE_TERMS)
     adverse_title=_v69_term_hits(title,_V71_ADVERSE_EVENT_TERMS)

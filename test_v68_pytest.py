@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_80_home_invest_belgium_group_domain'
+    assert app.APP_VERSION == 'hostable_v93_81_engineering_review_batch_1'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4359,3 +4359,130 @@ def test_home_invest_belgium_widens_to_its_real_corporate_domain():
         if app._host_has_brand_label('homeinvest.com', brand):
             known_us.extend(domains)
     assert 'https://corporate.homeinvest.be' not in known_us
+
+
+def test_lotus_bakeries_does_not_resolve_to_unrelated_lotus_cars():
+    """Full engineering review, batch 1: same bug class/mechanism as the Home Invest Belgium
+    fix, one token shorter -- _v64_brand_aliases()/_v72_guess_domain_bases() used to also add a
+    bare tokens[0] alias/base ("lotus" for "Lotus Bakeries"), which exactly matches the
+    unrelated Lotus Cars' root domain label and title ("Lotus Cars | Official Site")."""
+    aliases = app._v64_brand_aliases('Lotus Bakeries')
+    assert 'lotus' not in aliases
+    bases = app._v72_guess_domain_bases('Lotus Bakeries')
+    assert 'lotus' not in bases
+    compacts = {app._v64_compact(a) for a in aliases}
+    assert app._v64_compact(app._v64_root_label('lotus.com')) not in compacts
+    assert 'nike' in app._v64_brand_aliases('Nike Inc')
+    assert 'nike' in app._v72_guess_domain_bases('Nike Inc')
+
+
+def test_hm_group_domain_keys_are_reachable():
+    """Full engineering review, batch 1: _host_has_brand_label() (v93.31) requires an exact
+    dot-delimited host label, but KNOWN_GROUP_DOMAINS had 'hm.com' and 'www2.hm.com' as KEYS --
+    multi-label strings that can never equal a single split('.') label of any host, silently
+    making both entries unreachable since v93.31 shipped. Neither ever actually widened to
+    hmgroup.com, where H&M's real sustainability reporting lives."""
+    for host in ('hm.com', 'www2.hm.com'):
+        known = [d for brand, domains in app.KNOWN_GROUP_DOMAINS.items()
+                 if app._host_has_brand_label(host, brand) for d in domains]
+        assert 'https://hmgroup.com' in known, (host, known)
+
+
+def test_relevant_finds_compact_csr_year_slugs_without_over_matching_hostname():
+    """Full engineering review, batch 1: two bugs in relevant(). (1) The catalog-ID guard
+    excluded any compact "1-3 letters + 4+ digits" segment, including the exact
+    abbreviation+year shape a real CSR/ESG hub page commonly uses with no separator
+    ("mvo2024", "csr2024", "esg2025", "rse2024"). (2) Keyword matching ran against the whole
+    URL including the hostname, not just the path, so on a domain whose own name contains a
+    relevant term every link on that domain (including /contact, /cookies) was equally
+    "relevant", diluting the crawl-attempt budget."""
+    for slug in ('mvo2024', 'csr2024', 'esg2025', 'rse2024'):
+        assert app.relevant(f'https://example.be/nl/{slug}') is True, slug
+    assert app.relevant('https://example.com/products/pl2024') is False
+    assert app.relevant('https://www.societegenerale.be/contact') is False
+    assert app.relevant('https://www.societegenerale.be/fr/nos-engagements-durables') is True
+    assert app.relevant('https://duurzaamwonen.be/cookies') is False
+    assert app.relevant('https://duurzaamwonen.be/nl/duurzaamheid') is True
+
+
+def test_kbo_identity_check_requires_whole_word_match_not_substring():
+    """Full engineering review, batch 1: _v93_company_number_identity_check()'s "every
+    distinctive token present" check was a bare substring test. Belgian legal names are
+    dominated by short, common tokens ("van", "hool"...) that are substrings of ordinary
+    words -- a KBO number for "Van Hool NV" would falsely "confirm" against any page merely
+    containing "relevant" (contains "van") and "school" (contains "hool"), silently defeating
+    the check meant to catch a wrong-company scan."""
+    kbo = {'number': '0405.200.213', 'name': 'Van Hool NV', 'address': ''}
+    bad = app._v93_company_number_identity_check(
+        kbo, 'This page is relevant to our school programme and covers governance topics.')
+    assert 'confirmed' not in bad['note'].lower()
+    good = app._v93_company_number_identity_check(kbo, 'Van Hool is a Belgian bus and coach manufacturer.')
+    assert 'confirmed' in good['note'].lower()
+
+
+def test_problematic_terms_uses_word_boundaries_not_substrings():
+    """Full engineering review, batch 1: problematic_terms_for_finding() was a bare substring
+    test, so short terms like "green"/"eco"/"fair" matched inside unrelated words
+    ("greenhouse", "economic", "affair"), showing the reader "problematic terms" that don't
+    actually appear in the passage as claim wording."""
+    clean = app.problematic_terms_for_finding(
+        'Our economic performance and the local ecosystem benefit from greenhouse growers and an affair.', '')
+    assert clean == [], clean
+    real = app.problematic_terms_for_finding('Our product is eco-friendly and green.', '')
+    assert 'eco' in real and 'green' in real
+
+
+def test_failed_external_search_not_reported_as_verified_clean():
+    """Full engineering review, batch 1: a search that was ENABLED but whose provider(s) all
+    failed or were on cooldown (search_failed=True) fell through to "Performed -- no relevant
+    external signal identified", worded identically to a search that genuinely ran and found
+    nothing -- silently presenting a company as externally verified-clean when no check
+    actually happened."""
+    status_failed = app._v93_ext_verification_status({'enabled': True, 'search_failed': True}, [])
+    assert 'failed' in status_failed.lower()
+    assert 'no relevant external signal identified' not in status_failed.lower()
+    status_ok = app._v93_ext_verification_status({'enabled': True, 'search_failed': False}, [])
+    assert 'no relevant external signal identified' in status_ok.lower()
+    status_off = app._v93_ext_verification_status({'enabled': False}, [])
+    assert 'Not performed' in status_off
+
+
+def test_bhrrc_style_company_document_markers_match_owned_or_neutral_doc_terms():
+    """Full engineering review, batch 1: _V71_COMPANY_DOCUMENT_MARKERS and the separate,
+    older OWNED_OR_NEUTRAL_DOC_TERMS list both name "the company's own report/policy
+    document" but had drifted apart -- eight terms present in the other list were missing
+    here, so a company's own Integrated/Impact Report etc., hosted on a third-party ESG
+    register, was retained as an independent negative signal purely from its own ordinary
+    risk-disclosure language."""
+    for title in ('Acme Group Integrated Report 2025', 'Acme Group Impact Report 2025',
+                  'Acme Group Sustainability Statement 2025', 'Acme Group Due Diligence Statement 2025',
+                  'Acme Group Human Rights Statement', 'Acme Group Communication on Progress 2025'):
+        r = {'title': title,
+             'content': ('Acme is committed to preventing forced labour and child labour in its supply '
+                         'chain. We identified risks of excessive working hours at two suppliers and are '
+                         'remediating them.'),
+             'url': 'https://www.esg-register.example/library/acme.pdf'}
+        assert app._v71_company_document_without_adverse_finding(r) is True, title
+    adverse = {'title': 'NGO investigation finds Acme Impact Report overstates forced-labour remediation',
+               'content': 'An investigation found the claims in the report to be misleading.',
+               'url': 'https://www.ngo-watch.example/acme-investigation'}
+    assert app._v71_company_document_without_adverse_finding(adverse) is False
+
+
+def test_active_voice_exoneration_headlines_not_treated_as_adverse():
+    """Full engineering review, batch 1: every _V69_EXONERATION_TERMS entry was passive voice
+    ("complaint dismissed") or named the winner directly ("ruled in favor of X", v93.75) --
+    the active-voice form of the same event, with the usual adjective/name between the verb
+    and its object ("Court dismisses GREENWASHING complaint against Acme"), matched nothing.
+    A company that WON its case was scored as if it lost."""
+    for title in ('Court dismisses greenwashing complaint against Acme',
+                  'Appeal court overturns Acme greenwashing fine',
+                  'Watchdog drops investigation into Acme sustainability claims',
+                  'Regulator dismisses complaint over Acme environmental claims'):
+        accepted, reason = app._v69_external_polarity(
+            {'title': title, 'content': '', 'url': 'https://www.reuters.com/legal/acme'}, 'green')
+        assert accepted is False, (title, reason)
+    loss, _ = app._v69_external_polarity(
+        {'title': 'Regulator fines Acme for misleading environmental claims', 'content': '',
+         'url': 'https://www.reuters.com/legal/acme'}, 'green')
+    assert loss is True
