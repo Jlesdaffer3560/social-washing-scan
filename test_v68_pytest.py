@@ -1422,7 +1422,7 @@ def test_correct_sector_assignments_overwrites_wrong_inferred_values(monkeypatch
     update_sql=executed[0][0]
     assert "sector = 'Sector not explicitly identified'" not in update_sql
     assert 'IS DISTINCT FROM' in update_sql
-    assert executed[0][1]==('Food and beverage manufacturing (NACE C)','High','AB InBev','Food and beverage manufacturing (NACE C)','High','High')
+    assert executed[0][1]==('Food and beverage manufacturing (NACE C)','High','AB InBev','Food and beverage manufacturing (NACE C)','High')
 
 
 def test_correct_sector_assignments_reports_error_without_database(monkeypatch):

@@ -6410,10 +6410,18 @@ def _v93_correct_sector_assignments():
                 sector_name=info.get('sector') if isinstance(info,dict) else info
                 sector_risk=info.get('sector_risk') if isinstance(info,dict) else None
                 if not sector_name: continue
+                # v93.94: a bare "%s IS NOT NULL" gives Postgres no column/type context to
+                # infer that parameter's type from, which psycopg2 surfaced live as "could
+                # not determine data type of parameter $5" -- every fixture entry always
+                # supplies both fields together, so the extra COALESCE/IS-NOT-NULL guard for
+                # a missing sector_risk was unnecessary complexity, not a real requirement.
+                # Every remaining parameter is compared directly against a real column
+                # (giving Postgres a concrete type to infer), matching the simpler pattern
+                # already used by _v92_backfill_sector_names() above.
                 cur.execute(
-                    "UPDATE scan_history SET sector=%s, sector_risk=COALESCE(%s,sector_risk) "
-                    "WHERE company ILIKE %s AND (sector IS DISTINCT FROM %s OR (%s IS NOT NULL AND sector_risk IS DISTINCT FROM %s))",
-                    (sector_name,sector_risk,company,sector_name,sector_risk,sector_risk))
+                    "UPDATE scan_history SET sector=%s, sector_risk=%s "
+                    "WHERE company ILIKE %s AND (sector IS DISTINCT FROM %s OR sector_risk IS DISTINCT FROM %s)",
+                    (sector_name,sector_risk,company,sector_name,sector_risk))
                 n=cur.rowcount
                 if n>0:
                     summary['updated_rows']+=n
