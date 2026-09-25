@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_97_distinct_dropdown_sql_fix'
+    assert app.APP_VERSION == 'hostable_v93_98_history_multiselect_filters'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -320,17 +320,20 @@ def test_scan_history_filter_builder():
     """v92.3: the WHERE-clause builder shared by the table view, stats block and CSV
     export must bind every value as a parameter (never interpolate it into the SQL
     text), and must silently ignore a risk/period value outside the fixed option list
-    rather than accepting an arbitrary string into a raw SQL fragment."""
+    rather than accepting an arbitrary string into a raw SQL fragment.
+    v93.98: the company condition is wrapped in parens ('(company ILIKE %s)') because
+    `search` (free text) and `companies` (multi-select) both narrow by company and
+    combine with OR inside that one clause -- see _v92_build_filters()'s v93.98 note."""
     assert app._v92_build_filters()==('',())
     where,params=app._v92_build_filters(search='Acme')
-    assert where=='WHERE company ILIKE %s' and params==('%Acme%',)
+    assert where=='WHERE (company ILIKE %s)' and params==('%Acme%',)
     where,params=app._v92_build_filters(risk='High')
     assert where=='WHERE global_risk = %s' and params==('High',)
     # not a real risk level / period key -- must be dropped, not smuggled into the SQL
     assert app._v92_build_filters(risk='1=1; DROP TABLE scan_history')==('',())
     assert app._v92_build_filters(period='not-a-real-period')==('',())
     where,params=app._v92_build_filters(search='Acme',risk='High',period='month')
-    assert where.startswith('WHERE company ILIKE %s AND global_risk = %s AND') and params==('%Acme%','High')
+    assert where.startswith('WHERE (company ILIKE %s) AND global_risk = %s AND') and params==('%Acme%','High')
 
 
 def test_scan_history_csv_export():
@@ -754,17 +757,27 @@ def test_build_filters_external_signals_exact_match():
     assert params==(5,)
 
 
-def test_build_filters_sector_exact_match():
-    """v93.95: `sector` is an independent exact-match filter, alongside (not instead of)
-    `search` (company) -- both must be usable together in one query, since the whole point
-    is being able to narrow by company AND/OR by sector separately."""
-    where,params=app._v92_build_filters(sector='Food and beverage manufacturing (NACE C)')
-    assert 'sector = %s' in where
-    assert params==('Food and beverage manufacturing (NACE C)',)
-    where2,params2=app._v92_build_filters(search='Puratos',sector='Food and beverage manufacturing (NACE C)')
-    assert 'company ILIKE %s' in where2 and 'sector = %s' in where2 and ' AND ' in where2
-    assert params2==('%Puratos%','Food and beverage manufacturing (NACE C)')
-    assert app._v92_build_filters(sector='')==('',())
+def test_build_filters_sector_and_company_multi_select():
+    """v93.98: `sectors`/`companies` are MULTI-select exact-match filters (lists),
+    replacing v93.95's single-value `sector` -- the user could only ever pick one company
+    or one sector at a time. `sectors` uses `sector = ANY(%s)`; `companies` combines with
+    `search` (free text) via OR inside one company condition, since both narrow by the
+    same thing (company) -- that combined condition then combines with `sectors` and
+    everything else via AND, same as always."""
+    where,params=app._v92_build_filters(sectors=['Food and beverage manufacturing (NACE C)','Banking and financial services (NACE K)'])
+    assert 'sector = ANY(%s)' in where
+    assert params==(['Food and beverage manufacturing (NACE C)','Banking and financial services (NACE K)'],)
+    where2,params2=app._v92_build_filters(companies=['Puratos','Zabra'])
+    assert where2=='WHERE (company = ANY(%s))'
+    assert params2==(['Puratos','Zabra'],)
+    where3,params3=app._v92_build_filters(search='Pura',companies=['Zabra'])
+    assert where3=='WHERE (company ILIKE %s OR company = ANY(%s))'
+    assert params3==('%Pura%',['Zabra'])
+    where4,params4=app._v92_build_filters(companies=['Puratos'],sectors=['Food and beverage manufacturing (NACE C)'])
+    assert where4=='WHERE (company = ANY(%s)) AND sector = ANY(%s)'
+    assert params4==(['Puratos'],['Food and beverage manufacturing (NACE C)'])
+    assert app._v92_build_filters(sectors=[])==('',())
+    assert app._v92_build_filters(companies=[])==('',())
 
 
 def test_scan_history_fetch_distinct_companies_and_dates_unconfigured():
@@ -781,39 +794,56 @@ def test_scan_history_fetch_distinct_sectors_unconfigured():
     assert app._v92_fetch_distinct_sectors()==[]
 
 
-def test_scan_history_excel_style_date_and_company_dropdowns(monkeypatch):
-    """v93.10: Date and Company get the same Excel-style exact-value dropdown as the
-    score columns -- Company reuses the existing `q` search param (so picking a name just
-    fills the search box with that exact value, no new filter machinery), and Date reuses
-    the existing exact date-range filter by setting date_from=date_to=that single day.
-    Both lists must come back alphabetically/chronologically ordered, and an active
-    Company/Date filter must be preserved when a score dropdown's option is built (AND
-    semantics across every active filter, not just the score ones)."""
+def test_scan_history_excel_style_date_dropdown(monkeypatch):
+    """v93.10: Date gets the same Excel-style exact-value dropdown as the score columns --
+    reusing the existing exact date-range filter by setting date_from=date_to=that single
+    day. The list must come back chronologically ordered (newest first), and an active
+    Date filter must be preserved when a score dropdown's option is built (AND semantics
+    across every active filter, not just the score ones)."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
          'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
          'social_score':50,'findings_count':14}
     html=app._v92_render_history_page([row],1,1,25,'Puratos',
         date_from='2026-09-02',date_to='2026-09-02',
-        distinct_companies=['AB Eiffage','Puratos','Zabra'],
         distinct_dates=['2026-09-03','2026-09-02'])
-    # Company dropdown: alphabetical order, active value ("Puratos") marked selected
-    assert '<option value="/history?q=AB%20Eiffage&date_from=2026-09-02&date_to=2026-09-02">AB Eiffage</option>' in html
-    assert '<option value="/history?q=Puratos&date_from=2026-09-02&date_to=2026-09-02" selected>Puratos</option>' in html
     # Date dropdown: newest first, active day marked selected, other day still an option
     assert ('<option value="/history?q=Puratos&date_from=2026-09-02&date_to=2026-09-02" selected>'
             '2026-09-02</option>' in html)
     assert '2026-09-03</option>' in html
-    # picking a different company must preserve the active date filter
-    assert 'q=Zabra&date_from=2026-09-02&date_to=2026-09-02' in html
+
+
+def test_scan_history_company_multiselect_dropdown(monkeypatch):
+    """v93.98: the Company column's filter is a real multi-select (<select multiple>,
+    applied via a button rather than onchange -- see _v92ApplyMulti()'s docstring for
+    why), replacing v93.10's single-pick dropdown that only ever reused the `q` search
+    box. Options come back alphabetically ordered, currently-active companies are marked
+    selected, and the select's `data-base` URL (used by the Apply button's JS to build the
+    final navigation target) preserves every OTHER currently active filter."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
+         'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
+         'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'',
+        date_from='2026-09-02',date_to='2026-09-02',companies=['Puratos'],
+        distinct_companies=['AB Eiffage','Puratos','Zabra'])
+    assert '<select id="companiesSelect" multiple' in html
+    assert '<option value="AB Eiffage">AB Eiffage</option>' in html
+    assert '<option value="Puratos" selected>Puratos</option>' in html
+    assert '<option value="Zabra">Zabra</option>' in html
+    # the base URL for the Apply button preserves the active date filter and excludes
+    # `companies` itself (the JS appends the live selection on click)
+    assert 'data-base="/history?date_from=2026-09-02&date_to=2026-09-02"' in html
+    assert 'data-param="companies"' in html
+    assert "_v92ApplyMulti(&#39;companiesSelect&#39;)" in html
 
 
 def test_scan_history_company_and_sector_are_separate_filterable_columns(monkeypatch):
     """v93.95: the user reported that Company and Sector were shown together in ONE table
     cell, with only Company filterable -- they wanted to be able to select/filter by
-    company name AND, independently, by sector name. Sector must now render as its OWN
-    table column with its own Excel-style exact-match dropdown (mirroring Company's), and
-    the Company cell must no longer embed the sector text at all."""
+    company name AND, independently, by sector name. Sector must render as its OWN table
+    column with its own filter dropdown, and the Company cell must no longer embed the
+    sector text at all."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Food and beverage manufacturing (NACE C)',
          'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
@@ -822,22 +852,64 @@ def test_scan_history_company_and_sector_are_separate_filterable_columns(monkeyp
         distinct_sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'])
     # Sector column header exists with its own dropdown, independent of the Company one.
     assert '>Sector<' in html or '>Sector&darr;<' in html
-    # Dropdown options: label has the "(NACE X)" suffix stripped, value is the exact
-    # full stored string (used for the real filter), alphabetically ordered.
-    assert ('<option value="/history?sector=Banking%20and%20financial%20services%20%28NACE%20K%29">'
-            'Banking and financial services</option>' in html)
-    assert '<option value="/history?sector=Food%20and%20beverage%20manufacturing%20%28NACE%20C%29">Food and beverage manufacturing</option>' in html
     # The Company cell itself must be its own <td>, with the sector text in a DIFFERENT <td>.
     assert '<td><strong>Puratos</strong></td>' in html
     assert '<td class="small">Food and beverage manufacturing &middot; Risk: High</td>' in html
     assert '<div class="small">Food and beverage manufacturing' not in html
 
-    # Selecting a sector must be preserved alongside an active company search (both filters
-    # combine, neither clobbers the other), and the "All" option must clear only sector.
-    html2=app._v92_render_history_page([row],1,1,25,'Puratos',sector='Food and beverage manufacturing (NACE C)',
-        distinct_sectors=['Food and beverage manufacturing (NACE C)'])
-    assert 'q=Puratos&sector=Food' in html2.replace('%20',' ')
-    assert '<option value="/history?q=Puratos">All</option>' in html2
+
+def test_scan_history_sector_multiselect_dropdown(monkeypatch):
+    """v93.98: same multi-select conversion as Company (see
+    test_scan_history_company_multiselect_dropdown) applied to Sector -- option labels
+    have the "(NACE X)" suffix stripped for readability, but the option VALUE (what
+    actually gets filtered on) is the exact full stored string. Selecting a sector must be
+    usable alongside an active company text search (both filters combine, neither clobbers
+    the other)."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Food and beverage manufacturing (NACE C)',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'Puratos',sectors=['Food and beverage manufacturing (NACE C)'],
+        distinct_sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'])
+    assert '<select id="sectorsSelect" multiple' in html
+    assert '<option value="Banking and financial services (NACE K)">Banking and financial services</option>' in html
+    assert '<option value="Food and beverage manufacturing (NACE C)" selected>Food and beverage manufacturing</option>' in html
+    # the base URL for the Apply button preserves the active `q` company search
+    assert 'data-base="/history?q=Puratos"' in html
+    assert 'data-param="sectors"' in html
+
+
+def test_scan_history_multiple_companies_and_sectors_selected_together(monkeypatch):
+    """v93.98: the whole point of this feature -- several companies AND several sectors
+    must be selectable and filterable AT THE SAME TIME, with neither multi-select's Apply
+    button clobbering the other's current selection. Both must round-trip as repeated
+    query params, both option lists must mark every currently-active value as selected
+    (not just the first), and each multi-select's `data-base` must include the OTHER
+    multi-select's full active list."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Food and beverage manufacturing (NACE C)',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'',
+        companies=['AB Eiffage','Puratos'],sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'],
+        distinct_companies=['AB Eiffage','Puratos','Zabra'],
+        distinct_sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'])
+    # both companies marked selected in the Company multi-select
+    assert '<option value="AB Eiffage" selected>AB Eiffage</option>' in html
+    assert '<option value="Puratos" selected>Puratos</option>' in html
+    assert '<option value="Zabra">Zabra</option>' in html
+    # both sectors marked selected in the Sector multi-select
+    assert '<option value="Banking and financial services (NACE K)" selected>Banking and financial services</option>' in html
+    assert '<option value="Food and beverage manufacturing (NACE C)" selected>Food and beverage manufacturing</option>' in html
+    # the Company select's base URL preserves the full active sectors list (as repeated params)
+    assert ('data-base="/history?sectors=Banking%20and%20financial%20services%20%28NACE%20K%29'
+            '&sectors=Food%20and%20beverage%20manufacturing%20%28NACE%20C%29" data-param="companies"' in html)
+    # the Sector select's base URL preserves the full active companies list (as repeated params)
+    assert ('data-base="/history?companies=AB%20Eiffage&companies=Puratos" data-param="sectors"' in html)
+    # the CSV export link and the selectForm's hidden fields must carry BOTH lists, too
+    assert 'export.csv?q=&companies=AB%20Eiffage&companies=Puratos&sectors=Banking' in html
+    assert html.count('<input type="hidden" name="companies" value="AB Eiffage">')==2  # toolbar form + selectForm
+    assert html.count('<input type="hidden" name="sectors" value="Food and beverage manufacturing (NACE C)">')==2
 
 
 def test_scan_history_select_all_button_always_visible(monkeypatch):

@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_97_distinct_dropdown_sql_fix"
-APP_RELEASE_LABEL="v93.97"
+APP_VERSION="hostable_v93_98_history_multiselect_filters"
+APP_RELEASE_LABEL="v93.98"
 APP_RELEASE_DATE="2026-09-25"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5976,7 +5976,7 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
 _V92_EXTERNAL_SIGNALS_EXPR="(COALESCE(external_green_retained_count,0) + COALESCE(external_social_retained_count,0))"
 
 def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                        date_from=None,date_to=None,min_external=None,sector=None):
+                        date_from=None,date_to=None,min_external=None,companies=None,sectors=None):
     """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
     all three always agree on what "the current view" means. Every value is bound as a
     parameter, never interpolated into the SQL text, regardless of source.
@@ -5997,18 +5997,24 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
     column -- a derived value (retained green + social external-source signals), not a
     raw stored column, so the filter/sort/distinct-values machinery all use the same
     _V92_EXTERNAL_SIGNALS_EXPR SQL expression rather than a plain column name.
-    v93.95: `sector` is an exact-match filter (the same Excel-style "pick one value from
-    the real distinct values" pattern as the score columns), independent of `search`
-    (company). Reported by the user: company and sector were shown together in one table
-    cell/column with only company filterable, so a scan couldn't be found or narrowed down
-    by sector name at all."""
+    v93.98: `companies`/`sectors` are MULTI-select exact-match filters (lists), replacing
+    v93.95's single-value `sector` -- the user could only ever pick one company or one
+    sector at a time. `search` (the free-text partial box) and `companies` (the column's
+    own multi-select) both narrow by COMPANY, so they combine with OR (either matches);
+    that combined company condition, and `sectors`, then combine with everything else
+    (risk/period/scores/...) the normal way, with AND."""
     clauses=[]; params=[]
     if ids:
         clauses.append('id = ANY(%s)'); params.append(list(ids))
+    company_clauses=[]; company_params=[]
     if search:
-        clauses.append('company ILIKE %s'); params.append(f'%{search}%')
-    if sector:
-        clauses.append('sector = %s'); params.append(sector)
+        company_clauses.append('company ILIKE %s'); company_params.append(f'%{search}%')
+    if companies:
+        company_clauses.append('company = ANY(%s)'); company_params.append(list(companies))
+    if company_clauses:
+        clauses.append('('+' OR '.join(company_clauses)+')'); params.extend(company_params)
+    if sectors:
+        clauses.append('sector = ANY(%s)'); params.append(list(sectors))
     if risk in _V92_RISK_LEVELS:
         clauses.append('global_risk = %s'); params.append(risk)
     if period in _V92_PERIOD_SQL:
@@ -6058,8 +6064,25 @@ def _v92_parse_min_filter(source,key):
         return None
     return max(0,min(100000,v))
 
+def _v92_parse_multi_filter(source,key,max_items=100,max_len=200):
+    """v93.98: parses a MULTI-select query/form value (`companies`/`sectors` -- repeated
+    ?key=a&key=b query params, or repeated same-name form fields, both of which
+    parse_qs()/_v93_read_form_body() already collect into one list) into a capped,
+    de-duplicated list of stripped strings. Caps guard against a malicious/malformed
+    request building an absurdly large SQL `= ANY(%s)` array or reflecting oversized
+    values back into the page -- same defensive posture as `search`'s existing [:200]
+    truncation, just for a list instead of one string. Returns [] if the key is absent,
+    never None (so callers can use it directly as `if companies:` / `list(companies)`)."""
+    raw=source.get(key,[])
+    out=[]
+    for v in raw[:max_items]:
+        v=(v or '').strip()[:max_len]
+        if v and v not in out:
+            out.append(v)
+    return out
+
 def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                             date_from=None,date_to=None,sort='company',min_external=None,sector=None):
+                             date_from=None,date_to=None,sort='company',min_external=None,companies=None,sectors=None):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -6070,7 +6093,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
         order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
@@ -6533,7 +6556,7 @@ def _v93_backfill_finding_counts():
     return summary
 
 def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                      date_from=None,date_to=None,min_external=None,sector=None):
+                      date_from=None,date_to=None,min_external=None,companies=None,sectors=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
     whatever filters are currently applied. Returns safe all-zero defaults if the
     feature isn't configured/available rather than erroring."""
@@ -6544,7 +6567,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
     try:
         if not _v92_ensure_table(conn):
             return empty
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
         month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
@@ -6561,7 +6584,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
         conn.close()
 
 def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                               date_from=None,date_to=None,sort='company',min_external=None,sector=None):
+                               date_from=None,date_to=None,sort='company',min_external=None,companies=None,sectors=None):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -6571,7 +6594,7 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=No
     try:
         if not _v92_ensure_table(conn):
             return []
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
         order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
@@ -6594,7 +6617,8 @@ def _v92_resolve_selected_export_rows(form):
         search=(form.get('q',[''])[0] or '').strip()[:200]
         risk=(form.get('risk',[''])[0] or '').strip()
         period=(form.get('period',[''])[0] or '').strip()
-        sector=(form.get('sector',[''])[0] or '').strip()
+        companies=_v92_parse_multi_filter(form,'companies')
+        sectors=_v92_parse_multi_filter(form,'sectors')
         min_global=_v92_parse_min_filter(form,'min_global')
         min_green=_v92_parse_min_filter(form,'min_green')
         min_social=_v92_parse_min_filter(form,'min_social')
@@ -6604,7 +6628,7 @@ def _v92_resolve_selected_export_rows(form):
         date_to=_v92_parse_date_filter(form,'date_to')
         sort=(form.get('sort',['company'])[0] or 'company').strip()
         return _v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
-            date_from,date_to,sort,min_external,sector)
+            date_from,date_to,sort,min_external,companies,sectors)
     return _v92_fetch_all_for_export(ids=ids) if ids else []
 
 def _v92_resolve_selected_scan_ids(form):
@@ -6619,7 +6643,8 @@ def _v92_resolve_selected_scan_ids(form):
     search=(form.get('q',[''])[0] or '').strip()[:200]
     risk=(form.get('risk',[''])[0] or '').strip()
     period=(form.get('period',[''])[0] or '').strip()
-    sector=(form.get('sector',[''])[0] or '').strip()
+    companies=_v92_parse_multi_filter(form,'companies')
+    sectors=_v92_parse_multi_filter(form,'sectors')
     min_global=_v92_parse_min_filter(form,'min_global')
     min_green=_v92_parse_min_filter(form,'min_green')
     min_social=_v92_parse_min_filter(form,'min_social')
@@ -6627,7 +6652,7 @@ def _v92_resolve_selected_scan_ids(form):
     min_external=_v92_parse_min_filter(form,'min_external')
     date_from=_v92_parse_date_filter(form,'date_from')
     date_to=_v92_parse_date_filter(form,'date_to')
-    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -6643,7 +6668,7 @@ def _v92_resolve_selected_scan_ids(form):
         conn.close()
 
 def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None,
-                           date_from=None,date_to=None,min_external=None,sector=None):
+                           date_from=None,date_to=None,min_external=None,companies=None,sectors=None):
     """Deletes every row matching the given search/risk/period/threshold filter -- the
     "select all matching results across every page" counterpart to _v92_delete_by_ids().
     Used when the operator selects all N results under the current filter (which may span
@@ -6654,7 +6679,7 @@ def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=
     try:
         if not _v92_ensure_table(conn):
             return 0
-        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
         with conn.cursor() as cur:
             cur.execute(f'DELETE FROM scan_history {where}',params)
             deleted=cur.rowcount
@@ -6847,7 +6872,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
                               date_from=None,date_to=None,sort='company',distinct_scores=None,
                               distinct_companies=None,distinct_dates=None,min_external=None,visit_stats=None,
-                              sector='',distinct_sectors=None):
+                              companies=None,sectors=None,distinct_sectors=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -6858,7 +6883,6 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     # escaping.
     ids=ids or []
     search_safe=html_escape(search)
-    sector_safe=html_escape(sector or '')
     stats=stats or {'total':0,'avg_score':None,'this_month':0,'by_risk':{}}
     by_risk=stats.get('by_risk') or {}
     high_plus=(by_risk.get('High',0) or 0)+(by_risk.get('Very high',0) or 0)
@@ -6915,12 +6939,19 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     distinct_companies=distinct_companies or []
     distinct_sectors=distinct_sectors or []
     distinct_dates=distinct_dates or []
+    companies=companies or []
+    sectors=sectors or []
     # v93.9/v93.10: every currently-active filter/sort in one place, so a column header's
     # sort link or a filter dropdown's option can build a URL that changes ONLY its own
     # piece while preserving everything else already active (e.g. picking Green=62 must
     # not silently drop an already-active Global=41 or Company filter). `overrides`
     # replaces specific keys; a value of None removes that key from the URL entirely.
-    _active={'q':search or None,'sector':sector or None,'risk':risk or None,'period':period or None,
+    # v93.98: `companies`/`sectors` carry a LIST of values (multi-select), not a single
+    # scalar -- _filter_url() below renders each as its own repeated query param
+    # (?companies=A&companies=B), matching how the GET handler already parses repeated
+    # params back into a list via parse_qs().
+    _active={'q':search or None,'companies':companies or None,'sectors':sectors or None,
+             'risk':risk or None,'period':period or None,
              'sort':sort if sort!='company' else None,'min_global':min_global,'min_green':min_green,
              'min_social':min_social,'min_findings':min_findings,'min_external':min_external,
              'date_from':date_from,'date_to':date_to}
@@ -6928,8 +6959,16 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         parts=dict(_active)
         if overrides:
             parts.update(overrides)
-        q=''.join(f'&{k}={quote(str(v))}' for k,v in parts.items() if v is not None and v!='')
-        return '/history?'+q[1:] if q else '/history'
+        segments=[]
+        for k,v in parts.items():
+            if v is None or v=='':
+                continue
+            if isinstance(v,(list,tuple)):
+                segments.extend(f'{k}={quote(str(item))}' for item in v if item not in (None,''))
+            else:
+                segments.append(f'{k}={quote(str(v))}')
+        q='&'.join(segments)
+        return '/history?'+q if q else '/history'
     def _sort_link(key):
         arrow=' &darr;' if sort==key else ''
         return f'<a href="{_filter_url({"sort":key})}">{_V92_SORT_LABELS[key]}{arrow}</a>'
@@ -6948,28 +6987,43 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         for v in distinct_scores.get(key,[]):
             opts.append(f'<option value="{_filter_url({param:v})}"{" selected" if current_val==v else ""}>{v}</option>')
         return _dropdown_th(key,''.join(opts))
+    def _multiselect_th(key,param,current_values,distinct_values,label_fn=None):
+        # v93.98: MULTI-select filter for the Company/Sector columns, replacing v93.10's
+        # single-pick Company dropdown (which reused `q`) and v93.95's single-value Sector
+        # dropdown -- the user could only ever select one company or one sector at a time.
+        # A plain <select multiple> can't drive an immediate onchange-navigate the way the
+        # single-select dropdowns above do: the browser fires `change` after EVERY click
+        # that alters the selection (including each Ctrl/Cmd-click while building up a
+        # multi-value selection), so navigating on the first click would reload the page
+        # before a second option could ever be added. An explicit "Apply" button (reading
+        # the select's full current selection via _v92ApplyMulti(), defined in this page's
+        # own <script> block below) is used instead.
+        label_fn=label_fn or (lambda v:v)
+        base=_filter_url({param:None})
+        opts=[]
+        for name in distinct_values:
+            label_safe=html_escape(label_fn(name))
+            sel=' selected' if name in current_values else ''
+            opts.append(f'<option value="{html_escape(name)}"{sel}>{label_safe}</option>')
+        select_id=f'{param}Select'
+        select=(f'<select id="{select_id}" multiple size="4" data-base="{base}" data-param="{param}" '
+                f'title="Hold Ctrl/Cmd (or Shift for a range) to pick several, then click Apply" '
+                f'style="margin-top:4px;font-size:11px;padding:1px;width:130px">{"".join(opts)}</select><br>'
+                f'<button type="button" onclick="_v92ApplyMulti(&#39;{select_id}&#39;)" '
+                f'style="margin-top:2px;font-size:10px;padding:1px 6px">Apply</button>')
+        return f'<th>{_sort_link(key)}<br>{select}</th>'
     def _company_th():
-        # v93.10: reuses the existing `q` search param -- picking a name from the list
-        # just fills the search box with that exact company, no new filter machinery.
-        opts=[f'<option value="{_filter_url({"q":None})}"{" selected" if not search else ""}>All</option>']
-        for name in distinct_companies:
-            name_safe=html_escape(name)
-            sel=' selected' if name==search else ''
-            opts.append(f'<option value="{_filter_url({"q":name})}"{sel}>{name_safe}</option>')
-        return _dropdown_th('company',''.join(opts))
+        return _multiselect_th('company','companies',companies,distinct_companies)
     def _sector_th():
-        # v93.95: independent exact-match filter for the Sector column, now rendered as its
-        # own column separate from Company (see the row-rendering below) -- reported by the
-        # user: company and sector were shown together in one table cell with only company
-        # filterable, so a scan couldn't be found or narrowed down by sector at all. Options
-        # show the same "(NACE X)" -stripped label the table cell itself displays, but the
-        # filter value is the full stored string (an exact match against the real column).
-        opts=[f'<option value="{_filter_url({"sector":None})}"{" selected" if not sector else ""}>All</option>']
-        for name in distinct_sectors:
-            label_safe=html_escape(re.sub(r'\s*\(NACE\s+[A-Z]\)\s*$','',name))
-            sel=' selected' if name==sector else ''
-            opts.append(f'<option value="{_filter_url({"sector":name})}"{sel}>{label_safe}</option>')
-        return _dropdown_th('sector',''.join(opts))
+        # v93.95/v93.98: independent multi-select filter for the Sector column, rendered as
+        # its own column separate from Company (see the row-rendering below) -- reported by
+        # the user: company and sector were shown together in one table cell with only
+        # company filterable, and later that only one of each could be picked at a time.
+        # Options show the same "(NACE X)"-stripped label the table cell itself displays,
+        # but the filter value is the full stored string (an exact match against the real
+        # column).
+        return _multiselect_th('sector','sectors',sectors,distinct_sectors,
+            label_fn=lambda name: re.sub(r'\s*\(NACE\s+[A-Z]\)\s*$','',name))
     def _date_th():
         # v93.10: reuses the existing exact date-range filter -- picking one calendar day
         # sets date_from=date_to=that day.
@@ -6986,7 +7040,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
                    +_score_th('external',min_external))
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
-    elif not rows and not (search or sector or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None or min_external is not None):
+    elif not rows and not (search or companies or sectors or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None or min_external is not None):
         body='<div class="empty">No scans logged yet.</div>'
     elif not rows:
         body='<div class="empty">No scans match the current search/filters.</div>'
@@ -7062,7 +7116,16 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     min_external_s='' if min_external is None else str(min_external)
     date_from_s=date_from or ''
     date_to_s=date_to or ''
-    extra_q=((f'&q={quote(search)}' if search else '')+(f'&sector={quote(sector)}' if sector else '')
+    # v93.98: companies/sectors are lists now -- each selected value is its own repeated
+    # &companies=/&sectors= query param, matching what parse_qs() hands back on the way in.
+    companies_q=''.join(f'&companies={quote(c)}' for c in companies)
+    sectors_q=''.join(f'&sectors={quote(s)}' for s in sectors)
+    # Same list, as repeated hidden <input>s for the two <form>s below (GET filter form's
+    # own submit, and the POST selectForm used by Export/Create report/Delete selected) --
+    # a plain "value" attribute can only ever hold one value per field name.
+    companies_hidden=''.join(f'<input type="hidden" name="companies" value="{html_escape(c)}">' for c in companies)
+    sectors_hidden=''.join(f'<input type="hidden" name="sectors" value="{html_escape(s)}">' for s in sectors)
+    extra_q=((f'&q={quote(search)}' if search else '')+companies_q+sectors_q
               +(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
               +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
               +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else '')
@@ -7109,16 +7172,18 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
 <select name="risk"><option value="">All risk levels</option>{risk_options}</select>
 <select name="period"><option value="">All time</option>{period_options}</select>
-<input type="hidden" name="sector" value="{sector_safe}">
+{companies_hidden}
+{sectors_hidden}
 <input type="hidden" name="sort" value="{sort}">
 <button class="btn" type="submit">Filter</button>
 <a class="btn secondary" href="/history">Clear</a>
-<a class="btn secondary" href="/history/export.csv?q={quote(search)}&sector={quote(sector or '')}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&min_external={min_external_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}{companies_q}{sectors_q}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&min_external={min_external_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
 <form id="selectForm" method="POST" action="/history/export_selected">
 <input type="hidden" name="q" value="{search_safe}">
-<input type="hidden" name="sector" value="{sector_safe}">
+{companies_hidden}
+{sectors_hidden}
 <input type="hidden" name="risk" value="{html_escape(risk)}">
 <input type="hidden" name="period" value="{html_escape(period)}">
 <input type="hidden" name="min_global" value="{min_global_s}">
@@ -7145,6 +7210,24 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 {visits_html}
 </div>
 <script>
+// v93.98: applies a multi-select column filter (Company/Sector) -- called from each
+// column's "Apply" button rather than the <select>'s own onchange, since the browser
+// fires `change` after EVERY click that alters the selection (including each
+// Ctrl/Cmd-click while building up a multi-value pick), so navigating on the first click
+// would reload the page before a second option could ever be added. Reads the select's
+// full current selection at the moment Apply is clicked, appends it to the base URL
+// (every OTHER active filter, precomputed server-side, with this select's own param
+// already stripped) and navigates.
+function _v92ApplyMulti(id){{
+  var sel=document.getElementById(id);
+  if(!sel) return;
+  var base=sel.getAttribute('data-base'), param=sel.getAttribute('data-param');
+  var vals=Array.prototype.slice.call(sel.selectedOptions).map(function(o){{ return o.value; }});
+  if(!vals.length){{ location.href=base; return; }}
+  var sep=base.indexOf('?')===-1?'?':'&';
+  var extra=vals.map(function(v){{ return param+'='+encodeURIComponent(v); }}).join('&');
+  location.href=base+sep+extra;
+}}
 (function(){{
   var all=document.getElementById('selectAll'), boxes=document.querySelectorAll('.row-check'),
       exportBtn=document.getElementById('exportSelectedBtn'), viewBtn=document.getElementById('viewSelectedBtn'),
@@ -7336,9 +7419,12 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
-            # v93.95: independent exact-match Sector filter/column, alongside the existing
-            # Company search -- see _v92_build_filters()'s v93.95 note.
-            sector=(qs.get('sector',[''])[0] or '').strip()[:200]
+            # v93.98: MULTI-select exact-match Company/Sector filters, alongside the existing
+            # free-text Company search -- see _v92_build_filters()'s v93.98 note. Replaces
+            # v93.95's single-value `sector`, which only ever let the operator pick one
+            # company or one sector at a time.
+            companies=_v92_parse_multi_filter(qs,'companies')
+            sectors=_v92_parse_multi_filter(qs,'sectors')
             # v93.2: while "select all matching" is active, the GET form (View selected)
             # would otherwise submit only the ids checked on whatever page was visible --
             # ignore those and fall back to the plain search/risk/period filter instead,
@@ -7357,8 +7443,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception: page=1
             page_size=25
             rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort,min_external,sector)
-            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+                date_from,date_to,sort,min_external,companies,sectors)
+            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
             top_claims=_v92_fetch_top_claims()
             distinct_scores=_v92_fetch_distinct_scores()
             distinct_companies=_v92_fetch_distinct_companies()
@@ -7367,7 +7453,7 @@ class Handler(BaseHTTPRequestHandler):
             visit_stats=_v93_fetch_visit_stats()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
                 min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores,
-                distinct_companies,distinct_dates,min_external,visit_stats,sector,distinct_sectors))
+                distinct_companies,distinct_dates,min_external,visit_stats,companies,sectors,distinct_sectors))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -7377,7 +7463,8 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
-            sector=(qs.get('sector',[''])[0] or '').strip()[:200]
+            companies=_v92_parse_multi_filter(qs,'companies')
+            sectors=_v92_parse_multi_filter(qs,'sectors')
             ids=_v92_parse_ids(qs)
             min_global=_v92_parse_min_filter(qs,'min_global')
             min_green=_v92_parse_min_filter(qs,'min_green')
@@ -7388,7 +7475,7 @@ class Handler(BaseHTTPRequestHandler):
             date_to=_v92_parse_date_filter(qs,'date_to')
             sort=(qs.get('sort',['company'])[0] or 'company').strip()
             rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort,min_external,sector)
+                date_from,date_to,sort,min_external,companies,sectors)
             csv_bytes=_v92_rows_to_csv(rows)
             stamp=datetime.date.today().isoformat()
             return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -7520,7 +7607,8 @@ class Handler(BaseHTTPRequestHandler):
             search=(form.get('q',[''])[0] or '').strip()[:200]
             risk=(form.get('risk',[''])[0] or '').strip()
             period=(form.get('period',[''])[0] or '').strip()
-            sector=(form.get('sector',[''])[0] or '').strip()
+            companies=_v92_parse_multi_filter(form,'companies')
+            sectors=_v92_parse_multi_filter(form,'sectors')
             min_global=_v92_parse_min_filter(form,'min_global')
             min_green=_v92_parse_min_filter(form,'min_green')
             min_social=_v92_parse_min_filter(form,'min_social')
@@ -7528,7 +7616,7 @@ class Handler(BaseHTTPRequestHandler):
             min_external=_v92_parse_min_filter(form,'min_external')
             date_from=_v92_parse_date_filter(form,'date_from')
             date_to=_v92_parse_date_filter(form,'date_to')
-            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
+            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,companies,sectors)
         else:
             _v92_delete_by_ids(ids)
         return self._send(b'',status=302,extra_headers={'Location':'/history'})
