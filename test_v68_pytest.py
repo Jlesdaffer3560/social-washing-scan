@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_96_distinct_dropdown_diagnostic'
+    assert app.APP_VERSION == 'hostable_v93_97_distinct_dropdown_sql_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -580,6 +580,52 @@ def test_scan_history_company_sort_is_case_insensitive():
     import inspect
     src=inspect.getsource(app._v92_fetch_distinct_companies)
     assert 'ORDER BY LOWER(company) ASC' in src
+
+
+def test_distinct_companies_and_sectors_query_is_valid_postgres_distinct_order_by(monkeypatch):
+    """v93.96: live-reproduced that _v92_fetch_distinct_companies() had been silently
+    returning [] (dropdown showing only "All") in production ever since v93.10 -- Postgres
+    rejects `SELECT DISTINCT company ... ORDER BY LOWER(company)` outright with "for SELECT
+    DISTINCT, ORDER BY expressions must appear in select list", because LOWER(company) is a
+    DIFFERENT expression from the bare `company` in the select list, even though it's a
+    function of it. A bare `except Exception: return []` swallowed this with zero visibility
+    on every single page load. _v92_fetch_distinct_sectors() (new in v93.95) copied the
+    exact same broken pattern. Both must instead ORDER BY in an outer query over an inner
+    DISTINCT (which carries no such restriction, since only the OUTER query lacks its own
+    DISTINCT), keeping the returned shape unchanged. Confirmed against a fake cursor that
+    checks the query text and would raise the exact live psycopg2 error class this
+    reproduces if fed to a real Postgres backend."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+
+    def make_fake_conn(rows):
+        class FakeCursor:
+            def __enter__(self): return self
+            def __exit__(self,*a): return False
+            def execute(self,sql,params=None):
+                # Mirrors the one Postgres rule this bug tripped over: when the query's OWN
+                # top-level SELECT is itself "SELECT DISTINCT <col>" (not a plain SELECT
+                # wrapping an inner DISTINCT subquery), its ORDER BY must be that exact same
+                # bare column -- anything else (e.g. LOWER(<col>)) is rejected outright. A
+                # plain outer SELECT over an inner DISTINCT subquery carries no such
+                # restriction regardless of what it orders by.
+                import re as _re
+                normalized=' '.join(sql.split())
+                if _re.match(r'select\s+distinct\s+(\w+)\s+from',normalized,_re.I):
+                    m=_re.match(r'select\s+distinct\s+(\w+)\s+from.*order\s+by\s+(.+?)(?:\s+(?:asc|desc))?$',normalized,_re.I)
+                    if m and m.group(2).strip().lower()!=m.group(1).strip().lower():
+                        raise Exception('for SELECT DISTINCT, ORDER BY expressions must appear in select list')
+                self._rows=rows
+            def fetchall(self): return self._rows
+        class FakeConn:
+            def cursor(self): return FakeCursor()
+            def close(self): pass
+        return FakeConn()
+
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: make_fake_conn([('Zabra',),('AB Eiffage',)]))
+    assert app._v92_fetch_distinct_companies()==['Zabra','AB Eiffage']
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: make_fake_conn([('Food and beverage manufacturing (NACE C)',)]))
+    assert app._v92_fetch_distinct_sectors()==['Food and beverage manufacturing (NACE C)']
 
 
 def test_scan_history_clear_button_always_visible(monkeypatch):
