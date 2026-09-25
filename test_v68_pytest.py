@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_98_history_multiselect_filters'
+    assert app.APP_VERSION == 'hostable_v93_99_checkbox_multiselect_filters'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -814,12 +814,15 @@ def test_scan_history_excel_style_date_dropdown(monkeypatch):
 
 
 def test_scan_history_company_multiselect_dropdown(monkeypatch):
-    """v93.98: the Company column's filter is a real multi-select (<select multiple>,
-    applied via a button rather than onchange -- see _v92ApplyMulti()'s docstring for
-    why), replacing v93.10's single-pick dropdown that only ever reused the `q` search
-    box. Options come back alphabetically ordered, currently-active companies are marked
-    selected, and the select's `data-base` URL (used by the Apply button's JS to build the
-    final navigation target) preserves every OTHER currently active filter."""
+    """v93.98/v93.99: the Company column's filter is a real multi-select, applied via a
+    button rather than onchange -- see _v92ApplyMulti()'s docstring for why. v93.98's first
+    attempt used a native <select multiple>, but the user reported still not being able to
+    select more than one company at a time -- a plain click on one of its options REPLACES
+    the whole selection (adding to it needs an unlabelled Ctrl/Cmd-click). Replaced with a
+    checkbox list, where every click toggles exactly the one box clicked, no modifier key
+    needed. Options come back alphabetically ordered, currently-active companies are
+    checked, and the container's `data-base` URL (used by the Apply button's JS to build
+    the final navigation target) preserves every OTHER currently active filter."""
     monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
     row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'','sector_risk':'High',
          'input_url':'https://www.puratos.us','global_score':54,'global_risk':'High','green_score':57,
@@ -827,15 +830,15 @@ def test_scan_history_company_multiselect_dropdown(monkeypatch):
     html=app._v92_render_history_page([row],1,1,25,'',
         date_from='2026-09-02',date_to='2026-09-02',companies=['Puratos'],
         distinct_companies=['AB Eiffage','Puratos','Zabra'])
-    assert '<select id="companiesSelect" multiple' in html
-    assert '<option value="AB Eiffage">AB Eiffage</option>' in html
-    assert '<option value="Puratos" selected>Puratos</option>' in html
-    assert '<option value="Zabra">Zabra</option>' in html
+    assert '<div id="companiesBox"' in html
+    assert '<input type="checkbox" value="AB Eiffage"> AB Eiffage</label>' in html
+    assert '<input type="checkbox" value="Puratos" checked> Puratos</label>' in html
+    assert '<input type="checkbox" value="Zabra"> Zabra</label>' in html
     # the base URL for the Apply button preserves the active date filter and excludes
-    # `companies` itself (the JS appends the live selection on click)
+    # `companies` itself (the JS appends the live checked selection on click)
     assert 'data-base="/history?date_from=2026-09-02&date_to=2026-09-02"' in html
     assert 'data-param="companies"' in html
-    assert "_v92ApplyMulti(&#39;companiesSelect&#39;)" in html
+    assert "_v92ApplyMulti(&#39;companiesBox&#39;)" in html
 
 
 def test_scan_history_company_and_sector_are_separate_filterable_columns(monkeypatch):
@@ -859,9 +862,9 @@ def test_scan_history_company_and_sector_are_separate_filterable_columns(monkeyp
 
 
 def test_scan_history_sector_multiselect_dropdown(monkeypatch):
-    """v93.98: same multi-select conversion as Company (see
+    """v93.98/v93.99: same checkbox-list multi-select as Company (see
     test_scan_history_company_multiselect_dropdown) applied to Sector -- option labels
-    have the "(NACE X)" suffix stripped for readability, but the option VALUE (what
+    have the "(NACE X)" suffix stripped for readability, but the checkbox VALUE (what
     actually gets filtered on) is the exact full stored string. Selecting a sector must be
     usable alongside an active company text search (both filters combine, neither clobbers
     the other)."""
@@ -871,9 +874,9 @@ def test_scan_history_sector_multiselect_dropdown(monkeypatch):
          'green_score':57,'social_score':50,'findings_count':14}
     html=app._v92_render_history_page([row],1,1,25,'Puratos',sectors=['Food and beverage manufacturing (NACE C)'],
         distinct_sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'])
-    assert '<select id="sectorsSelect" multiple' in html
-    assert '<option value="Banking and financial services (NACE K)">Banking and financial services</option>' in html
-    assert '<option value="Food and beverage manufacturing (NACE C)" selected>Food and beverage manufacturing</option>' in html
+    assert '<div id="sectorsBox"' in html
+    assert '<input type="checkbox" value="Banking and financial services (NACE K)"> Banking and financial services</label>' in html
+    assert '<input type="checkbox" value="Food and beverage manufacturing (NACE C)" checked> Food and beverage manufacturing</label>' in html
     # the base URL for the Apply button preserves the active `q` company search
     assert 'data-base="/history?q=Puratos"' in html
     assert 'data-param="sectors"' in html
@@ -894,13 +897,13 @@ def test_scan_history_multiple_companies_and_sectors_selected_together(monkeypat
         companies=['AB Eiffage','Puratos'],sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'],
         distinct_companies=['AB Eiffage','Puratos','Zabra'],
         distinct_sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'])
-    # both companies marked selected in the Company multi-select
-    assert '<option value="AB Eiffage" selected>AB Eiffage</option>' in html
-    assert '<option value="Puratos" selected>Puratos</option>' in html
-    assert '<option value="Zabra">Zabra</option>' in html
-    # both sectors marked selected in the Sector multi-select
-    assert '<option value="Banking and financial services (NACE K)" selected>Banking and financial services</option>' in html
-    assert '<option value="Food and beverage manufacturing (NACE C)" selected>Food and beverage manufacturing</option>' in html
+    # both companies checked in the Company multi-select
+    assert '<input type="checkbox" value="AB Eiffage" checked> AB Eiffage</label>' in html
+    assert '<input type="checkbox" value="Puratos" checked> Puratos</label>' in html
+    assert '<input type="checkbox" value="Zabra"> Zabra</label>' in html
+    # both sectors checked in the Sector multi-select
+    assert '<input type="checkbox" value="Banking and financial services (NACE K)" checked> Banking and financial services</label>' in html
+    assert '<input type="checkbox" value="Food and beverage manufacturing (NACE C)" checked> Food and beverage manufacturing</label>' in html
     # the Company select's base URL preserves the full active sectors list (as repeated params)
     assert ('data-base="/history?sectors=Banking%20and%20financial%20services%20%28NACE%20K%29'
             '&sectors=Food%20and%20beverage%20manufacturing%20%28NACE%20C%29" data-param="companies"' in html)

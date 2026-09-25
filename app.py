@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_98_history_multiselect_filters"
-APP_RELEASE_LABEL="v93.98"
+APP_VERSION="hostable_v93_99_checkbox_multiselect_filters"
+APP_RELEASE_LABEL="v93.99"
 APP_RELEASE_DATE="2026-09-25"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -6991,27 +6991,34 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
         # v93.98: MULTI-select filter for the Company/Sector columns, replacing v93.10's
         # single-pick Company dropdown (which reused `q`) and v93.95's single-value Sector
         # dropdown -- the user could only ever select one company or one sector at a time.
-        # A plain <select multiple> can't drive an immediate onchange-navigate the way the
-        # single-select dropdowns above do: the browser fires `change` after EVERY click
-        # that alters the selection (including each Ctrl/Cmd-click while building up a
-        # multi-value selection), so navigating on the first click would reload the page
-        # before a second option could ever be added. An explicit "Apply" button (reading
-        # the select's full current selection via _v92ApplyMulti(), defined in this page's
-        # own <script> block below) is used instead.
+        # v93.99: the FIRST attempt at this used a native <select multiple>, which the user
+        # reported still couldn't select more than one value at a time (for both Company
+        # and Sector) -- a plain click on a <select multiple> option REPLACES the whole
+        # selection with just that one option; adding to it requires holding Ctrl/Cmd (or
+        # Shift for a range) while clicking, which is unlabelled, easy to miss, and
+        # unreliable on some trackpads. Replaced with an unambiguous checkbox list instead:
+        # every click toggles exactly the one item clicked, with no modifier key needed.
+        # An explicit "Apply" button (reading every checked box via _v92ApplyMulti(),
+        # defined in this page's own <script> block below) is still needed rather than an
+        # immediate per-click navigate, for the same reason as before: reloading the page
+        # after the FIRST checkbox click would lose the in-progress selection before a
+        # second box could be checked.
         label_fn=label_fn or (lambda v:v)
         base=_filter_url({param:None})
-        opts=[]
+        rows=[]
         for name in distinct_values:
             label_safe=html_escape(label_fn(name))
-            sel=' selected' if name in current_values else ''
-            opts.append(f'<option value="{html_escape(name)}"{sel}>{label_safe}</option>')
-        select_id=f'{param}Select'
-        select=(f'<select id="{select_id}" multiple size="4" data-base="{base}" data-param="{param}" '
-                f'title="Hold Ctrl/Cmd (or Shift for a range) to pick several, then click Apply" '
-                f'style="margin-top:4px;font-size:11px;padding:1px;width:130px">{"".join(opts)}</select><br>'
-                f'<button type="button" onclick="_v92ApplyMulti(&#39;{select_id}&#39;)" '
-                f'style="margin-top:2px;font-size:10px;padding:1px 6px">Apply</button>')
-        return f'<th>{_sort_link(key)}<br>{select}</th>'
+            name_safe=html_escape(name)
+            checked=' checked' if name in current_values else ''
+            rows.append(f'<label style="display:block;font-weight:normal;white-space:nowrap;text-transform:none;letter-spacing:normal;color:var(--ink)">'
+                        f'<input type="checkbox" value="{name_safe}"{checked}> {label_safe}</label>')
+        box_id=f'{param}Box'
+        box=(f'<div id="{box_id}" data-base="{base}" data-param="{param}" '
+             f'style="margin-top:4px;max-height:110px;overflow-y:auto;border:1px solid var(--line);'
+             f'border-radius:6px;padding:3px 5px;width:150px;font-size:11px;background:#fff">{"".join(rows)}</div>'
+             f'<button type="button" onclick="_v92ApplyMulti(&#39;{box_id}&#39;)" '
+             f'style="margin-top:3px;font-size:10px;padding:1px 6px">Apply</button>')
+        return f'<th>{_sort_link(key)}<br>{box}</th>'
     def _company_th():
         return _multiselect_th('company','companies',companies,distinct_companies)
     def _sector_th():
@@ -7210,19 +7217,23 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 {visits_html}
 </div>
 <script>
-// v93.98: applies a multi-select column filter (Company/Sector) -- called from each
-// column's "Apply" button rather than the <select>'s own onchange, since the browser
-// fires `change` after EVERY click that alters the selection (including each
-// Ctrl/Cmd-click while building up a multi-value pick), so navigating on the first click
-// would reload the page before a second option could ever be added. Reads the select's
-// full current selection at the moment Apply is clicked, appends it to the base URL
-// (every OTHER active filter, precomputed server-side, with this select's own param
-// already stripped) and navigates.
+// v93.99: applies a multi-select column filter (Company/Sector) -- called from each
+// column's "Apply" button. v93.98's first attempt used a native <select multiple>, but a
+// plain click on one of its options REPLACES the whole selection (adding to it needs an
+// unlabelled Ctrl/Cmd-click), which the user reported as still not being able to select
+// more than one value -- replaced with a checkbox list (below), where every click toggles
+// exactly the one box clicked. Either way, an explicit Apply button is needed rather than
+// an immediate per-click navigate: reloading the page after the FIRST click would lose the
+// in-progress selection before a second item could be picked. Reads every currently
+// CHECKED box inside the container at the moment Apply is clicked, appends that to the
+// base URL (every OTHER active filter, precomputed server-side, with this filter's own
+// param already stripped) and navigates.
 function _v92ApplyMulti(id){{
-  var sel=document.getElementById(id);
-  if(!sel) return;
-  var base=sel.getAttribute('data-base'), param=sel.getAttribute('data-param');
-  var vals=Array.prototype.slice.call(sel.selectedOptions).map(function(o){{ return o.value; }});
+  var box=document.getElementById(id);
+  if(!box) return;
+  var base=box.getAttribute('data-base'), param=box.getAttribute('data-param');
+  var boxes=box.querySelectorAll('input[type=checkbox]:checked');
+  var vals=Array.prototype.slice.call(boxes).map(function(cb){{ return cb.value; }});
   if(!vals.length){{ location.href=base; return; }}
   var sep=base.indexOf('?')===-1?'?':'&';
   var extra=vals.map(function(v){{ return param+'='+encodeURIComponent(v); }}).join('&');
