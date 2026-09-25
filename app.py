@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_95_history_sector_column_filter"
-APP_RELEASE_LABEL="v93.95"
+APP_VERSION="hostable_v93_96_distinct_dropdown_diagnostic"
+APP_RELEASE_LABEL="v93.96"
 APP_RELEASE_DATE="2026-09-25"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -6131,6 +6131,7 @@ def _v92_fetch_distinct_companies():
     filter dropdown -- reuses the existing `q` search param under the hood (picking a name
     from the list just fills the search box with that exact value), so no new filter
     machinery is needed. Returns [] if the feature isn't configured/available."""
+    global _V92_LAST_ERROR
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -6140,7 +6141,14 @@ def _v92_fetch_distinct_companies():
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT company FROM scan_history WHERE company IS NOT NULL AND company <> '' ORDER BY LOWER(company) ASC")
             return [r[0] for r in cur.fetchall()]
-    except Exception:
+    except Exception as e:
+        # v93.96: temporary diagnostic -- this and _v92_fetch_distinct_sectors() were found
+        # live to silently return [] (the dropdown showing only "All") while every other
+        # /history fetch on the same page load succeeded. The bare `except Exception: return
+        # []` here gave no visibility into why; surface it the same way
+        # _v92_fetch_scan_history() already does, so the real cause shows up in
+        # /api/health's history_last_error without needing direct database access.
+        _V92_LAST_ERROR=_v92_redact_error('fetch_distinct_companies failed: '+str(e))
         return []
     finally:
         conn.close()
@@ -6152,6 +6160,7 @@ def _v92_fetch_distinct_sectors():
     shown together in one table cell with only company filterable, so a scan couldn't be
     found or narrowed down by sector at all. Returns [] if the feature isn't configured/
     available."""
+    global _V92_LAST_ERROR
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -6161,7 +6170,9 @@ def _v92_fetch_distinct_sectors():
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT sector FROM scan_history WHERE sector IS NOT NULL AND sector <> '' ORDER BY LOWER(sector) ASC")
             return [r[0] for r in cur.fetchall()]
-    except Exception:
+    except Exception as e:
+        # v93.96: see _v92_fetch_distinct_companies()'s matching note above.
+        _V92_LAST_ERROR=_v92_redact_error('fetch_distinct_sectors failed: '+str(e))
         return []
     finally:
         conn.close()
