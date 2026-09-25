@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_93_external_review_fixes"
-APP_RELEASE_LABEL="v93.93"
-APP_RELEASE_DATE="2026-09-23"
+APP_VERSION="hostable_v93_94_sector_assignment_corrections"
+APP_RELEASE_LABEL="v93.94"
+APP_RELEASE_DATE="2026-09-25"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -6371,6 +6371,68 @@ def _v92_backfill_sector_names():
         conn.close()
     return summary
 
+def _v93_correct_sector_assignments():
+    """Unconditional companion to _v92_backfill_sector_names(): that function only ever
+    touches a row still showing the exact 'Sector not explicitly identified' placeholder, so
+    a row that already has a WRONG sector value (typically an auto-inferred one from
+    SECTOR_RULES/SECTOR_KEYWORD_NAMES matching loosely-related homepage keywords rather than
+    the company's actual registered business -- e.g. AB InBev, a global brewer, inferred as
+    "Digital and technology services" from stray "digital"/"platform" wording on its own
+    site) was never corrected by it at all, regardless of whether the company was already
+    hand-verified in data_sector_backfill.json. Reported by the user reviewing the /history
+    page: found live on a 2026-09 export that 111 of 156 logged companies had either no
+    sector or a wrong one, spanning both the original 44-company batch AND every company
+    scanned since. This updates by exact company name (case-insensitive) for every entry in
+    the fixture, but ONLY when the row's current sector actually differs from the fixture's
+    verified value -- so a re-run is idempotent and 'updated_rows' always reflects real
+    changes, not a no-op rewrite of already-correct rows. Never raises -- returns a summary
+    dict either way."""
+    summary={'updated_rows':0,'updated_companies':0,'unchanged_companies':0,'not_found':[],'error':None}
+    fixture_path=APP_DIR/'data_sector_backfill.json'
+    if not fixture_path.exists():
+        summary['error']='Fixture file not found.'
+        return summary
+    try:
+        fixture=json.loads(fixture_path.read_text(encoding='utf-8'))
+    except Exception as e:
+        summary['error']=f'Could not read fixture: {e}'
+        return summary
+    conn=_v92_db_connect()
+    if conn is None:
+        summary['error']='Database not configured.'
+        return summary
+    try:
+        if not _v92_ensure_table(conn):
+            summary['error']='Could not prepare tables.'
+            return summary
+        with conn.cursor() as cur:
+            for company,info in fixture.items():
+                sector_name=info.get('sector') if isinstance(info,dict) else info
+                sector_risk=info.get('sector_risk') if isinstance(info,dict) else None
+                if not sector_name: continue
+                cur.execute(
+                    "UPDATE scan_history SET sector=%s, sector_risk=COALESCE(%s,sector_risk) "
+                    "WHERE company ILIKE %s AND (sector IS DISTINCT FROM %s OR (%s IS NOT NULL AND sector_risk IS DISTINCT FROM %s))",
+                    (sector_name,sector_risk,company,sector_name,sector_risk,sector_risk))
+                n=cur.rowcount
+                if n>0:
+                    summary['updated_rows']+=n
+                    summary['updated_companies']+=1
+                else:
+                    cur.execute('SELECT COUNT(*) FROM scan_history WHERE company ILIKE %s',(company,))
+                    if cur.fetchone()[0]==0:
+                        summary['not_found'].append(company)
+                    else:
+                        summary['unchanged_companies']+=1
+        conn.commit()
+    except Exception as e:
+        summary['error']=str(e)
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        conn.close()
+    return summary
+
 def _v93_backfill_finding_counts():
     """One-time correction of scan_history.findings_count and high_risk_findings_count for
     scans logged before the v93.44 counting fixes: findings_count no longer counts the
@@ -7272,6 +7334,19 @@ class Handler(BaseHTTPRequestHandler):
             if not _v92_valid_history_cookie(self.headers.get('Cookie')):
                 return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
             return self._json(_v92_backfill_sector_names())
+        if self.path=='/history/backfill_sector_corrections':
+            # v93.94: _v92_backfill_sector_names() above only ever touches a row still
+            # showing the exact 'Sector not explicitly identified' placeholder -- a row with
+            # a WRONG auto-inferred sector (e.g. AB InBev inferred as "Digital and technology
+            # services") was never corrected by it, even when the company was already
+            # hand-verified in data_sector_backfill.json. See
+            # _v93_correct_sector_assignments(). Gated behind the same /history cookie auth;
+            # safe to visit more than once (already-correct rows are left untouched).
+            if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
+                return self._json({'error':'Scan history is not configured for this deployment.'},404)
+            if not _v92_valid_history_cookie(self.headers.get('Cookie')):
+                return self._json({'error':'Not logged in. Open /history in a browser first.'},401)
+            return self._json(_v93_correct_sector_assignments())
         if self.path=='/history/backfill_finding_counts':
             # v93.46: one-time, idempotent correction of scan_history.findings_count and
             # high_risk_findings_count for scans logged before the v93.44 counting fixes --

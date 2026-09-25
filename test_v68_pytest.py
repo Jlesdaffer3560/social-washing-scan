@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_93_external_review_fixes'
+    assert app.APP_VERSION == 'hostable_v93_94_sector_assignment_corrections'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -1363,6 +1363,75 @@ def test_backfill_sector_names_updates_not_found_and_skips_already_real(monkeypa
     assert summary['not_found']==['Ghost Co']
     assert "sector = 'Sector not explicitly identified'" in executed[0][0]
     assert executed[0][1]==('Food retail and supermarkets (NACE G)','High','Acme')
+
+
+def test_correct_sector_assignments_missing_fixture(monkeypatch, tmp_path):
+    """v93.94: same safety posture as the other /history backfills -- a missing bundled
+    fixture file must report a clear error, never raise."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    summary=app._v93_correct_sector_assignments()
+    assert summary['error']=='Fixture file not found.'
+
+
+def test_correct_sector_assignments_overwrites_wrong_inferred_values(monkeypatch, tmp_path):
+    """The user found live on /history that _v92_backfill_sector_names() (WHERE sector =
+    the exact placeholder string) never corrected a company whose auto-inferred sector was
+    simply WRONG rather than missing -- e.g. AB InBev (a global brewer) inferred as "Digital
+    and technology services" from stray keyword matches. _v93_correct_sector_assignments()
+    must overwrite by exact company name regardless of the row's CURRENT sector value, but
+    only when it actually differs from the fixture (a company whose row is already correct
+    must be left alone and counted as unchanged, not touched or reported as an error), and a
+    company with no matching row at all must still be reported as not_found."""
+    fixture={'AB InBev':{'sector':'Food and beverage manufacturing (NACE C)','sector_risk':'High'},
+             'Already Correct Co':{'sector':'Automotive (NACE C)','sector_risk':'Medium'},
+             'Ghost Co':{'sector':'Banking and financial services (NACE K)','sector_risk':'Medium'}}
+    (tmp_path/'data_sector_backfill.json').write_text(json.dumps(fixture),encoding='utf-8')
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    monkeypatch.setattr(app,'APP_DIR',tmp_path)
+    monkeypatch.setattr(app,'_v92_ensure_table',lambda conn: True)
+    executed=[]
+    # UPDATE rowcounts in fixture (dict, insertion-ordered) iteration order:
+    # AB InBev -> 1 row updated (was wrong); Already Correct Co -> 0 (already matches, the
+    # UPDATE's own IS DISTINCT FROM guard means no row qualifies); Ghost Co -> 0 (no such
+    # company at all).
+    update_rowcounts=[1,0,0]
+    count_results=[1,0]  # Already Correct Co exists (COUNT=1) -> unchanged; Ghost Co doesn't (COUNT=0) -> not_found
+    class FakeCursor:
+        def __init__(self): self.rowcount=0
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def execute(self,sql,params=None):
+            executed.append((sql,params))
+            if sql.strip().startswith('UPDATE'):
+                self.rowcount=update_rowcounts.pop(0)
+        def fetchone(self): return (count_results.pop(0),)
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: FakeConn())
+    summary=app._v93_correct_sector_assignments()
+    assert summary['error'] is None
+    assert summary['updated_companies']==1 and summary['updated_rows']==1
+    assert summary['unchanged_companies']==1
+    assert summary['not_found']==['Ghost Co']
+    # the UPDATE has no restriction to the generic placeholder -- it must fire regardless of
+    # the row's current sector value, only guarded by IS DISTINCT FROM
+    update_sql=executed[0][0]
+    assert "sector = 'Sector not explicitly identified'" not in update_sql
+    assert 'IS DISTINCT FROM' in update_sql
+    assert executed[0][1]==('Food and beverage manufacturing (NACE C)','High','AB InBev','Food and beverage manufacturing (NACE C)','High','High')
+
+
+def test_correct_sector_assignments_reports_error_without_database(monkeypatch):
+    """v93.94: same safety posture as the other /history backfills -- a missing/unreachable
+    database must report a clear error, never raise."""
+    monkeypatch.setattr(app,'_v92_db_connect',lambda: None)
+    summary=app._v93_correct_sector_assignments()
+    assert summary['error']=='Database not configured.'
+    assert summary['updated_rows']==0
 
 
 def _sample_export_rows():

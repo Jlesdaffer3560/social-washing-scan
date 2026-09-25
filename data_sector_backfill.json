@@ -1,46 +1,526 @@
 {
-  "AB Eiffage": {"sector": "Infrastructure and construction (NACE F)", "sector_risk": "Medium"},
-  "AB InBev": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Besix Group": {"sector": "Infrastructure and construction (NACE F)", "sector_risk": "Medium"},
-  "Beyers": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "BNP Paribas Fortis": {"sector": "Banking and financial services (NACE K)", "sector_risk": "Medium"},
-  "C&A": {"sector": "Fast fashion and apparel retail (NACE G)", "sector_risk": "High"},
-  "Certis Belchim": {"sector": "Agrochemicals and crop protection (NACE C)", "sector_risk": "Medium"},
-  "Colruyt Group": {"sector": "Food retail and supermarkets (NACE G)", "sector_risk": "High"},
-  "Danis": {"sector": "Infrastructure and construction (NACE F)", "sector_risk": "Medium"},
-  "DEME": {"sector": "Infrastructure and construction (NACE F)", "sector_risk": "Medium"},
-  "Didak": {"sector": "Industrial manufacturing (NACE C)", "sector_risk": "Medium"},
-  "Ecofrost": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Gaasch Packaging": {"sector": "Industrial manufacturing (NACE C)", "sector_risk": "Medium"},
-  "GLS Belgium": {"sector": "Transport and logistics (NACE H)", "sector_risk": "Medium"},
-  "Greenyard": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Henco Industries": {"sector": "Infrastructure and construction (NACE F)", "sector_risk": "Medium"},
-  "Home Invest": {"sector": "Real estate and property management (NACE L)", "sector_risk": "Medium"},
-  "Intwo": {"sector": "Digital and technology services (NACE J)", "sector_risk": "Low"},
-  "Kemin Europe": {"sector": "Pharmaceuticals and nutrition manufacturing (NACE C)", "sector_risk": "Medium"},
-  "Kevlinx": {"sector": "Digital and technology services (NACE J)", "sector_risk": "Medium"},
-  "Kinepolis Group": {"sector": "Media and entertainment services (NACE J)", "sector_risk": "Medium"},
-  "Konings Drinks": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Kontoor Brands": {"sector": "Fast fashion and apparel retail (NACE G)", "sector_risk": "High"},
-  "Lantmannen-Unibake": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "LCL Group": {"sector": "Transport and logistics (NACE H)", "sector_risk": "Medium"},
-  "Le Pain Cotidien": {"sector": "Food service and catering (NACE I)", "sector_risk": "High"},
-  "Lidl": {"sector": "Food retail and supermarkets (NACE G)", "sector_risk": "High"},
-  "Metagenics Europe": {"sector": "Pharmaceuticals and nutrition manufacturing (NACE C)", "sector_risk": "Medium"},
-  "Metarom Benelux": {"sector": "Specialty ingredients, flavors and fragrances (NACE C)", "sector_risk": "Medium"},
-  "Neuhaus": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Poppies Bakeries": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Puratos": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Rotom": {"sector": "Transport and logistics (NACE H)", "sector_risk": "Medium"},
-  "SD Worx": {"sector": "Staffing and human resources services (NACE N)", "sector_risk": "Medium"},
-  "Smappee": {"sector": "Energy and utilities (NACE D)", "sector_risk": "Medium"},
-  "Stadsbader": {"sector": "Infrastructure and construction (NACE F)", "sector_risk": "Medium"},
-  "Truncus": {"sector": "Banking and financial services (NACE K)", "sector_risk": "Medium"},
-  "Umicore": {"sector": "Metals and materials manufacturing (NACE C)", "sector_risk": "Medium"},
-  "Van De Velde": {"sector": "Fast fashion and apparel retail (NACE G)", "sector_risk": "High"},
-  "Van Zon": {"sector": "Food service and catering (NACE I)", "sector_risk": "Medium"},
-  "Vandemoortele": {"sector": "Food and beverage manufacturing (NACE C)", "sector_risk": "High"},
-  "Versele & Laga": {"sector": "Pharmaceuticals and nutrition manufacturing (NACE C)", "sector_risk": "Medium"},
-  "Volys Star": {"sector": "Agriculture, farming and animal production (NACE A)", "sector_risk": "High"},
-  "Zabra": {"sector": "Agriculture, farming and animal production (NACE A)", "sector_risk": "High"}
+ "AB Eiffage": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "AB InBev": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Abcengines": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Abinbev": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Aedifica": {
+  "sector": "Real estate and property management (NACE L)",
+  "sector_risk": "Medium"
+ },
+ "Ageas": {
+  "sector": "Insurance (NACE K)",
+  "sector_risk": "Medium"
+ },
+ "Agfa": {
+  "sector": "Digital and technology services (NACE J)",
+  "sector_risk": "Medium"
+ },
+ "Agristo": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Algistbruggeman": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Aliaxis": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Aluminiumduffel": {
+  "sector": "Metals and materials manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Aperam": {
+  "sector": "Metals and materials manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Aquafin": {
+  "sector": "Energy and utilities (NACE D)",
+  "sector_risk": "Medium"
+ },
+ "Ardo": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Argenx": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Asadventure": {
+  "sector": "Wholesale and retail trade (NACE G)",
+  "sector_risk": "Medium"
+ },
+ "Avh": {
+  "sector": "Banking and financial services (NACE K)",
+  "sector_risk": "Medium"
+ },
+ "Azelis": {
+  "sector": "Chemicals manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "BNP Paribas Fortis": {
+  "sector": "Banking and financial services (NACE K)",
+  "sector_risk": "Medium"
+ },
+ "Barrycallebaut": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Belorta": {
+  "sector": "Agricultural commodities and raw materials (NACE A)",
+  "sector_risk": "High"
+ },
+ "Besix Group": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Beyers": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Bidfood": {
+  "sector": "Food service and catering (NACE I)",
+  "sector_risk": "High"
+ },
+ "Brabantia": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Brustor": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "C&A": {
+  "sector": "Fast fashion and apparel retail (NACE G)",
+  "sector_risk": "High"
+ },
+ "Canda": {
+  "sector": "Fast fashion and apparel retail (NACE G)",
+  "sector_risk": "High"
+ },
+ "Catalent": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Cegeka": {
+  "sector": "Digital and technology services (NACE J)",
+  "sector_risk": "Low"
+ },
+ "Certis Belchim": {
+  "sector": "Agrochemicals and crop protection (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Coccinelle": {
+  "sector": "Agricultural commodities and raw materials (NACE A)",
+  "sector_risk": "High"
+ },
+ "Colruyt Group": {
+  "sector": "Food retail and supermarkets (NACE G)",
+  "sector_risk": "High"
+ },
+ "Conway": {
+  "sector": "Food retail and supermarkets (NACE G)",
+  "sector_risk": "High"
+ },
+ "Cooperconsumerhealth": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Cordeel": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "DEME": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Dana": {
+  "sector": "Automotive (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Danis": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Darta": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Delacre": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Didak": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Ecofrost": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Elia": {
+  "sector": "Energy and utilities (NACE D)",
+  "sector_risk": "Medium"
+ },
+ "GLS Belgium": {
+  "sector": "Transport and logistics (NACE H)",
+  "sector_risk": "Medium"
+ },
+ "Gaasch Packaging": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Gaaschpack": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Gbl": {
+  "sector": "Banking and financial services (NACE K)",
+  "sector_risk": "Medium"
+ },
+ "Greenyard": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Groupgts": {
+  "sector": "Transport and logistics (NACE H)",
+  "sector_risk": "Medium"
+ },
+ "Guylian": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Henco Industries": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Home Invest": {
+  "sector": "Real estate and property management (NACE L)",
+  "sector_risk": "Medium"
+ },
+ "Ikea": {
+  "sector": "Wholesale and retail trade (NACE G)",
+  "sector_risk": "Medium"
+ },
+ "Inno": {
+  "sector": "Wholesale and retail trade (NACE G)",
+  "sector_risk": "Medium"
+ },
+ "Intwo": {
+  "sector": "Digital and technology services (NACE J)",
+  "sector_risk": "Low"
+ },
+ "Jacops": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Johncockerill": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Joriside": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Katoennatie": {
+  "sector": "Transport and logistics (NACE H)",
+  "sector_risk": "Medium"
+ },
+ "Kemin Europe": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Kevlinx": {
+  "sector": "Digital and technology services (NACE J)",
+  "sector_risk": "Medium"
+ },
+ "Kinepolis": {
+  "sector": "Media and entertainment services (NACE J)",
+  "sector_risk": "Medium"
+ },
+ "Kinepolis Group": {
+  "sector": "Media and entertainment services (NACE J)",
+  "sector_risk": "Medium"
+ },
+ "Konings Drinks": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Kontoor Brands": {
+  "sector": "Fast fashion and apparel retail (NACE G)",
+  "sector_risk": "High"
+ },
+ "Kontoor Brands (Lee Cooper en Wrangler)": {
+  "sector": "Fast fashion and apparel retail (NACE G)",
+  "sector_risk": "High"
+ },
+ "LCL Group": {
+  "sector": "Transport and logistics (NACE H)",
+  "sector_risk": "Medium"
+ },
+ "Lantmannen-Unibake": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Lantmännen-Unibake": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Le Pain Cotidien": {
+  "sector": "Food service and catering (NACE I)",
+  "sector_risk": "High"
+ },
+ "Lidl": {
+  "sector": "Food retail and supermarkets (NACE G)",
+  "sector_risk": "High"
+ },
+ "Lotusbakeries": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Mediafin": {
+  "sector": "Media and entertainment services (NACE J)",
+  "sector_risk": "Low"
+ },
+ "Melexis": {
+  "sector": "Automotive (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Metagenics Europe": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Metarom Benelux": {
+  "sector": "Specialty ingredients, flavors and fragrances (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Mobix": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Nallo": {
+  "sector": "Facilities and outsourced services (NACE N)",
+  "sector_risk": "Medium"
+ },
+ "Neuhaus": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Neuhauschocolates": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Niko": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Patagonia": {
+  "sector": "Textile and apparel manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Pauwelssauces": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Pietercil": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Poppies Bakeries": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Puratos": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Reazn": {
+  "sector": "Metals and materials manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Rotom": {
+  "sector": "Transport and logistics (NACE H)",
+  "sector_risk": "Medium"
+ },
+ "SD Worx": {
+  "sector": "Staffing and human resources services (NACE N)",
+  "sector_risk": "Medium"
+ },
+ "Samsonite": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Shein": {
+  "sector": "Fast fashion and apparel retail (NACE G)",
+  "sector_risk": "High"
+ },
+ "Sintandriestielt": {
+  "sector": "Human health and social work activities (NACE Q)",
+  "sector_risk": "High"
+ },
+ "Sintjozefskliniekizegem": {
+  "sector": "Human health and social work activities (NACE Q)",
+  "sector_risk": "High"
+ },
+ "Sitra Group": {
+  "sector": "Transport and logistics (NACE H)",
+  "sector_risk": "Medium"
+ },
+ "Smappee": {
+  "sector": "Energy and utilities (NACE D)",
+  "sector_risk": "Medium"
+ },
+ "Sofina": {
+  "sector": "Banking and financial services (NACE K)",
+  "sector_risk": "Medium"
+ },
+ "Solvay": {
+  "sector": "Chemicals manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Spaas": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Stadsbader": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Stas": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Steelforce": {
+  "sector": "Automotive (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Suraimpact": {
+  "sector": "Professional and business services (NACE M)",
+  "sector_risk": "Low"
+ },
+ "Syensqo": {
+  "sector": "Chemicals manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Theuma": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Thule": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Tiensesuikerraffinaderij": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Trayco": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Truncus": {
+  "sector": "Banking and financial services (NACE K)",
+  "sector_risk": "Medium"
+ },
+ "Tvhequipment": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Ucb": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Umicore": {
+  "sector": "Metals and materials manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Van De Velde": {
+  "sector": "Fast fashion and apparel retail (NACE G)",
+  "sector_risk": "High"
+ },
+ "Van Zon": {
+  "sector": "Food service and catering (NACE I)",
+  "sector_risk": "Medium"
+ },
+ "Vandemoortele": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Vanheede": {
+  "sector": "Waste management and environmental services (NACE E)",
+  "sector_risk": "Medium"
+ },
+ "Vanmarcke": {
+  "sector": "Wholesale and retail trade (NACE G)",
+  "sector_risk": "Medium"
+ },
+ "Varo Power Plus": {
+  "sector": "Energy and utilities (NACE D)",
+  "sector_risk": "Medium"
+ },
+ "Versele & Laga": {
+  "sector": "Pharmaceuticals and nutrition manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Vgd": {
+  "sector": "Professional and business services (NACE M)",
+  "sector_risk": "Low"
+ },
+ "Vibrantz": {
+  "sector": "Chemicals manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Vincotte": {
+  "sector": "Professional and business services (NACE M)",
+  "sector_risk": "Medium"
+ },
+ "Vma": {
+  "sector": "Infrastructure and construction (NACE F)",
+  "sector_risk": "Medium"
+ },
+ "Volys Star": {
+  "sector": "Agriculture, farming and animal production (NACE A)",
+  "sector_risk": "High"
+ },
+ "Vpk": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Wearepantarein": {
+  "sector": "Waste management and environmental services (NACE E)",
+  "sector_risk": "Medium"
+ },
+ "Westvlees": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Whatscooking": {
+  "sector": "Food and beverage manufacturing (NACE C)",
+  "sector_risk": "High"
+ },
+ "Wienerberger": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Woosh": {
+  "sector": "Industrial manufacturing (NACE C)",
+  "sector_risk": "Medium"
+ },
+ "Zabra": {
+  "sector": "Agriculture, farming and animal production (NACE A)",
+  "sector_risk": "High"
+ }
 }
