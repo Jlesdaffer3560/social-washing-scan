@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_94_sector_assignment_corrections"
-APP_RELEASE_LABEL="v93.94"
+APP_VERSION="hostable_v93_95_history_sector_column_filter"
+APP_RELEASE_LABEL="v93.95"
 APP_RELEASE_DATE="2026-09-25"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -5976,7 +5976,7 @@ _V92_EXPORT_COLUMNS=['scanned_at','scan_type','company','sector','sector_risk','
 _V92_EXTERNAL_SIGNALS_EXPR="(COALESCE(external_green_retained_count,0) + COALESCE(external_social_retained_count,0))"
 
 def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                        date_from=None,date_to=None,min_external=None):
+                        date_from=None,date_to=None,min_external=None,sector=None):
     """Shared WHERE-clause builder for the table view, the stats block and CSV export, so
     all three always agree on what "the current view" means. Every value is bound as a
     parameter, never interpolated into the SQL text, regardless of source.
@@ -5996,12 +5996,19 @@ def _v92_build_filters(search='',risk='',period='',ids=None,min_global=None,min_
     v93.23: min_external is the same exact-match pattern for the "External signals"
     column -- a derived value (retained green + social external-source signals), not a
     raw stored column, so the filter/sort/distinct-values machinery all use the same
-    _V92_EXTERNAL_SIGNALS_EXPR SQL expression rather than a plain column name."""
+    _V92_EXTERNAL_SIGNALS_EXPR SQL expression rather than a plain column name.
+    v93.95: `sector` is an exact-match filter (the same Excel-style "pick one value from
+    the real distinct values" pattern as the score columns), independent of `search`
+    (company). Reported by the user: company and sector were shown together in one table
+    cell/column with only company filterable, so a scan couldn't be found or narrowed down
+    by sector name at all."""
     clauses=[]; params=[]
     if ids:
         clauses.append('id = ANY(%s)'); params.append(list(ids))
     if search:
         clauses.append('company ILIKE %s'); params.append(f'%{search}%')
+    if sector:
+        clauses.append('sector = %s'); params.append(sector)
     if risk in _V92_RISK_LEVELS:
         clauses.append('global_risk = %s'); params.append(risk)
     if period in _V92_PERIOD_SQL:
@@ -6033,10 +6040,11 @@ def _v92_parse_date_filter(source,key):
     return raw
 
 _V92_SORT_SQL={'date':'scanned_at DESC','company':'LOWER(company) ASC, scanned_at DESC',
+               'sector':'LOWER(sector) ASC, scanned_at DESC',
                'global':'global_score DESC NULLS LAST, scanned_at DESC','green':'green_score DESC NULLS LAST, scanned_at DESC',
                'social':'social_score DESC NULLS LAST, scanned_at DESC','findings':'findings_count DESC NULLS LAST, scanned_at DESC',
                'external':f'{_V92_EXTERNAL_SIGNALS_EXPR} DESC NULLS LAST, scanned_at DESC'}
-_V92_SORT_LABELS={'date':'Date','company':'Company','global':'Global','green':'Green','social':'Social','findings':'Findings','external':'External signals'}
+_V92_SORT_LABELS={'date':'Date','company':'Company','sector':'Sector','global':'Global','green':'Green','social':'Social','findings':'Findings','external':'External signals'}
 
 def _v92_parse_min_filter(source,key):
     """Parses an optional "column >= N" query/form value (min_global etc.) into an int,
@@ -6051,7 +6059,7 @@ def _v92_parse_min_filter(source,key):
     return max(0,min(100000,v))
 
 def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                             date_from=None,date_to=None,sort='company',min_external=None):
+                             date_from=None,date_to=None,sort='company',min_external=None,sector=None):
     """Returns (rows, total_count). rows is [] and total_count is 0 if the feature
     isn't configured/available -- callers render an empty/unconfigured state rather
     than erroring."""
@@ -6062,7 +6070,7 @@ def _v92_fetch_scan_history(search='',page=1,page_size=25,risk='',period='',ids=
     try:
         if not _v92_ensure_table(conn):
             return [],0
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
         order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*) FROM scan_history {where}',params)
@@ -6131,6 +6139,27 @@ def _v92_fetch_distinct_companies():
             return []
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT company FROM scan_history WHERE company IS NOT NULL AND company <> '' ORDER BY LOWER(company) ASC")
+            return [r[0] for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+def _v92_fetch_distinct_sectors():
+    """Alphabetically-sorted, distinct sector names for the Sector column's own Excel-style
+    filter dropdown -- an exact-match filter (see _v92_build_filters' `sector` parameter),
+    independent of the Company search box. Reported by the user: company and sector were
+    shown together in one table cell with only company filterable, so a scan couldn't be
+    found or narrowed down by sector at all. Returns [] if the feature isn't configured/
+    available."""
+    conn=_v92_db_connect()
+    if conn is None:
+        return []
+    try:
+        if not _v92_ensure_table(conn):
+            return []
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT sector FROM scan_history WHERE sector IS NOT NULL AND sector <> '' ORDER BY LOWER(sector) ASC")
             return [r[0] for r in cur.fetchall()]
     except Exception:
         return []
@@ -6490,7 +6519,7 @@ def _v93_backfill_finding_counts():
     return summary
 
 def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                      date_from=None,date_to=None,min_external=None):
+                      date_from=None,date_to=None,min_external=None,sector=None):
     """Aggregate counts/averages for the stats block at the top of /history, scoped to
     whatever filters are currently applied. Returns safe all-zero defaults if the
     feature isn't configured/available rather than erroring."""
@@ -6501,7 +6530,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
     try:
         if not _v92_ensure_table(conn):
             return empty
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
         month_where=where+(' AND ' if where else 'WHERE ')+_V92_PERIOD_SQL['month']
         with conn.cursor() as cur:
             cur.execute(f'SELECT COUNT(*), AVG(global_score) FROM scan_history {where}',params)
@@ -6518,7 +6547,7 @@ def _v92_fetch_stats(search='',risk='',period='',ids=None,min_global=None,min_gr
         conn.close()
 
 def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=None,min_green=None,min_social=None,min_findings=None,
-                               date_from=None,date_to=None,sort='company',min_external=None):
+                               date_from=None,date_to=None,sort='company',min_external=None,sector=None):
     """Un-paginated fetch of every column, for CSV export -- scan volumes here are modest
     (tens to low hundreds a month), so a single full query is fine without its own
     pagination; callers stream the result straight into a CSV response."""
@@ -6528,7 +6557,7 @@ def _v92_fetch_all_for_export(search='',risk='',period='',ids=None,min_global=No
     try:
         if not _v92_ensure_table(conn):
             return []
-        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+        where,params=_v92_build_filters(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
         order_by=_V92_SORT_SQL.get(sort,_V92_SORT_SQL['date'])
         with conn.cursor() as cur:
             cur.execute(f'''SELECT {",".join(_V92_EXPORT_COLUMNS)} FROM scan_history {where}
@@ -6551,6 +6580,7 @@ def _v92_resolve_selected_export_rows(form):
         search=(form.get('q',[''])[0] or '').strip()[:200]
         risk=(form.get('risk',[''])[0] or '').strip()
         period=(form.get('period',[''])[0] or '').strip()
+        sector=(form.get('sector',[''])[0] or '').strip()
         min_global=_v92_parse_min_filter(form,'min_global')
         min_green=_v92_parse_min_filter(form,'min_green')
         min_social=_v92_parse_min_filter(form,'min_social')
@@ -6560,7 +6590,7 @@ def _v92_resolve_selected_export_rows(form):
         date_to=_v92_parse_date_filter(form,'date_to')
         sort=(form.get('sort',['company'])[0] or 'company').strip()
         return _v92_fetch_all_for_export(search,risk,period,None,min_global,min_green,min_social,min_findings,
-            date_from,date_to,sort,min_external)
+            date_from,date_to,sort,min_external,sector)
     return _v92_fetch_all_for_export(ids=ids) if ids else []
 
 def _v92_resolve_selected_scan_ids(form):
@@ -6575,6 +6605,7 @@ def _v92_resolve_selected_scan_ids(form):
     search=(form.get('q',[''])[0] or '').strip()[:200]
     risk=(form.get('risk',[''])[0] or '').strip()
     period=(form.get('period',[''])[0] or '').strip()
+    sector=(form.get('sector',[''])[0] or '').strip()
     min_global=_v92_parse_min_filter(form,'min_global')
     min_green=_v92_parse_min_filter(form,'min_green')
     min_social=_v92_parse_min_filter(form,'min_social')
@@ -6582,7 +6613,7 @@ def _v92_resolve_selected_scan_ids(form):
     min_external=_v92_parse_min_filter(form,'min_external')
     date_from=_v92_parse_date_filter(form,'date_from')
     date_to=_v92_parse_date_filter(form,'date_to')
-    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+    where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
     conn=_v92_db_connect()
     if conn is None:
         return []
@@ -6598,7 +6629,7 @@ def _v92_resolve_selected_scan_ids(form):
         conn.close()
 
 def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=None,min_social=None,min_findings=None,
-                           date_from=None,date_to=None,min_external=None):
+                           date_from=None,date_to=None,min_external=None,sector=None):
     """Deletes every row matching the given search/risk/period/threshold filter -- the
     "select all matching results across every page" counterpart to _v92_delete_by_ids().
     Used when the operator selects all N results under the current filter (which may span
@@ -6609,7 +6640,7 @@ def _v92_delete_by_filter(search='',risk='',period='',min_global=None,min_green=
     try:
         if not _v92_ensure_table(conn):
             return 0
-        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+        where,params=_v92_build_filters(search,risk,period,None,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
         with conn.cursor() as cur:
             cur.execute(f'DELETE FROM scan_history {where}',params)
             deleted=cur.rowcount
@@ -6801,7 +6832,8 @@ def _v92_option(value,label,current):
 def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',stats=None,ids=None,
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
                               date_from=None,date_to=None,sort='company',distinct_scores=None,
-                              distinct_companies=None,distinct_dates=None,min_external=None,visit_stats=None):
+                              distinct_companies=None,distinct_dates=None,min_external=None,visit_stats=None,
+                              sector='',distinct_sectors=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -6812,6 +6844,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     # escaping.
     ids=ids or []
     search_safe=html_escape(search)
+    sector_safe=html_escape(sector or '')
     stats=stats or {'total':0,'avg_score':None,'this_month':0,'by_risk':{}}
     by_risk=stats.get('by_risk') or {}
     high_plus=(by_risk.get('High',0) or 0)+(by_risk.get('Very high',0) or 0)
@@ -6866,13 +6899,14 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     sort=sort if sort in _V92_SORT_SQL else 'company'
     distinct_scores=distinct_scores or {k:[] for k in _V92_DISTINCT_SCORE_COLUMNS}
     distinct_companies=distinct_companies or []
+    distinct_sectors=distinct_sectors or []
     distinct_dates=distinct_dates or []
     # v93.9/v93.10: every currently-active filter/sort in one place, so a column header's
     # sort link or a filter dropdown's option can build a URL that changes ONLY its own
     # piece while preserving everything else already active (e.g. picking Green=62 must
     # not silently drop an already-active Global=41 or Company filter). `overrides`
     # replaces specific keys; a value of None removes that key from the URL entirely.
-    _active={'q':search or None,'risk':risk or None,'period':period or None,
+    _active={'q':search or None,'sector':sector or None,'risk':risk or None,'period':period or None,
              'sort':sort if sort!='company' else None,'min_global':min_global,'min_green':min_green,
              'min_social':min_social,'min_findings':min_findings,'min_external':min_external,
              'date_from':date_from,'date_to':date_to}
@@ -6909,6 +6943,19 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             sel=' selected' if name==search else ''
             opts.append(f'<option value="{_filter_url({"q":name})}"{sel}>{name_safe}</option>')
         return _dropdown_th('company',''.join(opts))
+    def _sector_th():
+        # v93.95: independent exact-match filter for the Sector column, now rendered as its
+        # own column separate from Company (see the row-rendering below) -- reported by the
+        # user: company and sector were shown together in one table cell with only company
+        # filterable, so a scan couldn't be found or narrowed down by sector at all. Options
+        # show the same "(NACE X)" -stripped label the table cell itself displays, but the
+        # filter value is the full stored string (an exact match against the real column).
+        opts=[f'<option value="{_filter_url({"sector":None})}"{" selected" if not sector else ""}>All</option>']
+        for name in distinct_sectors:
+            label_safe=html_escape(re.sub(r'\s*\(NACE\s+[A-Z]\)\s*$','',name))
+            sel=' selected' if name==sector else ''
+            opts.append(f'<option value="{_filter_url({"sector":name})}"{sel}>{label_safe}</option>')
+        return _dropdown_th('sector',''.join(opts))
     def _date_th():
         # v93.10: reuses the existing exact date-range filter -- picking one calendar day
         # sets date_from=date_to=that day.
@@ -6919,13 +6966,13 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             opts.append(f'<option value="{_filter_url({"date_from":d,"date_to":d})}"{sel}>{d}</option>')
         return _dropdown_th('date',''.join(opts))
     table_header=('<th><input type="checkbox" id="selectAll" title="Select all"></th>'
-                   +_date_th()+_company_th()+'<th>Input</th>'
+                   +_date_th()+_company_th()+_sector_th()+'<th>Input</th>'
                    +_score_th('global',min_global)+_score_th('green',min_green)
                    +_score_th('social',min_social)+_score_th('findings',min_findings)
                    +_score_th('external',min_external))
     if not DATABASE_URL:
         body='<div class="empty">Scan history is not configured for this deployment (no DATABASE_URL set).</div>'
-    elif not rows and not (search or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None or min_external is not None):
+    elif not rows and not (search or sector or risk or period or ids or min_global is not None or min_green is not None or min_social is not None or min_findings is not None or min_external is not None):
         body='<div class="empty">No scans logged yet.</div>'
     elif not rows:
         body='<div class="empty">No scans match the current search/filters.</div>'
@@ -6951,6 +6998,10 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             # renders the SAME two-part shape -- a name (real label, or an explicit
             # "Sector not identified" placeholder instead of leaving it blank) followed
             # by the always-computed sector risk level when known.
+            # v93.95: rendered as its OWN column (see table_header above), not a sub-line
+            # under Company, so it can carry its own Excel-style filter dropdown -- named
+            # `sector_cell` (not `sector`) to avoid shadowing this function's own `sector`
+            # filter-value parameter used earlier for `_sector_th()`/`_active`.
             sector_name=str(r.get('sector') or '')
             has_real_sector_name=bool(sector_name) and 'not explicitly identified' not in sector_name.lower()
             # v93.19: the stored sector value cites its NACE Rev. 2 section letter (e.g.
@@ -6960,7 +7011,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             display_sector_name=re.sub(r'\s*\(NACE\s+[A-Z]\)\s*$','',sector_name)
             sector_label=html_escape(display_sector_name) if has_real_sector_name else 'Sector not identified'
             sector_risk_level=str(r.get('sector_risk') or '')
-            sector=f'{sector_label} &middot; Risk: {html_escape(sector_risk_level)}' if sector_risk_level else sector_label
+            sector_cell=f'{sector_label} &middot; Risk: {html_escape(sector_risk_level)}' if sector_risk_level else sector_label
             input_url=html_escape(str(r.get('input_url') or '')[:60])
             # v92.5: row id, needed so "Export selected" knows exactly which rows were
             # checked -- not part of any display value, so no escaping concern (it's an
@@ -6978,7 +7029,8 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
             trs.append(f'''<tr>
 <td><input type="checkbox" class="row-check" name="ids" value="{row_id}" form="selectForm"></td>
 <td>{when}</td>
-<td><strong>{company}</strong><div class="small">{sector}</div></td>
+<td><strong>{company}</strong></td>
+<td class="small">{sector_cell}</td>
 <td class="small">{input_url}</td>
 <td>{r.get("global_score") if r.get("global_score") is not None else "—"} {_v92_risk_badge(r.get("global_risk"))}</td>
 <td>{r.get("green_score") if r.get("green_score") is not None else "—"}</td>
@@ -6996,7 +7048,8 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
     min_external_s='' if min_external is None else str(min_external)
     date_from_s=date_from or ''
     date_to_s=date_to or ''
-    extra_q=((f'&q={quote(search)}' if search else '')+(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
+    extra_q=((f'&q={quote(search)}' if search else '')+(f'&sector={quote(sector)}' if sector else '')
+              +(f'&risk={quote(risk)}' if risk else '')+(f'&period={quote(period)}' if period else '')
               +(f'&min_global={min_global_s}' if min_global_s else '')+(f'&min_green={min_green_s}' if min_green_s else '')
               +(f'&min_social={min_social_s}' if min_social_s else '')+(f'&min_findings={min_findings_s}' if min_findings_s else '')
               +(f'&min_external={min_external_s}' if min_external_s else '')
@@ -7042,14 +7095,16 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <input type="text" name="q" placeholder="Search by company name" style="flex:1;min-width:180px" value="{search_safe}">
 <select name="risk"><option value="">All risk levels</option>{risk_options}</select>
 <select name="period"><option value="">All time</option>{period_options}</select>
+<input type="hidden" name="sector" value="{sector_safe}">
 <input type="hidden" name="sort" value="{sort}">
 <button class="btn" type="submit">Filter</button>
 <a class="btn secondary" href="/history">Clear</a>
-<a class="btn secondary" href="/history/export.csv?q={quote(search)}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&min_external={min_external_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
+<a class="btn secondary" href="/history/export.csv?q={quote(search)}&sector={quote(sector or '')}&risk={quote(risk)}&period={quote(period)}&min_global={min_global_s}&min_green={min_green_s}&min_social={min_social_s}&min_findings={min_findings_s}&min_external={min_external_s}&date_from={date_from_s}&date_to={date_to_s}&sort={sort}{ids_q}">Export CSV</a>
 </form>
 {selection_banner}
 <form id="selectForm" method="POST" action="/history/export_selected">
 <input type="hidden" name="q" value="{search_safe}">
+<input type="hidden" name="sector" value="{sector_safe}">
 <input type="hidden" name="risk" value="{html_escape(risk)}">
 <input type="hidden" name="period" value="{html_escape(period)}">
 <input type="hidden" name="min_global" value="{min_global_s}">
@@ -7267,6 +7322,9 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
+            # v93.95: independent exact-match Sector filter/column, alongside the existing
+            # Company search -- see _v92_build_filters()'s v93.95 note.
+            sector=(qs.get('sector',[''])[0] or '').strip()[:200]
             # v93.2: while "select all matching" is active, the GET form (View selected)
             # would otherwise submit only the ids checked on whatever page was visible --
             # ignore those and fall back to the plain search/risk/period filter instead,
@@ -7285,16 +7343,17 @@ class Handler(BaseHTTPRequestHandler):
             except Exception: page=1
             page_size=25
             rows,total=_v92_fetch_scan_history(search,page,page_size,risk,period,ids,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort,min_external)
-            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+                date_from,date_to,sort,min_external,sector)
+            stats=_v92_fetch_stats(search,risk,period,ids,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
             top_claims=_v92_fetch_top_claims()
             distinct_scores=_v92_fetch_distinct_scores()
             distinct_companies=_v92_fetch_distinct_companies()
+            distinct_sectors=_v92_fetch_distinct_sectors()
             distinct_dates=_v92_fetch_distinct_dates()
             visit_stats=_v93_fetch_visit_stats()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
                 min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores,
-                distinct_companies,distinct_dates,min_external,visit_stats))
+                distinct_companies,distinct_dates,min_external,visit_stats,sector,distinct_sectors))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -7304,6 +7363,7 @@ class Handler(BaseHTTPRequestHandler):
             search=(qs.get('q',[''])[0] or '').strip()[:200]
             risk=(qs.get('risk',[''])[0] or '').strip()
             period=(qs.get('period',[''])[0] or '').strip()
+            sector=(qs.get('sector',[''])[0] or '').strip()[:200]
             ids=_v92_parse_ids(qs)
             min_global=_v92_parse_min_filter(qs,'min_global')
             min_green=_v92_parse_min_filter(qs,'min_green')
@@ -7314,7 +7374,7 @@ class Handler(BaseHTTPRequestHandler):
             date_to=_v92_parse_date_filter(qs,'date_to')
             sort=(qs.get('sort',['company'])[0] or 'company').strip()
             rows=_v92_fetch_all_for_export(search,risk,period,ids,min_global,min_green,min_social,min_findings,
-                date_from,date_to,sort,min_external)
+                date_from,date_to,sort,min_external,sector)
             csv_bytes=_v92_rows_to_csv(rows)
             stamp=datetime.date.today().isoformat()
             return self._send(csv_bytes,'text/csv; charset=utf-8',200,
@@ -7446,6 +7506,7 @@ class Handler(BaseHTTPRequestHandler):
             search=(form.get('q',[''])[0] or '').strip()[:200]
             risk=(form.get('risk',[''])[0] or '').strip()
             period=(form.get('period',[''])[0] or '').strip()
+            sector=(form.get('sector',[''])[0] or '').strip()
             min_global=_v92_parse_min_filter(form,'min_global')
             min_green=_v92_parse_min_filter(form,'min_green')
             min_social=_v92_parse_min_filter(form,'min_social')
@@ -7453,7 +7514,7 @@ class Handler(BaseHTTPRequestHandler):
             min_external=_v92_parse_min_filter(form,'min_external')
             date_from=_v92_parse_date_filter(form,'date_from')
             date_to=_v92_parse_date_filter(form,'date_to')
-            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to,min_external)
+            _v92_delete_by_filter(search,risk,period,min_global,min_green,min_social,min_findings,date_from,date_to,min_external,sector)
         else:
             _v92_delete_by_ids(ids)
         return self._send(b'',status=302,extra_headers={'Location':'/history'})

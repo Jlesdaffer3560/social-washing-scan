@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_94_sector_assignment_corrections'
+    assert app.APP_VERSION == 'hostable_v93_95_history_sector_column_filter'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -708,12 +708,31 @@ def test_build_filters_external_signals_exact_match():
     assert params==(5,)
 
 
+def test_build_filters_sector_exact_match():
+    """v93.95: `sector` is an independent exact-match filter, alongside (not instead of)
+    `search` (company) -- both must be usable together in one query, since the whole point
+    is being able to narrow by company AND/OR by sector separately."""
+    where,params=app._v92_build_filters(sector='Food and beverage manufacturing (NACE C)')
+    assert 'sector = %s' in where
+    assert params==('Food and beverage manufacturing (NACE C)',)
+    where2,params2=app._v92_build_filters(search='Puratos',sector='Food and beverage manufacturing (NACE C)')
+    assert 'company ILIKE %s' in where2 and 'sector = %s' in where2 and ' AND ' in where2
+    assert params2==('%Puratos%','Food and beverage manufacturing (NACE C)')
+    assert app._v92_build_filters(sector='')==('',())
+
+
 def test_scan_history_fetch_distinct_companies_and_dates_unconfigured():
     """v93.10: both new distinct-value fetchers for the Date and Company dropdown filters
     must return [] (not raise) when the feature isn't configured -- same safety posture as
     every other scan-history fetch function."""
     assert app._v92_fetch_distinct_companies()==[]
     assert app._v92_fetch_distinct_dates()==[]
+
+
+def test_scan_history_fetch_distinct_sectors_unconfigured():
+    """v93.95: same safety posture as the other distinct-value fetchers -- returns [] (not
+    raise) when the feature isn't configured."""
+    assert app._v92_fetch_distinct_sectors()==[]
 
 
 def test_scan_history_excel_style_date_and_company_dropdowns(monkeypatch):
@@ -741,6 +760,38 @@ def test_scan_history_excel_style_date_and_company_dropdowns(monkeypatch):
     assert '2026-09-03</option>' in html
     # picking a different company must preserve the active date filter
     assert 'q=Zabra&date_from=2026-09-02&date_to=2026-09-02' in html
+
+
+def test_scan_history_company_and_sector_are_separate_filterable_columns(monkeypatch):
+    """v93.95: the user reported that Company and Sector were shown together in ONE table
+    cell, with only Company filterable -- they wanted to be able to select/filter by
+    company name AND, independently, by sector name. Sector must now render as its OWN
+    table column with its own Excel-style exact-match dropdown (mirroring Company's), and
+    the Company cell must no longer embed the sector text at all."""
+    monkeypatch.setattr(app,'DATABASE_URL','postgres://fake:fake@localhost/fake')
+    row={'id':42,'scanned_at':'2026-09-02T14:10','company':'Puratos','sector':'Food and beverage manufacturing (NACE C)',
+         'sector_risk':'High','input_url':'https://www.puratos.us','global_score':54,'global_risk':'High',
+         'green_score':57,'social_score':50,'findings_count':14}
+    html=app._v92_render_history_page([row],1,1,25,'',
+        distinct_sectors=['Banking and financial services (NACE K)','Food and beverage manufacturing (NACE C)'])
+    # Sector column header exists with its own dropdown, independent of the Company one.
+    assert '>Sector<' in html or '>Sector&darr;<' in html
+    # Dropdown options: label has the "(NACE X)" suffix stripped, value is the exact
+    # full stored string (used for the real filter), alphabetically ordered.
+    assert ('<option value="/history?sector=Banking%20and%20financial%20services%20%28NACE%20K%29">'
+            'Banking and financial services</option>' in html)
+    assert '<option value="/history?sector=Food%20and%20beverage%20manufacturing%20%28NACE%20C%29">Food and beverage manufacturing</option>' in html
+    # The Company cell itself must be its own <td>, with the sector text in a DIFFERENT <td>.
+    assert '<td><strong>Puratos</strong></td>' in html
+    assert '<td class="small">Food and beverage manufacturing &middot; Risk: High</td>' in html
+    assert '<div class="small">Food and beverage manufacturing' not in html
+
+    # Selecting a sector must be preserved alongside an active company search (both filters
+    # combine, neither clobbers the other), and the "All" option must clear only sector.
+    html2=app._v92_render_history_page([row],1,1,25,'Puratos',sector='Food and beverage manufacturing (NACE C)',
+        distinct_sectors=['Food and beverage manufacturing (NACE C)'])
+    assert 'q=Puratos&sector=Food' in html2.replace('%20',' ')
+    assert '<option value="/history?q=Puratos">All</option>' in html2
 
 
 def test_scan_history_select_all_button_always_visible(monkeypatch):
