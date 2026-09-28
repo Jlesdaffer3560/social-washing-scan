@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v93_99_checkbox_multiselect_filters"
-APP_RELEASE_LABEL="v93.99"
-APP_RELEASE_DATE="2026-09-25"
+APP_VERSION="hostable_v94_0_report_legal_basis_and_avg_disclosure"
+APP_RELEASE_LABEL="v94.0"
+APP_RELEASE_DATE="2026-09-28"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))

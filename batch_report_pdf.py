@@ -103,6 +103,7 @@ def _aggregate(rows):
     return {
         'total': len(rows),
         'avg_global': avg(scores['global']),
+        'avg_global_n': len(scores['global']),
         'avg_green': avg(scores['green']),
         'avg_social': avg(scores['social']),
         'avg_findings': avg(findings_counts),
@@ -281,7 +282,15 @@ def _executive_summary_text(agg):
     parts = [f'Of the {total} scan{"" if total == 1 else "s"} included in this report, '
              f'{high_plus} ({pct}%) show a High or Very high claim-risk rating.']
     if avg_g is not None:
-        parts.append(f'The average Global score across the set is {avg_g}/100 -- this reflects wording and '
+        # External review (ChatGPT): an average silently computed over fewer rows than the
+        # stated total (e.g. a scan with no numeric global_score yet, or an older row missing
+        # the field) previously gave no indication of that -- the reader had no way to tell
+        # "average of all 157" from "average of however many actually had a score". Only
+        # surfaced when it actually differs, so the ordinary case (every row scored) stays as
+        # a clean, uncluttered sentence.
+        avg_n = agg.get('avg_global_n')
+        coverage_note = f' (based on {avg_n} of {total} scans with a valid score)' if avg_n is not None and avg_n != total else ''
+        parts.append(f'The average Global score across the set is {avg_g}/100{coverage_note} -- this reflects wording and '
                       'evidence gaps found, not a share of unlawful claims.')
     if agg['blacklisted_companies']:
         parts.append(f'{agg["blacklisted_companies"]} scan{"" if agg["blacklisted_companies"] == 1 else "s"} '

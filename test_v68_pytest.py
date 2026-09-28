@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v93_99_checkbox_multiselect_filters'
+    assert app.APP_VERSION == 'hostable_v94_0_report_legal_basis_and_avg_disclosure'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3872,6 +3872,27 @@ def test_batch_report_wording_says_scans_not_companies_for_totals():
     assert 'companies included' not in text.lower()
 
 
+def test_batch_report_average_score_discloses_partial_coverage():
+    """External review (ChatGPT): the average Global score was silently computed over
+    whichever rows had a numeric global_score, with no indication when that was FEWER rows
+    than the stated total (e.g. a row with no score yet). The ordinary case (every row
+    scored) must stay a clean, unqualified sentence; a partial-coverage case must name how
+    many of the total actually contributed to the average."""
+    import batch_report_pdf as brp
+    rows = _sample_export_rows()  # 3 rows, all with a numeric global_score
+    agg_full = brp._aggregate(rows)
+    assert agg_full['avg_global_n'] == len(rows)
+    text_full = brp._executive_summary_text(agg_full)
+    assert 'based on' not in text_full
+
+    partial_rows = rows + [dict(rows[0], company='Unscored Co', global_score=None, global_risk='Not assessed')]
+    agg_partial = brp._aggregate(partial_rows)
+    assert agg_partial['avg_global_n'] == len(rows)
+    assert agg_partial['total'] == len(rows) + 1
+    text_partial = brp._executive_summary_text(agg_partial)
+    assert f"based on {len(rows)} of {len(rows) + 1} scans with a valid score" in text_partial
+
+
 def test_batch_report_pill_badges():
     """v93.17: risk and blacklist values must render as rounded pill badges (a hand-drawn
     Drawing with a soft-tinted background and colored bold text), matching the same
@@ -4236,6 +4257,37 @@ def test_build_company_report_pdf_stays_within_four_pages_with_few_findings():
     full_text=' '.join(p.extract_text() for p in pages)
     assert 'FULL LIST OF FINDINGS' in full_text.upper()
     assert 'occurrences' in full_text and 'milieuvriendelijk' in full_text
+
+
+def test_claim_card_shows_legal_basis_explanation_when_available():
+    """External review (ChatGPT): the report showed a legal-basis CATEGORY badge next to the
+    claim title (e.g. "Potentially Prohibited (UCPD Annex I, as amended by EmpCo)") but never
+    explained what that meant or which article it rested on -- app.py's classify_legal_basis()
+    already computes a real explanation ('legal_basis_short') for exactly this purpose, but
+    report_pdf.py never rendered it. Must appear (bounded, not raising) when the backend
+    supplied one, and must be omitted cleanly (no blank "Legal basis:" line, no KeyError) when
+    it's absent -- an older cached result, or the non-material "no claim retained" placeholder,
+    which has no legal-basis category at all."""
+    import pypdf
+    import report_pdf as rp
+    finding=_pdf_finding(0,'Climate-neutrality or offsetting claim','High',
+        'Our product is carbon neutral, verified through certified carbon offset credits.',68,source='sustainability')
+    finding['legal_basis_short']=('On the fixed list added to Annex I of the Unfair Commercial Practices Directive '
+        '(2005/29/EC) by EmpCo (Directive (EU) 2024/825): automatically treated as unfair once EmpCo applies.')
+    data=_pdf_test_data([finding])
+    pdf_bytes=rp.build_company_report_pdf(data)
+    text=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
+    assert 'Legal basis:' in text
+    assert 'Unfair Commercial Practices Directive' in text
+
+    # sanity: a finding with NO legal_basis_short (e.g. an older cached scan) must not raise
+    # and must not show a dangling "Legal basis:" label with nothing after it
+    finding_no_basis=_pdf_finding(1,'Generic environmental claim','Medium','Our products are eco-friendly.',55,source='home')
+    data2=_pdf_test_data([finding_no_basis])
+    pdf_bytes2=rp.build_company_report_pdf(data2)
+    assert pdf_bytes2.startswith(b'%PDF-')
+    text2=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes2)).pages)
+    assert 'Legal basis: ' not in text2.split('FULL LIST')[0]
 
 
 def test_external_panel_renders_more_than_two_signals():

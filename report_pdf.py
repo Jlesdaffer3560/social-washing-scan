@@ -336,6 +336,22 @@ def legal_basis_label(claim):
     return "Problematic, not automatically prohibited (case-by-case)", AMBER
 
 
+def legal_basis_explanation_text(claim, max_chars=220):
+    """External review (ChatGPT): the report showed a legal-basis CATEGORY badge ("Potentially
+    Prohibited (UCPD Annex I, as amended by EmpCo)") but never the actual explanation of what
+    that category means or which article it rests on -- app.py's classify_legal_basis() already
+    computes a real, article-level explanation ('legal_basis_short', e.g. citing UCPD Article
+    12(a)/(b) or Annex I as amended by EmpCo, with the automatic-vs-case-by-case distinction
+    and, where relevant, the 27 September 2026 EmpCo application date) for exactly this purpose,
+    but report_pdf.py never rendered it -- a reader saw the label, never the grounding. Returns
+    "" for a non-material claim (no legal-basis category applies) or when the backend didn't
+    supply one (an older cached result), so callers can omit the line entirely rather than show
+    a blank "Legal basis:" prefix."""
+    if not is_material(claim):
+        return ""
+    return bounded_text(claim.get("legal_basis_short") or "", max_chars)
+
+
 def claim_source(claim):
     source = clean_text(claim.get("source_label") or claim.get("source_url") or "Reviewed material")
     if source.startswith("http"):
@@ -1132,7 +1148,15 @@ def claim_card(cluster, excerpt_chars=220, material=False):
         # in app.py), so no quote marks are added here on top of those.
         action_html += f'<br/><font color="#6B7398">Example wording — verify and complete before use:</font> <i>{esc(ready_rewrite)}</i>'
     action = Paragraph(action_html, ST["small_dark"])
-    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + [[meaning], [action]]
+    # External review (ChatGPT): the legal-basis BADGE next to the title (e.g. "Potentially
+    # Prohibited (UCPD Annex I, as amended by EmpCo)") was never explained -- the reader saw
+    # the label, never which article it rests on or why. Adds a short, bounded explanation
+    # line (see legal_basis_explanation_text()) using the same small-label pattern already
+    # used for "Source:"/"Wording detected:"/"Why this example:" above, so it reads as one
+    # more citation-style fact rather than a new, heavier block.
+    legal_body = legal_basis_explanation_text(claim, 200 if material else 160)
+    legal_row = [Paragraph(f'<font color="#6B7398">Legal basis:</font> {esc(legal_body)}', ST["source"])] if legal_body else None
+    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + ([legal_row] if legal_row else []) + [[meaning], [action]]
     inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
