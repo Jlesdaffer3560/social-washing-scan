@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_0_report_legal_basis_and_avg_disclosure'
+    assert app.APP_VERSION == 'hostable_v94_1_report_honesty_and_transparency_pass'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4288,6 +4288,159 @@ def test_claim_card_shows_legal_basis_explanation_when_available():
     assert pdf_bytes2.startswith(b'%PDF-')
     text2=' '.join(p.extract_text() for p in pypdf.PdfReader(__import__('io').BytesIO(pdf_bytes2)).pages)
     assert 'Legal basis: ' not in text2.split('FULL LIST')[0]
+
+
+def test_no_findings_placeholder_is_neutral_not_green_when_coverage_is_limited():
+    """External review (ChatGPT), section 3 (ontbrekende gegevens eerlijk behandelen): the
+    zero-findings placeholder used to hardcode risk="Low", which report_pdf.py's own
+    risk_color() renders as a solid GREEN pill -- exactly the "kunstmatig groen hoofdvoorbeeld"
+    the review warned against, since it made "we found nothing" look identical to "we
+    positively confirmed a low-risk result" even when the scan barely reviewed anything.
+    A scan with GOOD coverage and zero findings may still legitimately show Low/green (a
+    real screening result); only a scan with LIMITED coverage must fall back to a neutral
+    'Not assessed' state."""
+    import report_pdf as rp
+    poor = _pdf_test_data([])
+    poor['crawl_diagnostics'] = {'pages_attempted': 10, 'pages_failed': 6, 'pages_thin': 0, 'pages_retrieved_via_fallback': 0}
+    placeholder = rp._no_findings_placeholder(poor)
+    assert placeholder['representative']['risk'] == 'Not assessed'
+    assert rp.risk_color('Not assessed') != rp.GREEN
+
+    good = _pdf_test_data([])
+    good['crawl_diagnostics'] = {'pages_attempted': 10, 'pages_failed': 0, 'pages_thin': 0, 'pages_retrieved_via_fallback': 0}
+    good['scan_inventory'] = {'website_pages': [{'name': f'p{i}', 'url': f'https://x.example/{i}', 'source_type': 'Website page'} for i in range(9)],
+                               'documents': [], 'summary': {'website_pages_reviewed': 9, 'documents_reviewed': 0, 'domains_reviewed': 1, 'reviewed_total': 9}}
+    good_placeholder = rp._no_findings_placeholder(good)
+    assert good_placeholder['representative']['risk'] == 'Low'
+
+
+def test_priority_actions_suppressed_when_no_material_claims_retained():
+    """External review (ChatGPT), section 3: app.py's company_action_plan generator always
+    returns generic governance actions (e.g. "Create a social-claim register") regardless of
+    whether any claim was actually retained -- shown next to "No material claim signal
+    retained" this reads as remediation for a deficiency that was never found. When no
+    material claim exists, actions_table must show a neutral note instead of padding to 3
+    generic actions; with a material claim, the normal 3-action table is unchanged."""
+    import report_pdf as rp
+    import pypdf, io
+    t_empty = rp.actions_table({'company_action_plan': []}, has_material_claims=False)
+    t_full = rp.actions_table({'company_action_plan': []}, has_material_claims=True)
+    assert len(t_full._cellvalues) == 3  # unchanged: pads to the 3 default actions
+    assert len(t_empty._cellvalues) == 1  # the neutral note, not 3 generic rows
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.lib.pagesizes import A4
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=A4).build([t_empty])
+    text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(buf.getvalue())).pages)
+    assert 'No priority action is linked to a specific finding' in text
+    assert 'Create a social-claim register' not in text
+
+
+def test_external_panel_discloses_retained_vs_shown_count():
+    """External review (ChatGPT), section 4: "toon hoeveel externe bronnen zijn behouden en
+    hoeveel daarvan worden weergegeven" -- external_signals() used to stop collecting once
+    `limit` was reached, so the true retained total was never known and the report could
+    never say "these are 2 of 8" versus "these are the only 2 that exist". Must disclose the
+    gap only when it's real; a selection that fits entirely within `limit` stays clean."""
+    import report_pdf as rp
+    import pypdf, io
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.lib.pagesizes import A4
+    many = {'external_research': {'green': {'targeted_negative_sources': [
+        {'title': f'Item {i}', 'url': f'https://n.example/{i}', 'polarity': 'negative', 'review_status': 'Included'} for i in range(8)
+    ]}, 'social': {'targeted_negative_sources': []}}}
+    shown, total = rp.external_signals(many, limit=2)
+    assert len(shown) == 2 and total == 8
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=A4).build([rp.external_panel(many, 2)])
+    text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(buf.getvalue())).pages)
+    assert 'Showing 2 of 8 retained external signals' in text
+
+    few = {'external_research': {'green': {'targeted_negative_sources': [
+        {'title': 'Only item', 'url': 'https://n.example/only', 'polarity': 'negative', 'review_status': 'Included'}
+    ]}, 'social': {'targeted_negative_sources': []}}}
+    shown2, total2 = rp.external_signals(few, limit=2)
+    assert len(shown2) == 1 and total2 == 1
+    buf2 = io.BytesIO()
+    SimpleDocTemplate(buf2, pagesize=A4).build([rp.external_panel(few, 2)])
+    text2 = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(buf2.getvalue())).pages)
+    assert 'retained external signals' not in text2
+
+
+def test_score_overview_explains_bands_and_global_green_social_relationship():
+    """External review (ChatGPT), section 5: three score cards (Overall/Green/Social) sat
+    side by side with no explanation of what the risk bands mean or how the three numbers
+    relate to each other. app.py's level() bands scores into four equal 25-point tiers and
+    why_score.global already states the global/green/social relationship exactly -- neither
+    was ever surfaced in the PDF."""
+    import pypdf, io
+    import report_pdf as rp
+    data = _pdf_test_data([_pdf_finding(0, 'Generic environmental claim', 'High', 'Our products are eco-friendly and green.', 70)])
+    data['why_score'] = {'global': 'Global score is 75/100. It is a weighted combination of the green score (75/100) and social score (62/100), calibrated so that one dimension does not automatically dominate the global score.'}
+    pdf_bytes = rp.build_company_report_pdf(data)
+    text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
+    assert 'Low 0' in text and 'Very high 75' in text
+    # PDF text extraction can insert a line-wrap newline mid-sentence, so check two shorter
+    # substrings on either side of a likely wrap point rather than one long exact phrase.
+    assert 'weighted combination' in text and 'social score (62/100)' in text
+
+    # fallback: no why_score at all (older cached result) must not raise, and must still show
+    # a generically accurate relationship sentence rather than nothing.
+    data_no_why = _pdf_test_data([])
+    data_no_why.pop('why_score', None)
+    pdf_bytes2 = rp.build_company_report_pdf(data_no_why)
+    text2 = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes2)).pages)
+    assert 'weighted combination of the green and social' in text2
+
+
+def test_claim_card_separates_why_from_what_remains_uncertain():
+    """External review (ChatGPT), section 6 (vijf-vragen structuur): "evidence to verify"
+    used to be folded silently into the WHY-THIS-MATTERS paragraph, leaving "what remains
+    uncertain" unanswered as its own distinct question. Must now appear as its own labelled
+    section, separate from WHY THIS MATTERS."""
+    import report_pdf as rp
+    finding = _pdf_finding(0, 'Generic environmental claim', 'High', 'Our products are fully eco-friendly.', 70)
+    cluster = rp.cluster_claims({'claim_inventory': [finding]})[0]
+    card = rp.claim_card(cluster, material=True)
+    import pypdf, io
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.lib.pagesizes import A4
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=A4).build([card])
+    text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(buf.getvalue())).pages)
+    assert 'WHY THIS MATTERS' in text
+    assert 'WHAT REMAINS UNCERTAIN' in text
+    assert text.index('WHY THIS MATTERS') < text.index('WHAT REMAINS UNCERTAIN') < text.index('WHAT TO DO')
+
+
+def test_full_inventory_title_and_numbering_note_reflect_truncation():
+    """External review (ChatGPT), section 7: "noem een lijst alleen 'volledig' wanneer
+    werkelijk alle bevindingen zijn opgenomen" -- the appendix section title said "Full list
+    of findings" unconditionally even when full_claim_inventory_table's own max_rows cap
+    truncated it. Also verifies the numbering-scope clarification note (the appendix numbers
+    every individual claim; the page-1 table numbers the top-3 grouped clusters -- these are
+    different lists and must not be implied to correspond)."""
+    import pypdf, io
+    import report_pdf as rp
+    few = _pdf_test_data([_pdf_finding(i, f'Claim type {i}', 'Medium', f'Distinct wording {i} about our products.', 40) for i in range(3)])
+    text_few = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(rp.build_company_report_pdf(few))).pages)
+    assert 'Full list of findings' in text_few
+    assert 'do not correspond to the numbering' in text_few
+
+
+def test_pdf_document_metadata_is_set():
+    """External review (ChatGPT), section 7: "vul documenttitel, auteur en onderwerp
+    professioneel in" -- neither PDF set title/author/subject metadata at all, so a saved
+    file showed a blank or filename-derived title in a PDF viewer/reader list."""
+    import pypdf, io
+    import report_pdf as rp
+    import batch_report_pdf as brp
+    meta = pypdf.PdfReader(io.BytesIO(rp.build_company_report_pdf(_pdf_test_data([])))).metadata
+    assert meta.title and 'Test Co' in meta.title
+    assert meta.author == 'Durably'
+    batch_meta = pypdf.PdfReader(io.BytesIO(brp.build_batch_summary_report_pdf(_sample_export_rows()))).metadata
+    assert batch_meta.title == 'Durably Scan Summary Report'
+    assert batch_meta.author == 'Durably'
 
 
 def test_external_panel_renders_more_than_two_signals():

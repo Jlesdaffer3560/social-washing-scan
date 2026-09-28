@@ -474,7 +474,9 @@ def build_batch_summary_report_pdf(rows, meta=None):
     subtitle = f'{agg["total"]} selected scan(s) · generated {generated}'
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X,
-                             topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
+                             topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1,
+                             title='Durably Scan Summary Report', author='Durably',
+                             subject='Aggregated sustainability claims risk scan summary')
     flow = []
     flow += _header(subtitle, generated)
     if not rows:

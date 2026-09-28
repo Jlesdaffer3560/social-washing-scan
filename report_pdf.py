@@ -352,6 +352,25 @@ def legal_basis_explanation_text(claim, max_chars=220):
     return bounded_text(claim.get("legal_basis_short") or "", max_chars)
 
 
+# External review (ChatGPT): "leg kort uit wat de score meet en welke grenzen bij de
+# risiconiveaus horen" -- app.py's level() bands scores into four equal 25-point tiers
+# (0-24/25-49/50-74/75-100); the report never stated those bounds anywhere.
+_SCORE_TIER_LEGEND = "Score bands: Low 0–24 · Medium 25–49 · High 50–74 · Very high 75–100."
+
+
+def score_relationship_text(data, max_chars=320):
+    """External review (ChatGPT): "licht de verhouding tussen totaalscore, milieuscore en
+    sociale score toe" -- the report showed three score cards side by side with no
+    explanation of how they relate. app.py's why_score.global already states this exactly
+    (a weighted combination of the green and social scores, calibrated so neither one
+    automatically dominates); this only surfaces it. Falls back to a generic but still
+    accurate sentence when the backend didn't supply one (an older cached result)."""
+    raw = clean_text((data.get("why_score") or {}).get("global") or "")
+    if raw:
+        return bounded_text(raw, max_chars)
+    return "The overall score is a weighted combination of the green and social scores below; neither one automatically dominates the result."
+
+
 def claim_source(claim):
     source = clean_text(claim.get("source_label") or claim.get("source_url") or "Reviewed material")
     if source.startswith("http"):
@@ -705,6 +724,11 @@ def reliability_warning(data):
 
 
 def external_signals(data, limit=2):
+    """Returns (shown, total_retained). total_retained is the full count of sources that
+    passed every filter below, before slicing to `limit` -- external review (ChatGPT): the
+    report never disclosed how many external sources were actually retained versus how many
+    were displayed, so a reader had no way to tell "these are the only 2 that exist" from
+    "these are 2 of 11 we found room for"."""
     ext = data.get("external_research") or {}
     green_rows = (ext.get("green") or {}).get("targeted_negative_sources") or []
     social_rows = (ext.get("social") or {}).get("targeted_negative_sources") or []
@@ -733,9 +757,7 @@ def external_signals(data, limit=2):
             continue
         seen.add(key)
         unique.append(item)
-        if len(unique) >= limit:
-            break
-    return unique
+    return unique[:limit], len(unique)
 
 
 def reviewed_sources(data, limit=3):
@@ -861,7 +883,7 @@ def summary_box(data, clusters):
     else:
         conclusion = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
     score_line = (f'Overall score: {esc(global_score)}/100 — {esc(global_risk)} claim risk. '
-                  f'This reflects the wording and evidence gaps found, not a share of unlawful claims.')
+                  f"This reflects the wording and evidence gaps found — not a share of unlawful claims, and not a rating of the company's overall sustainability performance.")
     left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#4A5578" size="8">{score_line}</font>', ST["body_dark"])
     note = Paragraph(esc(bounded_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on the result.", 170)), ST["small"])
     t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
@@ -1133,10 +1155,16 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # changes how many separate boxes they render as, not their wording.
     why_body = why_text(claim, 155 if material else 130)
     gap_body = evidence_gap_text(claim, 130 if material else 110)
-    # v93.71: "What's missing" asserted the evidence doesn't exist; the scan can only say it
-    # wasn't found in the material actually reviewed, which "Evidence to verify" states
-    # honestly without that stronger, unproven claim.
-    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)} <font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
+    meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)}', ST["small_dark"])
+    # External review (ChatGPT): every finding should answer five plain questions -- what was
+    # said (source/quote above), why it needs attention (WHY THIS MATTERS above), what
+    # underpins it (source/legal-basis lines above), what remains uncertain, and what to do
+    # (below). "Evidence to verify" used to be folded silently into the WHY paragraph, leaving
+    # "what remains uncertain" unanswered as its own question. v93.71: "What's missing"
+    # asserted the evidence doesn't exist; the scan can only say it wasn't found in the
+    # material actually reviewed, which "Evidence to verify" states honestly without that
+    # stronger, unproven claim.
+    uncertain = Paragraph(f'<b>WHAT REMAINS UNCERTAIN</b><br/><font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
     ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
     if ready_rewrite:
@@ -1156,7 +1184,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     # more citation-style fact rather than a new, heavier block.
     legal_body = legal_basis_explanation_text(claim, 200 if material else 160)
     legal_row = [Paragraph(f'<font color="#6B7398">Legal basis:</font> {esc(legal_body)}', ST["source"])] if legal_body else None
-    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + ([legal_row] if legal_row else []) + [[meaning], [action]]
+    rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + ([legal_row] if legal_row else []) + [[meaning], [uncertain], [action]]
     inner = Table(rows, colWidths=[inner_width])
     inner.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     card = Table([[inner]], colWidths=[CONTENT_W])
@@ -1196,7 +1224,20 @@ def compact_action(action, company):
     return title, "Assign an owner, evidence file, review status and completion date."
 
 
-def actions_table(data):
+def actions_table(data, has_material_claims=True):
+    # External review (ChatGPT): app.py's company_action_plan is a general-governance
+    # generator that always returns entries regardless of whether any claim was actually
+    # retained (e.g. "Create a social-claim register" appears even for a zero-findings scan)
+    # -- shown next to "No material claim signal retained" this reads as remediation actions
+    # for a deficiency that was never found. Every priority action must trace to a concrete
+    # finding; when none exists, say so plainly instead of padding with generic advice.
+    if not has_material_claims:
+        p = Paragraph("No priority action is linked to a specific finding here, since none was retained in this scan. "
+                       "Maintaining a claim register, evidence files and an approval workflow remains good practice regardless.", ST["small"])
+        t = Table([[p]], colWidths=[CONTENT_W])
+        t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+        return t
     raw = list(data.get("company_action_plan") or [])[:3]
     defaults = [{"title":"Review priority claims","action":"Review exact wording, audience, scope and supporting evidence."},{"title":"Close evidence gaps","action":"Create claim-specific evidence files with accountable owners."},{"title":"Implement claim governance","action":"Require sustainability, legal, compliance and marketing approval before publication."}]
     while len(raw) < 3:
@@ -1268,13 +1309,19 @@ def external_signal_card(signal, width):
 
 
 def external_panel(data, limit):
-    signals = external_signals(data, limit)
+    signals, total_retained = external_signals(data, limit)
     # v93.64: "Negative external stakeholder signals... Automated retained signals require
     # manual verification of status, entity link and claim relevance" was internal
     # process/pipeline language, not something a report reader would naturally say. Restated
     # in plain terms without changing what it actually claims: only critical sources are
     # shown, and a person should still check each one before relying on it.
     note = Paragraph("Only critical or negative external sources are shown here — positive, neutral and the company's own sources are left out. These were found automatically, so a person should still check that each one is accurate, about the right company, and relevant to the claim.", ST["source"])
+    # External review (ChatGPT): "toon hoeveel externe bronnen zijn behouden en hoeveel
+    # daarvan worden weergegeven" -- discloses the gap only when it actually exists, so a
+    # scan whose retained signals all fit within `limit` still reads as a clean, uncluttered
+    # panel.
+    count_note = (Paragraph(f"Showing {len(signals)} of {total_retained} retained external signals; the rest remain available in the online scan.", ST["source"])
+                  if total_retained > len(signals) else None)
     if not signals:
         empty_text = ("External-source screening was not performed for this internal-document scan."
                       if _is_internal_document_scan(data) else
@@ -1300,8 +1347,13 @@ def external_panel(data, limit):
                 grid_rows.append([external_signal_card(pair[0], half_width-3), ""])
         cards = Table(grid_rows, colWidths=[half_width, half_width])
         cards.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 3), ("LEFTPADDING", (1, 0), (1, -1), 3), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
-    wrap = Table([[note], [cards]], colWidths=[CONTENT_W])
-    wrap.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, 1), (-1, 1), 0)]))
+    wrap_rows = [[note], [cards]] + ([[count_note]] if count_note is not None else [])
+    wrap = Table(wrap_rows, colWidths=[CONTENT_W])
+    last = len(wrap_rows) - 1
+    wrap_style = [("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, 1), (-1, last), 0)]
+    if count_note is not None:
+        wrap_style.append(("TOPPADDING", (0, 2), (-1, 2), 3))
+    wrap.setStyle(TableStyle(wrap_style))
     return wrap
 
 
@@ -1470,13 +1522,39 @@ def draw_footer(canvas, doc):
     canvas.restoreState()
 
 
+def _no_findings_placeholder(data):
+    """External review (ChatGPT): the zero-findings placeholder card used to hardcode
+    risk="Low", which risk_color() renders as a solid GREEN pill -- indistinguishable from a
+    genuine, explicitly-established low-risk result. That is only honest when the scan
+    actually had enough material to support it; when coverage was limited (see
+    reliability_warning(), already computed from the same crawl_diagnostics), "we found
+    nothing" only means "we found nothing in the little we could review", which must read as
+    neutral/uncertain, not as a positive result. Also distinguishes the wording from a
+    definitive "no claim exists" -- neither case asserts more than the scan actually
+    established."""
+    if reliability_warning(data):
+        risk = "Not assessed"
+        claim_text = ("We could not find a sustainability claim needing attention in the material we were able to "
+                       "review. Coverage was limited (see the data reliability note on this page), so this does not "
+                       "confirm the absence of risky wording elsewhere.")
+        why_flagged = "Coverage was limited, so this result reflects only the material actually reviewed, not a completed check of the company's full communications."
+    else:
+        risk = "Low"
+        claim_text = "No material sustainability claim was retained in the reviewed material."
+        why_flagged = "No material wording issue was retained in this first-pass screening."
+    return {"representative": {"claim_type": "No material claim signal retained", "risk": risk, "claim_text": claim_text,
+        "why_flagged": why_flagged, "evidence_needed": ["Maintain claim-specific evidence and approval records"],
+        "suggested_rewrite": "Continue using precise wording supported by current evidence."}, "occurrences": []}
+
+
 def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, source_limit=5, total_pages=None, inventory_limit=300, include_inventory=True):
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN_X, rightMargin=MARGIN_X, topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM, allowSplitting=1,
+        title=f"{company_name(data)} — Sustainability Claims Risk Scan", author="Durably", subject="Sustainability claims risk scan report")
     doc.report_data = data
     doc.total_pages_hint = total_pages
     clusters = cluster_claims(data)
-    material = clusters[0] if clusters else {"representative":{"claim_type":"No material claim signal retained","risk":"Low","claim_text":"No material sustainability claim was retained in the reviewed material.","why_flagged":"No material wording issue was retained in this first-pass screening.","evidence_needed":["Maintain claim-specific evidence and approval records"],"suggested_rewrite":"Continue using precise wording supported by current evidence."},"occurrences":[]}
+    material = clusters[0] if clusters else _no_findings_placeholder(data)
     additional = clusters[1:1+additional_limit]
     # v85: clusters are sorted purely by (risk, claim_score) with no dimension awareness, so a
     # scan with e.g. three High-risk social findings but a slightly higher-scoring green
@@ -1519,6 +1597,13 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 3.6*mm))
     flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 2.4*mm))
     flow.append(entity_context_bar(data)); flow.append(Spacer(1, 2.6*mm))
+    # External review (ChatGPT): three score cards (Overall/Green/Social) sat side by side
+    # with no explanation of what the risk bands mean or how the three numbers relate --
+    # app.py's why_score.global already computes exactly that (a weighted combination of the
+    # green and social scores, calibrated so neither one automatically dominates) but
+    # report_pdf.py never surfaced it. See score_relationship_text().
+    flow.append(Paragraph(f'{esc(_SCORE_TIER_LEGEND)} {esc(score_relationship_text(data))}', ST["source"]))
+    flow.append(Spacer(1, 1.6*mm))
     # v93.71: added per reviewer feedback -- the appendix can show every retained finding as
     # "High" while the overview score reads lower, which looks contradictory without knowing
     # that wording severity is weighted far more heavily than repetition, and that repeated
@@ -1580,7 +1665,7 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     flow.append(Spacer(1, 1.8*mm))
     top_selected = [material] + additional
     flow.append(risk_driver_table(top_selected)); flow.append(Spacer(1, 4*mm))
-    flow.append(section_title("Priority actions")); flow.append(actions_table(data))
+    flow.append(section_title("Priority actions")); flow.append(actions_table(data, has_material_claims=bool(clusters)))
     flow.append(PageBreak())
 
     # PAGE 2 -- the evidence itself: exact quotes, why they matter, what to do.
@@ -1624,7 +1709,25 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         # separated from the read-through narrative above, per explicit reviewer feedback.
         flow.append(PageBreak())
         flow += header_block(data, "Company claim-risk report · Full findings")
-        flow.append(section_title("Full list of findings"))
+        # External review (ChatGPT): "noem een lijst alleen 'volledig' wanneer werkelijk alle
+        # bevindingen zijn opgenomen" -- full_claim_inventory_table already caps at
+        # inventory_limit and shows a truncation note below the table when it does, but the
+        # SECTION TITLE above it still unconditionally said "Full list of findings" even in
+        # that case. Recompute the same materiality filter it uses to know in advance whether
+        # this run will actually be complete.
+        _inv_rows = [r for r in (data.get("claim_inventory") or data.get("findings") or []) if isinstance(r, dict) and is_material(r)]
+        if not _inv_rows:
+            _inv_rows = [r for r in (list(data.get("green_findings") or []) + list(data.get("social_findings") or [])) if isinstance(r, dict) and is_material(r)]
+        _inv_truncated = len(_inv_rows) > inventory_limit
+        flow.append(section_title("List of findings (highest-risk subset shown)" if _inv_truncated else "Full list of findings"))
+        # External review (ChatGPT): "gebruik... vaste bevindingnummers door het hele rapport"
+        # -- this table numbers every individually retained CLAIM, while the "What needs
+        # attention" table on page 1 numbers the top 3 grouped CLUSTERS; the two numbering
+        # schemes are not the same list and were never labelled as such. State that plainly
+        # rather than implying the numbers correspond.
+        flow.append(Paragraph("Numbered independently below, ordered by risk — these numbers do not correspond to the numbering in the "
+                               "&ldquo;What needs attention&rdquo; table on page 1.", ST["source"]))
+        flow.append(Spacer(1, 1.6*mm))
         flow += full_claim_inventory_table(data, max_rows=inventory_limit)
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
