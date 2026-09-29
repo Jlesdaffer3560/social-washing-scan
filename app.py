@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_1_report_honesty_and_transparency_pass"
-APP_RELEASE_LABEL="v94.1"
-APP_RELEASE_DATE="2026-09-28"
+APP_VERSION="hostable_v94_2_ec_faq_methodology_alignment"
+APP_RELEASE_LABEL="v94.2"
+APP_RELEASE_DATE="2026-09-29"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -3316,6 +3316,30 @@ _RECOGNIZED_CERTIFICATION_SCHEMES=(
     'better cotton initiative','bci cotton','iso 14001','higg index',
 )
 
+# European Commission Q&A on the ECGT Directive (Directive (EU) 2024/825), September 2026, Q7:
+# "recognised excellent environmental performance" (Article 2(s) UCPD, as amended by EmpCo) --
+# the specific, narrow test that excuses an otherwise-GENERIC environmental claim from the
+# Annex I point 4a blacklist -- is satisfied ONLY by: (1) the EU Ecolabel (Regulation (EC) No
+# 66/2010); (2) a national or regional EN ISO 14024 type I ecolabelling scheme officially
+# recognised in an EU Member State (the Q&A itself names the Nordic Swan, Blue Angel, the
+# Austrian Ecolabel and the Dutch Ecolabel/Milieukeur as examples); or (3) top environmental
+# performance under other applicable Union law (e.g. an A-rating under the Energy Labelling
+# Regulation, which cannot be detected from wording alone). This is deliberately a MUCH
+# narrower list than _RECOGNIZED_CERTIFICATION_SCHEMES above: a third-party scheme such as
+# Fairtrade, FSC, GOTS, B Corp or Rainforest Alliance is a legitimate certification scheme for
+# the separate question of whether a SUSTAINABILITY LABEL is genuine (Annex I point 2a /
+# Article 2(r)), but none of them certify environmental PERFORMANCE, so none of them satisfy
+# Article 2(s) -- naming Fairtrade does not excuse a generic "eco-friendly" claim from Annex I
+# point 4a. Kept to the Q&A's own named examples rather than an exhaustive list of every
+# officially-recognised national EN ISO 14024 scheme, which cannot be enumerated here with
+# confidence; any other named ecolabel should still be reviewed case-by-case.
+_RECOGNIZED_EXCELLENT_ENV_PERFORMANCE_SCHEMES=(
+    'eu ecolabel','ecolabel europeen','ecolabel européen','eu-ecolabel','ecolabel-eu',
+    'nordic swan','nordic ecolabel','blauer engel','blue angel',
+    'austrian ecolabel','österreichisches umweltzeichen','oesterreichisches umweltzeichen',
+    'milieukeur','dutch ecolabel',
+)
+
 # v93.46: naming a recognised scheme is only evidence of a real certification when the claim
 # actually asserts membership in it -- a comparison or contrast ("unlike Fairtrade", "in
 # tegenstelling tot Fairtrade") names the scheme specifically to say the claim is NOT that kind
@@ -3717,12 +3741,21 @@ def _has_strong_same_medium_specification(claim_text):
 
     v93.93: see _WEAK_VERIFICATION_TERMS above -- a bare "certified"/"verified"/"third-party"
     mention, with no named scheme and no figure to back it, is not itself specification and no
-    longer counts on its own."""
+    longer counts on its own.
+
+    EC Q&A on the ECGT Directive (September 2026), Q7: only the narrow "recognised excellent
+    environmental performance" pathway (EU Ecolabel / EN ISO 14024 type I ecolabel / other
+    Union-law top performance -- see _RECOGNIZED_EXCELLENT_ENV_PERFORMANCE_SCHEMES) excuses a
+    GENERIC environmental claim from Annex I point 4a. A broader third-party scheme such as
+    Fairtrade or FSC does not, even though it is a legitimate certification scheme for a
+    sustainability LABEL's own legitimacy test (Annex I point 2a / Article 2(r), a different
+    provision -- see _names_recognized_certification_scheme()'s other, broader-list callers,
+    which are unaffected by this)."""
     text=(claim_text or '').lower()
     if any(_evidence_term_hit(term.strip(), text) for term in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS):
         return True
     if any(_evidence_term_hit(term.strip(), text) for term in _WEAK_VERIFICATION_TERMS):
-        if _names_recognized_certification_scheme(text) or re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%',text):
+        if _names_recognized_certification_scheme(text, schemes=_RECOGNIZED_EXCELLENT_ENV_PERFORMANCE_SCHEMES) or re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%',text):
             return True
     return False
 
@@ -5225,8 +5258,14 @@ _PERCENT_RECYCLED_FR_RE=re.compile(r'\b\d{1,3}\s?%\s+(?:de\s+\w+\s+)?recycl[ée]
 # Better-balanced green claim taxonomy: includes plural/common variants while retaining only claim-like contexts.
 GREEN_CLAIMS=[
  (['eco-friendly','environmentally friendly','environmentally responsible','planet friendly','better for the planet','good for the planet','ecological','climate friendly','climate-friendly','green product','green products','green choice','eco choice','eco product','eco products','sustainable product','sustainable products','sustainable choice','sustainable collection','sustainable range','sustainable materials','100% sustainable','fully sustainable','natural product','natural products','biobased product','bio-based product',
+   # EC Q&A on the ECGT Directive (September 2026), Q4, citing Recital 9 of Directive (EU)
+   # 2024/825: the Commission's own named examples of generic environmental claims -- added
+   # here because none of them were previously covered by any trigger term.
+   'energy efficient','carbon friendly','gentle on the environment',"nature's friend",'environmentally correct','biodegradable',
    'milieuvriendelijk','milieuvriendelijke','ecologisch','ecologische','klimaatvriendelijk','klimaatvriendelijke','beter voor het milieu','beter voor de planeet','goed voor het milieu','goed voor de planeet','groen product','groene producten','groene keuze','eco product','eco producten','duurzaam product','duurzame producten','duurzame keuze','duurzame collectie','duurzaam assortiment','duurzame materialen','100% duurzaam','volledig duurzaam','natuurlijk product','natuurlijke producten','biogebaseerd product',
-   "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé'],'Generic environmental claim','High','EmpCo risk: a generic environmental claim (not clearly and prominently specified on the same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
+   'energie-efficiënt','koolstofvriendelijk','zacht voor het milieu','vriend van de natuur','milieucorrect','biologisch afbreekbaar',
+   "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé',
+   'efficace sur le plan énergétique','respectueux du carbone','doux pour l\'environnement','ami de la nature','écologiquement correct','biodégradable'],'Generic environmental claim','High','EmpCo risk: a generic environmental claim (not clearly and prominently specified on the same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
  (['carbon neutral','climate neutral','co2 neutral','co₂ neutral','net zero product','carbon negative','carbon positive','climate positive','carbon compensated','climate compensated','offset-based','offsetting','compensated emissions','reduced climate impact',
    'klimaatneutraal','koolstofneutraal','co2-neutraal','co₂-neutraal','netto nul product','klimaatpositief','koolstofpositief','klimaatgecompenseerd','koolstofgecompenseerd','gecompenseerde emissies','gecompenseerde uitstoot','verminderde klimaatimpact','emissiecompensatie',
    'neutre en carbone','carboneutre','neutralité carbone','co2 neutre','co₂ neutre','net zéro produit','climat positif','carbone positif','émissions compensées','compensation carbone','impact climatique réduit'],'Climate-neutrality or offsetting claim','High','EmpCo risk: product-level claims that state or imply neutral, reduced or positive climate impact based on greenhouse-gas offsetting are high-priority blacklisted-practice indicators.','Avoid product-level neutrality wording based on offsets. Separate actual emissions reductions from offsets and disclose scopes, baseline, methodology, residual emissions and progress.'),

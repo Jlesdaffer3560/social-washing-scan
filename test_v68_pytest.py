@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_1_report_honesty_and_transparency_pass'
+    assert app.APP_VERSION == 'hostable_v94_2_ec_faq_methodology_alignment'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -5501,9 +5501,24 @@ def test_bare_certification_word_does_not_clear_generic_claim_blacklist_indicato
     assert f_bc['legal_basis_category'] == 'prohibited'
     assert 'blacklisted-practice indicator' in f_bc['regulatory_signal'].lower()
 
-    # sanity: certification NAMING A REAL SCHEME must still correctly downgrade
-    named_scheme = 'Our product is eco-friendly, certified by Fairtrade.'
-    f_scheme = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': named_scheme, 'excerpt': named_scheme}, trigger='eco-friendly')
+    # EC Q&A on the ECGT Directive (September 2026), Q7: "recognised excellent environmental
+    # performance" (Article 2(s) UCPD) -- the test that excuses a GENERIC claim from Annex I
+    # point 4a -- is satisfied ONLY by the EU Ecolabel, an EN ISO 14024 type I ecolabel, or top
+    # performance under other Union law. Fairtrade is a genuine, internationally recognised
+    # certification scheme (it legitimises a sustainability LABEL under the separate Annex I
+    # point 2a / Article 2(r) test -- see the "Sustainability label / certification claim"
+    # tests elsewhere in this file), but it certifies fair-trade/labour conditions, not
+    # environmental performance, so naming it must NOT excuse a generic environmental claim.
+    named_non_env_scheme = 'Our product is eco-friendly, certified by Fairtrade.'
+    f_non_env = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': named_non_env_scheme, 'excerpt': named_non_env_scheme}, trigger='eco-friendly')
+    assert f_non_env['blacklisted_practice_indicator'] is True, 'Fairtrade certifies fair trade, not environmental performance, so it must not clear a generic environmental claim'
+    assert f_non_env['legal_basis_category'] == 'prohibited'
+
+    # sanity: naming a scheme that DOES demonstrate recognised excellent environmental
+    # performance (the EU Ecolabel, an EN ISO 14024 type I ecolabel) must still correctly
+    # downgrade -- this is the genuine positive case the check exists to allow.
+    named_env_scheme = 'Our product is eco-friendly, certified with the EU Ecolabel.'
+    f_scheme = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': named_env_scheme, 'excerpt': named_env_scheme}, trigger='eco-friendly')
     assert f_scheme['blacklisted_practice_indicator'] is False
     assert f_scheme['legal_basis_category'] == 'problematic'
     assert 'blacklisted-practice indicator' not in f_scheme['regulatory_signal'].lower(), f_scheme['regulatory_signal']
@@ -5629,3 +5644,50 @@ def test_partial_external_search_failure_is_surfaced_not_reported_as_clean():
     finally:
         app._v64_search_dimension = real_search_dim
         app.external_search_configured = real_configured
+
+
+def test_generic_environmental_claim_covers_all_recital_9_example_terms():
+    """European Commission Q&A on the ECGT Directive (Directive (EU) 2024/825), September
+    2026, Q4 (citing Recital 9 of the Directive): the Commission's own worked list of example
+    generic environmental claims is 'environmentally friendly, eco-friendly, green, nature's
+    friend, ecological, environmentally correct, climate friendly, gentle on the environment,
+    carbon friendly, energy efficient, biodegradable, biobased or similar statements'. Several
+    of these -- energy efficient, carbon friendly, gentle on the environment, nature's friend,
+    environmentally correct, and a bare (unqualified) biodegradable -- were not covered by any
+    trigger term at all, so real-world wording using exactly the EU's own named examples would
+    not have been flagged."""
+    import app
+    for phrase in ['energy efficient', 'carbon friendly', 'gentle on the environment',
+                   "nature's friend", 'environmentally correct', 'biodegradable']:
+        text = f'Our packaging is {phrase} and good for you.'
+        findings = [f for f in app.detect_green_claims(text) if not app.is_placeholder_finding(f.get('type', ''))]
+        assert any(f.get('type') == 'Generic environmental claim' for f in findings), f'"{phrase}" was not detected as a generic environmental claim'
+
+
+def test_named_certification_scheme_excuses_generic_claim_only_when_environmental():
+    """European Commission Q&A on the ECGT Directive, September 2026, Q7: 'recognised
+    excellent environmental performance' (Article 2(s) UCPD, as amended by EmpCo) -- the test
+    that excuses an otherwise-GENERIC environmental claim from the Annex I point 4a blacklist
+    -- is satisfied ONLY by the EU Ecolabel, an EN ISO 14024 type I ecolabel (the Q&A names the
+    Nordic Swan, Blue Angel, Austrian Ecolabel and Dutch Ecolabel/Milieukeur), or top
+    environmental performance under other Union law. _has_strong_same_medium_specification()
+    previously accepted ANY of the ~30 schemes in the broader _RECOGNIZED_CERTIFICATION_SCHEMES
+    list (used elsewhere for the separate Annex I point 2a / Article 2(r) sustainability-LABEL
+    legitimacy test) -- so naming Fairtrade, a genuine scheme that certifies fair-trade/labour
+    conditions but not environmental performance, wrongly cleared a generic environmental
+    claim. Only a genuine environmental-performance scheme may now do so."""
+    import app
+    fairtrade = 'Our product is eco-friendly, certified by Fairtrade.'
+    assert app._has_strong_same_medium_specification(fairtrade) is False
+    fsc = 'Our packaging is eco-friendly and FSC certified.'
+    assert app._has_strong_same_medium_specification(fsc) is False
+
+    eu_ecolabel = 'Our product is eco-friendly, certified with the EU Ecolabel.'
+    assert app._has_strong_same_medium_specification(eu_ecolabel) is True
+    nordic_swan = 'Our product is eco-friendly, certified with the Nordic Swan ecolabel.'
+    assert app._has_strong_same_medium_specification(nordic_swan) is True
+
+    # the broader Article 2(r) certification-scheme test (used for "Sustainability label /
+    # certification claim" findings, a different Annex I provision) must be unaffected --
+    # Fairtrade remains a genuine, recognised scheme for THAT purpose.
+    assert app._names_recognized_certification_scheme(fairtrade) is True
