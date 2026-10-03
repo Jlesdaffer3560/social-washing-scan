@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_2_ec_faq_methodology_alignment"
-APP_RELEASE_LABEL="v94.2"
-APP_RELEASE_DATE="2026-09-29"
+APP_VERSION="hostable_v94_3_ux_review_fixes"
+APP_RELEASE_LABEL="v94.3"
+APP_RELEASE_DATE="2026-10-03"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -2052,7 +2052,16 @@ def build_entity_context_indicator(sector, ctx, green_targeted, social_targeted,
     scores. A company's sector exposure or a public controversy is relevant context for a
     reviewer, but is not itself proof that a specific detected claim is misleading -- collapsing
     both into one number risks presenting a serious entity-level incident as if it were evidence
-    against a particular piece of wording. This indicator makes that distinction visible."""
+    against a particular piece of wording. This indicator makes that distinction visible.
+
+    External UX review: this was displayed under the label "Entity context", which reads as "how
+    confident are we which company we scanned" -- but none of the three inputs combined here
+    (sector-level structural risk, narrative-context keyword risk from the reviewed material, and
+    the volume of retained external signals) says anything about entity identification. The
+    frontend and PDF label are renamed to "Context signals" to match what this actually measures
+    (see frontend.html and report_pdf.py). Only the label, note text and explanation are
+    clarified below -- the level computation itself (thresholds, the max() combination) is
+    unchanged, since that is the scan's scoring methodology, not its presentation."""
     total_external=len(green_targeted or [])+len(social_targeted or [])
     levels={'Low':0,'Medium':1,'High':2,'Very high':3}
     sector_lvl=levels.get((sector or {}).get('level','Low'),0)
@@ -2068,10 +2077,15 @@ def build_entity_context_indicator(sector, ctx, green_targeted, social_targeted,
     if (sector or {}).get('level') in ('High','Very high'):
         basis=((sector or {}).get('risks','') or '')[:180]
         parts.append(f"Sector exposure is {sector.get('level')}"+(f": {basis}" if basis else "."))
+    # External UX review: ctx_lvl (narrative-context keyword risk) could drive `combined` on its
+    # own -- e.g. producing "Elevated" with zero external signals and a Low sector -- without
+    # ever being mentioned in the note, leaving a non-Low level with no visible reason for it.
+    if (ctx or {}).get('level') not in (None, 'Low'):
+        parts.append(f"The reviewed material's own context suggests {ctx.get('level').lower()} background risk (e.g. a mentioned controversy, dispute or regulatory topic).")
     return {'level':label,'note':' '.join(parts),'external_signals_retained':total_external,
             'sector_exposure':(sector or {}).get('level','Low'),'context_level':(ctx or {}).get('level','Low'),
             'external_verification_status':external_verification_status,
-            'explanation':'This indicator reflects company/sector exposure and retained external public-source signals. It is shown separately from the green and social claim-communication scores and is not blended into them, so an entity-level incident is not automatically presented as proof that a specific claim is misleading.'}
+            'explanation':'This indicator combines three things that are not about identifying which company was scanned: sector-level structural risk, background context mentioned in the material reviewed, and the volume of retained external public-source signals. It is shown separately from the green and social claim-communication scores and is not blended into them, so this context is never presented as proof that a specific claim is misleading.'}
 def snip(text,trig):
     return clean_excerpt(text,trig)
 
@@ -2146,10 +2160,18 @@ def problematic_terms_for_finding(claim_text, claim_type=''):
         if _v62_term_present(low,t) and t not in out:
             out.append(t)
     # Add claim-type markers where the excerpt is too short or lacks the exact trigger term.
-    ct=(claim_type or '').lower()
-    for marker in ['generic environmental claim','climate-neutrality or offsetting claim','sustainability label / certification claim','future environmental-performance claim','comparative environmental claim','forced-labour product or supply-chain claim','supply-chain or supplier-responsibility claim','broad ethical or responsible-business claim']:
-        if marker.lower() in ct and marker not in out:
-            out.append(marker)
+    # External UX review: this comment describes the intent, but the code below added the
+    # category-name marker unconditionally, regardless of whether `out` already had genuine
+    # matched wording. Reproduced live: a passage containing "eco-friendly" (a real match)
+    # still got "generic environmental claim" -- the claim TYPE's own name, not anything the
+    # company wrote -- appended to a list a caller then presents as "Specific wording to check:
+    # eco, generic environmental claim.", implying the company's text used that category name as
+    # wording. Only fall back to the category marker when no genuine term was actually found.
+    if not out:
+        ct=(claim_type or '').lower()
+        for marker in ['generic environmental claim','climate-neutrality or offsetting claim','sustainability label / certification claim','future environmental-performance claim','comparative environmental claim','forced-labour product or supply-chain claim','supply-chain or supplier-responsibility claim','broad ethical or responsible-business claim']:
+            if marker.lower() in ct and marker not in out:
+                out.append(marker)
     # Avoid showing bare supplier/suppliers as a problematic term unless the claim type is genuinely about supplier responsibility or forced labour.
     if 'supplier' not in (claim_type or '').lower() and 'forced' not in (claim_type or '').lower():
         out=[x for x in out if x not in ['supplier','suppliers']]
@@ -2967,7 +2989,13 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
         # v73: a short source that was fully read (analysed ~= extracted) is not "limited" --
         # only genuinely thin sources (very little text found at all) or sources where most of
         # the extracted text was cut before analysis should be flagged this way.
-        if str(method or '').lower()=='direct_thin' or extracted<150:
+        # External UX review: the `extracted<150` branch below didn't actually implement that
+        # stated intent -- it fired on low character count alone, regardless of whether
+        # `analysed` equalled `extracted` (i.e. the whole short source was genuinely read in
+        # full). Reproduced live: a 125-character uploaded test document, entirely analysed,
+        # was labelled "Limited text extracted" as if something had been cut, when nothing had.
+        # Only call it "limited" when the source is empty or when some of it was actually lost.
+        if str(method or '').lower()=='direct_thin' or extracted==0 or (extracted<150 and analysed<extracted):
             return 'Limited text extracted','Only a limited amount of usable text was available; findings may be incomplete.'
         if extracted>1200 and analysed < max(500,int(extracted*0.55)):
             return 'Retrieved and partially analysed','Only part of the extracted text entered the bounded analysis text.'
@@ -4815,7 +4843,15 @@ def analyse_url_v27(raw, company_number=''):
         if not c.get('source_url'):
             c['source_url']=url
         if not c.get('source_label'):
-            c['source_label']=page_name_from_url(url) if url else 'Reviewed website / document'
+            # External UX review: page_name_from_url() replaces "-"/"_" with spaces, which is
+            # correct for a URL slug (e.g. "/sustainability-report" -> "sustainability report")
+            # but wrong for a literal uploaded filename, which isn't a slug at all. This call
+            # was unconditional, so an internal-document scan's filename (e.g.
+            # "test_beperkt.txt") lost its underscore and displayed as "test beperkt.txt" in
+            # red-flag text, while the coverage table (a different code path) correctly showed
+            # the real filename. concise_source() elsewhere in this file already guards this
+            # the right way; apply the same guard here.
+            c['source_label']=page_name_from_url(url) if url and str(url).lower().startswith(('http://','https://')) else (url or 'Reviewed website / document')
         c.setdefault('audience_lens', audience.get('audience','Mixed or unclear'))
         c.setdefault('audience_group', 'mixed')
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
@@ -4836,7 +4872,15 @@ def analyse_url_v27(raw, company_number=''):
     crawl_pages_attempted=confidence_result.get('attempted',len(crawl_log))
     crawl_pages_failed=confidence_result.get('blocked',len([e for e in crawl_log if not e.get('ok')]))
     crawl_pages_thin=len([e for e in crawl_log if e.get('ok') and e.get('thin')])
-    domains_covered=len({(urlparse(p).hostname or '') for p in pages if p})
+    # External UX review: this counted raw hostnames without stripping "www.", so
+    # "patagonia.com" and "www.patagonia.com" counted as 2 domains here -- while the
+    # scan_inventory domain count (build_scan_inventory(), used by both the coverage stats box
+    # and the PDF report for the exact same scan) already normalises this the same way
+    # page-level 'domain' values do elsewhere in this file. Reproduced live: the executive
+    # summary sentence said "11 public page(s) across 2 domain(s)" while the coverage box on
+    # the same results page said "DOMAINS COVERED: 1" for the identical scan. Apply the same
+    # normalisation here so both numbers agree.
+    domains_covered=len({(urlparse(p).hostname or '').replace('www.','') for p in pages if p})
     summary=(f"The scan reviewed {len(pages)} public page(s) across {max(1,domains_covered)} domain(s) for {comp['company']} and identified "
              f"a {level(overall).lower()} overall sustainability-claim risk ({overall}/100). "
              f"Green-claim risk is {green_score}/100; social-claim risk is {social_score}/100. "

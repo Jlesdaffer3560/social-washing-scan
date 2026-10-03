@@ -172,7 +172,10 @@
     <p class="muted" style="margin-bottom:10px">Assess sustainability claims for wording risk, evidence gaps, regulatory sensitivity and relevant public contradictions &mdash; not a broad ESG rating.</p>
     <details class="how-it-works">
       <summary>How the assessment works</summary>
-      <p class="muted" style="margin-top:10px">This is a claims-risk scan, not a broad ESG rating. It identifies sustainability wording that may be too broad, insufficiently evidenced, consumer-facing under the EU Empowering Consumers Directive ("EmpCo", Directive (EU) 2024/825), may create forced-labour-related assurance risk, or may be contradicted by relevant external public-source context.</p>
+      <!-- External UX review: this repeated the teaser sentence above ("not a broad ESG
+      rating") almost verbatim, reading as redundant rather than as a deeper explanation.
+      Leads straight into what it actually identifies instead. -->
+      <p class="muted" style="margin-top:10px">Specifically, it identifies sustainability wording that may be too broad, insufficiently evidenced, consumer-facing under the EU Empowering Consumers Directive ("EmpCo", Directive (EU) 2024/825), may create forced-labour-related assurance risk, or may be contradicted by relevant external public-source context.</p>
       <ol>
         <li><strong>Claim wording:</strong> broad, generic, absolute, future-oriented, comparative or label/icon-based claims.</li>
         <li><strong>Evidence gap:</strong> missing scope, methodology, KPIs, limits, verification, grievance/remedy, audit coverage, traceability or due-diligence evidence.</li>
@@ -411,10 +414,15 @@ function renderScores(d){
   // visually distinct card -- not a 0-100 score bar like the claim scores above -- because it
   // is not blended into the claim-communication scores. A company controversy or sector
   // exposure is relevant background, not evidence that a specific claim is misleading.
+  // External UX review: this card combines sector exposure, narrative-context risk and
+  // external-signal volume -- none of which is about identifying which company was scanned.
+  // Labelling it "Entity context" misled readers into thinking "High" meant uncertainty about
+  // the scanned entity. Renamed to "Context signals" to match what it actually measures; the
+  // underlying value (eci.level/eci.note) and its computation are unchanged.
   let eci=d.entity_context_indicator;
   if(eci){
     html+=`<div class="score entity-context">
-      <div class="label">Entity context</div>
+      <div class="label">Context signals</div>
       <div class="num" style="font-size:22px">${esc(eci.level||'')}</div>
       <div class="small" style="margin-top:6px">${esc(eci.note||'')}</div>
       <div class="small" style="margin-top:8px;opacity:.75">Shown separately from the claim scores above &mdash; not blended into them.</div>

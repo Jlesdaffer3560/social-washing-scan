@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_2_ec_faq_methodology_alignment'
+    assert app.APP_VERSION == 'hostable_v94_3_ux_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4692,16 +4692,21 @@ def test_claim_card_example_wording_is_not_monospaced_and_not_double_quoted():
     assert '[Product] has [a specific attribute].' in text
 
 
-def test_entity_context_is_a_distinct_bar_not_a_fourth_score_card():
-    """v93.64: entity context (whether the scanned entity was clearly identified) used to
-    render as a fourth card in the same row and visual style as the three numeric 0-100 risk
-    scores, implying it was a comparable fourth score. It measures something different and
-    must now render as its own, visually distinct element rather than inside the score row."""
+def test_context_signals_bar_is_distinct_not_a_fourth_score_card():
+    """v93.64: this used to render as a fourth card in the same row and visual style as the
+    three numeric 0-100 risk scores, implying it was a comparable fourth score. It measures
+    something different and must render as its own, visually distinct element rather than
+    inside the score row.
+
+    External UX review: relabelled from "Entity context" to "Context signals" -- the field
+    combines sector exposure, narrative-context risk and external-signal volume, none of which
+    is about identifying which company was scanned (see build_entity_context_indicator() in
+    app.py and entity_context_bar()'s docstring in report_pdf.py)."""
     import report_pdf as rp
     data = _pdf_test_data([])
-    data['entity_context_indicator'] = {'level': 'Direct', 'note': 'The scanned domain matches the company name closely.'}
+    data['entity_context_indicator'] = {'level': 'Elevated', 'note': '2 external public-source signal(s) were retained and may be relevant to the credibility of the assessed claims, subject to manual verification.'}
     row = rp.score_row(data)
-    assert len(row._cellvalues[0]) == 3, 'score_row must contain only the three risk-score cards, not entity context'
+    assert len(row._cellvalues[0]) == 3, 'score_row must contain only the three risk-score cards, not context signals'
     bar = rp.entity_context_bar(data)
     from reportlab.platypus import SimpleDocTemplate
     import io as _io, pypdf
@@ -4709,8 +4714,9 @@ def test_entity_context_is_a_distinct_bar_not_a_fourth_score_card():
     doc = SimpleDocTemplate(buf, pagesize=rp.A4)
     doc.build([bar])
     text = pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
-    assert 'ENTITY CONTEXT' in text.upper()
-    assert 'Direct' in text
+    assert 'CONTEXT SIGNALS' in text.upper()
+    assert 'ENTITY CONTEXT' not in text.upper(), 'label must no longer imply entity-identification confidence'
+    assert 'Elevated' in text
 
 
 def test_external_panel_and_review_status_use_plain_language_not_pipeline_jargon():
@@ -5691,3 +5697,103 @@ def test_named_certification_scheme_excuses_generic_claim_only_when_environmenta
     # certification claim" findings, a different Annex I provision) must be unaffected --
     # Fairtrade remains a genuine, recognised scheme for THAT purpose.
     assert app._names_recognized_certification_scheme(fairtrade) is True
+
+
+def test_problematic_terms_only_falls_back_to_category_marker_when_no_real_term_matched():
+    """External UX review: problematic_terms_for_finding()'s own comment says the claim-type
+    marker (e.g. "generic environmental claim") is added only "where the excerpt is too short
+    or lacks the exact trigger term" -- but the code added it unconditionally, regardless of
+    whether a genuine word from the passage had already matched. Reproduced live: a passage
+    containing "eco-friendly" (a real match: "eco") still got "generic environmental claim" --
+    the claim TYPE's own name, not anything the company wrote -- appended, so a caller
+    presenting this as "Specific wording to check: eco, generic environmental claim." implied
+    the company's own text used that category name as wording. The marker must now only
+    appear as a last resort when nothing genuine was found."""
+    import app
+    real_match = app.problematic_terms_for_finding(
+        'We zijn trots op onze eco-friendly producten.', 'Generic environmental claim')
+    assert 'eco' in real_match
+    assert 'generic environmental claim' not in real_match
+
+    no_real_match = app.problematic_terms_for_finding(
+        'Ons concept is uniek en herkenbaar voor klanten.', 'Generic environmental claim')
+    assert no_real_match == ['generic environmental claim'], 'the marker must still cover the case with no genuine term at all'
+
+
+def test_uploaded_document_filename_not_mangled_by_url_slug_cleanup():
+    """External UX review: page_name_from_url() replaces "-"/"_" with spaces, which is correct
+    for a URL slug (e.g. "/sustainability-report" -> "sustainability report") but was being
+    applied unconditionally to every claim's fallback source_label -- including a literal
+    uploaded filename, which isn't a slug. Reproduced live: an internal-document scan of
+    "test_beperkt.txt" showed "Source: Uploaded internal document: test beperkt.txt" (space)
+    in the red-flag text, while the coverage table's own, differently-guarded code path
+    correctly kept the underscore."""
+    import app
+    finding = app.enrich_green_finding(
+        {'type': 'Generic environmental claim', 'claim': 'Our product is eco-friendly.'},
+        trigger='eco-friendly')
+    all_claims = app.build_green_claim_inventory([finding])
+    url = 'Uploaded internal document: test_beperkt.txt'
+    for c in all_claims:
+        c.setdefault('source_url', '')
+        c.setdefault('source_label', '')
+        if not c.get('source_url'):
+            c['source_url'] = url
+        if not c.get('source_label'):
+            c['source_label'] = app.page_name_from_url(url) if url and str(url).lower().startswith(('http://', 'https://')) else (url or 'Reviewed website / document')
+    assert all_claims[0]['source_label'] == url, 'a literal filename must not have its underscore replaced with a space'
+
+    # sanity: a genuine crawled URL must still get the readable, slug-cleaned label
+    real_url = 'https://example.com/sustainability-report'
+    label = app.page_name_from_url(real_url) if real_url.lower().startswith(('http://', 'https://')) else real_url
+    assert label == 'sustainability report'
+
+
+def test_short_fully_read_document_not_labelled_limited_text_extracted():
+    """External UX review: classify_status()'s own comment says "a short source that was fully
+    read (analysed ~= extracted) is not 'limited'" -- but the extracted<150 branch fired on low
+    character count alone, with no check that anything was actually cut. Reproduced live: a
+    125-character uploaded test document, entirely analysed, was labelled "Limited text
+    extracted" as if something had been lost, when nothing had. A genuinely empty/thin source
+    (extracted==0, or where analysed trails extracted) must still be flagged as limited."""
+    import app
+    pages = ['https://example.com', 'https://example.com/short']
+    short_text = 'B' * 120
+    text = 'Homepage content long enough to not matter here.\n\nPAGE: https://example.com/short\n' + short_text
+    log = [
+        {'url': pages[0], 'ok': True, 'chars': 900, 'method': 'direct', 'source': 'homepage', 'content_kind': 'html'},
+        {'url': pages[1], 'ok': True, 'chars': 120, 'method': 'direct', 'source': 'linked', 'content_kind': 'html'},
+    ]
+    docs = app.build_documents_checked(pages, {}, text)
+    inv = app.build_scan_inventory(pages, docs, log, full_text=text)
+    short_page = next(x for x in inv['website_pages'] if x['url'] == pages[1])
+    assert short_page['analysis_status'] == 'Retrieved and analysed', short_page
+
+    empty_pages = ['https://example.com/empty']
+    empty_log = [{'url': empty_pages[0], 'ok': True, 'chars': 0, 'method': 'direct', 'source': 'homepage', 'content_kind': 'html'}]
+    empty_docs = app.build_documents_checked(empty_pages, {}, '')
+    empty_inv = app.build_scan_inventory(empty_pages, empty_docs, empty_log, full_text='')
+    empty_page = next(x for x in empty_inv['website_pages'] if x['url'] == empty_pages[0])
+    assert empty_page['analysis_status'] == 'Limited text extracted', 'a genuinely empty source must still read as limited'
+
+
+def test_entity_context_indicator_explains_narrative_context_contribution():
+    """External UX review: build_entity_context_indicator()'s note only ever explained the
+    external-signal and sector-exposure components -- the narrative-context component
+    (ctx_lvl, derived from controversy-style keywords in the reviewed material) could still
+    drive the shown level (e.g. producing "Elevated" with zero external signals and a Low
+    sector) without ever being mentioned, leaving a non-Low level with no visible reason.
+    Also verifies the renamed explanation no longer implies this is about identifying which
+    company was scanned."""
+    import app
+    sector = {'level': 'Low'}
+    ctx = {'level': 'Medium', 'note': 'company mentioned in a labour dispute'}
+    result = app.build_entity_context_indicator(sector, ctx, [], [], 'Not performed')
+    assert result['level'] == 'Elevated'
+    assert 'background risk' in result['note'].lower(), result['note']
+    assert 'not about identifying which company was scanned' in result['explanation'].lower()
+
+    # baseline: nothing elevated anywhere -> plain Low, no spurious context sentence
+    baseline = app.build_entity_context_indicator({'level': 'Low'}, {'level': 'Low'}, [], [], 'Not performed')
+    assert baseline['level'] == 'Low'
+    assert 'background risk' not in baseline['note'].lower()

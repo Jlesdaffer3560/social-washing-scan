@@ -914,17 +914,25 @@ def score_card(label, value, risk, note="", card_width=None):
 
 
 def entity_context_bar(data):
-    """v93.64: entity context (whether the scanned entity was clearly identified -- e.g.
-    "Direct" / "Ambiguous" / "Not assessed") used to render as a fourth card in the same
-    row and visual style as the three numeric 0-100 risk scores, implying it was another
-    score of the same kind and directly comparable to them. It measures something different
-    (identity confidence, not claim risk) and is now a distinct, full-width strip below the
-    score row, so it can't be mistaken for a fourth risk score."""
+    """v93.64: this used to render as a fourth card in the same row and visual style as the
+    three numeric 0-100 risk scores, implying it was another score of the same kind and directly
+    comparable to them. It is now a distinct, full-width strip below the score row, so it can't
+    be mistaken for a fourth risk score.
+
+    External UX review: the label and this docstring previously described this field as entity
+    identification confidence ("Direct" / "Ambiguous" / "Not assessed"). That is not what
+    app.py's build_entity_context_indicator() actually computes -- it combines sector-level
+    structural risk, narrative-context keyword risk, and the volume of retained external
+    signals into a Low/Elevated/High/Very high label, none of which says anything about which
+    company was identified. Reproduced live: a scan with several external signals showed
+    "ENTITY CONTEXT: High" with a note only about those signals, reading as if the wrong
+    company might have been scanned. Relabelled "CONTEXT SIGNALS" to match what is actually
+    shown; the underlying value and its computation are unchanged."""
     ctx = data.get("entity_context_indicator") or {}
     level = clean_text(ctx.get("level") or "Not assessed")
     note = clean_text(ctx.get("note") or "")
-    left = Paragraph(f'<b>ENTITY CONTEXT</b>&nbsp;&nbsp;<font color="{risk_color(level).hexval()}"><b>{esc(level)}</b></font>', ST["card_label"])
-    right = Paragraph(esc(bounded_text(note, 230)) if note else "No additional entity-context note.", ST["source"])
+    left = Paragraph(f'<b>CONTEXT SIGNALS</b>&nbsp;&nbsp;<font color="{risk_color(level).hexval()}"><b>{esc(level)}</b></font>', ST["card_label"])
+    right = Paragraph(esc(bounded_text(note, 230)) if note else "No additional context-signal note.", ST["source"])
     t = Table([[left, right]], colWidths=[CONTENT_W * .28, CONTENT_W * .72])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     return t
