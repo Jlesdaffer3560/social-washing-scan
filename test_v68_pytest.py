@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_5_duplicate_content_page_cap_fix'
+    assert app.APP_VERSION == 'hostable_v94_6_duplicate_content_containment_match'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3590,6 +3590,50 @@ def test_crawl_with_related_sites_detects_duplicate_page_content(monkeypatch):
     assert dup_info3 is not None
     assert dup_info3['total_pages']==16, 'must be capped to the same 16-page ceiling as the returned page list'
     assert dup_info3['duplicate_pages']==16
+
+
+def test_crawl_with_related_sites_detects_near_duplicate_content_with_minor_differences(monkeypatch):
+    """External UX review follow-up: an exact-string-match version of the duplicate-content
+    check above was deployed, then verified live against the exact patagonia.com scan that
+    motivated it -- and did NOT fire, despite every page still showing the same analysed
+    character count. Fetching the real pages again showed why: the shared shell is not
+    byte-identical across pages (the <title> and a couple of nav details differ, and some
+    guessed paths additionally carry the site's own soft-404 message layered on top of the
+    same shell). Exact match missed this; must now detect it via containment (does the
+    SHORTER page's text appear, as matching blocks, within the longer one)."""
+    monkeypatch.setattr(app,'KNOWN_GROUP_DOMAINS',{})
+    monkeypatch.setattr(app,'_v65_discover_related_official_sites',lambda *a,**k: [])
+    monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: [])
+    shared_shell=('Free Shipping on Orders Over $99. Earth Is Now Our Only Shareholder. '
+                  'We guarantee everything we make. View Ironclad Guarantee. '
+                  'We take responsibility for our impact. Explore Our Footprint. '
+                  'We support grassroots activism. Visit Patagonia Action Works. '
+                  'We keep your gear in play. Visit Worn Wear. '
+                  'We give our profits to the planet. Read Our Commitment.') * 2
+    soft_404_extra=(' Sorry for the airer. You have found a page that no longer exists or '
+                     'product that is completely out of stock. Please try another page.')
+    def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        pages=['https://example.com','https://example.com/sustainability','https://example.com/climate',
+               'https://example.com/mensenrechten']
+        # Each page's title/nav differs slightly, and two of the four carry the extra soft-404
+        # paragraph on top of the same shared shell -- none of these four chunks are
+        # byte-identical to any other, unlike the exact-match test case above.
+        chunks=[
+            'Patagonia Home | Outdoor Clothing. ' + shared_shell,
+            'Sorry, this page is hanging too loose. ' + shared_shell + soft_404_extra,
+            'Patagonia Climate | Outdoor Gear. ' + shared_shell,
+            'Page not found at Patagonia. ' + shared_shell + soft_404_extra,
+        ]
+        assert len(set(chunks))==4, 'sanity: the four chunks must not be byte-identical'
+        app._log_fetch_success(log,pages[0],len(chunks[0]),method='direct',source='homepage',content_kind='html')
+        for p,c in zip(pages[1:],chunks[1:]):
+            app._log_fetch_success(log,p,len(c),method='direct',source='linked',content_kind='html')
+        return '\n\n'.join(chunks),pages,chunks
+    monkeypatch.setattr(app,'crawl',fake_crawl)
+    txt,pages,notes,log,dup_info=app.crawl_with_related_sites('https://example.com',company_name_hint='Example Co')
+    assert dup_info is not None, 'near-identical shell content (not byte-identical) must still be detected'
+    assert dup_info['duplicate_pages']==4
+    assert dup_info['total_pages']==4
 
 
 def test_related_company_sites_rejects_single_mention_without_relation_signal(monkeypatch):

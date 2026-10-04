@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from html import escape as html_escape, unescape as html_unescape
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv, difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FuturesTimeoutError
 
 def _get_build_company_report_pdf():
@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_5_duplicate_content_page_cap_fix"
-APP_RELEASE_LABEL="v94.5"
+APP_VERSION="hostable_v94_6_duplicate_content_containment_match"
+APP_RELEASE_LABEL="v94.6"
 APP_RELEASE_DATE="2026-10-04"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -10614,16 +10614,49 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
     # found" template for a couple of guessed paths that don't exist. Every individual fetch
     # "succeeded" with real, non-thin text, so none of the existing failure/thin/fallback
     # checks below catch this -- the scan would otherwise present a "Low risk" result as if
-    # the real page content had been reviewed. Detect several pages sharing the same
-    # (whitespace-normalised) text and surface it as its own reliability signal.
+    # the real page content had been reviewed.
+    #
+    # v94.5 follow-up: an exact-string-match version of this check was deployed, then verified
+    # live against the exact patagonia.com scan that motivated it -- and did NOT fire, despite
+    # every page still showing the same "1045 characters analysed". Fetching the real pages
+    # again showed why: the shared shell is not byte-identical across pages -- the <title> and
+    # a couple of nav details differ, and a few of the guessed paths additionally carry the
+    # site's own 404 message layered on top of the same shell. "1045 characters analysed" is
+    # itself a figure from LATER budget-distribution, not the raw per-page length, so pages
+    # can show an identical analysed count while their raw fetched text still differs by a few
+    # dozen characters -- exactly enough to defeat an exact match. Use containment instead:
+    # for each pair of pages, check what fraction of the SHORTER page's text also appears,
+    # as matching blocks, in the longer one (handles one page being the shared shell plus
+    # extra content, not just two pages being equal) via difflib.SequenceMatcher, and cluster
+    # pages whose mutual containment clears a high bar. Verified against the real patagonia.com
+    # content: a soft-404 page with an extra paragraph layered on the shared shell still shows
+    # ~100% containment against a page that is just the bare shell.
     duplicate_content_info=None
     if len(all_pages)>=3:
-        _norm_counts={}
-        for _chunk in all_chunks:
-            _norm=re.sub(r'\s+',' ',_chunk or '').strip()
-            if len(_norm)>=200:
-                _norm_counts[_norm]=_norm_counts.get(_norm,0)+1
-        if _norm_counts:
+        _norm_chunks=[re.sub(r'\s+',' ',(_c or ''))[:4000].strip() for _c in all_chunks]
+        _eligible=[_c for _c in _norm_chunks if len(_c)>=200]
+        if len(_eligible)>=3:
+            _n=len(_eligible)
+            _parent=list(range(_n))
+            def _dup_find(_x):
+                while _parent[_x]!=_x:
+                    _parent[_x]=_parent[_parent[_x]]; _x=_parent[_x]
+                return _x
+            def _dup_union(_x,_y):
+                _rx,_ry=_dup_find(_x),_dup_find(_y)
+                if _rx!=_ry: _parent[_rx]=_ry
+            for _i in range(_n):
+                for _j in range(_i+1,_n):
+                    _a,_b=_eligible[_i],_eligible[_j]
+                    _shorter,_longer=(_a,_b) if len(_a)<=len(_b) else (_b,_a)
+                    _matcher=difflib.SequenceMatcher(None,_shorter,_longer,autojunk=False)
+                    _matched=sum(_block.size for _block in _matcher.get_matching_blocks())
+                    if _shorter and _matched/len(_shorter)>=0.9:
+                        _dup_union(_i,_j)
+            _cluster_sizes={}
+            for _i in range(_n):
+                _root=_dup_find(_i)
+                _cluster_sizes[_root]=_cluster_sizes.get(_root,0)+1
             # all_pages is truncated to 16 below (the actual `pages` this function returns, and
             # the count build_confidence() and the UI go on to use); all_chunks can be longer or
             # differently aligned (a related-site merge dedupes pages but not their chunks), so
@@ -10631,7 +10664,7 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             # could report a duplicate/total count higher than the page count shown everywhere
             # else for this same scan.
             _reported_total=min(len(all_pages),16)
-            _dup_count=min(max(_norm_counts.values()),_reported_total)
+            _dup_count=min(max(_cluster_sizes.values()),_reported_total)
             if _dup_count>=3 and _dup_count>=max(3,_reported_total//2):
                 duplicate_content_info={'duplicate_pages':_dup_count,'total_pages':_reported_total}
     # v93.31: distribute the budget once across every page from every site, flat -- not per
