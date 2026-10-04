@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_3_ux_review_fixes'
+    assert app.APP_VERSION == 'hostable_v94_4_duplicate_content_and_nl_inflection'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2273,7 +2273,7 @@ def test_related_company_sites_requires_company_name_in_fetched_content(monkeypa
         text='Acme Corp is a real company with a thin primary site.'
         return text,[url],[text]
     monkeypatch.setattr(app,'crawl',fake_crawl)
-    txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
+    txt,pages,notes,log,dup_info=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
     assert not any('unrelatedbrand' in n for n in notes)
     assert 'unrelated business' not in txt.lower()
 
@@ -3500,7 +3500,7 @@ def test_crawl_with_related_sites_does_not_zero_out_a_full_subpage(monkeypatch):
         pages=['https://primary.example','https://primary.example/sub1','https://primary.example/sub2']
         return '\n\n'.join(chunks),pages,chunks
     monkeypatch.setattr(app,'crawl',fake_crawl)
-    txt,pages,notes,log=app.crawl_with_related_sites('https://primary.example',company_name_hint='Primary Co')
+    txt,pages,notes,log,dup_info=app.crawl_with_related_sites('https://primary.example',company_name_hint='Primary Co')
     # Every one of the four pages' distinctive filler character must survive into the final
     # combined text -- none may be truncated down to zero.
     for marker,label in [('H','primary homepage'),('S','primary sub1'),('T','primary sub2'),('R','related homepage')]:
@@ -3527,6 +3527,54 @@ def test_build_confidence_uses_actually_analysed_page_count():
     assert 'at least the main company page was reviewed' in result_analysed['reasons']
 
 
+def test_crawl_with_related_sites_detects_duplicate_page_content(monkeypatch):
+    """External UX review: investigated a live scan where 11 distinct guessed/discovered
+    patagonia.com pages (sustainability, climate, mensenrechten, duurzaamheid, ...) all
+    returned exactly the same ~1045-character text and 0 claim signals. Fetching those exact
+    URLs directly confirmed why: a JS-rendered storefront serves the same shared header/footer
+    shell (and, for a couple of guessed paths, the site's own branded "not found" page) to a
+    plain HTTP client for almost every route. Every fetch still reports as an ordinary success
+    with substantial, non-"thin" text, so nothing previously caught this. Reproduce it with a
+    mocked crawl() where most pages return identical text."""
+    monkeypatch.setattr(app,'KNOWN_GROUP_DOMAINS',{})
+    monkeypatch.setattr(app,'_v65_discover_related_official_sites',lambda *a,**k: [])
+    monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: [])
+    shell_text='Free Shipping on Orders Over $99. We guarantee everything we make. ' * 10
+    assert len(shell_text)>=200
+    def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        pages=['https://example.com','https://example.com/sustainability','https://example.com/climate',
+               'https://example.com/mensenrechten']
+        chunks=[shell_text]*len(pages)
+        app._log_fetch_success(log,pages[0],len(shell_text),method='direct',source='homepage',content_kind='html')
+        for p in pages[1:]:
+            app._log_fetch_success(log,p,len(shell_text),method='direct',source='linked',content_kind='html')
+        return '\n\n'.join(chunks),pages,chunks
+    monkeypatch.setattr(app,'crawl',fake_crawl)
+    txt,pages,notes,log,dup_info=app.crawl_with_related_sites('https://example.com',company_name_hint='Example Co')
+    assert dup_info is not None, 'identical content across most pages must be detected'
+    assert dup_info['duplicate_pages']==4
+    assert dup_info['total_pages']==4
+
+    confidence=app.build_confidence(pages,{'enabled':False},[{'type':'No material claim retained'}],
+                                     crawl_log=log,duplicate_content_info=dup_info)
+    assert confidence['reliability_warning'] is not None
+    assert 'returned the same text as each other' in confidence['reliability_warning']
+    assert '4 of 4' in confidence['reliability_warning']
+
+    # sanity: genuinely distinct pages must not trigger this
+    distinct_pages=['https://example.com','https://example.com/a','https://example.com/b']
+    def fake_crawl_distinct(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        chunks=['Homepage with real unique content about our mission. '*5,
+                'Page A with entirely different unique content about our products. '*5,
+                'Page B with yet another distinct passage about our operations. '*5]
+        for p,c in zip(distinct_pages,chunks):
+            app._log_fetch_success(log,p,len(c),method='direct',source='linked',content_kind='html')
+        return '\n\n'.join(chunks),distinct_pages,chunks
+    monkeypatch.setattr(app,'crawl',fake_crawl_distinct)
+    _,_,_,_,dup_info2=app.crawl_with_related_sites('https://example.com',company_name_hint='Example Co')
+    assert dup_info2 is None
+
+
 def test_related_company_sites_rejects_single_mention_without_relation_signal(monkeypatch):
     """v93.30: a single brand mention is too weak a bar -- a reseller, news article,
     competitor, or an unrelated same-named business can just as easily mention the target
@@ -3546,7 +3594,7 @@ def test_related_company_sites_rejects_single_mention_without_relation_signal(mo
         text='Acme Corp is a real company with a thin primary site.'
         return text,[url],[text]
     monkeypatch.setattr(app,'crawl',fake_crawl)
-    txt,pages,notes,log=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
+    txt,pages,notes,log,dup_info=app.crawl_with_related_sites('https://acmecorp.example',company_name_hint='Acme Corp')
     assert not any('acmecorp.eu' in n for n in notes)
     assert 'weekly deals' not in txt.lower()
 
@@ -3580,7 +3628,7 @@ def test_analyse_url_v27_prefers_kbo_official_website_over_name_resolution(monke
         captured['resolution_input']=resolution_input
         return 'https://www.gaaschpack.eu', None
     monkeypatch.setattr(app,'resolve_scan_input',fake_resolve_scan_input)
-    monkeypatch.setattr(app,'crawl_with_related_sites',lambda *a,**k: ('some text',['https://www.gaaschpack.eu'],[],[]))
+    monkeypatch.setattr(app,'crawl_with_related_sites',lambda *a,**k: ('some text',['https://www.gaaschpack.eu'],[],[],None))
     app.analyse_url_v27('', 'BE0403170701')
     assert captured['resolution_input']=='www.gaaschpack.eu'
 
@@ -5650,6 +5698,28 @@ def test_partial_external_search_failure_is_surfaced_not_reported_as_clean():
     finally:
         app._v64_search_dimension = real_search_dim
         app.external_search_configured = real_configured
+
+
+def test_climate_neutral_claim_detects_dutch_attributive_adjective_form():
+    """External UX review: a Dutch adjective placed directly before a noun takes an extra "-e"
+    ("klimaatneutraal" -> "klimaatneutrale werking"), already handled for the generic-claim
+    terms ("milieuvriendelijk"/"milieuvriendelijke") but missing from the climate-neutrality/
+    offsetting trigger list, which only had the bare predicate form. Reproduced live: a test
+    document containing "onze CO2-neutrale werking" produced zero findings in that category,
+    since "co2-neutraal" is not a substring of "co2-neutrale" for the exact-phrase matcher."""
+    import app
+    attributive_cases = [
+        'We zijn trots op onze CO2-neutrale werking.',
+        'Onze klimaatneutrale productie is uniek in de sector.',
+        'Dit koolstofneutrale proces bespaart veel uitstoot.',
+    ]
+    for text in attributive_cases:
+        findings = [f for f in app.detect_green_claims(text) if not app.is_placeholder_finding(f.get('type', ''))]
+        assert any(f.get('type') == 'Climate-neutrality or offsetting claim' for f in findings), f'not detected: {text!r}'
+    # sanity: the original predicate form must still work unchanged
+    predicate_findings = [f for f in app.detect_green_claims('Ons bedrijf is klimaatneutraal.')
+                           if not app.is_placeholder_finding(f.get('type', ''))]
+    assert any(f.get('type') == 'Climate-neutrality or offsetting claim' for f in predicate_findings)
 
 
 def test_generic_environmental_claim_covers_all_recital_9_example_terms():

@@ -57,7 +57,7 @@ assert any(x.get('dimension')=='social' for x in social),social
 orig_crawl=app.crawl_with_related_sites
 orig_ext=app.external
 orig_extg=app.external_green
-app.crawl_with_related_sites=lambda url,overall_deadline=None:(company_text,['https://www.shein.com','https://www.sheingroup.com/sustainability'],['Official corporate/group site also checked: https://www.sheingroup.com'],[{'url':'https://www.shein.com','ok':True,'thin':False}])
+app.crawl_with_related_sites=lambda url,overall_deadline=None:(company_text,['https://www.shein.com','https://www.sheingroup.com/sustainability'],['Official corporate/group site also checked: https://www.sheingroup.com'],[{'url':'https://www.shein.com','ok':True,'thin':False}],None)
 app.external=lambda company,findings=None,reviewed_pages=None:{'enabled':True,'results':[shein_ngo],'compact_sources':[],'search_diagnostics':{'raw_result_count':2,'company_matched_count':1,'negative_candidate_count':1,'retained_count':1,'fallback_used':False,'competitor_primary_rejected_count':1},'summary':'test'}
 app.external_green=lambda company,findings=None,reviewed_pages=None:{'enabled':True,'results':[shein_reg],'compact_sources':[],'search_diagnostics':{'raw_result_count':2,'company_matched_count':1,'negative_candidate_count':1,'retained_count':1,'fallback_used':False,'competitor_primary_rejected_count':1},'summary':'test'}
 try:
@@ -105,7 +105,7 @@ def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source=
     return text,pages,[text]*len(pages)
 app.crawl=fake_crawl
 try:
-    text,pages,notes,log=app.crawl_with_related_sites('https://www.shein.com',overall_deadline=app.time.time()+20)
+    text,pages,notes,log,dup_info=app.crawl_with_related_sites('https://www.shein.com',overall_deadline=app.time.time()+20)
     assert any('sheingroup.com' in u for u,_ in calls),calls
     assert 'responsible materials' in text,text
     assert any('sheingroup.com' in p for p in pages),pages

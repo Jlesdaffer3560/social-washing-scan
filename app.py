@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_3_ux_review_fixes"
-APP_RELEASE_LABEL="v94.3"
-APP_RELEASE_DATE="2026-10-03"
+APP_VERSION="hostable_v94_4_duplicate_content_and_nl_inflection"
+APP_RELEASE_LABEL="v94.4"
+APP_RELEASE_DATE="2026-10-04"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -2487,7 +2487,7 @@ def build_engagement_questions(findings,ext):
         if q not in out: out.append(q)
     return out[:6]
 
-def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None):
+def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None,duplicate_content_info=None):
     # v93.30: every check below that reasons about "how many pages were reviewed" used
     # len(pages) -- the count of pages the crawler successfully FETCHED, not how many
     # actually contributed real text to the analysed document (build_scan_inventory()
@@ -2531,7 +2531,19 @@ def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None)
     fallback_pages=[e for e in reliability_log if e.get("ok") and e.get("method")=='reader_fallback']
     attempted=len(reliability_log)
     reliability_warning=None
-    if attempted:
+    if duplicate_content_info and duplicate_content_info.get('duplicate_pages',0)>=3:
+        # External UX review: every one of these page fetches reports as a plain success with
+        # substantial (non-"thin") text, so none of the checks below ever fire -- without this,
+        # a scan like this reads as fully, genuinely reviewed. See crawl_with_related_sites()'s
+        # own comment for how this was confirmed (a JS-rendered site returning its shared page
+        # shell, or a branded "not found" page, for most distinct URLs requested).
+        pts=max(0,pts-2)
+        reliability_warning=(f"{duplicate_content_info['duplicate_pages']} of {duplicate_content_info['total_pages']} reviewed page(s) "
+                              "returned the same text as each other, which can happen when a site needs JavaScript to show "
+                              "page-specific content, or when several guessed/discovered links point to a generic or "
+                              "“not found” page. A low risk score from this scan may reflect limited access to the "
+                              "site's actual content, not necessarily a genuine absence of risky claims.")
+    elif attempted:
         failure_ratio=len(blocked)/attempted
         if failure_ratio>0.25 or (n_pages<3 and blocked):
             pts=max(0,pts-(2 if failure_ratio>=0.5 else 1))
@@ -4751,10 +4763,10 @@ def analyse_url_v27(raw, company_number=''):
     scan_deadline=time.time()+CRAWL_BUDGET_SECONDS
     try:
         try:
-            txt,pages,related_notes,crawl_log=crawl_with_related_sites(original_url,overall_deadline=scan_deadline,company_name_hint=company_name_hint)
+            txt,pages,related_notes,crawl_log,duplicate_content_info=crawl_with_related_sites(original_url,overall_deadline=scan_deadline,company_name_hint=company_name_hint)
         except TypeError as crawl_type_error:
             if 'company_name_hint' not in str(crawl_type_error): raise
-            txt,pages,related_notes,crawl_log=crawl_with_related_sites(original_url,overall_deadline=scan_deadline)
+            txt,pages,related_notes,crawl_log,duplicate_content_info=crawl_with_related_sites(original_url,overall_deadline=scan_deadline)
         url=original_url
     except Exception as first_error:
         raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)} No country-domain substitution was attempted; verify the exact official URL and try again.')
@@ -4864,7 +4876,7 @@ def analyse_url_v27(raw, company_number=''):
     _inv_summary=scan_inventory.get('summary',{}) if isinstance(scan_inventory,dict) else {}
     analysed_page_count=max(0,_inv_summary.get('reviewed_total',len(pages))-_inv_summary.get('retrieved_not_analysed',0))
     methodology='Sustainability Claims Risk Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
-    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log,analysed_page_count=analysed_page_count)
+    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log,analysed_page_count=analysed_page_count,duplicate_content_info=duplicate_content_info)
     reliability_warning=confidence_result.get('reliability_warning')
     # Use the same expected-guess-filtered counts the warning text itself is based on (see
     # build_confidence), so the "(X/Y pages failed)" prefix never disagrees with the warning
@@ -5311,7 +5323,15 @@ GREEN_CLAIMS=[
    "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé',
    'efficace sur le plan énergétique','respectueux du carbone','doux pour l\'environnement','ami de la nature','écologiquement correct','biodégradable'],'Generic environmental claim','High','EmpCo risk: a generic environmental claim (not clearly and prominently specified on the same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
  (['carbon neutral','climate neutral','co2 neutral','co₂ neutral','net zero product','carbon negative','carbon positive','climate positive','carbon compensated','climate compensated','offset-based','offsetting','compensated emissions','reduced climate impact',
-   'klimaatneutraal','koolstofneutraal','co2-neutraal','co₂-neutraal','netto nul product','klimaatpositief','koolstofpositief','klimaatgecompenseerd','koolstofgecompenseerd','gecompenseerde emissies','gecompenseerde uitstoot','verminderde klimaatimpact','emissiecompensatie',
+   # External UX review: a Dutch adjective placed directly before a noun takes an extra "-e"
+   # ("klimaatneutraal" -> "klimaatneutrale werking"), the same rule already applied to the
+   # generic-claim terms above ("milieuvriendelijk"/"milieuvriendelijke") -- but this list only
+   # ever had the bare predicate form. Reproduced live: "onze CO2-neutrale werking" triggered no
+   # finding at all, since "co2-neutraal" is not a substring of "co2-neutrale" for
+   # _trigger_present()'s exact-phrase matcher. Added the "-e" attributive form for every
+   # adjective in this list (noun phrases like "netto nul product"/"gecompenseerde emissies"
+   # don't inflect this way and are left as-is).
+   'klimaatneutraal','klimaatneutrale','koolstofneutraal','koolstofneutrale','co2-neutraal','co2-neutrale','co₂-neutraal','co₂-neutrale','netto nul product','klimaatpositief','klimaatpositieve','koolstofpositief','koolstofpositieve','klimaatgecompenseerd','klimaatgecompenseerde','koolstofgecompenseerd','koolstofgecompenseerde','gecompenseerde emissies','gecompenseerde uitstoot','verminderde klimaatimpact','emissiecompensatie',
    'neutre en carbone','carboneutre','neutralité carbone','co2 neutre','co₂ neutre','net zéro produit','climat positif','carbone positif','émissions compensées','compensation carbone','impact climatique réduit'],'Climate-neutrality or offsetting claim','High','EmpCo risk: product-level claims that state or imply neutral, reduced or positive climate impact based on greenhouse-gas offsetting are high-priority blacklisted-practice indicators.','Avoid product-level neutrality wording based on offsets. Separate actual emissions reductions from offsets and disclose scopes, baseline, methodology, residual emissions and progress.'),
  (['greener than','more sustainable than','more eco-friendly than','lower impact than','lowest emissions','best environmental','less harmful than','lower emissions than','reduced emissions compared','reduced impact compared','lower carbon than','less carbon than',
    'groener dan','duurzamer dan','milieuvriendelijker dan','lagere impact dan','laagste uitstoot','beste voor het milieu','minder schadelijk dan','lagere emissies dan','verminderde uitstoot vergeleken','lagere koolstofuitstoot dan','minder koolstof dan',
@@ -10586,10 +10606,31 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             pass
     if not all_chunks:
         raise primary_error if primary_error is not None else ValueError(f'Could not access {original_url}.')
+    # External UX review: investigated a live scan where 11 distinct guessed/discovered pages
+    # across patagonia.com all returned exactly the same ~1045-character text and 0 claim
+    # signals. Fetching those exact URLs directly confirmed the cause -- a JS-rendered
+    # storefront where the server-side HTML for most routes is the same shared header/footer
+    # shell (page-specific content loads client-side) plus the site's own branded "page not
+    # found" template for a couple of guessed paths that don't exist. Every individual fetch
+    # "succeeded" with real, non-thin text, so none of the existing failure/thin/fallback
+    # checks below catch this -- the scan would otherwise present a "Low risk" result as if
+    # the real page content had been reviewed. Detect several pages sharing the same
+    # (whitespace-normalised) text and surface it as its own reliability signal.
+    duplicate_content_info=None
+    if len(all_pages)>=3:
+        _norm_counts={}
+        for _chunk in all_chunks:
+            _norm=re.sub(r'\s+',' ',_chunk or '').strip()
+            if len(_norm)>=200:
+                _norm_counts[_norm]=_norm_counts.get(_norm,0)+1
+        if _norm_counts:
+            _dup_count=max(_norm_counts.values())
+            if _dup_count>=3 and _dup_count>=max(3,len(all_pages)//2):
+                duplicate_content_info={'duplicate_pages':_dup_count,'total_pages':len(all_pages)}
     # v93.31: distribute the budget once across every page from every site, flat -- not per
     # site as an opaque unit (see the long comment above `all_chunks=[]`). floor_chars matches
     # crawl()'s own per-page floor now that the unit here is a page, not a whole site.
-    return '\n\n'.join(_distribute_text_budget(all_chunks,180000,floor_chars=4000)),all_pages[:16],source_notes,crawl_log
+    return '\n\n'.join(_distribute_text_budget(all_chunks,180000,floor_chars=4000)),all_pages[:16],source_notes,crawl_log,duplicate_content_info
 
 
 
