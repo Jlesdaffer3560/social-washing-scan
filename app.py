@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_4_duplicate_content_and_nl_inflection"
-APP_RELEASE_LABEL="v94.4"
+APP_VERSION="hostable_v94_5_duplicate_content_page_cap_fix"
+APP_RELEASE_LABEL="v94.5"
 APP_RELEASE_DATE="2026-10-04"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -10624,9 +10624,16 @@ def crawl_with_related_sites(original_url,overall_deadline=None,company_name_hin
             if len(_norm)>=200:
                 _norm_counts[_norm]=_norm_counts.get(_norm,0)+1
         if _norm_counts:
-            _dup_count=max(_norm_counts.values())
-            if _dup_count>=3 and _dup_count>=max(3,len(all_pages)//2):
-                duplicate_content_info={'duplicate_pages':_dup_count,'total_pages':len(all_pages)}
+            # all_pages is truncated to 16 below (the actual `pages` this function returns, and
+            # the count build_confidence() and the UI go on to use); all_chunks can be longer or
+            # differently aligned (a related-site merge dedupes pages but not their chunks), so
+            # cap both figures to that same 16-page ceiling -- otherwise a busy multi-site scan
+            # could report a duplicate/total count higher than the page count shown everywhere
+            # else for this same scan.
+            _reported_total=min(len(all_pages),16)
+            _dup_count=min(max(_norm_counts.values()),_reported_total)
+            if _dup_count>=3 and _dup_count>=max(3,_reported_total//2):
+                duplicate_content_info={'duplicate_pages':_dup_count,'total_pages':_reported_total}
     # v93.31: distribute the budget once across every page from every site, flat -- not per
     # site as an opaque unit (see the long comment above `all_chunks=[]`). floor_chars matches
     # crawl()'s own per-page floor now that the unit here is a page, not a whole site.

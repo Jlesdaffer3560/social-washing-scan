@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_4_duplicate_content_and_nl_inflection'
+    assert app.APP_VERSION == 'hostable_v94_5_duplicate_content_page_cap_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3573,6 +3573,23 @@ def test_crawl_with_related_sites_detects_duplicate_page_content(monkeypatch):
     monkeypatch.setattr(app,'crawl',fake_crawl_distinct)
     _,_,_,_,dup_info2=app.crawl_with_related_sites('https://example.com',company_name_hint='Example Co')
     assert dup_info2 is None
+
+    # edge case: crawl_with_related_sites() truncates its returned page list to 16 (all_pages[:16]),
+    # but the duplicate-content scan runs over the untruncated all_pages/all_chunks -- the
+    # reported duplicate/total counts must be capped to that same 16-page ceiling, or a busy
+    # scan could report a higher count than the page list shown everywhere else for it.
+    many_pages=['https://example.com']+[f'https://example.com/p{i}' for i in range(19)]
+    def fake_crawl_many(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        chunks=[shell_text]*len(many_pages)
+        for p in many_pages:
+            app._log_fetch_success(log,p,len(shell_text),method='direct',source='linked',content_kind='html')
+        return '\n\n'.join(chunks),many_pages,chunks
+    monkeypatch.setattr(app,'crawl',fake_crawl_many)
+    _,pages3,_,_,dup_info3=app.crawl_with_related_sites('https://example.com',company_name_hint='Example Co')
+    assert len(pages3)==16, 'sanity: the returned page list itself is capped at 16'
+    assert dup_info3 is not None
+    assert dup_info3['total_pages']==16, 'must be capped to the same 16-page ceiling as the returned page list'
+    assert dup_info3['duplicate_pages']==16
 
 
 def test_related_company_sites_rejects_single_mention_without_relation_signal(monkeypatch):
