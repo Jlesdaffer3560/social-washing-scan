@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_6_duplicate_content_containment_match'
+    assert app.APP_VERSION == 'hostable_v94_7_internal_document_source_label_fix'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -5858,21 +5858,36 @@ def test_uploaded_document_filename_not_mangled_by_url_slug_cleanup():
     uploaded filename, which isn't a slug. Reproduced live: an internal-document scan of
     "test_beperkt.txt" showed "Source: Uploaded internal document: test beperkt.txt" (space)
     in the red-flag text, while the coverage table's own, differently-guarded code path
-    correctly kept the underscore."""
+    correctly kept the underscore.
+
+    A first version of this fix (in analyse_url_v27()'s own claim-source fallback) shipped,
+    was verified live -- and the live bug was still there, because the actual internal-
+    document-scan path never reaches that fallback at all: assign_sources_to_findings() ->
+    assign_claim_sources() already sets source_label first via its OWN unconditional
+    page_name_from_url(best) call (a separate call site with the same bug). Note that
+    result['claim_inventory']/['merged_claims'] (built by build_green_claim_inventory() /
+    build_claim_inventory()) never actually copy source_label from the finding at all -- they
+    get it from analyse_uploaded_document()'s own c.setdefault('source_label', filename), which
+    uses the raw filename directly and was therefore NEVER mangled; testing against those keys
+    would pass regardless of this bug and prove nothing. The field that actually carries the
+    live bug is result['green_findings']/['social_findings'] (the raw, un-rebuilt finding
+    dicts, capped to 12 for display) and anything derived from them, e.g. stakeholder_red_flags
+    (via regulatory_red_flags()/build_red_flags(), which read the same finding dicts). This
+    test exercises the real, full analyse_uploaded_document() entry point end-to-end -- not a
+    hand-rolled copy of the fixed logic, and not a field that was never actually broken --
+    specifically so a fix landing in the wrong call site, or a test checking the wrong field,
+    is caught, as both were here."""
     import app
-    finding = app.enrich_green_finding(
-        {'type': 'Generic environmental claim', 'claim': 'Our product is eco-friendly.'},
-        trigger='eco-friendly')
-    all_claims = app.build_green_claim_inventory([finding])
-    url = 'Uploaded internal document: test_beperkt.txt'
-    for c in all_claims:
-        c.setdefault('source_url', '')
-        c.setdefault('source_label', '')
-        if not c.get('source_url'):
-            c['source_url'] = url
-        if not c.get('source_label'):
-            c['source_label'] = app.page_name_from_url(url) if url and str(url).lower().startswith(('http://', 'https://')) else (url or 'Reviewed website / document')
-    assert all_claims[0]['source_label'] == url, 'a literal filename must not have its underscore replaced with a space'
+    result = app.analyse_uploaded_document(
+        'test_beperkt.txt',
+        'We zijn trots op onze eco-friendly producten en onze CO2-neutrale werking, al jaren een kernwaarde van ons bedrijf.',
+        company_name_hint='Test Co')
+    findings = (result.get('green_findings') or []) + (result.get('social_findings') or [])
+    real = [f for f in findings if not app.is_placeholder_finding(f.get('type', ''))]
+    assert real, 'expected at least one real (non-placeholder) retained finding'
+    for f in real:
+        assert 'test beperkt.txt' not in (f.get('source_label') or ''), f.get('source_label')
+        assert 'test_beperkt.txt' in (f.get('source_label') or ''), f.get('source_label')
 
     # sanity: a genuine crawled URL must still get the readable, slug-cleaned label
     real_url = 'https://example.com/sustainability-report'

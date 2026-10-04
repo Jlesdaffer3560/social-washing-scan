@@ -96,8 +96,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_6_duplicate_content_containment_match"
-APP_RELEASE_LABEL="v94.6"
+APP_VERSION="hostable_v94_7_internal_document_source_label_fix"
+APP_RELEASE_LABEL="v94.7"
 APP_RELEASE_DATE="2026-10-04"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -3245,7 +3245,19 @@ def assign_claim_sources(claims, page_segments, documents):
                         best=best_guess
         if best:
             c['source_url']=best
-            c['source_label']=page_name_from_url(best)
+            # External UX review follow-up: page_name_from_url() replaces "-"/"_" with spaces,
+            # correct for a URL path slug but wrong for a literal, non-URL source identifier --
+            # for an internal-document scan, `best` is the page_segments URL set in
+            # analyse_uploaded_document() to the literal string "Uploaded internal document:
+            # <filename>", not an actual URL. Calling page_name_from_url() on it unconditionally
+            # (as this line did) mangled the filename's underscore into a space: "test_beperkt.
+            # txt" displayed as "test beperkt.txt". This is the SAME bug already fixed for
+            # analyse_url_v27()'s own claim-source fallback and for concise_source() above --
+            # found live, verified AFTER that first fix had already shipped, because this is a
+            # separate call site (the one actually used for internal-document-scan claims) that
+            # a hand-rolled test of the fixed logic in isolation did not exercise. Apply the
+            # same http(s)-URL guard here.
+            c['source_label']=page_name_from_url(best) if str(best).lower().startswith(('http://','https://')) else best
             d=docs_by_url.get(best,{})
             c['audience_group']=d.get('audience_group','mixed')
             c['audience_lens']=d.get('audience_assessment','Mixed or unclear')
