@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_7_internal_document_source_label_fix"
-APP_RELEASE_LABEL="v94.7"
-APP_RELEASE_DATE="2026-10-04"
+APP_VERSION="hostable_v94_8_exclude_standards_network_related_sites"
+APP_RELEASE_LABEL="v94.8"
+APP_RELEASE_DATE="2026-10-07"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -697,6 +697,23 @@ NON_OFFICIAL_SITE_DOMAINS = {
     # to pass the relation-term check below -- the same underlying weakness now also guarded
     # by the self-description check in _v65_discover_related_official_sites().
     'rocketreach.co','leadiq.com',
+    # v94.8: third-party standards/target-setting NETWORKS -- confirmed live: a Carrefour
+    # scan found almost nothing on carrefour.com itself (every guessed sustainability-path
+    # candidate 404'd), triggered the thin-coverage fallback, and
+    # _v65_discover_related_official_sites() picked up sciencebasedtargetsnetwork.org as a
+    # supposed "official related Carrefour site" -- it is an independent NGO/standards body,
+    # not part of Carrefour at all. Its own site repeats "official"/"corporate"/
+    # "sustainability"/"annual report" and the names of the many companies that have joined
+    # its target-setting initiatives throughout, by its very nature as a standards network,
+    # which trivially passed the relation-term/alias-count check below. 5 of 6 "Carrefour"
+    # pages in that scan's inventory were actually this NGO's own content: wrong sector
+    # inferred ("Digital and technology services" instead of retail), zero claims found, and
+    # a "Low risk" score that reflected almost no real Carrefour text. Same underlying
+    # weakness as the two exclusions above (NGO/standards domain not on the hand-maintained
+    # list, so it isn't recognised as NGO/civil-society and falls through as "Other public
+    # source"). sciencebasedtargets.org (the allied Science Based Targets initiative, "SBTi")
+    # is the same kind of organisation and excluded pre-emptively for the same reason.
+    'sciencebasedtargetsnetwork.org','sciencebasedtargets.org',
 }
 
 def slugify_company_name(name):

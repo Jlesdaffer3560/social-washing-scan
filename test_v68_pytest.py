@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_7_internal_document_source_label_fix'
+    assert app.APP_VERSION == 'hostable_v94_8_exclude_standards_network_related_sites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3320,6 +3320,34 @@ def test_non_official_site_domains_excludes_esg_report_aggregators():
     assert app._v65_official_candidate_score(result, 'Kinepolis') == -999
     for domain in ('responsibilityreports.com', 'annualreports.com', 'corporateregister.com', 'csrhub.com'):
         assert domain in app.NON_OFFICIAL_SITE_DOMAINS
+
+
+def test_discover_related_sites_rejects_third_party_standards_networks(monkeypatch):
+    """v94.8: same underlying weakness as the two exclusions above, a third occurrence.
+    Reported live: a Carrefour scan found almost nothing on carrefour.com itself (every
+    guessed sustainability-path candidate 404'd), which triggered the thin-coverage
+    related-site fallback -- and _v65_discover_related_official_sites() picked up
+    sciencebasedtargetsnetwork.org as a supposed "official related Carrefour site". It is an
+    independent NGO/standards body, not part of Carrefour at all, but its own site repeats
+    "official"/"corporate"/"sustainability"/"annual report" and the names of the many
+    companies that have joined its target-setting initiatives, by its very nature as a
+    standards network -- enough to trivially pass the relation-term/alias-count check. 5 of 6
+    "Carrefour" pages in that live scan's inventory were actually this NGO's own content:
+    wrong sector inferred ("Digital and technology services" instead of retail), zero claims
+    found, and a "Low risk" score that reflected almost no real Carrefour text."""
+    assert 'sciencebasedtargetsnetwork.org' in app.NON_OFFICIAL_SITE_DOMAINS
+    assert 'sciencebasedtargets.org' in app.NON_OFFICIAL_SITE_DOMAINS
+    result = {'url': 'https://sciencebasedtargetsnetwork.org/set-climate-science-based-targets',
+              'title': 'Carrefour sets official science-based climate targets | Science Based Targets Network',
+              'content': ('Carrefour is one of many corporate members that have set an official, '
+                          'independently-verified sustainability target through our network. Read '
+                          'Carrefour\'s annual report submission and corporate commitment.')}
+    assert app._v65_official_candidate_score(result, 'Carrefour') == -999
+    monkeypatch.setattr(app, 'external_search_configured', lambda: True)
+    monkeypatch.setattr(app, '_v60_run_queries', lambda queries: ([result], [], [], {}))
+    monkeypatch.setattr(app, '_v60_source_kind', lambda r: 'Other public source')
+    found = app._v65_discover_related_official_sites('Carrefour', 'https://carrefour.com')
+    assert found == [], 'an unrelated third-party standards network must never be treated as a related official site'
 
 
 def test_discover_related_sites_rejects_third_party_contact_lookup_platforms(monkeypatch):
