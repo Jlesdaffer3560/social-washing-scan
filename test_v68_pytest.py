@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_8_exclude_standards_network_related_sites'
+    assert app.APP_VERSION == 'hostable_v94_9_deduplicate_reliability_warning'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3618,6 +3618,40 @@ def test_crawl_with_related_sites_detects_duplicate_page_content(monkeypatch):
     assert dup_info3 is not None
     assert dup_info3['total_pages']==16, 'must be capped to the same 16-page ceiling as the returned page list'
     assert dup_info3['duplicate_pages']==16
+
+
+def test_analyse_url_v27_summary_does_not_duplicate_reliability_warning(monkeypatch):
+    """External UX review: analyse_url_v27() used to prepend "⚠ DATA RELIABILITY:
+    {reliability_warning}" onto the SAME plain-English prose paragraph the frontend renders as
+    the "Executive summary", while the frontend separately renders the identical
+    data_reliability_warning text in its own notice box, plus a third, differently-worded
+    restatement of the same issue in the confidence-reasons badge. Reported live on a
+    Vandenborre scan: the "9 of 11 reviewed page(s) returned the same text..." sentence
+    appeared twice in a row at the top of the executive summary, immediately followed by a
+    third restatement, before the reader ever reached the actual scan result. The reliability
+    warning must still be available to the frontend via its own dedicated field, but must not
+    also be folded into the summary prose."""
+    monkeypatch.setattr(app,'KNOWN_GROUP_DOMAINS',{})
+    monkeypatch.setattr(app,'_v65_discover_related_official_sites',lambda *a,**k: [])
+    monkeypatch.setattr(app,'related_company_sites',lambda *a,**k: [])
+    monkeypatch.setattr(app,'resolve_scan_input',lambda raw: ('https://example.com', None))
+    shell_text='Free Shipping on Orders Over $99. We guarantee everything we make. ' * 10
+    def fake_crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
+        pages=['https://example.com','https://example.com/sustainability','https://example.com/climate',
+               'https://example.com/mensenrechten']
+        chunks=[shell_text]*len(pages)
+        app._log_fetch_success(log,pages[0],len(shell_text),method='direct',source='homepage',content_kind='html')
+        for p in pages[1:]:
+            app._log_fetch_success(log,p,len(shell_text),method='direct',source='linked',content_kind='html')
+        return '\n\n'.join(chunks),pages,chunks
+    monkeypatch.setattr(app,'crawl',fake_crawl)
+    result=app.analyse_url_v27('https://example.com','')
+    assert result['data_reliability_warning'], 'the warning must still be reported via its own dedicated field'
+    assert 'returned the same text as each other' in result['data_reliability_warning']
+    summary=result['report']['summary']
+    assert 'DATA RELIABILITY' not in summary, 'the warning must not be folded into the executive-summary prose'
+    assert 'returned the same text as each other' not in summary, 'the warning text must not be duplicated inside the summary'
+    assert result['assessment_summary_specific']==summary
 
 
 def test_crawl_with_related_sites_detects_near_duplicate_content_with_minor_differences(monkeypatch):

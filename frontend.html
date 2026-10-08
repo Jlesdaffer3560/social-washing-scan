@@ -222,8 +222,6 @@
       <h2>Executive summary</h2>
       <p id="resolutionNote" class="notice warning hidden" style="margin-bottom:12px"></p>
       <p id="companyIdentityCheck" class="notice hidden" style="margin-bottom:12px;padding:10px 14px;border-radius:8px;font-weight:600"></p>
-      <p id="reliabilityWarning" class="notice warning hidden" style="margin-bottom:12px;background:#fff4e5;border:1px solid #e0a020;color:#7a4a00;padding:10px 14px;border-radius:8px;font-weight:600"></p>
-      <p id="confidenceBadge" class="small hidden" style="margin-bottom:10px"></p>
       <p id="summary" class="muted"></p>
       <div id="scoreCards" class="scores"></div>
       <div class="download-panel" style="background:#f0f9ff;border:1px solid #bfd7f0;border-radius:12px;padding:16px;margin-top:16px">
@@ -278,6 +276,13 @@
       <div id="actions"></div>
     </div>
 
+    <div class="card section" id="data-quality-section">
+      <h2>Scan coverage &amp; data quality</h2>
+      <p class="muted">How much of the material could actually be reviewed for this scan, in plain terms. Worth reading before treating a low score as a clean result.</p>
+      <p id="reliabilityWarning" class="notice warning hidden" style="margin-bottom:12px;background:#fff4e5;border:1px solid #e0a020;color:#7a4a00;padding:10px 14px;border-radius:8px;font-weight:600"></p>
+      <p id="confidenceBadge" class="small hidden"></p>
+    </div>
+
     <div class="card section">
       <h2>Methodology and limitations</h2>
       <p id="methodology" class="muted"></p>
@@ -297,6 +302,19 @@ function legalBasisCategory(x){return x.legal_basis_category==='prohibited'?'pro
 function legalBasisBadgeLabel(x){return x.legal_basis_label || (legalBasisCategory(x)==='prohibited'?'Potentially Prohibited (UCPD Annex I, as amended by EmpCo)':'Problematic, not automatically prohibited (case-by-case)')}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function arr(x){return Array.isArray(x)?x:(x?[x]:[])}
+// External UX review: the raw backend coverage/reliability strings are accurate but written in
+// internal, technical terms ("provider/query attempts", "rate limit or usage quota") that read
+// as jargon to a non-technical reader. Soften that vocabulary for display only -- the underlying
+// API fields and their exact wording are unchanged (and still covered by backend tests), this
+// only touches how the text is presented on screen.
+function plainLanguage(text){
+  return String(text||'')
+    .replace(/external public-source search/gi,'the external media/NGO/regulator check')
+    .replace(/provider\/query attempts/gi,'automated source checks')
+    .replace(/a rate limit or usage quota/gi,'a temporary limit on automated checks')
+    .replace(/\(provider error\/quota, not a clean result\)/gi,'(a technical issue, not a clean result)')
+    .replace(/HTTP 403\/blocked or unreachable/gi,'blocked or unreachable')
+}
 function setStatus(msg,type='notice'){const el=$('status'); if(!el)return; el.className=type; el.innerHTML=msg}
 // v93.24: proactively show whether external public-source search (media/NGO/regulator
 // signals) is actually configured on this deployment, BEFORE the user runs a scan --
@@ -355,8 +373,15 @@ if(idc){let nace=arr(idc.nace_activities).map(a=>`${esc(a.code)} – ${esc(a.des
   cic.style.background=colours.bg;cic.style.border='1px solid '+colours.border;cic.style.color=colours.text;
   cic.innerHTML=esc(idc.note)+(nace?`<br><span style="font-weight:400;font-size:0.92em">Officially registered NACE activity (KBO/BCE): ${nace}</span>`:'');
   cic.classList.remove('hidden')}else{cic.classList.add('hidden')}
-let rw=$('reliabilityWarning');if(d.data_reliability_warning){let cd=d.crawl_diagnostics||{};rw.textContent='⚠ Data reliability: '+d.data_reliability_warning+(cd.pages_attempted?` (${cd.pages_failed||0}/${cd.pages_attempted} page fetches failed.)`:'');rw.classList.remove('hidden')}else{rw.classList.add('hidden')}
-let cb=$('confidenceBadge'),conf=d.confidence;if(conf&&conf.level){let lvl=String(conf.level);let colour=lvl==='High'?'#205b31':lvl==='Medium'?'#68470f':'#842424';cb.innerHTML=`<strong style="color:${colour}">Coverage confidence: ${esc(lvl)}</strong>`+(arr(conf.reasons).length?' — '+esc(arr(conf.reasons).join('; ')):'');cb.classList.remove('hidden')}else{cb.classList.add('hidden')}
+let rw=$('reliabilityWarning');if(d.data_reliability_warning){let cd=d.crawl_diagnostics||{};
+  // The warning text already states its own page/content figures for most cases (e.g. "9 of 11
+  // reviewed page(s) returned the same text..."); only add the raw fetch-failure count below
+  // when the warning itself doesn't already cover page-level counts, so the same figure isn't
+  // stated twice in one box.
+  let alreadyCoversPages=/page fetches failed|returned the same text as each other|fetched page\(s\) returned|text-extraction fallback|company page\(s\) could be reviewed/i.test(d.data_reliability_warning);
+  rw.textContent='Note on data reliability: '+plainLanguage(d.data_reliability_warning)+(cd.pages_attempted&&!alreadyCoversPages?` (${cd.pages_failed||0} of ${cd.pages_attempted} page fetches failed.)`:'');
+  rw.classList.remove('hidden')}else{rw.classList.add('hidden')}
+let cb=$('confidenceBadge'),conf=d.confidence;if(conf&&conf.level){let lvl=String(conf.level);let colour=lvl==='High'?'#205b31':lvl==='Medium'?'#68470f':'#842424';let reasonsText=arr(conf.reasons).map(plainLanguage).join('; ');cb.innerHTML=`<strong style="color:${colour}">Coverage confidence: ${esc(lvl)}</strong>`+(reasonsText?' — '+esc(reasonsText):'');cb.classList.remove('hidden')}else{cb.classList.add('hidden')}
 renderScores(d);renderCoverage(d);renderDrivers(d);renderClaims(d);renderRedFlags(d);renderExternal(d);renderActions(d);window.scrollTo({top:$('results').offsetTop-10,behavior:'smooth'});}
 function sourceTypeLabel(item){return item?.source_type||'Reviewed source'}
 function methodLabel(method){let m=String(method||'direct').toLowerCase();if(m==='reader_fallback')return 'Public text fallback';if(m==='uploaded')return 'Uploaded';if(m==='direct_thin')return 'Direct (limited text)';return 'Direct fetch'}

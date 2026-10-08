@@ -96,9 +96,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_8_exclude_standards_network_related_sites"
-APP_RELEASE_LABEL="v94.8"
-APP_RELEASE_DATE="2026-10-07"
+APP_VERSION="hostable_v94_9_deduplicate_reliability_warning"
+APP_RELEASE_LABEL="v94.9"
+APP_RELEASE_DATE="2026-10-08"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -4929,8 +4929,18 @@ def analyse_url_v27(raw, company_number=''):
              "This is an initial screening result, not a legal finding.")
     if not (green_ext or {}).get('enabled') and not (social_ext or {}).get('enabled'):
         summary=summary+" Note: external public-source verification was not performed for this scan (no search source configured); the external-context component reflects that no check was run, not a confirmed absence of negative signals."
-    if reliability_warning:
-        summary=f"⚠ DATA RELIABILITY: {reliability_warning} " + summary
+    # External UX review: this used to prepend "⚠ DATA RELIABILITY: {reliability_warning}" onto
+    # the SAME sentence rendered right here, while the frontend separately renders the identical
+    # data_reliability_warning text (below) in its own dedicated notice box, and a third, shorter
+    # restatement of the same issue in the confidence-reasons badge -- the same warning appearing
+    # three times on one results page, mixed into the plain-English scan summary a reader expects
+    # to just describe what was found. Reported live: a Vandenborre scan's "Executive summary"
+    # showed the identical "9 of 11 reviewed page(s) returned the same text..." sentence twice in
+    # a row (once in its own box, once again at the start of this prose paragraph) plus a third,
+    # differently-worded restatement in the coverage-confidence line directly below. The
+    # reliability warning is kept available to the frontend via the separate
+    # data_reliability_warning/confidence fields (reported below); it is no longer folded into
+    # this summary string, so the frontend can present it once, in one place.
     if empco_blacklist_floor:
         # v93.53: both of these always said "Very high" regardless of what the floor actually
         # raised the score to -- since v93.51 scales the floor by audience factor for internal/
