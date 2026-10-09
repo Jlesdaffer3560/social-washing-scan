@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+import http.client
 from urllib.parse import urlparse, urljoin, quote, parse_qs
-from urllib.request import Request, urlopen, HTTPRedirectHandler, HTTPSHandler, build_opener, install_opener
+from urllib.request import Request, urlopen, HTTPRedirectHandler, HTTPHandler, HTTPSHandler, build_opener, install_opener
 from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from html import escape as html_escape, unescape as html_unescape
@@ -96,9 +97,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v94_9_deduplicate_reliability_warning"
-APP_RELEASE_LABEL="v94.9"
-APP_RELEASE_DATE="2026-10-08"
+APP_VERSION="hostable_v95_0_external_review_prelaunch_fixes"
+APP_RELEASE_LABEL="v95.0"
+APP_RELEASE_DATE="2026-10-09"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
@@ -1159,6 +1160,83 @@ class _SSRFSafeRedirectHandler(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _DNSRebindingBlocked(OSError):
+    """Raised from inside a pinned connection's connect() -- an OSError subclass so urllib's
+    own do_open() wraps it as the same URLError every other connection failure already becomes,
+    requiring no changes to any caller's existing except (URLError, ...) handling."""
+
+
+def _resolve_pinned_ip(host):
+    """External code review: is_private(host) and the ACTUAL TCP connection urlopen() makes
+    moments later each call socket.getaddrinfo() independently -- a classic DNS-rebinding/
+    TOCTOU gap. A host under attacker-controlled DNS with a very short TTL could resolve to a
+    public IP for the is_private() pre-check and to a private/loopback/link-local address for
+    the real connection instants later, sailing straight through the guard. is_private()'s own
+    docstring already flagged this as a known limitation needing "a separate, pinned-IP
+    connection to fix properly" (v93.31).
+
+    Used from _PinnedHTTPConnection/_PinnedHTTPSConnection.connect() below: resolves self.host
+    and validates it RIGHT BEFORE opening the socket, in the very same call whose result is then
+    connected to -- there is no longer a separate window between "checked" and "connected" for a
+    rebinding attack to land in. Mirrors is_private()'s fail-closed semantics (ANY private/
+    loopback/link-local/reserved address, or any resolution failure, blocks the whole host) but
+    raises instead of returning a bool, and returns one concrete, validated IP string to dial."""
+    if host in {'localhost','127.0.0.1','0.0.0.0'}:
+        raise _DNSRebindingBlocked(_blocked_host_message(host))
+    try:
+        infos=socket.getaddrinfo(host,None)
+    except Exception as exc:
+        raise _DNSRebindingBlocked(_blocked_host_message(host)) from exc
+    ips=[]
+    for r in infos:
+        ip_str=r[4][0]
+        try:
+            ip=ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise _DNSRebindingBlocked(_blocked_host_message(host))
+        if ip_str not in ips:
+            ips.append(ip_str)
+    if not ips:
+        raise _DNSRebindingBlocked(_blocked_host_message(host))
+    # Prefer an IPv4 result for the broadest compatibility with sites/CDNs that still have
+    # incomplete IPv6 support; any validated result is safe, this is purely a preference order.
+    for ip_str in ips:
+        if ':' not in ip_str:
+            return ip_str
+    return ips[0]
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        ip=_resolve_pinned_ip(self.host)
+        self.sock=socket.create_connection((ip,self.port),self.timeout,self.source_address)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        ip=_resolve_pinned_ip(self.host)
+        sock=socket.create_connection((ip,self.port),self.timeout,self.source_address)
+        if getattr(self,'_tunnel_host',None):
+            self.sock=sock
+            self._tunnel()
+        # server_hostname stays the real hostname (self.host), never the pinned IP -- this is
+        # what keeps SNI and certificate validation (hostname-vs-cert checking) correct even
+        # though the TCP connection itself goes straight to the pre-validated IP.
+        self.sock=self._context.wrap_socket(sock,server_hostname=self.host)
+
+
+class _PinnedHTTPHandler(HTTPHandler):
+    def http_open(self,req):
+        return self.do_open(_PinnedHTTPConnection,req)
+
+
+class _PinnedHTTPSHandler(HTTPSHandler):
+    def https_open(self,req):
+        return self.do_open(_PinnedHTTPSConnection,req,context=self._context)
+
+
 # v93.28: urlopen(req, context=...) -- the pattern used at every call site below -- makes
 # Python build its OWN one-off opener internally whenever a context is supplied, bypassing
 # the process-wide installed opener entirely (confirmed against cpython's urllib/request.py:
@@ -1168,8 +1246,11 @@ class _SSRFSafeRedirectHandler(HTTPRedirectHandler):
 # private/link-local address (e.g. a cloud metadata endpoint) with no re-validation,
 # defeating the SSRF guard it looks like this file has. Build ONE explicit opener that
 # carries both the TLS context and the safe-redirect handler, and use its .open() at every
-# call site instead of the bare urlopen(..., context=...) pattern.
-_SAFE_OPENER=build_opener(HTTPSHandler(context=ssl.create_default_context()), _SSRFSafeRedirectHandler())
+# call site instead of the bare urlopen(..., context=...) pattern. The HTTP(S) handlers use the
+# pinned connection classes above, so both the original request and every redirect hop (each
+# gets its own fresh connection, built from that hop's own Request/host) resolve-and-connect to
+# a single validated IP atomically, closing the DNS-rebinding gap described above.
+_SAFE_OPENER=build_opener(_PinnedHTTPHandler(), _PinnedHTTPSHandler(context=ssl.create_default_context()), _SSRFSafeRedirectHandler())
 install_opener(_SAFE_OPENER)
 
 
@@ -2268,6 +2349,17 @@ def is_placeholder_finding(finding_type):
     return t.startswith('no material') or t.startswith('no major')
 
 _EVIDENCE_CLAUSE_VERB_RE = re.compile(r"\b(is|are|was|were|zijn|ben|bent|est|sont|était|étaient)\b")
+# External code review: this matched almost no real percentage. The trailing \b after "%"
+# requires a transition between a \w and \W character, but "%" is itself \W, so \b only matches
+# there when "%" is immediately followed by a word character (or absolute string end) -- not
+# when followed by a space, period, comma or any other punctuation, which is how a percentage is
+# written in ordinary text ("50% recycled", "75% of employees", "50%."). Confirmed: "50% recycled
+# material" and "75% of employees" produced zero matches; a bare year like "2026" matched fine
+# (digits are \w, so \b after them works normally against a following space). Dropped the
+# trailing \b -- "%" itself is already an unambiguous terminator, no boundary check needed after
+# it. Also dropped the bare-year alternative entirely: a reporting year on its own is not
+# evidence of a measured result (per the review's own point), only an actual percentage is.
+_MEASURED_PERCENTAGE_RE = re.compile(r'\b\d{1,4}(?:[.,]\d+)?\s?%')
 _EVIDENCE_TERM_RE_CACHE = {}
 def _evidence_term_hit(term, text):
     """v93.51: evidence_signal_score()/green_evidence_signal_score() both counted a term as
@@ -2378,7 +2470,7 @@ def evidence_signal_score(page_text, findings):
     import re
     social_window_terms=["supplier","worker","employee","human rights","diversity","inclusion","safety","customer","community","labour","labor","forced labour","forced labor","modern slavery","traceability","import","export","product"]
     numeric_social_hits=0
-    for m in re.finditer(r'(\b\d{1,4}(?:[.,]\d+)?\s?%\b|\b20\d{2}\b)', text):
+    for m in re.finditer(_MEASURED_PERCENTAGE_RE, text):
         win=text[max(0,m.start()-160):m.end()+160]
         if any(t in win for t in social_window_terms): numeric_social_hits+=1
     points=min(55,len(strong_hits)*7)+min(15,len(weak_hits)*3)+min(20,numeric_social_hits*5)
@@ -3918,7 +4010,7 @@ def green_evidence_signal_score(page_text, findings):
     import re
     env_terms=['emissions','carbon','climate','recycled','recyclable','sustainable','environment','water','energy','waste','biodiversity','circular']
     numeric_env_hits=0
-    for m in re.finditer(r'(\b\d{1,4}(?:[.,]\d+)?\s?%\b|\b20\d{2}\b)', text):
+    for m in re.finditer(_MEASURED_PERCENTAGE_RE, text):
         win=text[max(0,m.start()-160):m.end()+160]
         if any(t in win for t in env_terms): numeric_env_hits+=1
     points=min(55,len(strong_hits)*7)+min(15,len(weak_hits)*3)+min(20,numeric_env_hits*5)
@@ -4065,6 +4157,31 @@ def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings,
         return green_score, overall_score, False
     floor_value=round(75*_v93_audience_factor(audience)) if audience is not None else 75
     return max(green_score, floor_value), max(overall_score, floor_value), True
+
+def _why_score_global_text(overall, green_score, social_score, empco_blacklist_floor, document_scan=False):
+    """External code review, confirmed in a sample report: green=75, social=44, overall=75 --
+    a normal weighted blend of 75 and 44 would land around 62, not 75. The overall score had
+    actually been raised to 75 by _v93_apply_empco_blacklist_floor()'s floor rule (a retained
+    claim matched a fixed EmpCo Annex I wording pattern), not by the blended formula the
+    'why_score.global' text claimed to describe -- it always said "a weighted combination...
+    calibrated so that one dimension does not automatically dominate", regardless of whether
+    the floor rule was what actually produced the number. green_conclusion/screening_conclusion
+    already got the equivalent floor-aware wording fix (v93.52/v93.53); this field was missed.
+    State the real, decisive reason instead, without exposing internal field/function names,
+    when the floor applied; otherwise keep the existing weighted-combination description."""
+    if empco_blacklist_floor:
+        scope_clause=' for the uploaded document' if document_scan else ''
+        return (f'The overall rating is {level(overall)}{scope_clause} because the wording of a retained environmental '
+                f'claim matches a fixed practice EmpCo adds to UCPD Annex I, which raises the green and overall '
+                f'scores to at least the {level(overall)} band regardless of the blended combination of the green '
+                f'({green_score}/100) and social ({social_score}/100) scores. This is an automated wording-pattern '
+                'match that requires priority review, not a confirmed legal violation.')
+    if document_scan:
+        return f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.'
+    return (f'Global score is {overall}/100. It is a weighted combination of the green score ({green_score}/100) and '
+            f'social score ({social_score}/100), calibrated so that one dimension does not automatically dominate '
+            'the global score. Direct EmpCo or Forced Labour Regulation risk signals can raise the relevant '
+            'dimension score, while broader OECD/UNGC/UNGP expectations are weighted less strongly.')
 
 def green_washing_conclusion(score, findings, evidence_gap, external_score, audience):
     no_major=findings and is_placeholder_finding(findings[0].get('type',''))
@@ -4486,10 +4603,21 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     # here IS the full, untruncated text, so its own length is the true original size.
     original_chars=page_coverage['original_chars'] if page_coverage else len(txt)
     analyzed_text=txt[:90000]
+    total_pages=(page_coverage or {}).get('total_pages')
+    pages_analyzed=(page_coverage or {}).get('pages_analyzed')
+    # External code review: 'truncated' only ever compared character counts, so a PDF cut off
+    # by the page cap (extract_pdf_text_best_effort()'s max_pages=60) rather than the 90,000-
+    # character cap was never flagged. Confirmed live: a synthetic 61-page PDF was reported as
+    # "61 total pages, 60 analysed" in page_coverage, yet this 'truncated' value stayed False
+    # whenever the 60 pages' own text happened to fit under 90,000 characters -- which silently
+    # defeats analyse_uploaded_document()'s existing page_note/coverage_note logic below, since
+    # that logic only runs when 'truncated' is already True. A page-count shortfall is just as
+    # much a truncation as a character-count one.
+    page_truncated=(total_pages is not None and pages_analyzed is not None and pages_analyzed<total_pages)
     coverage={'original_chars':original_chars,'analyzed_chars':min(len(analyzed_text),original_chars),
-        'truncated':original_chars>90000,
-        'total_pages':(page_coverage or {}).get('total_pages'),
-        'pages_analyzed':(page_coverage or {}).get('pages_analyzed')}
+        'truncated':original_chars>90000 or page_truncated,
+        'total_pages':total_pages,
+        'pages_analyzed':pages_analyzed}
     return analyzed_text,coverage
 
 def fetch_document_text(url):
@@ -4651,13 +4779,26 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     coverage.setdefault('truncated', coverage.get('original_chars',0) > coverage.get('analyzed_chars',0))
     coverage_note=''
     if coverage.get('truncated'):
-        page_note=''
-        if coverage.get('total_pages') and coverage.get('pages_analyzed') and coverage['pages_analyzed'] < coverage['total_pages']:
-            page_note=f" (pages 1-{coverage['pages_analyzed']} of {coverage['total_pages']})"
-        coverage_note=(f"Document coverage note: this document contains approximately {coverage['original_chars']:,} "
-            f"characters; only the first {coverage['analyzed_chars']:,}{page_note} were analysed for this hosted "
-            "first-pass scan. Any claim appearing only after that point was not reviewed and is not reflected in "
-            "this result.")
+        page_truncated=bool(coverage.get('total_pages') and coverage.get('pages_analyzed') and coverage['pages_analyzed'] < coverage['total_pages'])
+        char_truncated=coverage.get('original_chars',0) > coverage.get('analyzed_chars',0)
+        if page_truncated:
+            # External code review: the character-count phrasing below ("only the first N of M
+            # characters") reads as self-contradictory once a page-count shortfall is the ONLY
+            # thing that got truncated -- analyzed_chars then equals original_chars (all
+            # extracted text was kept), so it would otherwise say "contains ~50,000 characters;
+            # only the first 50,000 were analysed", which looks like nothing was cut at all. Lead
+            # with the actual page count in that case, and only mention a separate character cut
+            # when one genuinely also occurred.
+            char_clause=(f", and within those pages only the first {coverage['analyzed_chars']:,} of "
+                         f"{coverage['original_chars']:,} characters were analysed") if char_truncated else ''
+            coverage_note=(f"Document coverage note: this document has {coverage['total_pages']} page(s); only the "
+                f"first {coverage['pages_analyzed']} were analysed for this hosted first-pass scan{char_clause}. "
+                "Any claim on an unanalysed page was not reviewed and is not reflected in this result.")
+        else:
+            coverage_note=(f"Document coverage note: this document contains approximately {coverage['original_chars']:,} "
+                f"characters; only the first {coverage['analyzed_chars']:,} were analysed for this hosted "
+                "first-pass scan. Any claim appearing only after that point was not reviewed and is not reflected in "
+                "this result.")
     source='Uploaded internal document: '+(filename or 'document')
     kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
     if kbo_info and kbo_info.get('name'):
@@ -4723,7 +4864,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     if coverage_note:
         summary=coverage_note+' '+summary
     return {'version':APP_VERSION,'assessment_type':'internal_document','document_type':'Uploaded internal document','source_label':source,'original_url':source,'fallback_note':'','company_identity_check':company_identity_check,'empco_blacklist_floor_applied':empco_blacklist_floor,'analysis_date':datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'),
-        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'document_coverage':coverage,'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':f'Global score is {overall}/100. It reflects only the uploaded internal document and is a weighted combination of the green and social scores.','green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']+([coverage_note] if coverage_note else [])},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
+        'overall_score':overall,'overall_risk':level(overall),'global_score':overall,'global_risk':level(overall),'green_score':green_score,'green_risk':level(green_score),'green_conclusion':green_conclusion,'social_score':social_score,'social_risk':level(social_score),'social_conclusion':social_conclusion,'screening_conclusion':f'Global: {level(overall)} | Green: {level(green_score)} | Social: {level(social_score)}','methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,'document_coverage':coverage,'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,'documents_checked':documents_checked,'scan_inventory':scan_inventory,'channel_analysis':build_channel_analysis(documents_checked),'related_source_notes':[],'report':{'summary':summary,'rationale':methodology,'rewrite_guidance':'Make green and social claims specific, scoped, evidenced and audience-appropriate.','pages_reviewed':[source],'standards_overview':EMPCO_LENS+STANDARDS},'assessment_summary_specific':summary,'concise_standards_lens':EMPCO_LENS,'merged_claims':all_claims,'claim_inventory':all_claims,'regulatory_risk_summary':build_regulatory_risk_summary(green_fs,social_fs,audience),'claim_modules_summary':build_claim_modules_summary(green_fs,social_fs),'federation_pilot_output':federation_pilot_output(green_fs,social_fs,overall,green_score,social_score),'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Internal-document scan only. No public-source or website content is included.'},'green_external_context_assessment':green_external_context,'social_external_context_assessment':{'score':0,'note':'Not assessed for internal-document scans.'},'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},'why_score':{'global':_why_score_global_text(overall,green_score,social_score,empco_blacklist_floor,document_scan=True),'green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],'audience':audience.get('note',''),'interpretation':'This is an assessment signal, not a legal finding.'},'score_driver_details':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'stakeholder_red_flags':regulatory_red_flags(green_fs,social_fs,audience)+build_red_flags(social_fs,social_ext,sec,ctx)+(['EmpCo readiness flag (applies from 27 September 2026): high-sensitivity green claims should be prepared for EmpCo-style substantiation and wording controls ahead of that date.'] if any(f.get('risk')=='High' for f in green_fs) else []),'red_flags_by_dimension':split_red_flags_by_dimension(green_fs,social_fs,dict(green_ext,targeted_negative_sources=green_targeted),dict(social_ext,targeted_negative_sources=social_targeted),sec,audience),'company_action_plan':build_green_social_actions(green_fs,social_fs,audience,comp.get('company','')),'engagement_questions':build_engagement_questions(social_fs,social_ext),'confidence':{'level':'Medium','reasons':['Uploaded document was scanned as a standalone source.','External public-source search was not performed for this internal-document scan.']+([coverage_note] if coverage_note else [])},'disclaimer':'Indicative first-pass sustainability claims assessment only. This tool does not provide legal advice, does not establish a violation of EmpCo, the Forced Labour Regulation or any other law, and does not make a definitive greenwashing or social-washing finding. Results should be verified by legal, compliance and subject-matter experts before external use.','analysed_text_excerpt':text[:2200],'quality_improvements':['Maintain a sustainability claims register distinguishing green and social claims, claim owner, evidence file and review date.','Attach objective evidence, same-medium specification, methodology, limitations and approval owner to each claim.'],'ai_used':False,'ai_note':''}
 
 def _describe_fetch_error(err):
     """Turns a raw fetch exception into a clear, non-technical explanation."""
@@ -4980,7 +5121,7 @@ def analyse_url_v27(raw, company_number=''):
         'external_research':{'green':dict(green_ext,compact_sources=green_targeted,targeted_negative_sources=green_targeted),'social':dict(social_ext,compact_sources=social_targeted,targeted_negative_sources=social_targeted),'summary':'Green and social external-source layers are reported separately.'},
         'green_external_context_assessment':green_external_context,'social_external_context_assessment':social_external_context,
         'score_components':{'green':green_components,'social':social_components},'split_scores':{'global_score':overall,'green_risk_score':green_score,'social_risk_score':social_score,'green':green_splits,'social':social_splits},
-        'why_score':{'global':f'Global score is {overall}/100. It is a weighted combination of the green score ({green_score}/100) and social score ({social_score}/100), calibrated so that one dimension does not automatically dominate the global score. Direct EmpCo or Forced Labour Regulation risk signals can raise the relevant dimension score, while broader OECD/UNGC/UNGP expectations are weighted less strongly.',
+        'why_score':{'global':_why_score_global_text(overall,green_score,social_score,empco_blacklist_floor),
                      'green':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['green']['summary'],
                      'social':score_driver_details(green_score,social_score,green_fs,social_fs,green_splits,social_splits,green_components,social_components,dict(green_ext, targeted_negative_sources=green_targeted),dict(social_ext, targeted_negative_sources=social_targeted),sec,audience)['social']['summary'],
                      'audience':audience['note'],'interpretation':'This is an assessment signal, not a legal finding. EmpCo relevance is strongest for consumer-facing commercial communications. The score methodology uses continuous weighting so results vary by claim type, evidence gap, communication channel, sector sensitivity and retained external stakeholder context.'},
@@ -7445,8 +7586,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Methods','GET, POST, OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type')
         for k,v in (extra_headers or {}).items(): self.send_header(k,v)
         self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+        # External code review: this fell off the end of the function with no explicit return,
+        # so it always evaluated to None -- including when it was called specifically to produce
+        # an "error already sent" signal, e.g. `return None, self._json({'error':...}, 403)` in
+        # _resolve_report_payload()/_v93_read_form_body(). Every caller of those two functions
+        # checks `if err is not None: return err` expecting that pattern to short-circuit, but
+        # since `err` was always None, it never did: an invalid report token or an oversized
+        # history-form body sent one error response here, then the calling handler carried on
+        # with a None payload/form, attempting a second response (or crashing on
+        # None.get(...) with no surrounding try/except) on top of the first. Confirmed by an
+        # external code review with a local reproduction. Return a truthy sentinel so "a
+        # response was already sent" is something a caller can actually detect and act on.
+        return True
 
-    def _json(self,d,status=200): self._send(json.dumps(d,ensure_ascii=False,indent=2),'application/json; charset=utf-8',status)
+    def _json(self,d,status=200): return self._send(json.dumps(d,ensure_ascii=False,indent=2),'application/json; charset=utf-8',status)
 
     def _read_json(self):
         try: n=int(self.headers.get('Content-Length',0) or 0)

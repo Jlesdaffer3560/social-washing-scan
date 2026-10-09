@@ -27,6 +27,7 @@ import io
 
 from reportlab.graphics.shapes import Drawing, Line, Rect, String
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
@@ -35,6 +36,14 @@ from report_pdf import (
     MARGIN_X, NAVY, PAGE_W, RED, ST, TEAL_DARK, WHITE, bounded_text, clean_text, esc,
     risk_color, risk_soft,
 )
+
+# External code review, visually confirmed: _company_table()/_top_claims_table() below fill
+# their header row with a solid NAVY background, but built the header cells with report_pdf.py's
+# imported ST['table_head'] style -- which sets navy TEXT, correct for report_pdf.py's own
+# tables (no filled header background there, just a ruled line under the header), but navy-on-
+# navy and therefore invisible here. ST['table_head'] is shared with report_pdf.py and must keep
+# its own (correct, light-background) color; this is a separate style for a dark header bar.
+_TABLE_HEAD_ON_DARK = ParagraphStyle('table_head_on_dark', parent=ST['table_head'], textColor=WHITE)
 
 _RISK_ORDER = ['Low', 'Medium', 'High', 'Very high']
 # v93.46: a row with a missing/unrecognised global_risk value (e.g. a scan that never
@@ -361,7 +370,7 @@ def _top_claims_table(top_claims):
     # v93.44: "EmpCo blacklist" renamed -- a matched trigger phrase is an automated wording
     # match, not by itself a confirmed finding of a blacklisted practice.
     header = ['#', 'Phrase', 'Risk level', 'EmpCo pattern match', 'Occurrences', 'Companies']
-    data = [[Paragraph(esc(h), ST['table_head']) for h in header]]
+    data = [[Paragraph(esc(h), _TABLE_HEAD_ON_DARK) for h in header]]
     for i, c in enumerate(top_claims):
         data.append([
             Paragraph(str(i + 1), ST['table']),
@@ -391,7 +400,7 @@ def _company_table(rows):
     ranked = sorted(rows, key=lambda r: r.get('global_score') if isinstance(r.get('global_score'), (int, float)) else -1,
                      reverse=True)
     header = ['Company', 'Sector', 'Global', 'Green', 'Social', 'Findings', 'Scanned']
-    data = [[Paragraph(esc(h), ST['table_head']) for h in header]]
+    data = [[Paragraph(esc(h), _TABLE_HEAD_ON_DARK) for h in header]]
     for r in ranked:
         gscore = r.get('global_score')
         grisk = r.get('global_risk')

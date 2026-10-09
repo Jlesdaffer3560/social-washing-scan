@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v94_9_deduplicate_reliability_warning'
+    assert app.APP_VERSION == 'hostable_v95_0_external_review_prelaunch_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -145,6 +145,18 @@ def test_frontend_score_bands_and_privacy():
     assert "if(n>=25)return 'Medium" in text
     assert 'Document privacy:' in text
     assert 'Analysis status' in text
+    # External code review: the previous wording ("does not intentionally write its contents to
+    # persistent application storage") was imprecise -- _v92_save_scan_history() (app.py) does
+    # persist, for every document scan once scan history is enabled, the company name, a
+    # filename reference (input_url/source_label), the client IP address, and the exact wording
+    # of every flagged claim phrase (matched_phrase, one row per claim) -- information FROM the
+    # document's content, not the document itself, but specific enough that "does not write its
+    # contents" overstated the actual privacy posture. The corrected text must disclose what is
+    # actually logged and that it persists until an administrator deletes it (no automatic
+    # expiry exists in the scan_history schema/deletion code).
+    assert 'does not intentionally write its contents' not in text
+    assert 'exact wording of any flagged claim phrase' in text
+    assert 'until an administrator deletes them' in text
 
 
 def test_frontend_highlight_tolerates_dutch_inflected_adjective_form():
@@ -1379,6 +1391,56 @@ def test_empco_floor_text_consistency_covers_full_response_not_just_conclusion()
     assert 'at least high' in result['why_score']['green'].lower()
 
 
+def test_why_score_global_names_the_empco_floor_when_it_drove_the_result():
+    """External code review, confirmed in a sample report: green=75, social=44, overall=75 --
+    a normal weighted blend of those two would land around 62, not 75. The overall score had
+    actually been raised to 75 by _v93_apply_empco_blacklist_floor()'s floor rule, not by the
+    blended formula, yet why_score.global always said "a weighted combination of the green and
+    social scores... calibrated so that one dimension does not automatically dominate" --
+    exactly the opposite of what happened. Reproduced with the same internal-document scan used
+    by the sibling empco-floor-text tests above (green floored to High/56, social a real 9,
+    overall floored to match green): why_score.global must name the actual, decisive reason
+    instead of describing a blend that was overridden, and must not claim a band ("Very high")
+    the floor didn't actually produce here."""
+    text = ('This internal governance policy confirms our product line is climate neutral through '
+        'offsetting, achieved via certified carbon credits, as part of our corporate '
+        'sustainability programme.')
+    result = app.analyse_uploaded_document('internal_policy.txt', text, 'TestCo')
+    assert result['empco_blacklist_floor_applied'] is True
+    assert result['green_risk'] == 'High' and result['overall_risk'] == 'High'
+    why_global = result['why_score']['global']
+    assert 'weighted combination' not in why_global.lower(), 'must not describe this as an ordinary blend once the floor overrode it'
+    assert 'Very high' not in why_global, "must not claim a band the floor didn't actually produce for this (internal-audience-scaled) scan"
+    assert 'High' in why_global and 'Annex I' in why_global
+
+    # sanity: without a blacklisted claim, the ordinary weighted-combination description remains
+    normal_text = 'Our company published its annual report summarising general business activities.'
+    normal_result = app.analyse_uploaded_document('annual_report.txt', normal_text, 'TestCo')
+    assert normal_result['empco_blacklist_floor_applied'] is False
+    assert 'weighted combination' in normal_result['why_score']['global'].lower()
+
+
+def test_why_score_global_text_helper_covers_website_scan_and_no_trailing_space_bug():
+    """Direct unit coverage of _why_score_global_text() for the website-scan call site
+    (analyse_url_v27(), document_scan=False) alongside the document-scan case already covered
+    end-to-end above. Also guards against a spacing bug caught while fixing this: an earlier
+    draft produced "...is High for the uploaded documentbecause..." (missing space) by
+    concatenating a scope clause with no leading/trailing space onto the surrounding words."""
+    website_floored = app._why_score_global_text(75, 75, 44, True, document_scan=False)
+    assert 'document' not in website_floored.lower(), 'the website-scan case must not mention "the uploaded document"'
+    assert 'Very high' in website_floored and 'Annex I' in website_floored
+    assert 'documentbecause' not in website_floored and '  ' not in website_floored
+
+    doc_floored = app._why_score_global_text(56, 56, 9, True, document_scan=True)
+    assert 'for the uploaded document because' in doc_floored, 'both words must be separated by single spaces on each side'
+    assert '  ' not in doc_floored
+
+    website_normal = app._why_score_global_text(62, 75, 44, False, document_scan=False)
+    assert 'weighted combination' in website_normal.lower()
+    doc_normal = app._why_score_global_text(62, 75, 44, False, document_scan=True)
+    assert 'weighted combination' in doc_normal.lower() and 'uploaded internal document' in doc_normal.lower()
+
+
 def test_backfill_legacy_findings_missing_fixture(monkeypatch, tmp_path):
     """v93.3: the one-time legacy backfill must report a clear error (not raise) when its
     bundled fixture file isn't present."""
@@ -1962,6 +2024,12 @@ def test_ssrf_redirect_guard_is_actually_wired_into_used_requests():
     import urllib.request
     assert any(isinstance(h,app._SSRFSafeRedirectHandler) for h in app._SAFE_OPENER.handlers)
     assert urllib.request._opener is app._SAFE_OPENER
+    # External code review: is_private(host) and the real connection independently re-resolve
+    # the hostname, leaving a DNS-rebinding window between them -- _PinnedHTTPConnection/
+    # _PinnedHTTPSConnection (wired in via these two handlers) close it by resolving-and-
+    # validating inside connect() itself, the same call whose result gets connected to.
+    assert any(isinstance(h,app._PinnedHTTPHandler) for h in app._SAFE_OPENER.handlers)
+    assert any(isinstance(h,app._PinnedHTTPSHandler) for h in app._SAFE_OPENER.handlers)
 
 
 def test_open_public_url_routes_through_the_safe_opener(monkeypatch):
@@ -2763,6 +2831,48 @@ def test_csv_export_neutralises_formula_injection_in_company_name():
     assert "'Acme Corp" not in normal_text
 
 
+class _RealHandlerMethodsStub:
+    """A minimal stand-in for Handler (app.py's BaseHTTPRequestHandler subclass) that binds
+    the REAL _send/_json/_allowed_origin/_resolve_report_payload implementations instead of
+    replacing them with fakes -- just enough of the socket-level surface (wfile, send_response,
+    send_header, end_headers, headers) for those real methods to run to completion. Assigning
+    a function from another class as a class attribute here still makes it a correctly bound
+    method on this class (Python's normal descriptor protocol), so this exercises the exact
+    same code _handle_history_*/do_POST call in production, not a hand-written replica of it.
+
+    External code review: a previous version of this exact test replaced _json with a fake
+    that returned a dict (truthy) instead of the REAL _json/_send, which always fell off the
+    end of the function with an implicit `return None` -- so the fake's dict made
+    `if err is not None` look correct, while in production `err` was always None and this
+    exact check silently did nothing. The test passed; the bug it was meant to catch did not
+    exist in the test's own fake, only in the real code it never actually called."""
+    def __init__(self):
+        self.wfile = __import__('io').BytesIO()
+        self.headers = {}
+    def send_response(self, code, message=None): pass
+    def send_header(self, k, v): pass
+    def end_headers(self): pass
+    _allowed_origin = app.Handler._allowed_origin
+    _send = app.Handler._send
+    _json = app.Handler._json
+    _resolve_report_payload = app.Handler._resolve_report_payload
+
+
+def test_send_and_json_return_a_truthy_sentinel_once_a_response_is_sent():
+    """External code review: _send() (and therefore _json(), which calls it) fell off the end
+    of the function with no explicit return, so it always evaluated to None -- including when
+    called specifically to signal "an error response has already been sent". Every caller of
+    _resolve_report_payload()/_v93_read_form_body() checks `if err is not None: return err` to
+    stop immediately in that case, but since _json()/_send() always returned None, that check
+    never fired: an invalid report token or an oversized history-form body sent one error
+    response, then the calling handler carried on with a None payload/form, attempting a
+    second response (or crashing on None.get(...) with no surrounding try/except)."""
+    stub = _RealHandlerMethodsStub()
+    assert stub._send(b'ok') is True
+    stub2 = _RealHandlerMethodsStub()
+    assert stub2._json({'error': 'nope'}, 403) is True
+
+
 def test_history_form_body_reader_rejects_oversized_request():
     """v93.51: the four /history/* plain-HTML-form POST handlers (login, export_selected,
     report_selected, delete_selected) each read Content-Length with no upper bound at all,
@@ -2770,15 +2880,18 @@ def test_history_form_body_reader_rejects_oversized_request():
     MAX_REQUEST_BYTES cap via do_POST's own try/except). Reported by a third-party code
     review. _v93_read_form_body() is the shared, size-capped reader those four now use --
     it must accept an ordinary small body and reject one over the application limit with a
-    413, without raising (these call sites have no surrounding except block to catch it)."""
+    413, without raising (these call sites have no surrounding except block to catch it).
+
+    Uses the REAL Handler._json (via _RealHandlerMethodsStub), not a hand-written fake --
+    see test_send_and_json_return_a_truthy_sentinel_once_a_response_is_sent() for why that
+    distinction matters here specifically."""
     import io as _io
 
-    class FakeHandler:
+    class FakeHandler(_RealHandlerMethodsStub):
         def __init__(self, content_length, body):
+            super().__init__()
             self.headers = {'Content-Length': str(content_length)}
             self.rfile = _io.BytesIO(body)
-        def _json(self, d, status=200):
-            return {'_status': status, '_body': d}
 
     small_body = b'password=abc'
     form, err = app._v93_read_form_body(FakeHandler(len(small_body), small_body))
@@ -2788,7 +2901,27 @@ def test_history_form_body_reader_rejects_oversized_request():
     oversized_len = app.MAX_REQUEST_BYTES + 1
     form2, err2 = app._v93_read_form_body(FakeHandler(oversized_len, b''))
     assert form2 is None
-    assert err2['_status'] == 413
+    assert err2 is True, 'a truthy sentinel is required so callers actually stop instead of continuing with form=None'
+
+
+def test_resolve_report_payload_signals_error_so_caller_stops():
+    """External code review, confirmed with a local reproduction: _resolve_report_payload()'s
+    error branches returned (None, self._json({...}, 4xx)) -- sending a real error response --
+    but every caller checked `if err is not None: return err`, which never fired because
+    _json()/_send() always returned None. /api/report/pdf and /api/report/email then carried
+    on with payload=None: _respond_pdf(None) or build_fn(_unsigned_report_payload(None)) would
+    raise, and that second failure could attempt a SECOND HTTP response on top of the one
+    _resolve_report_payload already sent. Verified with the real Handler._json/_send
+    implementations (not a fake) via _RealHandlerMethodsStub."""
+    stub = _RealHandlerMethodsStub()
+    payload, err = stub._resolve_report_payload({'report_token': 'not-a-real-token'})
+    assert payload is None
+    assert err is True, 'a truthy sentinel is required so /api/report/pdf and /api/report/email actually stop here'
+
+    stub2 = _RealHandlerMethodsStub()
+    payload2, err2 = stub2._resolve_report_payload({})
+    assert payload2 is None
+    assert err2 is True
 
 
 def test_history_login_rate_limit_bucket_throttles_after_configured_max(monkeypatch):
@@ -2919,6 +3052,35 @@ def test_document_upload_discloses_silent_truncation_at_90000_characters():
     assert short_coverage['truncated'] is False
     short_result = app.analyse_uploaded_document('small.txt', short_txt, 'TestCo', document_coverage=short_coverage)
     assert 'Document coverage note' not in short_result['report']['summary']
+
+
+def test_document_upload_discloses_page_count_truncation_even_under_the_character_cap(monkeypatch):
+    """External code review: confirmed with a synthetic 61-page PDF. decode_uploaded_document()'s
+    'truncated' flag only ever compared character counts (original_chars > 90000) and ignored
+    extract_pdf_text_best_effort()'s own max_pages=60 cap entirely. A 61-page PDF whose first 60
+    pages' text happens to fit under 90,000 characters -- the common case for an ordinary report,
+    not just a pathologically long one -- was reported as "61 total pages, 60 analysed" in
+    page_coverage, yet 'truncated' stayed False, so analyse_uploaded_document()'s page_note/
+    coverage_note never fired and the missing page 61 was never disclosed anywhere."""
+    import base64
+    short_pdf_text = 'This document describes our general operations in detail. Our product is climate neutral.'
+
+    def fake_extract(data, max_pages=60, return_coverage=False):
+        assert return_coverage is True
+        return short_pdf_text, {'original_chars': len(short_pdf_text), 'analyzed_chars': len(short_pdf_text),
+            'total_pages': 61, 'pages_analyzed': 60}
+    monkeypatch.setattr(app, 'extract_pdf_text_best_effort', fake_extract)
+
+    b64 = base64.b64encode(b'%PDF-1.4 fake').decode('ascii')
+    txt, coverage = app.decode_uploaded_document('report.pdf', b64, 'application/pdf')
+    assert coverage['total_pages'] == 61
+    assert coverage['pages_analyzed'] == 60
+    assert coverage['truncated'] is True, "a page-count shortfall must be flagged as truncation even when the text fits under the character cap"
+
+    result = app.analyse_uploaded_document('report.pdf', txt, 'TestCo', document_coverage=coverage)
+    assert result['document_coverage']['truncated'] is True
+    summary = result['report']['summary']
+    assert '60' in summary and '61' in summary, 'the summary must disclose how many of the pages were actually reviewed'
 
 
 def test_score_is_reconstructable_from_its_displayed_components():
@@ -3490,6 +3652,52 @@ def test_is_private_fails_closed_on_resolution_error(monkeypatch):
         raise OSError('simulated DNS failure')
     monkeypatch.setattr(app.socket,'getaddrinfo',raising_getaddrinfo)
     assert app.is_private('some-host-that-fails-to-resolve.example') is True
+
+
+def test_resolve_pinned_ip_closes_the_dns_rebinding_gap(monkeypatch):
+    """External code review: is_private(host) and the real TCP connection urlopen() makes
+    moments later each resolve the hostname independently -- a host under attacker-controlled
+    DNS with a very short TTL could return a public IP for the is_private() pre-check and a
+    private/loopback/link-local address (e.g. the cloud metadata endpoint) for the actual
+    connection, sailing straight through the guard. _resolve_pinned_ip() is called from inside
+    _PinnedHTTPConnection/_PinnedHTTPSConnection.connect() itself -- the same call that resolves
+    the host is the one whose result gets connected to, so there is no separate check-then-
+    connect window left for a rebinding attack to land in."""
+    def expect_blocked(host):
+        try:
+            app._resolve_pinned_ip(host)
+            assert False, f'{host!r} should have been blocked'
+        except app._DNSRebindingBlocked:
+            pass
+
+    # the exact attack this closes: a name that resolves to the cloud metadata address
+    def fake_getaddrinfo(host,*a,**k):
+        if host=='evil-rebind.example':
+            return [(2,1,6,'',('169.254.169.254',0))]
+        raise AssertionError('unexpected host in this test')
+    monkeypatch.setattr(app.socket,'getaddrinfo',fake_getaddrinfo)
+    expect_blocked('evil-rebind.example')
+
+    # ordinary private/loopback/reserved hosts, and resolution failures, still fail closed
+    for literal in ('127.0.0.1','localhost','0.0.0.0'):
+        expect_blocked(literal)
+
+    def raising_getaddrinfo(host,*a,**k):
+        raise OSError('simulated DNS failure')
+    monkeypatch.setattr(app.socket,'getaddrinfo',raising_getaddrinfo)
+    expect_blocked('some-host-that-fails-to-resolve.example')
+
+    # a genuinely public address resolves and is returned for the connection to dial
+    def public_getaddrinfo(host,*a,**k):
+        return [(2,1,6,'',('93.184.216.34',0))]
+    monkeypatch.setattr(app.socket,'getaddrinfo',public_getaddrinfo)
+    assert app._resolve_pinned_ip('example.com')=='93.184.216.34'
+
+    # IPv4 is preferred over IPv6 when a host resolves to both -- broadest compatibility
+    def dual_stack_getaddrinfo(host,*a,**k):
+        return [(10,1,6,'',('2606:2800:220:1:248:1893:25c8:1946',0,0,0)),(2,1,6,'',('93.184.216.34',0))]
+    monkeypatch.setattr(app.socket,'getaddrinfo',dual_stack_getaddrinfo)
+    assert app._resolve_pinned_ip('example.com')=='93.184.216.34'
 
 
 def test_host_has_brand_label_rejects_substring_false_positives():
@@ -6005,3 +6213,46 @@ def test_entity_context_indicator_explains_narrative_context_contribution():
     baseline = app.build_entity_context_indicator({'level': 'Low'}, {'level': 'Low'}, [], [], 'Not performed')
     assert baseline['level'] == 'Low'
     assert 'background risk' not in baseline['note'].lower()
+
+
+def test_measured_percentage_regex_matches_ordinary_percentage_wording():
+    """External code review: the regex behind evidence_signal_score()/
+    green_evidence_signal_score()'s "numeric evidence near a social/environmental term" bonus
+    required a \\b word boundary immediately after "%". Since "%" is itself a non-word
+    character, that boundary only matches when "%" is followed by a word character (or the
+    absolute end of the string) -- never when followed by a space, period or comma, which is how
+    a percentage is written in ordinary text. Confirmed: "50% recycled material" and "75% of
+    employees" produced zero matches, while a bare year like "2026" matched fine (digits are
+    word characters, so \\b against a following space works normally there)."""
+    hits = lambda text: [m.group() for m in app._MEASURED_PERCENTAGE_RE.finditer(text.lower())]
+    assert hits('50% recycled material') == ['50%']
+    assert hits('75% of employees are covered.') == ['75%']
+    assert hits('a comparable discount, 50%, applies') == ['50%']
+    assert hits('decimal and comma forms: 12.5% and 12,5%') == ['12.5%', '12,5%']
+    # a bare reporting year is not itself evidence of a measured result and must not match here
+    assert hits('published in 2026') == []
+
+
+def test_evidence_signal_score_rewards_percentage_evidence_near_a_social_term(monkeypatch):
+    """External code review, confirmed with a local reproduction: because the regex above never
+    matched an ordinary percentage, a genuinely well-substantiated claim ("82% of our tier-1
+    suppliers completed a labour-rights audit") got no credit at all from the "numeric evidence
+    near a social term" bonus (worth up to 20 of evidence_signal_score()'s 100 points) -- only
+    the flat, context-blind "%" substring hit from the strong-terms list applied, regardless of
+    whether the percentage was actually near a relevant social term or not."""
+    findings = [{'type': 'Supply-chain or worker claim'}]
+    with_pct = 'Our supplier programme is strong. 82% of our tier-1 suppliers completed a labour-rights audit this year.'
+    without_pct = 'Our supplier programme is strong. We are proud of our progress on labour rights this year.'
+    score_with, _ = app.evidence_signal_score(with_pct, findings)
+    score_without, _ = app.evidence_signal_score(without_pct, findings)
+    assert score_with > score_without, 'a percentage genuinely tied to a social term must score higher than the same claim without one'
+
+
+def test_green_evidence_signal_score_rewards_percentage_evidence_near_an_environmental_term():
+    """Same regex, green-claim side (green_evidence_signal_score)."""
+    findings = [{'type': 'Generic environmental claim'}]
+    with_pct = 'We take recycling seriously. 65% of our packaging is made from recycled materials.'
+    without_pct = 'We take recycling seriously. We are committed to using more recycled materials.'
+    score_with, _ = app.green_evidence_signal_score(with_pct, findings)
+    score_without, _ = app.green_evidence_signal_score(without_pct, findings)
+    assert score_with > score_without, 'a percentage genuinely tied to an environmental term must score higher than the same claim without one'
