@@ -321,8 +321,25 @@ def _analysis_text(agg, top_claims):
         return ''
     parts = []
     top = agg.get('top_company')
+    bottom = agg.get('bottom_company')
     tie_count = agg.get('top_tie_count') or 0
-    if top:
+    # External code review: "{company} carries the highest Global score... By contrast,
+    # {company} shows the lowest" read as a flat self-contradiction whenever a selection
+    # contains more than one scan of the SAME company (e.g. tracking a company's score across
+    # two dates) -- confirmed with exactly that reproduction (two Example NV scans, 75 and 9).
+    # The old `bottom is not top` check only caught the identical-row case, not two different
+    # rows that merely share a company name.
+    same_company_top_bottom = bool(bottom and top and bottom is not top
+        and clean_text(top.get('company')) and clean_text(top.get('company')) == clean_text(bottom.get('company')))
+    if top and same_company_top_bottom:
+        # State it as a range for the one company instead of two separate "highest"/"lowest"
+        # sentences about what would otherwise look like two different companies -- accurate,
+        # and more informative (it shows the company's score actually changed between scans).
+        def _score_detail(row):
+            bits = [b for b in (clean_text(row.get('global_risk')), clean_text(row.get('scanned_at'))[:10]) if b]
+            return f'{row.get("global_score")}/100' + (f' ({", ".join(esc(b) for b in bits)})' if bits else '')
+        parts.append(f'{esc(clean_text(top.get("company")))}\'s scans in this selection range from {_score_detail(bottom)} to {_score_detail(top)}.')
+    elif top:
         # v93.44: naming ONE company as carrying "the highest risk" is misleading when
         # several scans in the selection share that same top score -- often because a fixed
         # EmpCo-blacklist floor rule raises a score to exactly that band, not because every
@@ -336,9 +353,8 @@ def _analysis_text(agg, top_claims):
             parts.append(f'{esc(clean_text(top.get("company")) or "The top-scoring company")} carries the highest Global '
                           f'score in this selection, at {top.get("global_score")}/100'
                           + (f' ({esc(clean_text(top.get("global_risk")))})' if top.get('global_risk') else '') + '.')
-    bottom = agg.get('bottom_company')
-    if bottom and top and bottom is not top:
-        parts.append(f'By contrast, {esc(clean_text(bottom.get("company")) or "the lowest-scoring company")} shows the '
+    if bottom and top and bottom is not top and not same_company_top_bottom:
+        parts.append(f'By contrast, {esc(clean_text(bottom.get("company"))) or "the lowest-scoring company"} shows the '
                       f'lowest claim risk at {bottom.get("global_score")}/100'
                       + (f' ({esc(clean_text(bottom.get("global_risk")))})' if bottom.get('global_risk') else '') + '.')
     dom = agg.get('dominant_sector_risk')
@@ -346,7 +362,11 @@ def _analysis_text(agg, top_claims):
         parts.append(f'{dom["count"]} of {agg["total"]} scans are for a company in a sector classified as '
                       f'{esc(dom["level"])} structural risk.')
     if agg.get('avg_findings') is not None:
-        parts.append(f'On average, {agg["avg_findings"]} flagged claim(s) were retained per company.')
+        # External code review: "per company" overstates what this actually measures -- the
+        # selection can (and, per the point above, sometimes does) include more than one scan
+        # of the same company, and findings_counts is summed/averaged per SELECTED ROW (scan),
+        # never deduplicated by company. "Per scan" is what the number actually is.
+        parts.append(f'On average, {agg["avg_findings"]} flagged claim(s) were retained per scan.')
     if top_claims:
         tc = top_claims[0]
         phrase = esc(clean_text(tc.get('phrase')))

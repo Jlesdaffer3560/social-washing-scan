@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_0_external_review_prelaunch_fixes"
-APP_RELEASE_LABEL="v95.0"
+APP_VERSION="hostable_v95_1_action_truncation_and_batch_report_fixes"
+APP_RELEASE_LABEL="v95.1"
 APP_RELEASE_DATE="2026-10-09"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4241,7 +4241,17 @@ def build_green_social_actions(green_findings, social_findings, audience, compan
     if client_facing or high_green:
         wording=f' Specific wording to check: {", ".join(green_terms)}.' if green_terms else ''
         areas='; '.join(green_types) or 'environmental claims'
-        actions.append({'priority':'Priority 1','title':'Review client-facing green claims under EmpCo','action':f"Review {who}'s detected green claim areas ({areas}) across websites and product communication.{wording} Confirm the scope, methodology, current evidence, verification basis and limitations before reuse."})
+        # External code review, visually confirmed on a live report: this sentence used to put
+        # the actual, concrete instruction ("Confirm the scope, methodology, current evidence,
+        # verification basis and limitations before reuse") LAST, after a variable-length
+        # claim-areas list and an optional "Specific wording to check: ..." clause -- so a
+        # realistic combination (several claim types, several flagged terms) routinely pushed
+        # the whole sentence well past compact_action()'s PDF-layer character budget, and the
+        # PDF truncated the END, cutting the one instruction a reader needs and leaving only the
+        # setup ("...across websites and product") with no verb. Put the fixed, always-essential
+        # instruction FIRST; the variable-length, more-skippable wording list now trails it, so a
+        # budget cut there drops a nice-to-have detail instead of the instruction itself.
+        actions.append({'priority':'Priority 1','title':'Review client-facing green claims under EmpCo','action':f"Confirm the scope, methodology, current evidence, verification basis and limitations for {who}'s green claim areas ({areas}) across websites and product communication before reuse.{wording}"})
     else:
         actions.append({'priority':'Priority 1','title':'Confirm which scanned claims are client-facing','action':f'Separate {who}\'s website/product/folder wording from annual or sustainability report language. Treat client-facing claims as higher priority for EmpCo-style substantiation and approval controls.'})
     if high_social:

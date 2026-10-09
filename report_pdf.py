@@ -672,7 +672,11 @@ def metadata(data):
     # dump rather than a sentence a person would write. Spelled out as plain English, and
     # pages/documents are now named separately since they aren't the same kind of thing.
     if is_internal_doc:
-        coverage = f"{len(documents_list)} document(s) reviewed" if documents_list else "Coverage not available"
+        # External code review: "1 document(s) reviewed" should read "1 document reviewed" --
+        # the website-scan branch just below already pluralises "web page"/"document" properly;
+        # this branch was the one spot that still used the literal "(s)" placeholder.
+        n_docs = len(documents_list)
+        coverage = f"{n_docs} document{'s' if n_docs != 1 else ''} reviewed" if documents_list else "Coverage not available"
     else:
         domains = int(inv_summary.get("domains_reviewed") or 0)
         n_pages, n_docs = len(pages_list), len(documents_list)
@@ -1219,7 +1223,15 @@ def compact_action(action, company):
     title = clean_text(action.get("title") or "Priority action")
     raw = clean_text(action.get("action") or action.get("description") or "")
     if raw:
-        return title, bounded_text(raw, 155)
+        # External code review, visually confirmed: the first two actions on a live report both
+        # ended with "..." right where the concrete instruction belongs. 155 chars is tighter
+        # than almost every real action sentence app.py's build_green_social_actions() produces
+        # -- even the SHORTEST fixed templates (no dynamic claim-type/wording lists at all) run
+        # 140-200 chars on their own, so truncation routinely fired on ordinary, not just
+        # worst-case, input. This table's cell spans nearly the full content width and already
+        # wraps across lines (see actions_table()'s colWidths and claim-count rows elsewhere in
+        # this file wrapping similarly), so there is room for a longer, still-complete sentence.
+        return title, bounded_text(raw, 260)
     low = title.lower()
     if "green" in low or "empco" in low:
         return title, "Review exact consumer-facing wording and confirm scope, methodology, evidence, verification basis and limitations before reuse."
@@ -1463,8 +1475,16 @@ def coverage_sources_methodology(data, limit=5):
     _count_parts=[]
     if _n_pages: _count_parts.append(f"{_n_pages} website page{'s' if _n_pages != 1 else ''}")
     if _n_docs: _count_parts.append(f"{_n_docs} document{'s' if _n_docs != 1 else ''}")
-    count_line=(f"{' and '.join(_count_parts)} reviewed across {_n_domains} domain{'s' if _n_domains != 1 else ''}"
-                if _count_parts else "Coverage not available")
+    # External code review: an internal-document scan has no website domain to speak of, so
+    # domains_reviewed is always 0 there -- this used to always append "reviewed across 0
+    # domains" regardless, which reads as a meaningless, slightly alarming-looking count for a
+    # document-only scan. Only mention the domain count when at least one was actually reviewed.
+    if not _count_parts:
+        count_line="Coverage not available"
+    elif _n_domains:
+        count_line=f"{' and '.join(_count_parts)} reviewed across {_n_domains} domain{'s' if _n_domains != 1 else ''}"
+    else:
+        count_line=f"{' and '.join(_count_parts)} reviewed"
     source_lines=[inventory_source_label(x) for x in shown]
     if total>len(shown):
         source_lines.append(f'+ {total-len(shown)} additional reviewed source(s) listed in the online scan')

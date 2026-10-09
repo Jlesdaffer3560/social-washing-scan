@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_0_external_review_prelaunch_fixes'
+    assert app.APP_VERSION == 'hostable_v95_1_action_truncation_and_batch_report_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4184,12 +4184,37 @@ def test_batch_report_analysis_text_contrasts_top_and_bottom_company():
     ]
     text=brp._analysis_text(agg,top_claims)
     assert 'By contrast' in text and 'Home Invest' in text and '9/100' in text
-    assert 'flagged claim(s) were retained per company' in text
+    # External code review: "per company" overstated what this actually measures -- the
+    # figure is summed/averaged per SELECTED ROW (scan), never deduplicated by company, and a
+    # selection can contain more than one scan of the same company (see the sibling test just
+    # below). "Per scan" is what the number actually is.
+    assert 'flagged claim(s) were retained per scan' in text
     assert 'eco-friendly' in text and 'net zero' in text
     single=[r for r in rows if r['company']=='Zabra']
     agg_single=brp._aggregate(single)
     text_single=brp._analysis_text(agg_single,[])
     assert 'By contrast' not in text_single
+
+
+def test_batch_report_analysis_text_does_not_contradict_itself_for_repeat_scans_of_one_company():
+    """External code review, confirmed with exactly this reproduction: a selection containing
+    TWO SCANS of the SAME company (e.g. tracking its score over time) produced "Example NV
+    carries the highest Global score... By contrast, Example NV shows the lowest claim risk" --
+    a flat, confusing self-contradiction, since the old `bottom is not top` check only caught
+    two rows being the literal same dict, not two different rows sharing a company name. Must
+    instead state this as one company's score range across its scans, and must not also render
+    the old "carries the highest" sentence about the exact same number a second time."""
+    import batch_report_pdf as brp
+    rows = [
+        {'company': 'Example NV', 'global_score': 75, 'global_risk': 'Very high', 'findings_count': 8, 'scanned_at': '2026-09-01'},
+        {'company': 'Example NV', 'global_score': 9, 'global_risk': 'Low', 'findings_count': 0, 'scanned_at': '2026-10-01'},
+    ]
+    agg = brp._aggregate(rows)
+    text = brp._analysis_text(agg, [])
+    assert 'By contrast' not in text, 'must not present one company against itself as two contrasting companies'
+    assert text.count('Example NV') == 1, 'must not name the same company twice as if comparing two different companies'
+    assert '9/100' in text and '75/100' in text
+    assert 'range from 9/100' in text and 'to 75/100' in text
 
 
 def test_missing_global_risk_buckets_as_not_assessed_not_low(monkeypatch):
@@ -4964,6 +4989,40 @@ def test_compact_action_preserves_the_backends_real_action_text():
     bare = {'title':'Fix green claims'}
     _title2,desc2 = rp.compact_action(bare, 'Test Co')
     assert 'scope, methodology' in desc2
+
+
+def test_compact_action_does_not_truncate_the_concrete_instruction_away():
+    """External code review, visually confirmed on a live report: the first two priority
+    actions both ended in "..." right where the concrete instruction belongs. Two compounding
+    causes, both fixed here: (1) compact_action()'s PDF-layer budget (155 chars) was tighter
+    than almost every real action sentence build_green_social_actions() (app.py) produces --
+    even its shortest FIXED templates with no dynamic claim-type/wording list at all run
+    140-200 chars; (2) the client-facing green Priority 1 template specifically put its one
+    concrete instruction ("Confirm the scope, methodology...") LAST, after a variable-length
+    claim-areas list and an optional "Specific wording to check: ..." clause, so a realistic
+    combination of several claim types and flagged terms pushed well past even a generous
+    budget and the PDF truncated the instruction itself away."""
+    import report_pdf as rp
+    import app
+    actions = app.build_green_social_actions(
+        green_findings=[{'type': 'Generic environmental claim', 'risk': 'High', 'problematic_terms': ['eco-friendly', 'sustainable', 'carbon neutral']},
+                         {'type': 'Climate-neutrality or offsetting claim', 'risk': 'High', 'problematic_terms': ['climate-friendly']}],
+        social_findings=[{'type': 'Supply-chain or worker claim', 'risk': 'High', 'problematic_terms': ['ethical sourcing']}],
+        audience={'audience': 'Client-facing commercial communication'},
+        company_name='Test Co')
+    priority_1 = next(a for a in actions if a['priority'] == 'Priority 1')
+    priority_2 = next(a for a in actions if a['priority'] == 'Priority 2')
+    _title2, desc2 = rp.compact_action(priority_2, 'Test Co')
+    assert not desc2.endswith('…'), f"action text was truncated, losing its instruction: {desc2!r}"
+    # Priority 1's own concrete instruction must survive complete even when the dynamic claim-
+    # areas/wording lists are long -- it must no longer sit after them where truncation would
+    # cut it away; truncation may still trim the trailing, supplementary "Specific wording to
+    # check" list (the least essential part, now deliberately placed last) if that list itself
+    # is very long, which is an acceptable loss the instruction itself no longer suffers.
+    priority_1_desc = rp.compact_action(priority_1, 'Test Co')[1]
+    assert priority_1_desc.startswith('Confirm the scope, methodology')
+    assert 'verification basis and limitations' in priority_1_desc
+    assert 'before reuse.' in priority_1_desc, 'the instruction itself must appear complete, not just its opening words'
 
 
 def test_external_signal_card_does_not_default_a_missing_entity_match_to_direct():
@@ -6256,3 +6315,30 @@ def test_green_evidence_signal_score_rewards_percentage_evidence_near_an_environ
     score_with, _ = app.green_evidence_signal_score(with_pct, findings)
     score_without, _ = app.green_evidence_signal_score(without_pct, findings)
     assert score_with > score_without, 'a percentage genuinely tied to an environmental term must score higher than the same claim without one'
+
+
+def test_report_pdf_document_scan_coverage_text_is_grammatical_and_drops_domain_count():
+    """External code review, visually confirmed on a live report PDF: an internal-document
+    scan showed "1 document(s) reviewed" (literal "(s)" placeholder instead of real
+    pluralisation) in metadata(), and "1 document reviewed across 0 domains" in
+    coverage_sources_methodology() -- a document scan has no website domain at all, so that
+    count is always 0 and reads as a meaningless, slightly alarming figure. The website-scan
+    branches of both functions already handled pluralisation/domain-counting correctly; only
+    the document-scan paths needed the fix."""
+    import report_pdf as rp
+    text = 'Our products are eco-friendly and sustainable, truly carbon neutral and climate-friendly.'
+    result = app.analyse_uploaded_document('policy.txt', text, 'Test Co')
+    unsigned = app._unsigned_report_payload(result)
+    assert rp.metadata(unsigned)['coverage'] == '1 document reviewed'
+
+    t = rp.coverage_sources_methodology(unsigned)
+    left_cell_texts = [p.text for p in t._cellvalues[0][0] if hasattr(p, 'text')]
+    coverage_line = left_cell_texts[1]
+    assert coverage_line == '1 document reviewed'
+    assert 'domain' not in coverage_line.lower()
+
+    # sanity: a genuine multi-document scan still pluralises correctly
+    inv = unsigned.get('scan_inventory') or {}
+    multi_doc_data = dict(unsigned)
+    multi_doc_data['scan_inventory'] = {**inv, 'documents': list(inv.get('documents') or []) + [{'name': 'second.txt'}]}
+    assert rp.metadata(multi_doc_data)['coverage'] == '2 documents reviewed'
