@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_2_external_check_status_and_empco_date_awareness'
+    assert app.APP_VERSION == 'hostable_v95_3_remaining_text_and_color_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -5157,6 +5157,39 @@ def test_selection_note_reflects_the_actual_number_of_additional_findings():
     assert 'listed in full' not in full_text.lower()
 
 
+def test_no_additional_finding_note_does_not_appear_for_a_true_zero_findings_scan():
+    """External code review, point 17: "No additional finding is shown in this concise report.
+    Full details remain available in the online scan." used to also fire for a scan with ZERO
+    findings at all -- where it implies there's a specific additional finding being withheld,
+    and somewhere further to look it up, neither of which is true for a scan that found
+    nothing. Must only appear when there genuinely is a single top finding and no others."""
+    import report_pdf as rp
+    import pypdf, io
+    zero = _pdf_test_data([])
+    pdf_bytes = rp.build_company_report_pdf(zero)
+    full_text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
+    assert 'No additional finding is shown' not in full_text
+
+    # sanity: the single-top-finding case (covered by the sibling test above) still shows it
+    single = [_pdf_finding(0, 'Generic environmental claim', 'High', 'Only one distinct claim type appears in this scan.', 60, source='only')]
+    pdf_bytes2 = rp.build_company_report_pdf(_pdf_test_data(single))
+    full_text2 = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes2)).pages)
+    assert 'No additional finding is shown' in full_text2
+
+
+def test_selection_note_does_not_repeat_in_detail_below():
+    """External code review, point 17: with exactly one top finding and no additional ones,
+    the "What needs attention" selection note used to read "...are explained in detail below,
+    shown in detail below as the 'Top finding'" -- "in detail below" twice back to back."""
+    import report_pdf as rp
+    import pypdf, io
+    single = [_pdf_finding(0, 'Generic environmental claim', 'High', 'Only one distinct claim type appears in this scan.', 60, source='only')]
+    pdf_bytes = rp.build_company_report_pdf(_pdf_test_data(single))
+    full_text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
+    assert 'in detail below, shown in detail below' not in full_text.lower()
+    assert full_text.lower().count('in detail below') == 1
+
+
 def test_claim_card_example_wording_is_not_monospaced_and_not_double_quoted():
     """v93.62/v93.63: the "Example wording" line used a monospaced Courier font, which read as
     code/technical output rather than suggested prose. Replaced with a plain italic treatment.
@@ -6422,6 +6455,19 @@ def test_frontend_scan_fetch_has_a_safety_net_timeout_and_no_internal_hosting_de
     # the old message itself (not this explanatory comment, which legitimately quotes it as history)
     assert "'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up.'" not in text
     assert 'The service did not respond in time after several attempts' in text
+
+
+def test_frontend_green_claim_sections_do_not_use_the_success_color_for_a_warning():
+    """External UX review, point 17: both the "EmpCo — Environmental claims" claim-group
+    heading and the "Core green-claim red flags" box used var(--ok) -- the same green used
+    elsewhere on this page specifically to mean "a genuinely clean/low-risk result" -- purely
+    because the section is about GREEN (environmental) claims, not because the content is
+    positive. Every claim listed under either section is a flagged risk, sometimes High or Very
+    high: styling it with the success color visually says "this is fine" on a warning."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert '.claim-group-heading.empco-heading{background:var(--ok-soft);color:var(--ok)' not in text
+    assert '.redflag.green-flag{background:#f1fbf4' not in text
+    assert '.redflag.green-flag h3{color:var(--ok)' not in text
 
 
 def test_empco_wording_switches_from_readiness_to_in_force_once_applicable(monkeypatch):

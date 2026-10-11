@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_2_external_check_status_and_empco_date_awareness"
-APP_RELEASE_LABEL="v95.2"
+APP_VERSION="hostable_v95_3_remaining_text_and_color_fixes"
+APP_RELEASE_LABEL="v95.3"
 APP_RELEASE_DATE="2026-10-11"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))

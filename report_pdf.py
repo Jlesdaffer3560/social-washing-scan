@@ -1713,7 +1713,11 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     elif len(additional) == 1:
         detail_line = ": one as “Top finding” and one more under “Additional findings”. "
     else:
-        detail_line = ", shown in detail below as the “Top finding”. "
+        # External code review: this used to read "...explained in detail below, shown in
+        # detail below as the 'Top finding'" -- "in detail below" repeated back to back in the
+        # single-group case, since the lead sentence below already ends in "...below" before
+        # this clause is appended.
+        detail_line = ", as the “Top finding”. "
     # v93.64: shortened for plain readability per reviewer feedback -- the previous version
     # correctly described the selection logic but spelled out all three tiebreak criteria
     # (severity, verifiability, frequency) in one dense sentence, more detail than a report
@@ -1735,7 +1739,13 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     if additional:
         for c in additional:
             flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 2.6*mm))
-    else:
+    elif clusters:
+        # Only shown when there genuinely IS a single top finding and no others -- "no
+        # additional finding" implies at least one finding exists. External code review: this
+        # used to also fire for a scan with ZERO findings at all (material is then
+        # _no_findings_placeholder(), not a real finding), where "No additional finding is
+        # shown... Full details remain available in the online scan" makes no sense -- there is
+        # no additional finding to not show, and nothing further to look up either.
         flow.append(Paragraph("No additional finding is shown in this concise report. Full details remain available in the online scan.", ST["small"]))
     flow.append(PageBreak())
 
