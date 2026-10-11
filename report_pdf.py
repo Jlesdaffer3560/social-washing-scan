@@ -1614,6 +1614,35 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     doc.report_data = data
     doc.total_pages_hint = total_pages
     clusters = cluster_claims(data)
+    if not clusters:
+        # External code review, point 8, visually confirmed: a scan with ZERO retained findings
+        # still got the full 4-page narrative -- page 2 showed only a "Top finding" section
+        # containing the placeholder "No material claim signal retained" card (a risk badge and
+        # all, for something that isn't a finding), and the appendix page showed an empty "Full
+        # list of findings" table. Both pages conveyed nothing not already stated on page 1.
+        # "Gewenst: gebruik voor nul bevindingen een compact rapport van één of twee pagina's:
+        # conclusie, dekking, beperkingen en eventuele vervolgstap." A missing finding must not
+        # appear as a numbered finding or a "Top finding" card. This compact path reuses the
+        # same building blocks as page 1/3 of the normal report (so it stays visually
+        # consistent) but skips the findings-detail page and the empty appendix entirely.
+        flow = []
+        flow += header_block(data, "Company claim-risk report · Assessment overview")
+        flow.append(summary_box(data, clusters)); flow.append(Spacer(1, 3.6*mm))
+        flow.append(section_title("Score overview")); flow.append(score_row(data)); flow.append(Spacer(1, 2.4*mm))
+        flow.append(entity_context_bar(data)); flow.append(Spacer(1, 2.6*mm))
+        flow.append(Paragraph(f'{esc(_SCORE_TIER_LEGEND)} {esc(score_relationship_text(data))}', ST["source"]))
+        flow.append(Spacer(1, 1.6*mm))
+        rp_panel = reliability_panel(data)
+        if rp_panel is not None:
+            flow.append(rp_panel); flow.append(Spacer(1, 3.2*mm))
+        flow.append(section_title("Coverage and limitations"))
+        flow.append(coverage_sources_methodology(data, source_limit)); flow.append(Spacer(1, 2.6*mm))
+        ext_panel = external_panel(data, external_limit)
+        if ext_panel is not None:
+            flow.append(section_title("External concerns identified")); flow.append(ext_panel); flow.append(Spacer(1, 2.6*mm))
+        flow.append(section_title("Next step")); flow.append(actions_table(data, has_material_claims=False))
+        doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
+        return buf.getvalue()
     material = clusters[0] if clusters else _no_findings_placeholder(data)
     additional = clusters[1:1+additional_limit]
     # v85: clusters are sorted purely by (risk, claim_score) with no dimension awareness, so a

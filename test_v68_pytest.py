@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_3_remaining_text_and_color_fixes'
+    assert app.APP_VERSION == 'hostable_v95_4_compact_zero_findings_report'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4922,11 +4922,16 @@ def test_external_panel_renders_more_than_two_signals():
 
 
 def test_zero_findings_placeholder_shows_no_legal_basis_contradiction():
-    """v93.35: the "no material claim retained" placeholder (_build_once's fallback when a
-    scan has zero findings) went through the same legal-basis routine as a genuine claim,
-    producing a direct on-card contradiction: "No material claim signal retained" next to a
-    "Problematic, not automatically prohibited (case-by-case)" legal-basis badge. A claim
-    that isn't material has no legal-basis category to report."""
+    """v93.35: the "no material claim retained" placeholder went through the same legal-basis
+    routine as a genuine claim, producing a direct on-card contradiction: "No material claim
+    signal retained" next to a "Problematic, not automatically prohibited (case-by-case)"
+    legal-basis badge. A claim that isn't material has no legal-basis category to report. The
+    placeholder's own legal_basis_label() handling is still exercised directly below.
+
+    v95.4 (external code review, point 8): a zero-findings scan no longer renders this
+    placeholder as a card/"Top finding" at all (see the compact report path in _build_once()
+    and its own dedicated test) -- so the end-to-end assertion here only needs to confirm no
+    legal-basis badge of any kind leaks into that compact report."""
     import report_pdf as rp
     placeholder={'claim_type':'No material claim signal retained','risk':'Low',
         'claim_text':'No material sustainability claim was retained in the reviewed material.'}
@@ -4936,7 +4941,36 @@ def test_zero_findings_placeholder_shows_no_legal_basis_contradiction():
     pdf_bytes=rp.build_company_report_pdf(data)
     full_text=' '.join(p.extract_text() for p in __import__('pypdf').PdfReader(__import__('io').BytesIO(pdf_bytes)).pages)
     assert 'Problematic' not in full_text
-    assert 'No material claim signal retained' in full_text
+
+
+def test_zero_findings_scan_gets_a_compact_one_page_report_not_the_full_narrative():
+    """External code review, point 8, visually confirmed: a scan with zero retained findings
+    still got the full 4-page narrative -- page 2 showed only a "Top finding" section
+    containing the placeholder "No material claim signal retained" card (a risk badge and all,
+    for something that is explicitly not a finding), and the appendix page showed an empty
+    "Full list of findings" table. Both pages conveyed nothing not already stated on page 1.
+    A missing finding must not appear as a numbered finding or a "Top finding" card; the
+    compact report should cover conclusion, coverage, limitations and next step in 1-2 pages."""
+    import report_pdf as rp
+    import pypdf, io
+    zero = _pdf_test_data([])
+    pdf_bytes = rp.build_company_report_pdf(zero)
+    assert rp._page_count(pdf_bytes) <= 2, 'a zero-findings scan must get a compact report, not the full 4-page narrative'
+    full_text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
+    assert 'Top finding' not in full_text, 'a missing finding must not be presented as a "Top finding"'
+    assert 'No material claim signal retained' not in full_text, 'the internal placeholder label must not leak into the compact report as if it were a finding'
+    assert 'Full list of findings' not in full_text and 'List of findings' not in full_text, 'no empty appendix table'
+    assert 'SCORE OVERVIEW' in full_text
+    assert 'COVERAGE AND LIMITATIONS' in full_text
+    assert 'NEXT STEP' in full_text
+    assert 'No priority action is linked to a specific finding' in full_text
+
+    # sanity: a scan WITH findings is completely unaffected by this change
+    single = [_pdf_finding(0, 'Generic environmental claim', 'High', 'Only one distinct claim type appears in this scan.', 60, source='only')]
+    pdf_bytes2 = rp.build_company_report_pdf(_pdf_test_data(single))
+    assert rp._page_count(pdf_bytes2) > 2
+    full_text2 = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes2)).pages)
+    assert 'Top finding' in full_text2
 
 
 def test_risk_color_treats_not_assessed_as_neutral_not_low_risk():
