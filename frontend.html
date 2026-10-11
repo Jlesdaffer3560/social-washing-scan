@@ -350,15 +350,36 @@ $('accessGateSubmit')?.addEventListener('click',submitAccessCode);
 $('accessCodeInput')?.addEventListener('keydown',e=>{if(e.key==='Enter')submitAccessCode()});
 $('chooseFile')?.addEventListener('click',()=>$('file').click());
 $('file')?.addEventListener('change',()=>{$('fileName').textContent=$('file').files[0]?.name||'No file selected'});
-async function scanUrl(){let url=$('url').value.trim(); let companyNumber=$('companyNumber').value.trim(); if(!url&&!companyNumber){setStatus('Please enter a company name, website, or company number.','notice warning');return} await runScan('/api/scan/url',{url,company_number:companyNumber});}
-async function scanDoc(){let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return}
+// External UX review: the run buttons are disabled while a scan is in flight, but pressing
+// Enter in the URL/company-name input calls scanUrl()/scanDoc() directly, bypassing that
+// disabled state entirely -- repeated Enter presses during an active scan could start several
+// concurrent requests, burning budget and letting an older response overwrite a newer one.
+// $('runUrl').disabled (toggled together with $('runDoc').disabled by runScan() below) is
+// already the single source of truth for "a scan is running"; check it here too so every
+// entry point -- click or Enter, on either form -- is covered by the same guard.
+async function scanUrl(){if($('runUrl').disabled)return; let url=$('url').value.trim(); let companyNumber=$('companyNumber').value.trim(); if(!url&&!companyNumber){setStatus('Please enter a company name, website, or company number.','notice warning');return} await runScan('/api/scan/url',{url,company_number:companyNumber});}
+async function scanDoc(){if($('runDoc').disabled)return; let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return}
   // Check the server's 8 MB limit client-side before reading+base64-encoding the whole file --
   // previously a too-large file was read into memory and sent anyway, only to be rejected by
   // the server after the round trip, wasting the upload and giving slower feedback.
   if(f.size>8*1024*1024){setStatus(`This file is ${(f.size/1024/1024).toFixed(1)} MB, which is above the 8 MB limit for this hosted first-pass scan. Please upload a smaller extract.`,'notice warning');return}
   let b64; try{b64=await fileToBase64(f)}catch(e){setStatus('Could not read the selected file. Please try again or choose a different file.','notice error');return} await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64,company_name:$('docCompanyName').value.trim(),company_number:$('docCompanyNumber').value.trim()});}
 function sleep(ms){return new Promise(res=>setTimeout(res,ms))}
-async function attemptScan(endpoint,payload){payload=Object.assign({},payload,{access_code:getAccessCode()});let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let text=await r.text();let j;try{j=JSON.parse(text)}catch(_){let coldStart=/^<!doctype|^<html/i.test(text.trim());let err=new Error(coldStart?'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up.':(text.slice(0,250)||'The server returned an unreadable response.'));err.coldStart=coldStart;throw err}if(!r.ok||j.error){
+// External UX review: this fetch had no timeout or cancellation of its own at all -- if a
+// request genuinely hung (a dropped connection, a server-side deadlock), the "Running scan..."
+// spinner stayed up forever with no recovery action. A SHORT timeout would be wrong here --
+// PDF text extraction has no time cap by design (completeness over speed, an explicit product
+// decision) and large uploaded reports can legitimately take a while -- so this is a generous
+// safety net for a truly stuck request, not a normal-case budget.
+const SCAN_FETCH_SAFETY_TIMEOUT_MS=300000;
+async function attemptScan(endpoint,payload){payload=Object.assign({},payload,{access_code:getAccessCode()});let controller=new AbortController();let timeoutId=setTimeout(()=>controller.abort(),SCAN_FETCH_SAFETY_TIMEOUT_MS);let r;try{r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal})}catch(e){if(e.name==='AbortError'){throw new Error('The scan is taking much longer than expected and was stopped. Please try again, or try a smaller document or single page if this keeps happening.')}throw e}finally{clearTimeout(timeoutId)}let text=await r.text();let j;try{j=JSON.parse(text)}catch(_){
+  // External UX review: this named the hosting internals ("the free hosting instance was
+  // asleep") directly to the user -- too internal for a professional product, and no longer
+  // even accurate for the current paid, no-spin-down hosting tier. The retry loop in
+  // runScan() below already explains the *user-facing* symptom ("The service is starting.
+  // This may take up to 60 seconds.") while retrying; this message now only has to cover the
+  // case where every retry was exhausted.
+  let coldStart=/^<!doctype|^<html/i.test(text.trim());let err=new Error(coldStart?'The service did not respond in time after several attempts. Please try again in a moment.':(text.slice(0,250)||'The server returned an unreadable response.'));err.coldStart=coldStart;throw err}if(!r.ok||j.error){
   // v93.43: a rejected/expired access code clears the stored value and re-shows the gate,
   // rather than just surfacing a generic scan-failed message the user can't act on.
   if(j.access_denied){clearAccessCode();$('accessGate')?.classList.remove('hidden')}

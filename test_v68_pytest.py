@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_1_action_truncation_and_batch_report_fixes'
+    assert app.APP_VERSION == 'hostable_v95_2_external_check_status_and_empco_date_awareness'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4771,6 +4771,55 @@ def test_external_panel_discloses_retained_vs_shown_count():
     assert 'retained external signals' not in text2
 
 
+def test_external_panel_shows_the_real_per_dimension_check_status_when_empty():
+    """External code review: with zero retained signals, external_panel() always showed one
+    generic, conditional sentence ("If external search was unavailable, this does not
+    confirm...") regardless of what actually happened. app.py's _v93_ext_verification_status()
+    already tracks, per dimension, whether the check was not performed, attempted but failed,
+    partially completed or genuinely completed with nothing found -- the PDF must say which one
+    it actually was, since a reader with only the PDF (no access to the online scan) otherwise
+    cannot tell a clean, completed check apart from one that never ran."""
+    import report_pdf as rp
+    import pypdf, io
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.lib.pagesizes import A4
+
+    def render_text(data):
+        buf = io.BytesIO()
+        SimpleDocTemplate(buf, pagesize=A4).build([rp.external_panel(data, 2)])
+        return ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(buf.getvalue())).pages)
+
+    empty_sources = {'green': {'targeted_negative_sources': []}, 'social': {'targeted_negative_sources': []}}
+
+    not_configured = {'external_research': empty_sources, 'external_verification_status': {
+        'green': 'Not performed (no external search source was configured for this scan)',
+        'social': 'Not performed (no external search source was configured for this scan)'}}
+    text = render_text(not_configured)
+    assert 'Not completed' in text
+    assert 'no external search source was configured' in text
+    assert 'If external search was unavailable' not in text, 'the old one-size-fits-all hedge must be gone'
+
+    failed = {'external_research': empty_sources, 'external_verification_status': {
+        'green': 'Attempted but failed (provider error or quota) — not a verified-clean result',
+        'social': 'Performed — no relevant external signal identified'}}
+    text = render_text(failed)
+    assert 'Not completed' in text and 'Completed' in text
+    assert 'not a verified-clean result' in text
+
+    partial = {'external_research': empty_sources, 'external_verification_status': {
+        'green': 'Partially performed (6/12 provider/query attempts succeeded) — no relevant external signal identified, not a complete check',
+        'social': 'Performed — no relevant external signal identified'}}
+    text = render_text(partial)
+    assert 'Partly completed' in text
+    assert '6/12 automated source checks succeeded' in text, 'internal "provider/query" jargon must be softened here too'
+
+    complete = {'external_research': empty_sources, 'external_verification_status': {
+        'green': 'Performed — no relevant external signal identified', 'social': 'Performed — no relevant external signal identified'}}
+    text = render_text(complete)
+    assert text.count('Completed') >= 2
+    assert 'no relevant external signal identified' in text
+
+
 def test_score_overview_explains_bands_and_global_green_social_relationship():
     """External review (ChatGPT), section 5: three score cards (Overall/Green/Social) sat
     side by side with no explanation of what the risk bands mean or how the three numbers
@@ -6342,3 +6391,73 @@ def test_report_pdf_document_scan_coverage_text_is_grammatical_and_drops_domain_
     multi_doc_data = dict(unsigned)
     multi_doc_data['scan_inventory'] = {**inv, 'documents': list(inv.get('documents') or []) + [{'name': 'second.txt'}]}
     assert rp.metadata(multi_doc_data)['coverage'] == '2 documents reviewed'
+
+
+def test_frontend_guards_against_duplicate_scans_from_the_enter_key():
+    """External UX review: the run buttons are disabled while a scan is in flight (runScan()
+    sets $('runUrl').disabled=true/$('runDoc').disabled=true), but pressing Enter in the URL or
+    document-company-name input calls scanUrl()/scanDoc() directly -- bypassing that disabled
+    state entirely, since a keydown handler on a text input doesn't care whether some other
+    element is disabled. Repeated Enter presses during an active scan could start several
+    concurrent requests, burning rate-limit budget and letting an older response's render()
+    overwrite a newer one. Both entry points must now check the same disabled flag that already
+    represents "a scan is running" before doing anything."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert "async function scanUrl(){if($('runUrl').disabled)return;" in text
+    assert "async function scanDoc(){if($('runDoc').disabled)return;" in text
+
+
+def test_frontend_scan_fetch_has_a_safety_net_timeout_and_no_internal_hosting_detail():
+    """External UX review: attemptScan()'s fetch() had no timeout/cancellation of its own --
+    a genuinely stuck request (dropped connection, server-side deadlock) left the "Running
+    scan..." spinner up forever with no recovery action. Deliberately a GENEROUS safety net,
+    not a normal-case budget: PDF text extraction has no time cap by design (completeness over
+    speed) and large uploaded reports can legitimately take a while. Also: the resulting
+    failure message used to name internal hosting details ("the free hosting instance was
+    asleep") directly to the user -- too internal for a professional product, and no longer
+    even accurate for the current paid, no-spin-down hosting tier."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert 'AbortController' in text
+    assert 'SCAN_FETCH_SAFETY_TIMEOUT_MS' in text
+    # the old message itself (not this explanatory comment, which legitimately quotes it as history)
+    assert "'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up.'" not in text
+    assert 'The service did not respond in time after several attempts' in text
+
+
+def test_empco_wording_switches_from_readiness_to_in_force_once_applicable(monkeypatch):
+    """External code review, point 17: several "EmpCo readiness" strings were hardcoded to
+    always say things like "...ahead of the applicability date" / "should be prepared...ahead
+    of that date" -- correct before 27 September 2026, but stale and misleading once EmpCo
+    actually applies (confirmed: today's real date is already past it).
+    report_pdf.py's _regulatory_basis_text() already got this right, keyed off each scan's own
+    analysis_date; these three app.py call sites (regulatory_red_flags(),
+    green_blacklisted_indicator(), analyse_uploaded_document()'s hardcoded flag) did not.
+    Verified with _empco_applicable_now() monkeypatched both ways, so this doesn't depend on
+    which side of the date the test happens to run on."""
+    high_green = [{'type': 'Generic environmental claim', 'risk': 'High', 'issue': '', 'claim': ''}]
+    audience = {'audience': 'Client-facing commercial communication'}
+
+    monkeypatch.setattr(app, '_empco_applicable_now', lambda: False)
+    flags_before = app.regulatory_red_flags(high_green, [], audience)
+    assert any('ahead of the applicability date' in f for f in flags_before)
+    note_before = app.green_blacklisted_indicator('Generic environmental claim', 'eco-friendly', 'eco-friendly')
+    assert 'EmpCo readiness indicator' in note_before and 'applies from 27 September 2026' in note_before
+
+    monkeypatch.setattr(app, '_empco_applicable_now', lambda: True)
+    flags_after = app.regulatory_red_flags(high_green, [], audience)
+    assert any('applicable since 27 September 2026' in f for f in flags_after)
+    assert not any('ahead of the applicability date' in f for f in flags_after)
+    note_after = app.green_blacklisted_indicator('Generic environmental claim', 'eco-friendly', 'eco-friendly')
+    assert 'EmpCo wording-pattern match' in note_after and 'applicable since 27 September 2026' in note_after
+    assert 'readiness indicator' not in note_after
+
+    # analyse_uploaded_document()'s own hardcoded flag
+    text = ('Our products are eco-friendly and environmentally conscious, truly climate neutral '
+        'through offsetting, across our whole range, a core commitment of our business.')
+    result = app.analyse_uploaded_document('policy.txt', text, 'Test Co')
+    assert any('applicable since 27 September 2026' in f and 'now in force' in f for f in result['stakeholder_red_flags'])
+    assert not any('ahead of that date' in f for f in result['stakeholder_red_flags'])
+
+    monkeypatch.setattr(app, '_empco_applicable_now', lambda: False)
+    result_before = app.analyse_uploaded_document('policy.txt', text, 'Test Co')
+    assert any('ahead of that date' in f for f in result_before['stakeholder_red_flags'])

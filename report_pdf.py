@@ -1343,9 +1343,41 @@ def external_panel(data, limit):
     count_note = (Paragraph(f"Showing {len(signals)} of {total_retained} retained external signals; the rest remain available in the online scan.", ST["source"])
                   if total_retained > len(signals) else None)
     if not signals:
-        empty_text = ("External-source screening was not performed for this internal-document scan."
-                      if _is_internal_document_scan(data) else
-                      "No negative external public-source signal was retained. If external search was unavailable, this does not confirm an absence of relevant criticism or enforcement.")
+        # External code review: this used one generic, conditional sentence ("If external
+        # search was unavailable, this does not confirm...") regardless of what actually
+        # happened -- app.py's _v93_ext_verification_status() already tracks, per dimension,
+        # whether the check was not performed, attempted but failed, partially completed or
+        # genuinely completed with nothing found, but the PDF never looked at it: a reader with
+        # only the PDF in hand (no access to the online scan's own status fields) could not
+        # tell a clean, completed check apart from one that never ran. State each dimension's
+        # actual status plainly instead of a one-size-fits-all hedge.
+        if _is_internal_document_scan(data):
+            empty_text = "Not completed — external-source screening is not performed for internal-document scans."
+        else:
+            verification = data.get("external_verification_status") or {}
+            lines = []
+            for dim_label, key in (("Green claims", "green"), ("Social claims", "social")):
+                status = clean_text(verification.get(key))
+                if not status:
+                    continue
+                # _v93_ext_verification_status() (app.py) always starts with one of these exact
+                # four prefixes; map each to the plain Completed/Partly completed/Not completed
+                # tag the review asked for, and keep that function's own detail text (already
+                # written for a reader) as the explanation rather than re-deriving it here.
+                if status.startswith("Performed"):
+                    tag, detail = "Completed", status.removeprefix("Performed — ")
+                elif status.startswith("Partially performed"):
+                    tag, detail = "Partly completed", status.removeprefix("Partially performed ").lstrip("(").replace(") — ", ", ", 1)
+                elif status.startswith("Attempted but failed"):
+                    tag, detail = "Not completed", status.removeprefix("Attempted but failed ").lstrip("(").replace(") — ", ", ", 1)
+                else:  # "Not performed (...)"
+                    tag, detail = "Not completed", status.removeprefix("Not performed ").strip("()")
+                # Same internal-jargon softening as the frontend's plainLanguage() helper --
+                # "provider/query attempts" is pipeline terminology, not something a report
+                # reader needs to parse.
+                detail = detail.replace("provider/query attempts", "automated source checks")
+                lines.append(f"<b>{esc(dim_label)}:</b> {tag} — {esc(detail)}")
+            empty_text = "<br/>".join(lines) if lines else "No negative external public-source signal was retained."
         cards = Table([[Paragraph(empty_text, ST["small"])]], colWidths=[CONTENT_W])
         cards.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (-1, -1), GREY_100), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     elif len(signals) == 1:
