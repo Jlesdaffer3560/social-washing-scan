@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_9_finding_reference_numbers'
+    assert app.APP_VERSION == 'hostable_v95_10_revert_landing_hero'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -6736,20 +6736,6 @@ def test_frontend_green_claim_sections_do_not_use_the_success_color_for_a_warnin
     assert '.redflag.green-flag{background:#f1fbf4' not in text
     assert '.redflag.green-flag h3{color:var(--ok)' not in text
 
-
-def test_frontend_hero_is_short_legal_detail_moved_into_how_it_works():
-    """External UX review, point 14: the hero led with a dense legal paragraph (directive
-    numbers, article citations, applicability dates) before a first-time visitor had even seen
-    what the tool does or how to use it. The short replacement text must appear in the hero,
-    and the full legal paragraph must still exist (moved into the "How the assessment works"
-    collapsible section) rather than being deleted outright."""
-    text = Path('frontend.html').read_text(encoding='utf-8')
-    assert 'Find sustainability claims that may need clearer wording or stronger evidence.' in text
-    assert 'Scan a company website or upload a document. Review the findings and download a company report.' in text
-    hero_end = text.index('</section>', text.index('class="hero"'))
-    hero_html = text[text.index('class="hero"'):hero_end]
-    assert 'Directive (EU) 2024/825' not in hero_html, 'detailed legal citations must not be in the hero itself anymore'
-    assert 'how-it-works' in text and 'Directive (EU) 2024/825' in text, 'the legal detail must still exist somewhere (moved, not deleted)'
 
 
 def test_empco_wording_switches_from_readiness_to_in_force_once_applicable(monkeypatch):
