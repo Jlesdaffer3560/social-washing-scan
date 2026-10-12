@@ -357,6 +357,23 @@ def legal_basis_explanation_text(claim, max_chars=220):
 # (0-24/25-49/50-74/75-100); the report never stated those bounds anywhere.
 _SCORE_TIER_LEGEND = "Score bands: Low 0–24 · Medium 25–49 · High 50–74 · Very high 75–100."
 
+# External code review, point 10: these two explanations (how scores are weighted, how
+# findings are grouped/selected for the "Top finding"/"Additional findings" detail) used to be
+# two full paragraphs on page 1, between the score cards and "What needs attention" -- "lange
+# teksten over groepering, selectie... en scoreweging... onderbreekt het overzicht" (interrupts
+# the overview). Page 1 now gets one short pointer each (see _build_once()); the full text
+# moved here, into the METHODOLOGY card on the context page, for the reader who wants it.
+_SCORE_WEIGHTING_METHODOLOGY_NOTE = (
+    "Scores weight the wording of retained claims most heavily, then evidence gaps, external context and "
+    "sector exposure; several findings of the same type raise the result but are capped so one repeated wording "
+    "pattern cannot dominate it. The same quoted passage can appear under more than one claim category when it "
+    "raises more than one distinct issue — this is not double-counted evidence of a single wording problem.")
+_FINDING_SELECTION_METHODOLOGY_NOTE = (
+    "Similar claims are grouped together; the highest-priority groups are shown in detail on page 1/2, each with "
+    "the clearest example found — the most serious occurrence, preferring an exact, sourced quote when there's a "
+    "choice. Every other retained finding still appears, with a short excerpt and its source, in the full list of "
+    "findings at the end of this report.")
+
 
 def score_relationship_text(data, max_chars=320):
     """External review (ChatGPT): "licht de verhouding tussen totaalscore, milieuscore en
@@ -1698,11 +1715,11 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # that wording severity is weighted far more heavily than repetition, and that repeated
     # findings raise but don't multiply the result. Also discloses that one quoted passage can
     # legitimately appear under more than one claim category.
-    scoring_note = ("Scores weight the wording of retained claims most heavily, then evidence gaps, external context and "
-        "sector exposure; several findings of the same type raise the result but are capped so one repeated wording "
-        "pattern cannot dominate it. The same quoted passage can appear under more than one claim category when it "
-        "raises more than one distinct issue — this is not double-counted evidence of a single wording problem.")
-    flow.append(Paragraph(scoring_note, ST["source"])); flow.append(Spacer(1, 3.2*mm))
+    # External code review, point 10: this full explanation sat on page 1, between the score
+    # cards and "What needs attention" -- "lange teksten over... scoreweging... onderbreekt het
+    # overzicht" (interrupts the overview). The full text now lives in the METHODOLOGY card on
+    # the context page (see coverage_sources_methodology()); page 1 gets one short pointer.
+    flow.append(Paragraph("Scores weight claim wording, evidence gaps, context and sector exposure; see Methodology for how.", ST["source"])); flow.append(Spacer(1, 3.2*mm))
     rp = reliability_panel(data)
     if rp is not None:
         # Kept on page 1, not moved to the later context page: a genuine coverage limitation
@@ -1710,51 +1727,22 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         # immediately, not after already having acted on the headline result.
         flow.append(rp); flow.append(Spacer(1, 3.2*mm))
     flow.append(section_title("What needs attention"))
-    # v93.37/v93.38: added per explicit user request -- readers otherwise couldn't tell why
-    # one specific claim group and wording example was shown in detail (here, and in "Most
-    # material finding"/"Additional material findings" below) while others weren't. States
-    # the actual selection method plainly. Once a dimension-balance substitution has happened
-    # (see above), "the 3 highest-ranked groups" is no longer strictly true, so the wording
-    # must say so -- a second reviewer caught that the original fixed sentence overclaimed in
-    # that case.
-    # v93.39: rewritten for plain-language readability -- the previous wording ("ranked by
-    # risk severity... chosen for severity first, then for how clearly it can be checked...")
-    # was accurate but too dense and technical for a report reader, per explicit user
-    # feedback.
-    # v93.40: "material finding(s)" (audit/materiality jargon) and "claim inventory" renamed
-    # to plain English per explicit user feedback -- the whole report must read fluently for
-    # executives and other non-specialist stakeholders, not just compliance/legal readers.
-    # v93.42: "Most/Additional serious finding(s)" toned down to "Top finding"/"Additional
-    # findings" per direct user feedback on a live report -- "serious" as a section LABEL read
-    # as more dramatic than intended; the actual severity is still stated plainly in the risk
-    # badge, legal-basis label and this sentence's own "how serious it is" wording below.
-    # v93.61: fixed two overclaims a second reviewer caught in this sentence: (a) it always
-    # said "one as Top finding and two more under Additional findings" regardless of how many
-    # groups were actually in `additional` (0, 1 or 2 depending on cluster count or the
-    # auto-shrink ladder) -- confirmed by inspection; (b) "Nothing is left out... listed in
-    # full" overstated what the appendix actually provides, since full_claim_inventory_table
-    # caps at inventory_limit rows and shows only a ~100-character excerpt per row, not the
-    # full text.
+    # v93.37-v93.64: this sentence went through several rounds of disclosing exactly how
+    # findings were grouped/selected and how many appear where (see git history for the prior
+    # wording and its reasoning) -- all still true, but per external code review point 10,
+    # "lange teksten over... selectie van representatieve citaten... onderbreekt het overzicht"
+    # (interrupts the overview): that full explanation now lives in the METHODOLOGY card on the
+    # context page (_FINDING_SELECTION_METHODOLOGY_NOTE). Page 1 keeps only the one piece of
+    # dynamic disclosure that matters for THIS scan specifically -- whether a group was swapped
+    # in to represent a dimension that would otherwise be missing entirely -- since a reader
+    # could otherwise wrongly assume the two groups below are simply the two highest-scoring
+    # ones. Everything else (how many groups, how examples are chosen) is self-evident from the
+    # "Top finding"/"Additional findings" headers themselves on the next page.
     if dimension_balanced:
-        detail_line = ", making sure both green and social risks are represented rather than only the highest-scoring group. "
-    elif len(additional) == 2:
-        detail_line = ": one as “Top finding” and two more under “Additional findings”. "
-    elif len(additional) == 1:
-        detail_line = ": one as “Top finding” and one more under “Additional findings”. "
+        short_note = "The priority findings below were chosen to represent both green and social risks, not only the highest-scoring group. The appendix lists every retained finding."
     else:
-        # External code review: this used to read "...explained in detail below, shown in
-        # detail below as the 'Top finding'" -- "in detail below" repeated back to back in the
-        # single-group case, since the lead sentence below already ends in "...below" before
-        # this clause is appended.
-        detail_line = ", as the “Top finding”. "
-    # v93.64: shortened for plain readability per reviewer feedback -- the previous version
-    # correctly described the selection logic but spelled out all three tiebreak criteria
-    # (severity, verifiability, frequency) in one dense sentence, more detail than a report
-    # reader needs up front.
-    selection_note = ("Similar claims are grouped together, and the highest-priority groups are explained in detail below"
-        + detail_line
-        + "For each group, we show the clearest example we found: the most serious occurrence, preferring an exact, sourced quote when there's a choice. Every other finding still appears — with a short excerpt and its source — in the Full list of findings at the end of this report.")
-    flow.append(Paragraph(selection_note, ST["small"]))
+        short_note = "The priority findings are shown in detail below. The appendix lists every retained finding."
+    flow.append(Paragraph(short_note, ST["small"]))
     flow.append(Spacer(1, 1.8*mm))
     top_selected = [material] + additional
     flow.append(risk_driver_table(top_selected)); flow.append(Spacer(1, 4*mm))
@@ -1793,6 +1781,15 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # room, so the appendix page below is just the findings table with nothing else competing
     # for space on it.
     flow.append(section_title("What we looked at")); flow.append(coverage_sources_methodology(data, source_limit))
+    # External code review, point 10: the full scoring-weight and finding-selection
+    # explanations used to sit on page 1 as two long paragraphs, interrupting the overview. A
+    # short pointer stays there (see above); the full text lives here instead, as plain
+    # full-width paragraphs rather than packed into the narrower METHODOLOGY card, which keeps
+    # that card's own height predictable regardless of how long this text is.
+    flow.append(Spacer(1, 2.6*mm))
+    flow.append(section_title("How scores and findings are determined"))
+    flow.append(Paragraph(esc(_SCORE_WEIGHTING_METHODOLOGY_NOTE), ST["source"])); flow.append(Spacer(1, 1.6*mm))
+    flow.append(Paragraph(esc(_FINDING_SELECTION_METHODOLOGY_NOTE), ST["source"]))
 
     if include_inventory:
         # v93.34/v93.35: option 4 -- the narrative above only ever details the top 3 claim

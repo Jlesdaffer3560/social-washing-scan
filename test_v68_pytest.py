@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_4_compact_zero_findings_report'
+    assert app.APP_VERSION == 'hostable_v95_5_lighter_hero_and_page_one'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4877,7 +4877,10 @@ def test_full_inventory_title_and_numbering_note_reflect_truncation():
     import report_pdf as rp
     few = _pdf_test_data([_pdf_finding(i, f'Claim type {i}', 'Medium', f'Distinct wording {i} about our products.', 40) for i in range(3)])
     text_few = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(rp.build_company_report_pdf(few))).pages)
-    assert 'Full list of findings' in text_few
+    # section_title() renders this upper-cased ("FULL LIST OF FINDINGS") -- v95.5 removed the
+    # only mixed-case mention of this phrase (it used to also appear in the page-1 selection
+    # note, which this test's exact-case check was incidentally relying on).
+    assert 'FULL LIST OF FINDINGS' in text_few.upper()
     assert 'do not correspond to the numbering' in text_few
 
 
@@ -4957,7 +4960,7 @@ def test_zero_findings_scan_gets_a_compact_one_page_report_not_the_full_narrativ
     pdf_bytes = rp.build_company_report_pdf(zero)
     assert rp._page_count(pdf_bytes) <= 2, 'a zero-findings scan must get a compact report, not the full 4-page narrative'
     full_text = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages)
-    assert 'Top finding' not in full_text, 'a missing finding must not be presented as a "Top finding"'
+    assert 'TOP FINDING' not in full_text.upper(), 'a missing finding must not be presented as a "Top finding"'
     assert 'No material claim signal retained' not in full_text, 'the internal placeholder label must not leak into the compact report as if it were a finding'
     assert 'Full list of findings' not in full_text and 'List of findings' not in full_text, 'no empty appendix table'
     assert 'SCORE OVERVIEW' in full_text
@@ -4970,7 +4973,31 @@ def test_zero_findings_scan_gets_a_compact_one_page_report_not_the_full_narrativ
     pdf_bytes2 = rp.build_company_report_pdf(_pdf_test_data(single))
     assert rp._page_count(pdf_bytes2) > 2
     full_text2 = ' '.join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf_bytes2)).pages)
-    assert 'Top finding' in full_text2
+    assert 'TOP FINDING' in full_text2.upper()
+
+
+def test_page_one_scoring_and_selection_explanations_moved_to_methodology():
+    """External code review, point 10: page 1 used to carry two full paragraphs -- how scores
+    are weighted (capping, repeated-wording, double-counting) and how findings are grouped/
+    selected (tiebreak criteria, excerpt policy) -- between the score cards and "What needs
+    attention", "onderbreekt het overzicht" (interrupts the overview). Page 1 must now show
+    only a short pointer for each; the full explanations must still exist, moved to the
+    "How scores and findings are determined" section on the context page."""
+    import report_pdf as rp
+    import pypdf, io
+    findings = [_pdf_finding(0, 'Generic environmental claim', 'High', 'Only one distinct claim type appears in this scan.', 60, source='only')]
+    pdf_bytes = rp.build_company_report_pdf(_pdf_test_data(findings))
+    pages = pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages
+    page1_text = pages[0].extract_text()
+    full_text = ' '.join(p.extract_text() for p in pages)
+
+    assert 'one repeated wording' not in page1_text, 'the full scoring-weight explanation must not still be on page 1'
+    assert 'preferring an exact, sourced quote' not in page1_text, 'the full finding-selection explanation must not still be on page 1'
+    assert 'see Methodology for how' in page1_text or 'see methodology' in page1_text.lower()
+
+    assert 'HOW SCORES AND FINDINGS ARE DETERMINED' in full_text.upper()
+    assert 'one repeated wording' in full_text, 'the full scoring-weight explanation must still exist somewhere'
+    assert 'preferring an exact, sourced quote' in full_text, 'the full finding-selection explanation must still exist somewhere'
 
 
 def test_risk_color_treats_not_assessed_as_neutral_not_low_risk():
@@ -5352,9 +5379,14 @@ def test_methodology_section_does_not_share_the_appendix_page_with_the_findings_
     # Note: the "What needs attention" narrative sentence legitimately *mentions* "Full list
     # of findings" by name (it points the reader ahead to it) -- so detect the appendix table
     # page by its actual column headers, not by that phrase, to avoid a false match on page 1.
+    # v95.5: a loose "'EXCERPT' in text and 'SOURCE' in text" check also false-matched the
+    # context page once it started quoting _FINDING_SELECTION_METHODOLOGY_NOTE's own prose
+    # ("...a short excerpt and its source...") -- those are ordinary English words in a
+    # sentence, not the appendix table's actual column headers. Require the table's own
+    # adjacent "CLAIM AREA"/"EXCERPT"/"SOURCE" header sequence instead.
     for p in pages:
         text=p.extract_text().upper()
-        if 'EXCERPT' in text and 'SOURCE' in text:
+        if 'CLAIM AREA\nEXCERPT\nSOURCE' in text or 'CLAIM AREA EXCERPT SOURCE' in text:
             assert 'REVIEWED PAGES AND DOCUMENTS' not in text, 'methodology section must not appear on the same page as the findings table'
     full_text=' '.join(p.extract_text() for p in pages).upper()
     assert 'WHAT WE LOOKED AT' in full_text
@@ -6502,6 +6534,21 @@ def test_frontend_green_claim_sections_do_not_use_the_success_color_for_a_warnin
     assert '.claim-group-heading.empco-heading{background:var(--ok-soft);color:var(--ok)' not in text
     assert '.redflag.green-flag{background:#f1fbf4' not in text
     assert '.redflag.green-flag h3{color:var(--ok)' not in text
+
+
+def test_frontend_hero_is_short_legal_detail_moved_into_how_it_works():
+    """External UX review, point 14: the hero led with a dense legal paragraph (directive
+    numbers, article citations, applicability dates) before a first-time visitor had even seen
+    what the tool does or how to use it. The short replacement text must appear in the hero,
+    and the full legal paragraph must still exist (moved into the "How the assessment works"
+    collapsible section) rather than being deleted outright."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert 'Find sustainability claims that may need clearer wording or stronger evidence.' in text
+    assert 'Scan a company website or upload a document. Review the findings and download a company report.' in text
+    hero_end = text.index('</section>', text.index('class="hero"'))
+    hero_html = text[text.index('class="hero"'):hero_end]
+    assert 'Directive (EU) 2024/825' not in hero_html, 'detailed legal citations must not be in the hero itself anymore'
+    assert 'how-it-works' in text and 'Directive (EU) 2024/825' in text, 'the legal detail must still exist somewhere (moved, not deleted)'
 
 
 def test_empco_wording_switches_from_readiness_to_in_force_once_applicable(monkeypatch):
