@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_7_remaining_jargon_cleanup'
+    assert app.APP_VERSION == 'hostable_v95_8_vocabulary_consistency'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -6637,6 +6637,32 @@ def test_frontend_external_status_line_uses_plain_language_not_raw_backend_jargo
     assert "esc(plainLanguage(vs.green||'Not assessed'))" in text
     assert "esc(plainLanguage(vs.social||'Not assessed'))" in text
     assert 'no external search provider is configured on this deployment' not in text
+
+
+def test_frontend_vocabulary_matches_the_external_review_table():
+    """External code review, point 15: a vocabulary-consistency table was given for several
+    labels that named internal scanner/pipeline concepts instead of what a reader sees --
+    "Global risk score" (an internal scope term, "combined across both dimensions") ->
+    "Overall claim risk"; "Coverage confidence" -> "Coverage of this scan"; "No material score
+    driver was retained" -> "No main risk factor was identified"; "Entity match" plus the raw
+    internal entity_match_details() string -> "Company identified" with a plain yes/not-
+    verified label (mirroring report_pdf.py's existing _plain_entity_match(), which the live
+    page never applied); and the analysis_status values ("Retrieved and analysed" etc.,
+    including the internal word "budget") -> plain review-stage labels via a new
+    analysisStatusLabel() helper."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert "'Overall claim risk'" in text
+    assert "${esc(s[0])} risk score" not in text  # the old label template ("Global risk score" etc.)
+    assert 'Coverage of this scan: ' in text
+    assert 'Coverage confidence:' not in text
+    assert 'No main risk factor was identified.' in text
+    assert 'No material score driver was retained.' not in text
+    assert 'function entityMatchLabel(' in text
+    assert "Company identified: ${esc(entityMatchLabel(src.entity_match))}" in text
+    assert 'Entity match:' not in text
+    assert 'function analysisStatusLabel(' in text
+    assert "esc(analysisStatusLabel(status))" in text
+    assert "if(status==='Retrieved and analysed')return 'Reviewed'" in text
 
 
 def test_frontend_green_claim_sections_do_not_use_the_success_color_for_a_warning():
