@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_8_vocabulary_consistency'
+    assert app.APP_VERSION == 'hostable_v95_9_finding_reference_numbers'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -4621,6 +4621,65 @@ def test_claim_card_shows_additional_distinct_occurrence_excerpts():
     same=[_pdf_finding(i,'Human-rights claim','High','We garanderen een leefbaar loon.',62,source=f's{i}') for i in range(4)]
     same_cluster=rp.cluster_claims({'claim_inventory':same})[0]
     assert rp.other_occurrence_excerpts(same_cluster,max_items=2)==[]
+
+
+def test_claim_card_ref_number_matches_the_page_one_attention_table():
+    """External code review, point 12: "gebruik vaste bevindingnummers door het hele rapport"
+    -- risk_driver_table() on page 1 numbers the shown [material]+additional clusters 1/2/3,
+    but the page-2 "Top finding"/"Additional findings" detail cards showed no number at all,
+    so a reader had no way to confirm a card matched a given row. claim_card()'s new `ref`
+    parameter must render that same number next to the risk badge."""
+    import report_pdf as rp
+    findings = [_pdf_finding(1, 'Generic environmental claim', 'High', 'Ons product is milieuvriendelijk.', 68)]
+    cluster = rp.cluster_claims({'claim_inventory': findings})[0]
+    card_with_ref = rp.claim_card(cluster, 220, True, ref=1)
+    card_no_ref = rp.claim_card(cluster, 220, True)
+    head_with_ref = card_with_ref._cellvalues[0][0]._cellvalues[0][0]._cellvalues[0][1].text
+    head_no_ref = card_no_ref._cellvalues[0][0]._cellvalues[0][0]._cellvalues[0][1].text
+    assert head_with_ref.startswith('#1')
+    assert not head_no_ref.startswith('#1') and '#1' not in head_no_ref
+
+
+def test_full_claim_inventory_table_cross_references_the_numbered_detail_cards():
+    """External code review, point 12 (continued): the appendix table numbers every
+    individual retained claim independently of the page-1/2 cluster numbers, and an existing
+    note already said so -- but a reader still had no way to tell WHICH appendix row belonged
+    to a card they'd already read. A row matching one of the numbered top clusters (via
+    ref_lookup) must be marked "(Finding #N above)" with that same number."""
+    import report_pdf as rp
+    shown = _pdf_finding(1, 'Generic environmental claim', 'High', 'Ons product is milieuvriendelijk.', 68, source='a')
+    unrelated = _pdf_finding(2, 'Legal requirement presented as green benefit', 'Medium', 'Wij voldoen aan de wet.', 40, source='b')
+    data = {'claim_inventory': [shown, unrelated]}
+    ref_lookup = {'generic environmental claim': 1}
+    flowables = rp.full_claim_inventory_table(data, ref_lookup=ref_lookup)
+    table = flowables[0]
+    row_shown = table._cellvalues[1][1].text
+    row_unrelated = table._cellvalues[2][1].text
+    assert '(Finding #1 above)' in row_shown
+    assert '(Finding #' not in row_unrelated
+    # Without ref_lookup, behaviour is unchanged -- no annotation at all.
+    flowables_plain = rp.full_claim_inventory_table(data)
+    assert '(Finding #' not in flowables_plain[0]._cellvalues[1][1].text
+
+
+def test_claim_excerpt_preserves_a_negation_cut_off_by_a_tight_budget():
+    """External code review, point 12: "korte fragmenten mogen een belangrijke beperking of
+    ontkenning niet laten verdwijnen" -- a negation sitting just before the matched phrase
+    ("...is absolutely not carbon neutral yet...") could fall outside the before-window a
+    tight max_chars budget allows, leaving an excerpt that reads as the OPPOSITE of what the
+    claim actually says. The widened window must still include the phrase itself."""
+    import report_pdf as rp
+    claim = {'claim_text': 'The company states it is not, under any realistic interpretation of '
+                            'current operations, carbon neutral today.',
+             'matched_phrase': 'carbon neutral'}
+    result = rp.claim_excerpt(claim, 100)
+    assert 'not' in result.lower()
+    assert 'carbon neutral' in result.lower()
+    # A claim with no negation nearby is unaffected.
+    clean_claim = {'claim_text': 'Our packaging is fully recyclable and milieuvriendelijk, say our '
+                                  'marketing materials distributed widely across all retail outlets nationwide today.',
+                   'matched_phrase': 'milieuvriendelijk'}
+    assert 'milieuvriendelijk' in rp.claim_excerpt(clean_claim, 40).lower()
 
 
 def test_full_claim_inventory_table_includes_findings_beyond_top_three_clusters():

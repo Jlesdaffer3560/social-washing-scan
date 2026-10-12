@@ -405,6 +405,14 @@ def trigger_phrase(claim):
     return clean_text(terms[0]) if terms else ""
 
 
+# External code review, point 12: a short excerpt built around the matched phrase could cut
+# off a negation sitting just before it ("Product A is NOT carbon neutral" -> "...is carbon
+# neutral", reversing the actual statement) when the before-window's budget landed between the
+# negation and the phrase. _NEGATION_RE covers the common EN/NL denial words this scan's own
+# claim wording can use.
+_NEGATION_RE = re.compile(r"\b(not|never|without|isn't|doesn't|cannot|can't|no longer|niet|geen|nooit|zonder)\b", re.I)
+
+
 def claim_excerpt(claim, max_chars=220):
     text = clean_text(claim.get("claim_text") or claim.get("claim") or "")
     if len(text) <= max_chars:
@@ -446,7 +454,21 @@ def claim_excerpt(claim, max_chars=220):
             # word-boundary snapping ate further into the budget than estimated above), show
             # the phrase itself rather than an excerpt that silently omits the flagged wording.
             if phrase.lower() not in result.lower():
-                return bounded_text(text[i:i + len(phrase) + after_budget], max_chars)
+                result = bounded_text(text[i:i + len(phrase) + after_budget], max_chars)
+                if phrase.lower() not in result.lower():
+                    return result
+            # External code review, point 12: best-effort widen the window to include a
+            # negation sitting just before the phrase ("...is NOT carbon neutral" -> dropping
+            # "not" reverses what the claim actually says). Only accepted if the phrase still
+            # survives in the widened result -- this must never give up the guarantee above.
+            negations = list(_NEGATION_RE.finditer(text, max(0, i - 80), i))
+            if negations and negations[-1].start() < start and negations[-1].group().lower() not in result.lower():
+                wider_start = negations[-1].start()
+                wider_after = max(0, remaining - (i - wider_start) - len(prefix_label))
+                wider_snippet = prefix_label + text[wider_start:min(len(text), i + len(phrase) + wider_after)]
+                wider_result = bounded_text(wider_snippet, max_chars)
+                if phrase.lower() in wider_result.lower():
+                    result = wider_result
             return result
     return bounded_text(text, max_chars)
 
@@ -1033,7 +1055,7 @@ def risk_driver_table(selected):
     return t
 
 
-def full_claim_inventory_table(data, max_rows=60):
+def full_claim_inventory_table(data, max_rows=60, ref_lookup=None):
     """v93.34: option 4 -- the narrative pages only ever detail the top 3 claim clusters, one
     representative example each; every other retained finding was previously invisible in the
     PDF (only present in the online scan's full list). A compact appendix table lists every
@@ -1051,7 +1073,12 @@ def full_claim_inventory_table(data, max_rows=60):
     headers = [Paragraph("#", ST["table_head"]), Paragraph("CLAIM AREA", ST["table_head"]), Paragraph("EXCERPT", ST["table_head"]), Paragraph("SOURCE", ST["table_head"])]
     rows = [headers]
     for idx, claim in enumerate(rows_data, 1):
-        area = f'<b>{esc(bounded_text(claim_title(claim), 44))}</b><br/><font color="#6B7398">{esc(claim_risk(claim))}</font>'
+        # External code review, point 12: tie a row back to its numbered detail card above
+        # (ref_lookup maps the claim-type key cluster_claims() groups by to that card's #N), so
+        # a reader who spotted a finding on page 1/2 can confirm it's the same one listed here.
+        ref_n = (ref_lookup or {}).get(claim_title(claim).lower())
+        ref_note = f' <font color="#6B7398">(Finding #{ref_n} above)</font>' if ref_n else ''
+        area = f'<b>{esc(bounded_text(claim_title(claim), 44))}</b>{ref_note}<br/><font color="#6B7398">{esc(claim_risk(claim))}</font>'
         # v93.35: was bounded_text(claim_excerpt(claim, 4000), 100) -- claim_excerpt(claim,
         # 4000) returns the claim near-verbatim (well under 4000 chars), then bounded_text
         # blindly cuts the first ~100 chars from the START. For a claim with a long lead-in,
@@ -1108,7 +1135,13 @@ def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
     return candidates[:max_items]
 
 
-def claim_card(cluster, excerpt_chars=220, material=False):
+def claim_card(cluster, excerpt_chars=220, material=False, ref=None):
+    # External code review, point 12: "gebruik vaste bevindingnummers door het hele rapport"
+    # -- risk_driver_table() on page 1 already numbers this same [material]+additional list
+    # 1/2/3 ("What needs attention"), but the page-2 detail cards below showed no number at
+    # all, so a reader had no way to tell which numbered row a given card corresponds to. ref
+    # is that same 1-based position, passed by the caller so the two pages always agree.
+    ref_tag = f"#{ref} &middot; " if ref else ""
     claim = cluster["representative"]
     # v93.35: a scan with zero retained findings renders this placeholder as `material` --
     # it previously went through the exact same legal-basis/evidence-gap/rewrite pipeline as
@@ -1126,7 +1159,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
         # risk pill -- see _RiskBadge.
         stamp_width = 24 * mm
         stamp = _RiskBadge(claim_risk(claim), risk_color(claim_risk(claim)))
-        head = Table([[stamp, Paragraph(esc(title), ST["claim_title"])]], colWidths=[stamp_width, inner_width - stamp_width], hAlign="LEFT")
+        head = Table([[stamp, Paragraph(ref_tag + esc(title), ST["claim_title"])]], colWidths=[stamp_width, inner_width - stamp_width], hAlign="LEFT")
         head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (0, 0), (0, 0), 4), ("TOPPADDING", (0, 0), (0, 0), 0), ("BOTTOMPADDING", (0, 0), (0, 0), 0),
             ("LEFTPADDING", (1, 0), (1, 0), 8), ("RIGHTPADDING", (1, 0), (1, 0), 0), ("TOPPADDING", (1, 0), (1, 0), 0), ("BOTTOMPADDING", (1, 0), (1, 0), 0)]))
@@ -1157,7 +1190,7 @@ def claim_card(cluster, excerpt_chars=220, material=False):
     lb_text, lb_color = legal_basis_label(claim)
     # v93.35: legal_basis_label() returns ("", None) for a non-material placeholder (no
     # legal-basis category applies when there is no retained claim) -- render the title alone.
-    title_html = f'{esc(title)} <font size="7" color="{lb_color.hexval()}"><b>&nbsp;&nbsp;{esc(lb_text)}</b></font>' if lb_text else esc(title)
+    title_html = ref_tag + (f'{esc(title)} <font size="7" color="{lb_color.hexval()}"><b>&nbsp;&nbsp;{esc(lb_text)}</b></font>' if lb_text else esc(title))
     head = Table(
         [[stamp, Paragraph(title_html, ST["claim_title"])]],
         colWidths=[stamp_width, title_width],
@@ -1774,11 +1807,11 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
 
     # PAGE 2 -- the evidence itself: exact quotes, why they matter, what to do.
     flow += header_block(data, "Company claim-risk report · Findings in detail")
-    flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True))); flow.append(Spacer(1, 3.6*mm))
+    flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True, ref=1))); flow.append(Spacer(1, 3.6*mm))
     flow.append(section_title("Additional findings"))
     if additional:
-        for c in additional:
-            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False))); flow.append(Spacer(1, 2.6*mm))
+        for idx, c in enumerate(additional, 2):
+            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False, ref=idx))); flow.append(Spacer(1, 2.6*mm))
     elif clusters:
         # Only shown when there genuinely IS a single top finding and no others -- "no
         # additional finding" implies at least one finding exists. External code review: this
@@ -1845,9 +1878,14 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
         # schemes are not the same list and were never labelled as such. State that plainly
         # rather than implying the numbers correspond.
         flow.append(Paragraph("Numbered independently below, ordered by risk — these numbers do not correspond to the numbering in the "
-                               "&ldquo;What needs attention&rdquo; table on page 1.", ST["source"]))
+                               "&ldquo;What needs attention&rdquo; table on page 1. A row for one of the findings detailed there is marked "
+                               "&ldquo;Finding #N above&rdquo; with that same number.", ST["source"]))
         flow.append(Spacer(1, 1.6*mm))
-        flow += full_claim_inventory_table(data, max_rows=inventory_limit)
+        # External code review, point 12: top_selected is the exact [material]+additional list
+        # risk_driver_table() and the page-2 detail cards both number 1/2/3 -- reuse the same
+        # mapping here so a matching appendix row can point back to the right card.
+        _ref_lookup = {claim_title(c["representative"]).lower(): n for n, c in enumerate(top_selected, 1)}
+        flow += full_claim_inventory_table(data, max_rows=inventory_limit, ref_lookup=_ref_lookup)
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()
 
