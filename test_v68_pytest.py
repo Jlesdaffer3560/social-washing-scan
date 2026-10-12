@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_5_lighter_hero_and_page_one'
+    assert app.APP_VERSION == 'hostable_v95_6_scan_specific_summary_conclusion'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3641,6 +3641,92 @@ def test_summary_box_areas_of_concern_are_pluralized():
     assert rp._pluralize_claim_area('Legal requirement presented as green benefit') == \
         'Legal requirement presented as green benefits'
     assert rp._pluralize_claim_area('Broad social-impact claim') == 'Broad social-impact claims'
+
+
+def test_summary_box_conclusion_names_the_specific_phrase_and_action_not_a_fixed_template():
+    """External code review, point 9: "de samenvatting is nog te algemeen" -- summary_box()'s
+    opening conclusion used to be one fixed sentence ("We found sustainability claims that
+    need clearer wording or stronger evidence...") that read almost the same regardless of
+    what was actually found. It must now name the exact count, the specific flagged phrase/
+    issue (claim.get('why_flagged'), via why_text()) and the concrete first action
+    (rewrite_text()) -- both of which vary per scan -- instead of a generic template."""
+    import report_pdf as rp
+    finding = _pdf_finding(1, 'Generic environmental claim', 'High',
+                            'Our packaging is milieuvriendelijk and fully circular.', 68)
+    finding['matched_phrase'] = 'milieuvriendelijk'
+    finding['why_flagged'] = 'The wording does not specify which environmental benefit is meant.'
+    finding['suggested_rewrite'] = 'Specify the benefit and add its supporting evidence.'
+    clusters = rp.cluster_claims({'claim_inventory': [finding]})
+    table = rp.summary_box({'global_score': 60, 'global_risk': 'Medium'}, clusters)
+    left_text = table._cellvalues[0][0].text
+    assert left_text.startswith('<b>One claim needs review before publication.')
+    assert 'The wording does not specify which environmental benefit is meant.' in left_text
+    assert 'Specify the benefit and add its supporting evidence.' in left_text
+    assert 'We found sustainability claims that need clearer wording' not in left_text
+    assert 'main areas of concern' not in left_text
+
+
+def test_summary_box_conclusion_states_the_exact_count_for_multiple_clusters():
+    """Same point 9 fix: a scan with several distinct claim-type groups must say exactly how
+    many need review ("2 claims need review...", not "One claim needs...")."""
+    import report_pdf as rp
+    green = _pdf_finding(1, 'Generic environmental claim', 'High', 'Groen en milieuvriendelijk.', 68)
+    social = _pdf_finding(2, 'Human-rights claim', 'High', 'We garanderen een leefbaar loon.', 62, dim='social')
+    clusters = rp.cluster_claims({'claim_inventory': [green, social]})
+    assert len(clusters) == 2
+    table = rp.summary_box({'global_score': 60, 'global_risk': 'Medium'}, clusters)
+    left_text = table._cellvalues[0][0].text
+    assert left_text.startswith('<b>2 claims need review before publication.')
+
+
+def test_summary_box_note_keeps_the_generic_verify_instruction_when_identity_is_not_established():
+    """External code review, point 9: the side note's generic "Verify the reviewed entity and
+    source scope" instruction is only honest when identity/source genuinely wasn't
+    established -- signalled by a non-empty data['fallback_note'] (see app.py's
+    resolve_scan_input()). That case must be unchanged by this fix."""
+    import report_pdf as rp
+    finding = _pdf_finding(1, 'Generic environmental claim', 'High', 'Claim text.', 68)
+    clusters = rp.cluster_claims({'claim_inventory': [finding]})
+    data = {'global_score': 60, 'global_risk': 'Medium', 'fallback_note': 'Multiple companies share this name; verify the match.'}
+    table = rp.summary_box(data, clusters)
+    note_text = table._cellvalues[0][1].text
+    assert 'Multiple companies share this name; verify the match.' in note_text
+
+
+def test_summary_box_note_shows_the_coverage_limitation_when_identity_is_already_confirmed():
+    """External code review, point 9: once identity/source is established (no fallback_note),
+    the side note must show the scan's most material limitation -- here, limited crawl
+    coverage (reliability_warning()) -- instead of the generic verify instruction, which has
+    nothing left to verify."""
+    import report_pdf as rp
+    finding = _pdf_finding(1, 'Generic environmental claim', 'High', 'Claim text.', 68)
+    clusters = rp.cluster_claims({'claim_inventory': [finding]})
+    data = {'global_score': 60, 'global_risk': 'Medium', 'fallback_note': '',
+            'data_reliability_warning': 'Only 2 of 10 pages could be retrieved.'}
+    table = rp.summary_box(data, clusters)
+    note_text = table._cellvalues[0][1].text
+    assert 'Only 2 of 10 pages could be retrieved.' in note_text
+    assert 'Verify the reviewed entity' not in note_text
+
+
+def test_summary_box_note_shows_a_first_action_when_identity_confirmed_and_coverage_was_fine():
+    """External code review, point 9, remaining branch: identity established and no coverage
+    limitation -- the note must offer a concrete first step, not the generic verify
+    instruction that no longer applies."""
+    import report_pdf as rp
+    finding = _pdf_finding(1, 'Generic environmental claim', 'High', 'Claim text.', 68)
+    finding['suggested_rewrite'] = 'Specify the benefit and add its supporting evidence.'
+    clusters = rp.cluster_claims({'claim_inventory': [finding]})
+    # Enough reviewed pages, with no failed/thin/fallback fetches, so reliability_warning()
+    # returns "" and the note falls through to the first-action branch being tested here.
+    pages = [{'name': f'page{i}', 'url': f'https://example.com/{i}', 'source_type': 'Website page'} for i in range(3)]
+    data = {'global_score': 60, 'global_risk': 'Medium', 'fallback_note': '',
+            'crawl_diagnostics': {'pages_attempted': 3, 'pages_failed': 0, 'pages_thin': 0, 'pages_retrieved_via_fallback': 0},
+            'scan_inventory': {'website_pages': pages, 'documents': []}}
+    table = rp.summary_box(data, clusters)
+    note_text = table._cellvalues[0][1].text
+    assert 'Specify the benefit and add its supporting evidence.' in note_text
+    assert 'Verify the reviewed entity' not in note_text
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):

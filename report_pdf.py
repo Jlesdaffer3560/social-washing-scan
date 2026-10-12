@@ -894,19 +894,42 @@ def summary_box(data, clusters):
     # the time it takes to read three sentences, per explicit user/reviewer feedback -- the
     # score used to come first, which foregrounds a number ("74/100") ahead of what it means.
     # The score is still shown, but as a supporting line under the conclusion, not the opener.
+    # External code review, point 9: that conclusion used to be one fixed sentence ("We found
+    # sustainability claims that need clearer wording or stronger evidence...") that read
+    # almost the same on every scan with at least one finding -- "past op vrijwel elk
+    # resultaat" (fits almost any result). Name the actual count, the specific flagged phrase
+    # and why it's flagged (claim.get("why_flagged"), already scan-specific -- see why_text()),
+    # and the concrete first action (rewrite_text()), instead of a generic area-of-concern list.
     global_score = data.get("global_score", data.get("overall_score", "—"))
     global_risk = data.get("global_risk", data.get("overall_risk", "Not assessed"))
-    types = [claim_title(c["representative"]) for c in clusters[:3]]
-    if types:
-        conclusion = (f"We found sustainability claims that need clearer wording or stronger evidence. "
-                      f"The main areas of concern are {_joined_areas(types)}. "
-                      f"Review this wording and its supporting evidence before it is reused.")
+    if clusters:
+        top = clusters[0]["representative"]
+        count_word = "One claim needs" if len(clusters) == 1 else f"{len(clusters)} claims need"
+        conclusion = f"{count_word} review before publication. {why_text(top, 150)} {rewrite_text(top, 140)}"
     else:
         conclusion = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
     score_line = (f'Overall score: {esc(global_score)}/100 — {esc(global_risk)} claim risk. '
                   f"This reflects the wording and evidence gaps found — not a share of unlawful claims, and not a rating of the company's overall sustainability performance.")
     left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#4A5578" size="8">{score_line}</font>', ST["body_dark"])
-    note = Paragraph(esc(bounded_text(data.get("fallback_note") or "Verify the reviewed entity and source scope before relying on the result.", 170)), ST["small"])
+    # External code review, point 9: the side note always told the reader to "verify the
+    # reviewed entity and source scope", even when that was already confirmed -- a generic
+    # instruction that fit every scan. Keep it only when identity/source genuinely isn't
+    # established (data["fallback_note"] is non-empty exactly then -- see app.py's
+    # resolve_scan_input()); otherwise show the scan's most material limitation
+    # (reliability_warning(), e.g. limited crawl coverage) or, absent one, a concrete first
+    # step instead of an instruction that has nothing left to verify.
+    fallback = clean_text(data.get("fallback_note") or "")
+    if fallback:
+        note_text = fallback
+    else:
+        limitation = reliability_warning(data)
+        if limitation:
+            note_text = limitation
+        elif clusters:
+            note_text = f"Next: {rewrite_text(clusters[0]['representative'], 140)}"
+        else:
+            note_text = "No action is required unless new claims are published; monitor future communications for the same wording."
+    note = Paragraph(esc(bounded_text(note_text, 170)), ST["small"])
     t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
     # v93.41: the opening conclusion is shown regardless of how severe the findings are (it
     # says plainly when nothing of concern was found, too), so an amber "warning" wash behind
