@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_6_scan_specific_summary_conclusion'
+    assert app.APP_VERSION == 'hostable_v95_7_remaining_jargon_cleanup'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3125,6 +3125,12 @@ def test_score_calculation_note_matches_the_formula_actually_used():
 
     material_note = app._v93_score_calculation_note([{'claim_score': 50}], 'blacklisted-practice')
     assert '50%' in material_note and '22%' in material_note and '20%' in material_note and '8%' in material_note
+
+    # External code review, point 16: the note used to name this function's own internal
+    # variables ("see raw_before_cap/cap_applied") to the reader -- jargon with no use outside
+    # the codebase. Both branches must describe the cap in plain terms only.
+    assert 'raw_before_cap' not in note and 'cap_applied' not in note
+    assert 'raw_before_cap' not in material_note and 'cap_applied' not in material_note
 
 
 def test_report_year_detection_requires_a_report_keyword_near_the_year():
@@ -6607,6 +6613,30 @@ def test_frontend_scan_fetch_has_a_safety_net_timeout_and_no_internal_hosting_de
     # the old message itself (not this explanatory comment, which legitimately quotes it as history)
     assert "'The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up.'" not in text
     assert 'The service did not respond in time after several attempts' in text
+
+
+def test_frontend_pdf_download_error_does_not_name_internal_hosting_details_either():
+    """External code review, point 18 (recurring bug class): the "free hosting instance was
+    asleep" jargon leak was already fixed in attemptScan()'s error message, but a second,
+    separate occurrence in downloadCompanyReportPdf()'s own cold-start detection was missed --
+    the two functions build their fetch-error messages independently."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    # the old message itself (not the explanatory comment above it, which legitimately quotes it as history)
+    assert "msg='The server did not respond in time. This usually happens when the free hosting instance was asleep after a period of inactivity and needed to wake up. Please try again.'" not in text
+    assert "msg='The service did not respond in time after several attempts. Please try again in a moment.'" in text
+
+
+def test_frontend_external_status_line_uses_plain_language_not_raw_backend_jargon():
+    """External code review, point 16: renderExternal()'s "External source screening" line
+    rendered d.external_verification_status's green/social values directly with esc(), even
+    though that raw text can contain backend jargon ("provider/query attempts") -- the
+    existing plainLanguage() helper (already used for the data-reliability note) was simply
+    not applied at this second call site. Also: the "Limited mode" note named internal
+    pipeline/hosting terms ("provider", "deployment") that a reader has no use for."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert "esc(plainLanguage(vs.green||'Not assessed'))" in text
+    assert "esc(plainLanguage(vs.social||'Not assessed'))" in text
+    assert 'no external search provider is configured on this deployment' not in text
 
 
 def test_frontend_green_claim_sections_do_not_use_the_success_color_for_a_warning():

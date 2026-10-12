@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_6_scan_specific_summary_conclusion"
-APP_RELEASE_LABEL="v95.6"
+APP_VERSION="hostable_v95_7_remaining_jargon_cleanup"
+APP_RELEASE_LABEL="v95.7"
 APP_RELEASE_DATE="2026-10-12"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4101,16 +4101,20 @@ def _v93_score_calculation_note(material, regulatory_label):
     so the shown explanation didn't match the formula that actually ran for that case. Reported
     by a third-party code review. Describes whichever formula _recalibrated_score() actually
     used, matching the branch taken there."""
+    # External code review, point 16: the parenthetical "(see raw_before_cap/cap_applied)"
+    # named this function's own internal variable names to the reader -- useless jargon, since
+    # a reader has no access to those variables and the surrounding sentence already describes
+    # what the cap does in plain terms.
     if material:
         return (f'Score = 50% claim wording severity + 22% evidence gap + 20% external stakeholder context + '
             f'8% sector/channel sensitivity, weighted by audience factor, then capped by claim count and '
-            f'regulatory signal (see raw_before_cap/cap_applied) so that isolated claim signals cannot alone '
+            f'regulatory signal so that isolated claim signals cannot alone '
             f'drive a High/Very high result unless they are a direct {regulatory_label} indicator or are '
             'supported by negative external stakeholder signals.')
     return ('No material claim was retained, so this score uses fixed baseline inputs rather than claim-derived '
         'ones: 45% baseline claim-wording risk + 30% baseline evidence gap + 15% external stakeholder context + '
         '10% sector/channel sensitivity, weighted by audience factor, then capped by claim count and regulatory '
-        'signal (see raw_before_cap/cap_applied).')
+        'signal.')
 
 def _v93_ext_verification_status(ext, targeted):
     """An external-context score of 0 can mean two very different things -- "we searched and
