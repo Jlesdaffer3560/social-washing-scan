@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_10_revert_landing_hero'
+    assert app.APP_VERSION == 'hostable_v95_11_report_quality_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3615,6 +3615,32 @@ def test_signal_manrope_font_registers_from_bundled_files():
     assert stringWidth('75', rp.DISPLAY_BOLD, 20) > 0
 
 
+def test_source_style_text_meets_minimum_contrast_against_white():
+    """User feedback: "sommige tekst en woorden zijn zeer klein/licht en bijna niet zichtbaar"
+    -- ST["source"] (8pt) used GREY_500 (#6B7398), which at this size is just under WCAG AA's
+    4.5:1 contrast floor against a white page, yet carries substantive report content (legal
+    basis, source citations, methodology notes, "Also:"/"Why this example" lines on every claim
+    card) rather than true fine print. Must be dark enough to clear AA at this size; the
+    well-known WCAG relative-luminance formula is reimplemented here to avoid depending on a
+    contrast-ratio library."""
+    import report_pdf as rp
+
+    def _contrast_ratio(hex_color):
+        hex_color = hex_color.lstrip('#')
+        r, g, b = (int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+        def _lin(c):
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        lum = 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+        return (1.0 + 0.05) / (lum + 0.05)
+
+    source_hex = rp.ST["source"].textColor.hexval()[2:]  # reportlab hexval() is '0xRRGGBB'
+    # The old GREY_500 (#6B7398) measures ~4.63:1 -- technically just over the 4.5 AA floor,
+    # which is why it still "passes" a bare AA check despite reading as barely visible; the
+    # fix darkens it well past that floor (GREY_700, ~7.3:1), so assert the stronger bound the
+    # fix actually targets rather than one GREY_500 already (just barely) satisfied.
+    assert _contrast_ratio(source_hex) >= 6.0, 'ST["source"] text does not clear the darker contrast this fix targets'
+
+
 def test_risk_badge_renders_for_every_risk_label_without_error():
     """v93.73: "Signal" replaces v93.72's neutral-ink stamp with a solid, vividly-coloured
     rounded risk pill (_RiskBadge) -- a custom Flowable that draws its own centred white text
@@ -3670,6 +3696,24 @@ def test_summary_box_conclusion_names_the_specific_phrase_and_action_not_a_fixed
     assert 'Specify the benefit and add its supporting evidence.' in left_text
     assert 'We found sustainability claims that need clearer wording' not in left_text
     assert 'main areas of concern' not in left_text
+
+
+def test_summary_box_only_bolds_the_lead_sentence_not_the_whole_explanation():
+    """User feedback: once point 9 made this conclusion name the specific issue and action
+    (potentially two or three full sentences), wrapping ALL of it in <b> -- as the original
+    point-9 implementation did -- made the box read as a wall of bold text. Only the lead fact
+    (the count) should be bold; the explanation that follows reads at normal weight, same as
+    the rest of the report's body text."""
+    import report_pdf as rp
+    finding = _pdf_finding(1, 'Generic environmental claim', 'High', 'Our packaging is milieuvriendelijk.', 68)
+    finding['why_flagged'] = 'The wording does not specify which environmental benefit is meant.'
+    finding['suggested_rewrite'] = 'Specify the benefit and add its supporting evidence.'
+    clusters = rp.cluster_claims({'claim_inventory': [finding]})
+    table = rp.summary_box({'global_score': 60, 'global_risk': 'Medium'}, clusters)
+    left_text = table._cellvalues[0][0].text
+    assert '<b>One claim needs review before publication.</b>' in left_text
+    assert '<b>The wording does not specify' not in left_text
+    assert 'does not specify which environmental benefit is meant.' in left_text.split('</b>', 1)[1]
 
 
 def test_summary_box_conclusion_states_the_exact_count_for_multiple_clusters():
@@ -4845,6 +4889,54 @@ def test_claim_card_shows_legal_basis_explanation_when_available():
     assert 'Legal basis: ' not in text2.split('FULL LIST')[0]
 
 
+def test_claim_card_does_not_truncate_realistic_length_why_and_legal_basis_text():
+    """User-reported bug on a live Umicore report: "WHY THIS MATTERS" and "Legal basis" cut
+    off mid-sentence with an ellipsis ("...is prohibited under UCPD Annex I point 4a unless...",
+    "...automatically treated as unfair once EmpCo applies (27 September...") -- the old 155/
+    200-char budgets were smaller than app.py's real explanation text (250-350 chars is
+    typical for these fields), so routine, not just pathological, content got cut mid-clause
+    and mid-date. Both must complete for text of this realistic length."""
+    import report_pdf as rp
+    claim = _pdf_finding(0, 'Generic environmental claim', 'High', 'Our products are sustainable.', 75)
+    claim['why_flagged'] = ('EmpCo risk: a generic environmental claim (not clearly and prominently specified on the '
+        'same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental '
+        'performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.')
+    claim['legal_basis_short'] = ('On the fixed list added to Annex I of the Unfair Commercial Practices Directive '
+        '(2005/29/EC) by EmpCo (Directive (EU) 2024/825): automatically treated as unfair once EmpCo applies '
+        '(27 September 2026) if the described conditions are met. No case-by-case balancing test is needed -- '
+        'only whether the wording fits the listed practice.')
+    cluster = rp.cluster_claims({'claim_inventory': [claim]})[0]
+    card = rp.claim_card(cluster, 220, True, ref=1)
+    texts = [row[0].text for row in card._cellvalues[0][0]._cellvalues if hasattr(row[0], 'text')]
+    why_para = next(t for t in texts if 'WHY THIS MATTERS' in t)
+    legal_para = next(t for t in texts if 'Legal basis:' in t)
+    assert why_para.rstrip().endswith('commercial practices.'), why_para
+    assert '…' not in why_para
+    assert legal_para.rstrip().endswith('fits the listed practice.'), legal_para
+    assert '(27 September…' not in legal_para and '…' not in legal_para
+
+
+def test_highlighted_excerpt_wraps_the_literal_company_quote_in_quotation_marks():
+    """User feedback: a literal sentence/claim quoted from the company's own material (e.g.
+    "Strengthening the circular economy with... sustainable products.") rendered as plain body
+    text, indistinguishable from Durably's own analysis prose around it. highlighted_excerpt()
+    is the one function used for the claim card's main quote, its "Also:" occurrences and the
+    appendix EXCERPT column, so fixing it here must wrap the quoted wording everywhere it's
+    used -- a short excerpt (no "Context:" prefix) and a windowed one (with the prefix) both
+    need to end up in quotation marks, with the prefix label staying outside them."""
+    import report_pdf as rp
+    short_claim = {'claim_text': 'Strengthening the circular economy with sustainable products.', 'matched_phrase': 'sustainable products'}
+    result = rp.highlighted_excerpt(short_claim, 220)
+    assert result.startswith('“') and '”' in result
+    assert 'sustainable products' in result
+
+    long_text = 'Intro padding text that pushes the matched phrase well past the start. ' * 3 + 'Our sustainable product line continues after this point with more detail.'
+    long_claim = {'claim_text': long_text, 'matched_phrase': 'sustainable product'}
+    windowed = rp.highlighted_excerpt(long_claim, 80)
+    assert windowed.startswith('Context: “')
+    assert windowed.rstrip().endswith('”') or '”' in windowed
+
+
 def test_no_findings_placeholder_is_neutral_not_green_when_coverage_is_limited():
     """External review (ChatGPT), section 3 (ontbrekende gegevens eerlijk behandelen): the
     zero-findings placeholder used to hardcode risk="Low", which report_pdf.py's own
@@ -5513,6 +5605,21 @@ def test_regulatory_basis_text_frames_not_yet_applicable_dates_correctly():
     assert 'readiness' not in after_empco.lower()
     after_both = rp._regulatory_basis_text({'analysis_date': '2028-01-01'})
     assert 'not yet applicable' not in after_both.lower()
+
+
+def test_regulatory_basis_text_does_not_end_in_a_dangling_clause():
+    """User-reported bug on a live Umicore report: the not-yet-applicable branch's flr_note
+    already ends in a complete sentence ("...under that not-yet-applicable ban"), but the
+    outer template unconditionally appended ", as the forced-labour and supply-chain assurance
+    lens." after it -- producing a dangling clause with no grammatical subject ("...that
+    not-yet-applicable ban, as the forced-labour and supply-chain assurance lens."). That
+    clause describes the REGULATION and must attach directly to it instead, in both branches."""
+    import report_pdf as rp
+    before = rp._regulatory_basis_text({'analysis_date': '2026-10-12'})
+    assert 'not-yet-applicable ban, as the forced-labour' not in before
+    assert 'Forced Labour Regulation (Regulation (EU) 2024/3015) is used here as the forced-labour and supply-chain assurance lens' in before
+    after = rp._regulatory_basis_text({'analysis_date': '2028-01-01'})
+    assert 'Forced Labour Regulation (Regulation (EU) 2024/3015) is used here as the forced-labour and supply-chain assurance lens' in after
 
 
 def test_methodology_section_does_not_share_the_appendix_page_with_the_findings_table():
@@ -6736,6 +6843,18 @@ def test_frontend_green_claim_sections_do_not_use_the_success_color_for_a_warnin
     assert '.redflag.green-flag{background:#f1fbf4' not in text
     assert '.redflag.green-flag h3{color:var(--ok)' not in text
 
+
+def test_frontend_wraps_literal_company_quotes_in_quotation_marks():
+    """User feedback: a literal sentence/claim quoted from the company's own material rendered
+    on the live scan results page as plain body text, indistinguishable from Durably's own
+    analysis prose -- same issue fixed in the PDF's highlighted_excerpt(). occurrenceHtml()'s
+    main quote block and clusterCard()'s collapsed-summary snippet are the two places a raw
+    claim_text reaches the page; both must wrap it in quotation marks, generically (every
+    scan), not as a one-off fix."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert "let quoteHtml=h.html?`&ldquo;${h.html}&rdquo;`" in text
+    assert "let snippetHtml=snippet?`&ldquo;${esc(snippet)}&rdquo;`" in text
+    assert '<span>${snippetHtml}</span>' in text
 
 
 def test_empco_wording_switches_from_readiness_to_in_force_once_applicable(monkeypatch):

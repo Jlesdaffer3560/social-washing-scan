@@ -109,6 +109,13 @@ def _style(name: str, **kwargs) -> ParagraphStyle:
 # size is a genuine space/legibility tradeoff, not an oversight. Chrome/label styles (badges,
 # card labels, footer) are left as-is -- they're short, fixed-width UI text, not reading
 # content.
+# External review: that pass only ever tuned SIZE -- "source" still used GREY_500 (#6B7398),
+# which at 8pt is below WCAG AA contrast against white (~4.4:1, needs 4.5:1) and reads as
+# "barely visible" since this style carries substantive content throughout the report (legal
+# basis, source citations, methodology notes, the "Also:"/"Why this example" lines on every
+# claim card) -- not footnote-grade fine print. Darkened to GREY_700 (~7:1), leaving the
+# inline <font color="#6B7398">label:</font> prefixes (e.g. "Source:", "Legal basis:") at the
+# lighter shade so they still read as de-emphasised labels against the now-readable body text.
 ST = {
     "brand": _style("brand", fontName=DISPLAY_BOLD, fontSize=8.0, leading=9.6, textColor=TEAL_DARK),
     "title": _style("title", fontName=DISPLAY_BOLD, fontSize=21.0, leading=22.5, textColor=NAVY),
@@ -120,7 +127,7 @@ ST = {
     "body_dark": _style("body_dark", fontSize=10.0, leading=12.6, textColor=GREY_900),
     "small": _style("small", fontSize=9.0, leading=11.2, textColor=GREY_700),
     "small_dark": _style("small_dark", fontSize=9.0, leading=11.2, textColor=GREY_900),
-    "source": _style("source", fontSize=8.0, leading=9.6, textColor=GREY_500),
+    "source": _style("source", fontSize=8.0, leading=9.6, textColor=GREY_700),
     "quote": _style("quote", fontSize=9.0, leading=11.4, textColor=GREY_900),
     "card_label": _style("card_label", fontName=DISPLAY_BOLD, fontSize=7.3, leading=8.6, textColor=TEAL_DARK),
     "card_num": _style("card_num", fontName=DISPLAY_BOLD, fontSize=19.0, leading=20.0, textColor=NAVY),
@@ -475,6 +482,16 @@ def claim_excerpt(claim, max_chars=220):
 
 def highlighted_excerpt(claim, max_chars=220):
     text = esc(claim_excerpt(claim, max_chars))
+    # External review: a literal passage quoted from the company's own material read as plain
+    # body text, indistinguishable from Durably's own analysis prose around it -- wrap the
+    # actual quoted wording in quotation marks. Generic: this is the one function used for the
+    # claim card's main quote, its "Also:" alternate occurrences, and the appendix EXCERPT
+    # column, so the fix applies everywhere a claim is quoted, not just one view.
+    if text:
+        if text.startswith("Context: "):
+            text = f'Context: “{text[len("Context: "):]}”'
+        else:
+            text = f'“{text}”'
     phrase = trigger_phrase(claim)
     if not phrase:
         return text
@@ -927,12 +944,21 @@ def summary_box(data, clusters):
     if clusters:
         top = clusters[0]["representative"]
         count_word = "One claim needs" if len(clusters) == 1 else f"{len(clusters)} claims need"
-        conclusion = f"{count_word} review before publication. {why_text(top, 150)} {rewrite_text(top, 140)}"
+        lead = f"{count_word} review before publication."
+        # Same budgets as claim_card()'s material WHY THIS MATTERS/WHAT TO DO text, so the
+        # conclusion and the detail card below never disagree on where a sentence gets cut.
+        detail = f"{why_text(top, 300)} {rewrite_text(top, 200)}"
     else:
-        conclusion = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
+        lead = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
+        detail = ""
     score_line = (f'Overall score: {esc(global_score)}/100 — {esc(global_risk)} claim risk. '
                   f"This reflects the wording and evidence gaps found — not a share of unlawful claims, and not a rating of the company's overall sustainability performance.")
-    left = Paragraph(f'<b>{esc(conclusion)}</b><br/><font color="#4A5578" size="8">{score_line}</font>', ST["body_dark"])
+    # External review: wrapping the WHOLE multi-sentence conclusion in <b> made this box read
+    # as a wall of bold text once point 9 made it name the specific issue and action instead of
+    # a single short templated line. Bold only the lead fact (the count); the explanation that
+    # follows reads at normal weight, same as any other paragraph in the report.
+    conclusion_html = f'<b>{esc(lead)}</b>' + (f' {esc(detail)}' if detail else '')
+    left = Paragraph(f'{conclusion_html}<br/><font color="#4A5578" size="8">{score_line}</font>', ST["body_dark"])
     # External code review, point 9: the side note always told the reader to "verify the
     # reviewed entity and source scope", even when that was already confirmed -- a generic
     # instruction that fit every scan. Keep it only when identity/source genuinely isn't
@@ -1238,7 +1264,12 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None):
     # small blocks mostly telling the reader the same thing is harder to scan than three clear
     # ones. Labels ("WHAT'S MISSING", "WHAT TO DO") were already renamed in v93.40; this only
     # changes how many separate boxes they render as, not their wording.
-    why_body = why_text(claim, 155 if material else 130)
+    # External review: this field's real backend content (app.py's EmpCo/UCPD explanations,
+    # typically 250-320 chars) routinely exceeded the old 155/130-char budget, cutting off
+    # mid-clause with an ellipsis ("...is prohibited under UCPD Annex I point 4a unless...")
+    # -- a sentence that reads as broken rather than merely abbreviated. Raised to fit the
+    # common case; bounded_text()'s own truncation remains the safety net for anything longer.
+    why_body = why_text(claim, 300 if material else 220)
     gap_body = evidence_gap_text(claim, 130 if material else 110)
     meaning = Paragraph(f'<b>WHY THIS MATTERS</b><br/>{esc(why_body)}', ST["small_dark"])
     # External review (ChatGPT): every finding should answer five plain questions -- what was
@@ -1267,7 +1298,12 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None):
     # line (see legal_basis_explanation_text()) using the same small-label pattern already
     # used for "Source:"/"Wording detected:"/"Why this example:" above, so it reads as one
     # more citation-style fact rather than a new, heavier block.
-    legal_body = legal_basis_explanation_text(claim, 200 if material else 160)
+    # External review: app.py's legal_basis_short entries commonly run 300-350 chars (e.g. the
+    # Annex I explanation ending "...automatically treated as unfair once EmpCo applies (27
+    # September 2026) if the described conditions are met."), well past the old 200/160-char
+    # budget -- cutting off mid-date ("27 September...") reads as a defect, not a deliberate
+    # abbreviation.
+    legal_body = legal_basis_explanation_text(claim, 360 if material else 260)
     legal_row = [Paragraph(f'<font color="#6B7398">Legal basis:</font> {esc(legal_body)}', ST["source"])] if legal_body else None
     rows = [[head]] + ([dist_row] if dist_row else []) + [[source], [quote]] + ([reason_row] if reason_row else []) + extra_rows + ([legal_row] if legal_row else []) + [[meaning], [uncertain], [action]]
     inner = Table(rows, colWidths=[inner_width])
@@ -1500,9 +1536,15 @@ def _regulatory_basis_text(data):
         "2027; a general supplier-conduct claim alone is not treated here as a forced-labour finding under that "
         "not-yet-applicable ban") if (analysis_date and analysis_date < "2027-12-14") else \
         "its ban on placing goods made with forced labour on the EU market, applicable from 14 December 2027"
+    # The "as the forced-labour and supply-chain assurance lens" clause describes the
+    # REGULATION itself and must always attach to it directly -- it previously trailed after
+    # flr_note's own, already-complete sentence (the not-yet-applicable branch ends in "...that
+    # not-yet-applicable ban"), producing a dangling, ungrammatical final clause. Reported live:
+    # "...under that not-yet-applicable ban, as the forced-labour and supply-chain assurance
+    # lens." An em dash now separates the two for either branch.
     return (f'The EU Empowering Consumers Directive (“EmpCo”, Directive (EU) 2024/825), {empco_note}; '
-        f'the EU Forced Labour Regulation (Regulation (EU) 2024/3015), {flr_note}, as the forced-labour and '
-        'supply-chain assurance lens.')
+        f'the EU Forced Labour Regulation (Regulation (EU) 2024/3015) is used here as the forced-labour and '
+        f'supply-chain assurance lens — {flr_note}.')
 
 
 def _assessment_scope_text(data):

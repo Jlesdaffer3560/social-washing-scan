@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_10_revert_landing_hero"
-APP_RELEASE_LABEL="v95.10"
+APP_VERSION="hostable_v95_11_report_quality_review_fixes"
+APP_RELEASE_LABEL="v95.11"
 APP_RELEASE_DATE="2026-10-12"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
