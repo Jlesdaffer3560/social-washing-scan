@@ -966,19 +966,17 @@ def summary_box(data, clusters):
     # resolve_scan_input()); otherwise show the scan's most material limitation
     # (reliability_warning(), e.g. limited crawl coverage) or, absent one, a concrete first
     # step instead of an instruction that has nothing left to verify.
+    # Regression found on a live report after v95.6/v95.11: showing reliability_warning() here
+    # duplicated the DATA RELIABILITY panel directly below (the exact duplication v94.9 had
+    # removed), and with the longer conclusion the box pushed page 1's third priority action
+    # onto an otherwise empty page 2. The side note now exists ONLY when identity/source is
+    # genuinely uncertain; otherwise the conclusion simply uses the full width.
     fallback = clean_text(data.get("fallback_note") or "")
     if fallback:
-        note_text = fallback
+        note = Paragraph(esc(bounded_text(fallback, 170)), ST["small"])
+        t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
     else:
-        limitation = reliability_warning(data)
-        if limitation:
-            note_text = limitation
-        elif clusters:
-            note_text = f"Next: {rewrite_text(clusters[0]['representative'], 140)}"
-        else:
-            note_text = "No action is required unless new claims are published; monitor future communications for the same wording."
-    note = Paragraph(esc(bounded_text(note_text, 170)), ST["small"])
-    t = Table([[left, note]], colWidths=[CONTENT_W * .73, CONTENT_W * .27])
+        t = Table([[left]], colWidths=[CONTENT_W])
     # v93.41: the opening conclusion is shown regardless of how severe the findings are (it
     # says plainly when nothing of concern was found, too), so an amber "warning" wash behind
     # it was misleading in the good-outcome case and, in the bad-outcome case, one more red/
@@ -986,7 +984,7 @@ def summary_box(data, clusters):
     # alarm." A calm navy accent line on a neutral background keeps this box looking like the
     # report's lead conclusion, not a risk signal in itself -- actual risk is communicated by
     # the score cards and finding badges below, in colours reserved for that purpose.
-    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (0, 0), GREY_100), ("LINEBEFORE", (0, 0), (0, 0), 2.8, NAVY), ("BACKGROUND", (1, 0), (1, 0), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, GREY_300), ("BACKGROUND", (0, 0), (0, 0), GREY_100), ("LINEBEFORE", (0, 0), (0, 0), 2.8, NAVY), ("BACKGROUND", (-1, 0), (-1, 0), GREY_100), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     return t
 
 

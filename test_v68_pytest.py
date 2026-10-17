@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_11_report_quality_review_fixes'
+    assert app.APP_VERSION == 'hostable_v95_12_summary_box_full_width'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3754,29 +3754,37 @@ def test_summary_box_note_shows_the_coverage_limitation_when_identity_is_already
     data = {'global_score': 60, 'global_risk': 'Medium', 'fallback_note': '',
             'data_reliability_warning': 'Only 2 of 10 pages could be retrieved.'}
     table = rp.summary_box(data, clusters)
-    note_text = table._cellvalues[0][1].text
-    assert 'Only 2 of 10 pages could be retrieved.' in note_text
-    assert 'Verify the reviewed entity' not in note_text
+    # Regression found on a live report after v95.6: the side note repeated this warning, which
+    # the DATA RELIABILITY panel directly below already shows (the duplication v94.9 removed),
+    # and the taller box pushed page 1's third priority action onto an empty page 2. With no
+    # fallback_note the conclusion now uses the full width in a single cell.
+    assert len(table._cellvalues[0]) == 1
+    assert 'Only 2 of 10 pages' not in table._cellvalues[0][0].text
 
 
-def test_summary_box_note_shows_a_first_action_when_identity_confirmed_and_coverage_was_fine():
-    """External code review, point 9, remaining branch: identity established and no coverage
-    limitation -- the note must offer a concrete first step, not the generic verify
-    instruction that no longer applies."""
+def test_company_report_first_page_holds_all_three_priority_actions():
+    """Regression found on a live report: page 1 overflowed, leaving action 3 alone on page 2."""
+    import io, pypdf
     import report_pdf as rp
-    finding = _pdf_finding(1, 'Generic environmental claim', 'High', 'Claim text.', 68)
-    finding['suggested_rewrite'] = 'Specify the benefit and add its supporting evidence.'
-    clusters = rp.cluster_claims({'claim_inventory': [finding]})
-    # Enough reviewed pages, with no failed/thin/fallback fetches, so reliability_warning()
-    # returns "" and the note falls through to the first-action branch being tested here.
-    pages = [{'name': f'page{i}', 'url': f'https://example.com/{i}', 'source_type': 'Website page'} for i in range(3)]
-    data = {'global_score': 60, 'global_risk': 'Medium', 'fallback_note': '',
-            'crawl_diagnostics': {'pages_attempted': 3, 'pages_failed': 0, 'pages_thin': 0, 'pages_retrieved_via_fallback': 0},
-            'scan_inventory': {'website_pages': pages, 'documents': []}}
-    table = rp.summary_box(data, clusters)
-    note_text = table._cellvalues[0][1].text
-    assert 'Specify the benefit and add its supporting evidence.' in note_text
-    assert 'Verify the reviewed entity' not in note_text
+    long_why = ('EmpCo risk: a generic environmental claim (not clearly and prominently specified on the '
+        'same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental '
+        'performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.')
+    long_fix = 'Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'
+    findings = []
+    for i, typ in enumerate(['Generic environmental claim', 'Supply-chain or supplier-responsibility claim', 'Health, safety or worker-welfare claim']):
+        f = _pdf_finding(i, typ, 'High', f'Our company is committed to sustainable practice number {i}.', 75)
+        f['why_flagged'] = long_why; f['suggested_rewrite'] = long_fix
+        findings.append(f)
+    data = _pdf_test_data(findings)
+    data['data_reliability_warning'] = ('1 reviewed page(s) required a public text-extraction fallback. A low risk score from this scan '
+        "may reflect limited access to the site's content, not necessarily a genuine absence of risky claims.")
+    data['company_action_plan'] = [
+        {'priority': 'Priority 1', 'title': 'Review client-facing green claims under EmpCo', 'action': "Confirm the scope, methodology, current evidence, verification basis and limitations for Umicore's green claim areas (Generic environmental claim; Recycled / recyclable material claim) across websites and product communication before reuse. Specific wording to check: sustainable, circular."},
+        {'priority': 'Priority 2', 'title': 'Validate forced-labour and supplier claims', 'action': "For Umicore's supplier and forced-labour assurances, confirm traceability, risk assessment, mitigation and remedy evidence relevant to Regulation (EU) 2024/3015. Specific wording to check: ethical, fair, supply chain, ethical sourcing, sustainable."},
+        {'priority': 'Priority 3', 'title': 'Build a claim evidence file', 'action': 'Keep one evidence file per priority claim with the approved wording, source, owner, supporting evidence, review status and next review date.'}]
+    pdf = rp.build_company_report_pdf(data)
+    page1 = pypdf.PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert 'Build a claim evidence file' in page1
 
 
 def test_is_private_fails_closed_on_resolution_error(monkeypatch):
