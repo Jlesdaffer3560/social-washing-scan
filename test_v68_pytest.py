@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_12_summary_box_full_width'
+    assert app.APP_VERSION == 'hostable_v95_13_spell_out_ucpd'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -6902,3 +6902,17 @@ def test_empco_wording_switches_from_readiness_to_in_force_once_applicable(monke
     monkeypatch.setattr(app, '_empco_applicable_now', lambda: False)
     result_before = app.analyse_uploaded_document('policy.txt', text, 'Test Co')
     assert any('ahead of that date' in f for f in result_before['stakeholder_red_flags'])
+
+
+def test_ucpd_is_spelled_out_on_intro_page_and_in_methodology_pdf():
+    """User request: the abbreviation UCPD must be written out in full on the intro page of the
+    scan and in the methodology document (first mention, with the abbreviation in brackets)."""
+    html = Path('frontend.html').read_text(encoding='utf-8')
+    hero = html[html.index('class="hero"'):html.index('</section>', html.index('class="hero"'))]
+    assert 'Unfair Commercial Practices Directive (UCPD)' in hero
+    import io, pypdf
+    import methodology_pdf
+    pdf = methodology_pdf.build_methodology_pdf()
+    data = pdf if isinstance(pdf, (bytes, bytearray)) else open(pdf, 'rb').read()
+    text = ' '.join(pg.extract_text() for pg in pypdf.PdfReader(io.BytesIO(data)).pages)
+    assert 'Unfair Commercial Practices Directive (UCPD)' in ' '.join(text.split())

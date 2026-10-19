@@ -129,7 +129,7 @@ def build_methodology_pdf():
                    'diligence or import/export controls provide assurance beyond what is evidenced. Core prohibition '
                    'and enforcement provisions apply from 14 December 2027 (a few governance articles already apply '
                    'from 13 December 2024).', STY['td'])),
-        (Paragraph('UCPD environmental-claim definition', STY['td_b']),
+        (Paragraph('Unfair Commercial Practices Directive (UCPD) environmental-claim definition', STY['td_b']),
          Paragraph('Supports the EmpCo lens: checks whether text, images, symbols, labels, brand names or presentation '
                    'imply positive, zero, reduced, comparative or improved environmental impact.', STY['td'])),
         (Paragraph('OECD Guidelines / UNGPs / ILO / GRI', STY['td_b']),
@@ -147,7 +147,7 @@ def build_methodology_pdf():
     legal_basis_rows = [
         ('Classification', 'Meaning'),
         (Paragraph('<b>Potentially Prohibited (Annex I)</b>', ParagraphStyle('lb1', parent=STY['td_b'], textColor=DANGER)),
-         Paragraph('Falls within the fixed list of practices Annex I of Directive (EU) 2024/825 adds to the UCPD '
+         Paragraph('Falls within the fixed list of practices Annex I of Directive (EU) 2024/825 adds to the Unfair Commercial Practices Directive (UCPD) '
                    'blacklist &mdash; sustainability labels not based on a qualifying certification scheme or not established by '
                    'public authorities, generic environmental claims that lack same-medium specification and recognised excellent '
                    'environmental performance, offset-based claims that a specific <b>product</b> has a climate neutral/reduced/'
