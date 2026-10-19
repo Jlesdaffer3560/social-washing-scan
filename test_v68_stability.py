@@ -100,7 +100,8 @@ method=PdfReader('methodology.pdf')
 # instead of re-pinning a number that will keep drifting as content is added.
 assert 1<=len(method.pages)<=8,len(method.pages)
 method_text='\n'.join((p.extract_text() or '') for p in method.pages)
-assert 'Main forced-labour and supply-chain assurance lens' in method_text
+assert 'main framework for claims about forced labour and supply chains' in ' '.join(method_text.split())
+assert 'Abbreviations and terms explained' in method_text
 assert 'dominant driver' not in method_text.lower()
 assert 'Coverage, confidence and source status' in method_text
 assert 'Candidate' in method_text and 'Verified' in method_text

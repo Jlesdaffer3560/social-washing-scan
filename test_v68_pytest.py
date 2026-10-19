@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_13_spell_out_ucpd'
+    assert app.APP_VERSION == 'hostable_v95_14_plain_language_methodology'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -6916,3 +6916,17 @@ def test_ucpd_is_spelled_out_on_intro_page_and_in_methodology_pdf():
     data = pdf if isinstance(pdf, (bytes, bytearray)) else open(pdf, 'rb').read()
     text = ' '.join(pg.extract_text() for pg in pypdf.PdfReader(io.BytesIO(data)).pages)
     assert 'Unfair Commercial Practices Directive (UCPD)' in ' '.join(text.split())
+
+
+def test_committed_methodology_pdf_is_in_sync_with_the_plain_language_generator():
+    """methodology.pdf is a static file served as-is by the app, so editing methodology_pdf.py
+    changes nothing live until the PDF is regenerated and committed (this is exactly how the first
+    UCPD edit missed the served document). Every abbreviation used in the committed file must be
+    explained: the glossary section must be present and the file must spell out UCPD."""
+    import fitz
+    doc = fitz.open('methodology.pdf')
+    text = ' '.join(' '.join(pg.get_text().split()) for pg in doc)
+    assert 'Unfair Commercial Practices Directive (UCPD)' in text
+    assert 'Abbreviations and terms explained' in text
+    for term in ('B2C', 'NGO', 'OECD', 'ILO', 'GRI', 'UNGPs'):
+        assert f'{term} ' in text.split('Abbreviations and terms explained')[1], term
