@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_14_plain_language_methodology"
-APP_RELEASE_LABEL="v95.14"
+APP_VERSION="hostable_v95_15_crawl_retry_on_timeout"
+APP_RELEASE_LABEL="v95.15"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -1571,6 +1571,12 @@ def _log_fetch_skipped_duplicate(log,url,chars,canonical_final_url,source='disco
                     'thin':False,'error':None,'method':'skipped_duplicate','source':source,'content_kind':content_kind})
 
 
+def _is_timeout_error(err):
+    """True for a socket/read timeout (the target was too slow), as opposed to a definite
+    answer such as a 404 or a blocked request, which retrying cannot fix."""
+    return isinstance(err,(TimeoutError,socket.timeout)) or 'timed out' in str(err).lower()
+
+
 def _candidate_score(item):
     url,source=item
     low=url.lower(); score=0
@@ -1735,11 +1741,21 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     max_attempts=CRAWL_MAX_PAGE_ATTEMPTS+8
     # Small parallel batches prevent two slow/blocked pages from exhausting the entire crawl
     # budget while keeping request concurrency modest for the target site.
+    # Reported on a live scan (gaaschpack.eu): the same site gave 22 findings on one run and 13-15
+    # on the next, because a slow target (1-4 s per page even for a single request) timed out on
+    # half of the parallel requests and every timeout was final -- the page was lost for that scan
+    # and the whole budget was spent waiting. A timeout now (a) lowers the concurrency for the
+    # remaining batches, since a struggling server is usually overloaded by the parallel
+    # requests, and (b) queues the page for ONE retry with a longer timeout, and a retry that
+    # succeeds replaces the earlier failure in the log.
+    workers=CRAWL_FETCH_WORKERS
+    fail_count={}
     while cursor<len(candidates) and successful<max_extra_pages and attempts<max_attempts and time.time()<deadline-2:
-        batch=candidates[cursor:cursor+CRAWL_FETCH_WORKERS]; cursor+=len(batch); attempts+=len(batch)
+        batch=candidates[cursor:cursor+workers]; cursor+=len(batch); attempts+=len(batch)
         per_timeout=min(8,max(3,remaining()-1))
-        discovered=[]
-        executor=ThreadPoolExecutor(max_workers=min(CRAWL_FETCH_WORKERS,len(batch)))
+        if any(fail_count.get(u) for u,_ in batch): per_timeout=min(12,max(4,remaining()-1))
+        discovered=[]; batch_timeouts=0; retry_pool=[]
+        executor=ThreadPoolExecutor(max_workers=min(workers,len(batch)))
         futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
         try:
             # v93.88: at the time of this fix, fetch_page_content's own `timeout` argument only
@@ -1763,7 +1779,15 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             # pending when it fires keeps running in its own thread in the background
             # (shutdown(wait=False) below can't forcibly stop it; only Python-level cooperative
             # timeouts, now enforced deeper in the call chain, actually bound its total runtime).
-            for future in as_completed(futures,timeout=max(1,deadline-time.time())):
+            # Collect first, then process in CANDIDATE (rank) order: with a page quota,
+            # processing in completion order let whichever pages answered fastest take the
+            # slots, so two scans of the same site could keep different pages.
+            completed=set()
+            try:
+                for future in as_completed(futures,timeout=max(1,deadline-time.time())): completed.add(future)
+            except _FuturesTimeoutError:
+                pass
+            for future in [f for f in futures if f in completed]:
                 link,source=futures[future]
                 try:
                     t,kind,method,page_links,link_base,final_url=future.result()
@@ -1804,6 +1828,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                             _log_fetch_skipped_outdated(log,link,len(t),stale_year,source=source,content_kind=kind)
                         else:
                             if final_canon: seen_final.add(final_canon)
+                            if fail_count.get(link) and log is not None: log[:]=[e for e in log if not (e.get('url')==link and e.get('ok') is False)]
                             _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
                             if successful<max_extra_pages:
                                 label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
@@ -1820,18 +1845,27 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                     else:
                         _log_fetch_failure(log,link,ValueError('The page returned insufficient usable text.'),source=source)
                 except Exception as e:
+                    fail_count[link]=fail_count.get(link,0)+1
+                    if fail_count[link]>1 and log is not None: log[:]=[x for x in log if not (x.get('url')==link and x.get('ok') is False)]
                     _log_fetch_failure(log,link,e,source=source)
-        except _FuturesTimeoutError:
+                    if _is_timeout_error(e):
+                        batch_timeouts+=1
+                        if fail_count[link]==1: retry_pool.append((link,source))
             # One or more fetches in this batch are still running past the remaining crawl
             # budget. Log each as an explicit, distinct timeout (instead of letting it vanish
             # silently from the coverage register) and stop waiting on it -- its thread keeps
             # running to completion in the background (shutdown(wait=False) below), but the
             # crawl itself moves on.
             for future,(link,source) in futures.items():
-                if not future.done():
+                if future not in completed:
+                    fail_count[link]=fail_count.get(link,0)+1
+                    if fail_count[link]>1 and log is not None: log[:]=[x for x in log if not (x.get('url')==link and x.get('ok') is False)]
                     _log_fetch_failure(log,link,TimeoutError('Fetch exceeded the remaining crawl time budget and was abandoned.'),source=source)
+                    batch_timeouts+=1
         finally:
             executor.shutdown(wait=False)
+        if batch_timeouts>=2: workers=max(2,workers-2)
+        if retry_pool: candidates[cursor:cursor]=retry_pool
         if discovered:
             # v93.90: newly discovered second-hop links were sorted only relative to EACH
             # OTHER, then spliced in immediately at the cursor -- jumping the queue ahead of

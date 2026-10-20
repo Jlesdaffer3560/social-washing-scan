@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_14_plain_language_methodology'
+    assert app.APP_VERSION == 'hostable_v95_15_crawl_retry_on_timeout'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -6930,3 +6930,73 @@ def test_committed_methodology_pdf_is_in_sync_with_the_plain_language_generator(
     assert 'Abbreviations and terms explained' in text
     for term in ('B2C', 'NGO', 'OECD', 'ILO', 'GRI', 'UNGPs'):
         assert f'{term} ' in text.split('Abbreviations and terms explained')[1], term
+
+
+def test_crawl_retries_a_page_that_timed_out_once_and_clears_the_failure(monkeypatch):
+    """Reported on a live scan of gaaschpack.eu: the same site gave 22 findings on one run and
+    13-15 on the next. The target is slow (1-4 s per page), so under parallel load about half of
+    the page requests timed out, and every timeout was final -- those pages were simply lost for
+    that scan. A timed-out page must now get ONE retry, and a retry that succeeds must replace
+    the earlier failure in the log (so coverage figures and the reliability warning stay honest)."""
+    calls = {}
+    def fake_fetch_html(url, timeout=7):
+        html = '<html><body>' + ''.join(f'<a href="/sustainability/p{i}">p{i}</a>' for i in range(4)) + '</body></html>'
+        return html, url
+    def flaky_fetch_page_content(url, timeout=8):
+        calls[url] = calls.get(url, 0) + 1
+        if '/sustainability/p' not in url:
+            raise ValueError('404')
+        if url.endswith('/p1') and calls[url] == 1:
+            raise TimeoutError('The read operation timed out')
+        return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', flaky_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    log = []
+    text, pages, chunks = app.crawl('https://example.com', max_extra_pages=8, deadline=None, log=log)
+    assert any(p.endswith('/sustainability/p1') for p in pages), 'the timed-out page was never retried'
+    assert calls['https://example.com/sustainability/p1'] == 2
+    assert not [e for e in log if e.get('ok') is False and e['url'].endswith('/p1')], 'the earlier failure must be cleared once the retry succeeds'
+
+
+def test_crawl_gives_up_on_a_page_that_keeps_timing_out_after_one_retry(monkeypatch):
+    """A page that times out twice stays a single failure (no endless retries, no duplicate log rows)."""
+    calls = {}
+    def fake_fetch_html(url, timeout=7):
+        return '<html><body><a href="/sustainability/slow">slow</a><a href="/sustainability/ok">ok</a></body></html>', url
+    def fetch(url, timeout=8):
+        calls[url] = calls.get(url, 0) + 1
+        if url.endswith('/slow'):
+            raise TimeoutError('The read operation timed out')
+        if '/sustainability/ok' not in url:
+            raise ValueError('404')
+        return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fetch)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    log = []
+    app.crawl('https://example.com', max_extra_pages=8, deadline=None, log=log)
+    assert calls['https://example.com/sustainability/slow'] == 2
+    assert len([e for e in log if e['url'].endswith('/slow')]) == 1
+
+
+def test_crawl_keeps_the_same_pages_when_a_slower_page_answers_after_a_faster_one(monkeypatch):
+    """With a page quota, whichever pages answered fastest used to take the slots, so two scans
+    of one site could keep different pages. Pages must now be taken in candidate (rank) order
+    whatever the response order."""
+    import time as _time
+    def fake_fetch_html(url, timeout=7):
+        return '<html><body>' + ''.join(f'<a href="/sustainability/p{i}">p{i}</a>' for i in range(6)) + '</body></html>', url
+    def make_fetch(slow_first):
+        def fetch(url, timeout=8):
+            if url.endswith('/p0') and slow_first: _time.sleep(0.4)
+            return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+        return fetch
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    results = []
+    for slow_first in (True, False):
+        monkeypatch.setattr(app, 'fetch_page_content', make_fetch(slow_first))
+        _, pages, _ = app.crawl('https://example.com', max_extra_pages=3, deadline=None, log=[])
+        results.append(pages)
+    assert results[0] == results[1], results
