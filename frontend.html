@@ -221,7 +221,7 @@
         <input id="docCompanyName" type="text" autocomplete="organization" placeholder="e.g. Acme Corp" />
         <label for="docCompanyNumber" style="margin-top:8px">Company number (KBO/BTW, optional)</label>
         <input id="docCompanyNumber" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. BE 0403.170.701" />
-        <p class="small">Supported: TXT, HTML, MD, CSV, DOCX. PDF extraction is best-effort.</p><div class="privacy-box"><strong>Document privacy:</strong> the application processes the uploaded file for this request; the file itself is not written to persistent storage. If scan history is enabled for this deployment, this result is logged for operators who can sign in to view it: the company name you entered, a reference to the filename, your IP address, and the exact wording of any flagged claim phrase extracted from the document (not the full document). Logged entries are kept until an administrator deletes them. The file is not combined with website crawling or external search. Do not upload personal data, legally privileged information or material that your organisation does not permit you to process through this hosted service.</div>
+        <p class="small">Supported: TXT, HTML, MD, CSV, DOCX and PDF. PDF scans work best with selectable text; scanned pages may not be readable. PDFs over 8 MB or 60 pages are read in your browser and only their text is sent.</p><div class="privacy-box"><strong>Document privacy:</strong> the application processes the uploaded file for this request; the file itself is not written to persistent storage. If scan history is enabled for this deployment, this result is logged for operators who can sign in to view it: the company name you entered, a reference to the filename, your IP address, and the exact wording of any flagged claim phrase extracted from the document (not the full document). Logged entries are kept until an administrator deletes them. The file is not combined with website crawling or external search. Do not upload personal data, legally privileged information or material that your organisation does not permit you to process through this hosted service.</div>
         <div class="toolbar"><button id="runDoc" class="btn">Upload and scan document</button></div>
       </div>
     </div>
@@ -419,12 +419,59 @@ async function scanUrl(){if($('runUrl').disabled)return; let url=$('url').value.
     }
   }
   await runScan('/api/scan/url',{url,company_number:companyNumber});}
+// Large PDFs (over the 8 MB upload limit, or over 60 pages, which the server would cut off) are read in the
+// BROWSER with pdf.js, served from our own server, and only the extracted text (a few hundred kB) is sent. The
+// file itself then never leaves the computer. Smaller PDFs and all other file types keep the unchanged upload path.
+const DOC_UPLOAD_LIMIT_BYTES=8*1024*1024, DOC_SERVER_PDF_MAX_PAGES=60;
+async function openPdfInBrowser(file){
+  let pdfjs=await import('/vendor/pdfjs/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc='/vendor/pdfjs/pdf.worker.min.mjs';
+  let data=new Uint8Array(await file.arrayBuffer());
+  return pdfjs.getDocument({data,isEvalSupported:false,useSystemFonts:true}).promise;
+}
+async function extractPdfTextInBrowser(pdf,onProgress){
+  let parts=[],pagesRead=0,total=pdf.numPages;
+  for(let i=1;i<=total;i++){
+    let page=await pdf.getPage(i);
+    try{
+      let tc=await page.getTextContent(),line='';
+      for(let it of tc.items){line+=it.str||'';line+=it.hasEOL?'\n':' '}
+      if(line.trim())parts.push(line);
+      pagesRead=i;
+    }finally{page.cleanup()}
+    if(onProgress&&(i%5===0||i===total))onProgress(i,total);
+  }
+  return {text:parts.join('\n'),totalPages:total,pagesRead};
+}
 async function scanDoc(){if($('runDoc').disabled)return; let f=$('file').files[0]; if(!f){setStatus('Please choose a document to upload.','notice warning');return}
-  // Check the server's 8 MB limit client-side before reading+base64-encoding the whole file --
-  // previously a too-large file was read into memory and sent anyway, only to be rejected by
-  // the server after the round trip, wasting the upload and giving slower feedback.
-  if(f.size>8*1024*1024){setStatus(`This file is ${(f.size/1024/1024).toFixed(1)} MB, which is above the 8 MB limit for this hosted first-pass scan. Please upload a smaller extract.`,'notice warning');return}
-  let b64; try{b64=await fileToBase64(f)}catch(e){setStatus('Could not read the selected file. Please try again or choose a different file.','notice error');return} await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64,company_name:$('docCompanyName').value.trim(),company_number:$('docCompanyNumber').value.trim()});}
+  let company_name=$('docCompanyName').value.trim(),company_number=$('docCompanyNumber').value.trim();
+  let isPdf=/\.pdf$/i.test(f.name)||f.type==='application/pdf';
+  if(isPdf){
+    let pdf=null;
+    try{
+      $('runDoc').disabled=true;
+      setStatus('<span class="spinner"></span> Opening the PDF in your browser.','notice');
+      pdf=await openPdfInBrowser(f);
+    }catch(e){pdf=null}
+    $('runDoc').disabled=false;
+    if(pdf&&(f.size>DOC_UPLOAD_LIMIT_BYTES||pdf.numPages>DOC_SERVER_PDF_MAX_PAGES)){
+      try{
+        $('runDoc').disabled=true;
+        let ex=await extractPdfTextInBrowser(pdf,(i,n)=>setStatus(`<span class="spinner"></span> Reading page ${i} of ${n} in your browser. Only the extracted text is sent for the scan.`,'notice'));
+        $('runDoc').disabled=false;
+        if(ex.text.trim().length<80){setStatus('No selectable text was found in this PDF (it may be a scanned document made of images). Please upload a text-based version or an extract.','notice warning');return}
+        await runScan('/api/scan/document',{filename:f.name,extracted_text:ex.text,source_total_pages:ex.totalPages,source_pages_read:ex.pagesRead,company_name,company_number});return;
+      }catch(e){
+        $('runDoc').disabled=false;
+        setStatus('This large PDF could not be read in your browser ('+esc(e&&e.message?e.message:'unknown error')+'). Please upload a smaller extract, or a text-based version.','notice error');return;
+      }
+    }
+    if(f.size>DOC_UPLOAD_LIMIT_BYTES){setStatus(`This file is ${(f.size/1024/1024).toFixed(1)} MB and could not be read in your browser. Please upload a smaller extract.`,'notice warning');return}
+  }else if(f.size>DOC_UPLOAD_LIMIT_BYTES){
+    // Non-PDF files still go to the server as-is, which has an 8 MB limit; check it client-side before reading+encoding.
+    setStatus(`This file is ${(f.size/1024/1024).toFixed(1)} MB, which is above the 8 MB limit for this file type. Please upload a smaller extract, or save it as a PDF.`,'notice warning');return}
+  let b64; try{b64=await fileToBase64(f)}catch(e){setStatus('Could not read the selected file. Please try again or choose a different file.','notice error');return}
+  await runScan('/api/scan/document',{filename:f.name,mime_type:f.type,content_base64:b64,company_name,company_number});}
 function sleep(ms){return new Promise(res=>setTimeout(res,ms))}
 // External UX review: this fetch had no timeout or cancellation of its own at all -- if a
 // request genuinely hung (a dropped connection, a server-side deadlock), the "Running scan..."

@@ -97,10 +97,15 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_3_registries_not_official_sites"
-APP_RELEASE_LABEL="v96.3"
+APP_VERSION="hostable_v96_4_large_pdfs_read_in_browser"
+APP_RELEASE_LABEL="v96.4"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
+# How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
+# 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
+# 1,000,000 characters of realistic report text), so a million characters (roughly 400 pages) stays well inside
+# the request time limit; anything beyond is still disclosed as not analysed.
+DOC_ANALYSIS_MAX_CHARS=max(90_000, min(2_000_000, int(os.environ.get("DOC_ANALYSIS_MAX_CHARS", "1000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
 RATE_LIMIT_SCANS=max(1, int(os.environ.get("RATE_LIMIT_SCANS", "5")))
 RATE_LIMIT_REPORTS=max(1, int(os.environ.get("RATE_LIMIT_REPORTS", "20")))
@@ -4587,9 +4592,9 @@ def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False):
             txt=re.sub(r'\s+', ' ', txt).strip()
             if len(txt) >= 80:
                 if return_coverage:
-                    return txt[:90000],{'original_chars':len(txt),'analyzed_chars':min(len(txt),90000),
+                    return txt[:DOC_ANALYSIS_MAX_CHARS],{'original_chars':len(txt),'analyzed_chars':min(len(txt),DOC_ANALYSIS_MAX_CHARS),
                         'total_pages':total_pages,'pages_analyzed':pages_analyzed}
-                return txt[:90000]
+                return txt[:DOC_ANALYSIS_MAX_CHARS]
             # pypdf ran but yielded almost nothing usable (e.g. scanned/image-only PDF) --
             # fall through to the regex fallback in case it can pull out something extra.
         except Exception:
@@ -4638,9 +4643,37 @@ def _extract_pdf_text_regex_fallback(data, return_coverage=False):
     txt=re.sub(r'\s+', ' ', ' '.join(t for t in text_parts if t)).strip()
     txt=_strip_pdf_glyph_artifacts(txt)
     if return_coverage:
-        return txt[:90000],{'original_chars':len(txt),'analyzed_chars':min(len(txt),90000),
+        return txt[:DOC_ANALYSIS_MAX_CHARS],{'original_chars':len(txt),'analyzed_chars':min(len(txt),DOC_ANALYSIS_MAX_CHARS),
             'total_pages':None,'pages_analyzed':None}
-    return txt[:90000]
+    return txt[:DOC_ANALYSIS_MAX_CHARS]
+
+def decode_extracted_text(filename, text, total_pages=None, pages_read=None):
+    """Text that the user's BROWSER read out of a large PDF (pdf.js), sent instead of the file itself.
+    Files above the 8 MB upload limit, or PDFs over 60 pages, cannot go through the server-side
+    extraction on this small instance (memory and time), but their text is small. Returns
+    (text, coverage) exactly like decode_uploaded_document(), so everything downstream (the character
+    cap, the truncation disclosure, page counts) is shared."""
+    txt=str(text or '')[:5_000_000]
+    txt=_strip_pdf_glyph_artifacts(txt)
+    txt=re.sub(r'[ \t]+',' ',txt)
+    txt=re.sub(r'[ \t]*\n[ \t]*','\n',txt)
+    txt=re.sub(r'\n{2,}','\n',txt).strip()
+    if len(txt)<80:
+        raise ValueError('No selectable text was found in this PDF (it may be a scanned document made of images). Please upload a text-based version or paste an extract into a text file.')
+    def as_int(v):
+        try:
+            v=int(v)
+            return v if v>=0 else None
+        except (TypeError,ValueError):
+            return None
+    total=as_int(total_pages); read=as_int(pages_read)
+    original_chars=len(txt)
+    analyzed=txt[:DOC_ANALYSIS_MAX_CHARS]
+    page_truncated=(total is not None and read is not None and read<total)
+    coverage={'original_chars':original_chars,'analyzed_chars':len(analyzed),
+        'truncated':original_chars>DOC_ANALYSIS_MAX_CHARS or page_truncated,
+        'total_pages':total,'pages_analyzed':read,'extraction':'browser'}
+    return analyzed,coverage
 
 def decode_uploaded_document(filename, content_base64, mime_type=''):
     # v93.24: validate=True makes malformed base64 (non-alphabet characters, e.g. a
@@ -4681,7 +4714,7 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     # clean-up just above) -- close enough for a disclosure figure; for DOCX/text/HTML, txt
     # here IS the full, untruncated text, so its own length is the true original size.
     original_chars=page_coverage['original_chars'] if page_coverage else len(txt)
-    analyzed_text=txt[:90000]
+    analyzed_text=txt[:DOC_ANALYSIS_MAX_CHARS]
     total_pages=(page_coverage or {}).get('total_pages')
     pages_analyzed=(page_coverage or {}).get('pages_analyzed')
     # External code review: 'truncated' only ever compared character counts, so a PDF cut off
@@ -4694,7 +4727,7 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
     # much a truncation as a character-count one.
     page_truncated=(total_pages is not None and pages_analyzed is not None and pages_analyzed<total_pages)
     coverage={'original_chars':original_chars,'analyzed_chars':min(len(analyzed_text),original_chars),
-        'truncated':original_chars>90000 or page_truncated,
+        'truncated':original_chars>DOC_ANALYSIS_MAX_CHARS or page_truncated,
         'total_pages':total_pages,
         'pages_analyzed':pages_analyzed}
     return analyzed_text,coverage
@@ -4714,7 +4747,7 @@ def fetch_document_text(url):
             return extract_pdf_text_best_effort(data)
         if 'wordprocessingml' in ctype or url.lower().endswith('.docx'):
             return extract_docx_text(data)
-        return data.decode('utf-8',errors='ignore')[:90000]
+        return data.decode('utf-8',errors='ignore')[:DOC_ANALYSIS_MAX_CHARS]
     except Exception:
         return ''
 
@@ -7651,6 +7684,13 @@ function _v92ApplyMulti(id){{
 </body></html>'''
 
 
+# pdf.js (Apache-2.0, Mozilla), served from our own server so large PDFs can be read in the browser without any
+# third-party request. Strict whitelist of paths; nothing else under /vendor is served.
+_VENDOR_PDFJS_FILES={'/vendor/pdfjs/pdf.min.mjs':('pdf.min.mjs','text/javascript; charset=utf-8'),
+    '/vendor/pdfjs/pdf.worker.min.mjs':('pdf.worker.min.mjs','text/javascript; charset=utf-8'),
+    '/vendor/pdfjs/LICENSE':('LICENSE','text/plain; charset=utf-8')}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version=f'DurablyScan/{APP_RELEASE_LABEL}'
 
@@ -7745,6 +7785,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(html)
         if self.path=='/methodology.pdf':
             pdf=APP_DIR/'methodology.pdf'; return self._send(pdf.read_bytes(),'application/pdf') if pdf.exists() else self._json({'error':'Methodology PDF not found'},404)
+        if self.path in _VENDOR_PDFJS_FILES:
+            f=APP_DIR/'vendor'/'pdfjs'/_VENDOR_PDFJS_FILES[self.path][0]
+            if not f.exists(): return self._json({'error':'Not found'},404)
+            return self._send(f.read_bytes(),_VENDOR_PDFJS_FILES[self.path][1],extra_headers={'Cache-Control':'public, max-age=604800'})
         if self.path=='/api/health':
             # v73: report_pdf_available previously defaulted to True before the lazy PDF import
             # had ever actually been attempted (report_pdf_fn and report_pdf_import_error both
@@ -8052,8 +8096,12 @@ class Handler(BaseHTTPRequestHandler):
                         _v92_save_scan_history(result,'url',client)
                     else:
                         filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')
-                        if not content: return self._json({'error':'No document content provided'},400)
-                        txt,doc_coverage=decode_uploaded_document(filename,content,data.get('mime_type',''))
+                        extracted=data.get('extracted_text')
+                        if isinstance(extracted,str) and extracted.strip():
+                            txt,doc_coverage=decode_extracted_text(filename,extracted,data.get('source_total_pages'),data.get('source_pages_read'))
+                        else:
+                            if not content: return self._json({'error':'No document content provided'},400)
+                            txt,doc_coverage=decode_uploaded_document(filename,content,data.get('mime_type',''))
                         result=analyse_uploaded_document(filename,txt,data.get('company_name',''),data.get('company_number',''),document_coverage=doc_coverage)
                         _v92_save_scan_history(result,'document',client)
                     if data.get('format')=='pdf': return self._respond_pdf(result)

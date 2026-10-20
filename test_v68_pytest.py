@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_3_registries_not_official_sites'
+    assert app.APP_VERSION == 'hostable_v96_4_large_pdfs_read_in_browser'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3016,7 +3016,7 @@ def test_not_only_no_doubt_and_self_assessed_claims_are_not_rejected():
     assert genuine_external_citation == []
 
 
-def test_document_upload_discloses_silent_truncation_at_90000_characters():
+def test_document_upload_discloses_silent_truncation_at_the_character_cap(monkeypatch):
     """v93.55: decode_uploaded_document() silently truncated any uploaded document to 90,000
     characters with no indication to the caller that anything was cut -- a document of 99,105
     characters lost its final ~9,000 characters (and any claim in them) with nothing in the
@@ -3025,6 +3025,9 @@ def test_document_upload_discloses_silent_truncation_at_90000_characters():
     coverage as its own result field and prepends a plain-language disclosure to the summary
     when truncation occurred, so a claim near the end is disclosed as unreviewed rather than
     silently absent. An untruncated document must show no such note."""
+    # The cap is configurable (DOC_ANALYSIS_MAX_CHARS, default 1,000,000 since v96); pin it to the original
+    # 90,000 so this test still exercises the truncation DISCLOSURE with a small fixture.
+    monkeypatch.setattr(app, 'DOC_ANALYSIS_MAX_CHARS', 90000)
     import base64
     filler_unit = 'This document describes our general operations and internal governance. '
     filler = filler_unit * 2000
@@ -7150,3 +7153,62 @@ def test_company_registers_and_quote_pages_are_never_offered_as_the_official_web
     for url in ('https://find-and-update.company-information.service.gov.uk/company/123',
                 'https://stockanalysis.com/quote/homi', 'https://www.cnbc.com/quotes/HOMI-BE', 'https://opencorporates.com/companies/be/1'):
         assert app._v65_official_candidate_score({'url': url, 'title': 'Gaasch Packaging', 'content': 'Gaasch Packaging'}, 'Gaasch Packaging') == -999, url
+
+
+def test_large_document_cap_covers_a_long_report_and_still_discloses_beyond_it(monkeypatch):
+    """Structural fix for long reports: the analysis cap used to be a fixed 90,000 characters (about 40
+    pages), so a long annual/ESG report was analysed only in part. The default is now 1,000,000 characters;
+    a claim deep inside a 400,000-character document must be analysed, and text beyond the cap is disclosed."""
+    assert app.DOC_ANALYSIS_MAX_CHARS >= 1_000_000
+    filler = 'This section describes our governance structure and financial results for the year. ' * 6000
+    claim = ' Our packaging is eco-friendly and fully recyclable.'
+    text = filler + claim
+    assert len(text) > 400_000
+    txt, cov = app.decode_extracted_text('report.pdf', text, total_pages=210, pages_read=210)
+    assert 'eco-friendly' in txt and cov['truncated'] is False and cov['extraction'] == 'browser'
+    monkeypatch.setattr(app, 'DOC_ANALYSIS_MAX_CHARS', 100_000)
+    txt2, cov2 = app.decode_extracted_text('report.pdf', text, total_pages=210, pages_read=210)
+    assert cov2['truncated'] is True and cov2['analyzed_chars'] == 100_000 and cov2['original_chars'] > 100_000
+
+
+def test_text_read_in_the_browser_goes_through_the_same_coverage_disclosure():
+    """A large PDF is read in the browser and only its text is sent. Page counts are carried along; a page
+    shortfall is a truncation; an image-only PDF (no selectable text) gets a clear error instead of an empty scan."""
+    text = 'Our products are climate neutral through offsetting, as stated in our sustainability report. ' * 20
+    txt, cov = app.decode_extracted_text('big.pdf', text, total_pages=300, pages_read=250)
+    assert cov['total_pages'] == 300 and cov['pages_analyzed'] == 250 and cov['truncated'] is True
+    result = app.analyse_uploaded_document('big.pdf', txt, 'TestCo', document_coverage=cov)
+    assert result['document_coverage']['total_pages'] == 300
+    import pytest
+    with pytest.raises(ValueError, match='No selectable text'):
+        app.decode_extracted_text('scan.pdf', '   ', total_pages=40, pages_read=40)
+    # hostile / malformed page counts must not break anything
+    _, cov3 = app.decode_extracted_text('x.pdf', text, total_pages='abc', pages_read=-5)
+    assert cov3['total_pages'] is None and cov3['pages_analyzed'] is None
+
+
+def test_pdfjs_is_vendored_and_served_from_our_own_server_with_a_strict_whitelist():
+    """Large PDFs are read in the browser with pdf.js, which must come from our own server (no third-party
+    CDN request for a tool that handles non-public documents), with the Apache-2.0 licence alongside, and
+    only the three whitelisted files may be served."""
+    from pathlib import Path
+    for name in ('pdf.min.mjs', 'pdf.worker.min.mjs', 'LICENSE'):
+        assert (Path('vendor') / 'pdfjs' / name).exists(), name
+    assert set(app._VENDOR_PDFJS_FILES) == {'/vendor/pdfjs/pdf.min.mjs', '/vendor/pdfjs/pdf.worker.min.mjs', '/vendor/pdfjs/LICENSE'}
+    assert app._VENDOR_PDFJS_FILES['/vendor/pdfjs/pdf.min.mjs'][1].startswith('text/javascript')
+    assert 'Apache License' in (Path('vendor') / 'pdfjs' / 'LICENSE').read_text(encoding='utf-8')
+
+
+def test_frontend_reads_large_pdfs_in_the_browser_and_sends_only_their_text():
+    """Structural fix for "This file is 46.2 MB, which is above the 8 MB limit": a PDF over the upload
+    limit (or over the 60 pages the server reads) is read in the browser with the vendored pdf.js and only
+    the extracted text is sent, with page counts for the coverage disclosure. Smaller PDFs and other file
+    types keep the unchanged upload path; the 8 MB message now only applies to non-PDF files."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert "import('/vendor/pdfjs/pdf.min.mjs')" in text
+    assert "GlobalWorkerOptions.workerSrc='/vendor/pdfjs/pdf.worker.min.mjs'" in text
+    assert 'extracted_text:ex.text,source_total_pages:ex.totalPages,source_pages_read:ex.pagesRead' in text
+    assert 'f.size>DOC_UPLOAD_LIMIT_BYTES||pdf.numPages>DOC_SERVER_PDF_MAX_PAGES' in text
+    assert 'content_base64:b64' in text
+    assert 'cdn.jsdelivr' not in text and 'cdnjs' not in text, 'pdf.js must be served from our own server'
+    assert 'PDFs over 8 MB or 60 pages are read in your browser' in text
