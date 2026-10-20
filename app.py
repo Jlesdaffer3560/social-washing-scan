@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_4_large_pdfs_read_in_browser"
-APP_RELEASE_LABEL="v96.4"
+APP_VERSION="hostable_v96_5_no_stale_page_cache"
+APP_RELEASE_LABEL="v96.5"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -7782,7 +7782,9 @@ class Handler(BaseHTTPRequestHandler):
             # itself on the very first paint -- no network round-trip, no flash of the scan form
             # before the gate covers it.
             html=html.replace('{{ACCESS_CODE_REQUIRED}}','true' if ACCESS_CODE else 'false')
-            return self._send(html)
+            # no-cache: the page is the app's own code. Without it a browser could keep serving an OLD copy after a
+            # release (a user still saw the pre-v96.4 "above the 8 MB limit" message after the fix was live).
+            return self._send(html,extra_headers={'Cache-Control':'no-cache, must-revalidate'})
         if self.path=='/methodology.pdf':
             pdf=APP_DIR/'methodology.pdf'; return self._send(pdf.read_bytes(),'application/pdf') if pdf.exists() else self._json({'error':'Methodology PDF not found'},404)
         if self.path in _VENDOR_PDFJS_FILES:

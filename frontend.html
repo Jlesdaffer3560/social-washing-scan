@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="app-version" content="{{APP_VERSION}}" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Durably Sustainability Claims Risk Scan</title>
   <style>
@@ -225,6 +226,7 @@
         <div class="toolbar"><button id="runDoc" class="btn">Upload and scan document</button></div>
       </div>
     </div>
+    <div id="updateBanner" class="notice warning hidden" role="alert">A newer version of GreenCheck is available. <button type="button" class="btn secondary" id="updateReload">Reload this page</button></div>
     <div id="status" class="notice" role="status" aria-live="polite">Ready.</div>
   </section>
 
@@ -326,6 +328,19 @@ function plainLanguage(text){
     .replace(/\(provider error\/quota, not a clean result\)/gi,'(a technical issue, not a clean result)')
     .replace(/HTTP 403\/blocked or unreachable/gi,'blocked or unreachable')
 }
+// A tab that stays open across a release keeps running the OLD page code. Compare the version this page was served
+// with against the server's current one (on load and whenever the tab is shown again) and offer a reload.
+async function checkForNewVersion(){
+  try{
+    let mine=document.querySelector('meta[name="app-version"]')?.content||'';
+    if(!mine||mine.indexOf('{{')>=0)return;
+    let r=await fetch('/api/health',{cache:'no-store'});if(!r.ok)return;let j=await r.json();
+    if(j.version&&j.version!==mine)$('updateBanner')?.classList.remove('hidden');
+  }catch(e){}
+}
+$('updateReload')?.addEventListener('click',()=>location.reload());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkForNewVersion()});
+checkForNewVersion();
 function setStatus(msg,type='notice'){const el=$('status'); if(!el)return; el.className=type; el.innerHTML=msg}
 // v93.24: proactively show whether external public-source search (media/NGO/regulator
 // signals) is actually configured on this deployment, BEFORE the user runs a scan --

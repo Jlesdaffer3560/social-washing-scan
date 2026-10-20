@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_4_large_pdfs_read_in_browser'
+    assert app.APP_VERSION == 'hostable_v96_5_no_stale_page_cache'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7212,3 +7212,15 @@ def test_frontend_reads_large_pdfs_in_the_browser_and_sends_only_their_text():
     assert 'content_base64:b64' in text
     assert 'cdn.jsdelivr' not in text and 'cdnjs' not in text, 'pdf.js must be served from our own server'
     assert 'PDFs over 8 MB or 60 pages are read in your browser' in text
+
+
+def test_page_is_never_cached_and_an_open_tab_is_told_about_a_new_version():
+    """A user still saw the pre-v96.4 "above the 8 MB limit" message after the fix was live: the browser kept
+    running an old copy of the page. The HTML is now served with no-cache, and a tab left open across a
+    release compares the version it was served with against the server's and offers a reload."""
+    import inspect
+    src = inspect.getsource(app.Handler.do_GET)
+    assert "'Cache-Control':'no-cache, must-revalidate'" in src
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert '<meta name="app-version" content="{{APP_VERSION}}"' in text
+    assert 'id="updateBanner"' in text and 'checkForNewVersion' in text and "visibilitychange" in text
