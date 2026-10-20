@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_6_plain_language_rewrites"
-APP_RELEASE_LABEL="v96.6"
+APP_VERSION="hostable_v96_7_topic_relevant_rewrites"
+APP_RELEASE_LABEL="v96.7"
 APP_RELEASE_DATE="2026-10-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -2591,7 +2591,7 @@ def build_claim_inventory(findings):
     # 'legal_basis_category' and 'legal_basis_label' yet dropped 'legal_basis_short' entirely,
     # so every claim card's "Legal basis" detail box (and the legal-basis badge's own hover
     # tooltip, which reads the same field) rendered empty. Reported live on Delhaize.
-    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite","")} for f in findings]
+    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite",""),"rewrite_example":f.get("rewrite_example","")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -3892,12 +3892,13 @@ _GREEN_REWRITES=[
      'Recycled Standard. The bottle can be recycled through household plastic collection in Belgium and the '
      'Netherlands, as long as the cap is removed."'),
     (('generic',),
-     '"[Product or product line] [states one concrete fact with a number, e.g. uses X% less water, contains X% recycled '
-     'material, or holds a named certificate]. This is measured with [name of the method or standard], applies to [this '
-     'product only / the whole collection] and dates from [month and year]. Full details: [link]."',
-     '"The Nordwind Aqua bottle uses 32% less water in production than our 2022 model. This is measured with the ISO '
-     '14046 water-footprint method, applies to the Aqua bottle only and dates from June 2026. Full details: '
-     'nordwind.example/aqua."'),
+     '"[What the claim is about: our company, a product or a site] [states one concrete fact with a number, e.g. a '
+     'percentage, a measured amount or a named certificate]. This is measured with [name of the method or standard], '
+     'applies to [exactly which part: this product, this site, the whole company] and dates from [month and year]. Full '
+     'details: [link]."',
+     '"The Nordwind Porto factory cut its packaging waste by 32% between 2022 and 2025. This is measured by weight from '
+     'waste-collector receipts, applies to the Porto factory only and dates from March 2026. Full details: '
+     'nordwind.example/porto."'),
     (('legal requirement',),
      '"[Feature] is required by [name of the law, e.g. EU REACH] and we comply with it. We do not present this as an '
      'extra sustainability benefit."',
@@ -3935,23 +3936,161 @@ _GREEN_REWRITE_DEFAULT=(
     '"Our Porto factory used 100% renewable electricity in 2025, checked by an independent auditor (report dated '
     'March 2026). This covers the Porto factory only. Evidence: nordwind.example/energy."')
 
-def _pick_rewrite(table, default, claim_type):
+# A rewrite must fit what the claim is ABOUT, not only the claim type: a "generic environmental claim" can be about
+# suppliers, energy, water, waste, packaging, nature ... and a template about "recycled material" or "a product that
+# uses less water" is then irrelevant. The topic is read from the claim text (English, Dutch, French and German
+# wording); the topic with the most hits wins, ties go to the earlier entry. If no topic is recognised the neutral
+# template of the claim type is used.
+_GREEN_TOPICS=[
+    ('supplier',
+     r"supplier|supply[- ]chain|value[- ]chain|procure|scope 3|leverancier|toeleverancier|waardeketen|ketenpartner|inkoop|fournisseur|cha[iî]ne d|achats responsables|lieferant|lieferkette|beschaffung",
+     '"We work with suppliers on [specific environmental goal, e.g. cutting emissions in the supply chain] through [what you '
+     'do, e.g. dialogue or pilot projects]. In [year], [X%] of our purchasing spend went to suppliers [taking part in '
+     'this work / holding a named certificate], up from [X%] in [year]. Target: [X%] by [year]. Progress: [link]."',
+     '"Nordwind works with its suppliers to cut emissions in the supply chain through dialogue and pilot projects. In '
+     '2025, 30% of our purchasing spend went to suppliers taking part in this work, up from 18% in 2023. Target: 70% '
+     'by 2030. Progress: nordwind.example/suppliers."'),
+    ('energy',
+     r"energy|energie|[eé]nergie|electric|elektri|[eé]lectri|renewable|hernieuwbaar|duurzame stroom|groene stroom|renouvelable|erneuerbar|solar|zonne|photovolta|\bwind(?:energ|park|turbin|kracht)|\bkwh\b|\bstrom\b",
+     '"In [year], [X%] of the electricity we use at [which sites, or the whole company] came from [renewable source, e.g. '
+     'wind or solar], [bought through named certificates / generated on site]. Our total energy use was [X kWh], [X%] '
+     '[lower/higher] than in [earlier year]. Details: [link]."',
+     '"In 2025, 100% of the electricity used at our Porto factory came from wind power bought through guarantees of '
+     'origin. Our total energy use there was 4.2 GWh, 9% lower than in 2022. Details: nordwind.example/energy."'),
+    ('water',
+     r"\bwater\b|waterverbruik|drinkwater|afvalwater|\beau\b|\beaux\b|wasser|water footprint|waterfootprint",
+     '"In [year] we used [X litres or m\u00b3] of water per [unit, e.g. product made], [X%] [less/more] than in [earlier '
+     'year], measured at [which sites]. The water comes from [source], and we [what you do to reduce use or clean the '
+     'water we discharge]. Details: [link]."',
+     '"In 2025 our Porto factory used 3.1 litres of water per bottle made, 22% less than in 2022. The water comes from '
+     'the municipal supply, and we clean it on site before it is discharged. Details: nordwind.example/water."'),
+    ('waste',
+     r"\bwaste|afval|d[eé]chet|abfall|landfill|storten|zero[- ]waste|zero afval|z[eé]ro d[eé]chet",
+     '"In [year], [X%] of the waste from [which sites or activities] was [recycled / reused / sent to landfill], out of '
+     '[X tonnes] in total, counted by [how you measure it]. Target: [target] by [year]. Details: [link]."',
+     '"In 2025, 78% of the waste from our Porto factory was recycled and 2% went to landfill, out of 640 tonnes in '
+     'total, counted by weight from waste-collector receipts. Target: 90% recycled by 2028. Details: '
+     'nordwind.example/waste."'),
+    ('packaging',
+     r"packag|verpakking|emballage|verpackung",
+     '"[X%] of our [packaging type, e.g. shipping boxes] is [one concrete property, e.g. made from recycled cardboard / '
+     'reusable / recyclable in the country of sale], checked against [name of the test or standard]. This does not '
+     'cover [exceptions, e.g. the lid or the label]. Details: [link]."',
+     '"85% of our shipping boxes are made from recycled cardboard, confirmed by the recycled-content certificate of our '
+     'box supplier. This does not cover the plastic tape. Details: nordwind.example/packaging."'),
+    ('transport',
+     r"transport|logistic|logistiek|\bfleet|vloot|vehicle|voertuig|vervoer|mobility|mobiliteit|\bflotte|v[eé]hicule|fahrzeug|shipping|verzending|leveringen",
+     '"In [year], [X%] of [our vehicles / our deliveries / the kilometres we drive] was [emission-free, e.g. electric or '
+     'by rail], measured by [how you count]. Emissions from transport were [X tonnes CO2e], [X%] [lower/higher] than in '
+     '[earlier year]. Details: [link]."',
+     '"In 2025, 35% of our deliveries in Belgium were made with electric vans, measured by kilometres driven. '
+     'Emissions from transport were 1,900 tonnes CO2e, 12% lower than in 2022. Details: nordwind.example/transport."'),
+    ('biodiversity',
+     r"biodivers|\bnature\b|\bnatuur\b|\bnatur\b|habitat|\bforest|\bbos(?:sen)?\b|\bwoud|deforest|ontbossing|ecosystem|[eé]cosyst|\bwald\b|\bfauna|\bflora",
+     '"At [named site or area] we [specific action, e.g. restored X hectares of habitat / stopped using named pesticides] '
+     'since [year]. The effect is measured by [what you count, e.g. species or hectares], checked by [independent '
+     'party]. Details: [link]."',
+     '"At our Algarve cork farms we restored 120 hectares of native habitat between 2021 and 2025. The effect is '
+     'measured by yearly counts of bird and plant species, checked by an independent ecology institute. Details: '
+     'nordwind.example/nature."'),
+    ('biodegradable',
+     r"biodegrad|compostable|composteer|\bcompost|biologisch afbreekbaar|biod[eé]gradable",
+     '"[Product] breaks down [fully / X%] within [time] under [conditions: industrial composting / home composting / '
+     'soil], tested to [named standard, e.g. EN 13432]. Dispose of it via [correct disposal route]. Details: [link]."',
+     '"Nordwind compostable bags break down fully within 12 weeks in industrial composting, tested to EN 13432. They '
+     'are not suitable for home composting; dispose of them in the food-waste bin. Details: nordwind.example/bags."'),
+    ('materials',
+     r"natural|natuurlijk|naturel|nat[uü]rlich|chemical|chemisch|chimique|chemikal|toxic|giftig|toxique|harmful|schadelijk|nocif|sch[aä]dlich|\bpure\b|zuiver|\bpur\b|\brein\b|ingredi[eë]nt|organic|biologisch|\bbio\b|pesticide|pfas|schadelijke stoffen",
+     '"[Product] contains no [named substance or group of substances, e.g. PFAS or phthalates], confirmed by [laboratory '
+     'test or standard, date]. It is made from [X%] [named natural material]. This applies to [which product or range]. '
+     'Details: [link]."',
+     '"Our wooden toys contain no PFAS or phthalates, confirmed by an independent laboratory test in April 2026. They '
+     'are made from 100% beech wood from certified forests. This applies to the Nordwind Play range. Details: '
+     'nordwind.example/play."'),
+    ('emissions',
+     r"emission|emissie|uitstoot|[eé]mission|\bco2|co\u2082|carbon|koolstof|carbone|kohlenstoff|greenhouse|broeikas|effet de serre|treibhaus|scope 1|scope 2|climate|klimaat|climat\b",
+     '"We cut our greenhouse-gas emissions by [X%] between [start year] and [latest year]. This covers [which emissions: '
+     'only our own sites and energy / also our suppliers and products] and is calculated with [name of the method, e.g. '
+     'the GHG Protocol]. Target: [target] by [year]. Details: [link]."',
+     '"Nordwind Packaging cut its greenhouse-gas emissions by 28% between 2019 and 2025. This covers our own factories '
+     'and the electricity we buy, and is calculated with the GHG Protocol. Target: 50% by 2030. Details: '
+     'nordwind.example/climate."'),
+]
+# Claim types for which the topic overrides the type's own template: the broad ones. Specific types (climate
+# neutrality, labels, recycled material, legal requirement, comparison, icon) already say what is needed.
+_GREEN_TOPIC_TYPES=('generic','absolute','purity','future')
+
+_SOCIAL_TOPICS=[
+    ('childlabour', r"child labou?r|kinderarbeid|travail des enfants|kinderarbeit|child work",
+     '"To prevent child labour in [product or supply chain], we [specific check, e.g. verify workers\' ages at supplier '
+     'sites], carry out [X] audits a year at [which suppliers], and have a written process to remove any child from '
+     'work and support them. Last reviewed: [date]. Details: [link]."',
+     '"To prevent child labour in our cotton supply chain, we verify workers\' ages at supplier sites, carry out 12 '
+     'audits a year at our largest suppliers, and have a written process to remove any child from work and support '
+     'them. Last reviewed: 15 May 2026. Details: nordwind.example/child-labour."'),
+    ('wage', r"living wage|fair wage|fair pay|leefbaar loon|leefloon|eerlijk loon|salaire d[eé]cent|salaire vital|salaire minimum|existenzsichernd|living income|\bwage|\bloon\b|\blonen\b|\blohn|\bl[oö]hne",
+     '"In [year], [X%] of our [employees / our suppliers\' workers: say which] earned at least a living wage, defined by '
+     '[named benchmark, e.g. the Anker method or a national benchmark]. Where they did not, we [action] by [date]. '
+     'Details: [link]."',
+     '"In 2025, 94% of our own employees earned at least a living wage, defined by the Anker method for their region. '
+     'For the other 6% we are raising pay by 1 January 2027. Details: nordwind.example/wages."'),
+    ('unions', r"collective (?:labou?r )?(?:agreement|bargaining)|trade union|labou?r union|\bunions\b|vakbond|collectieve arbeidsovereenkomst|\bcao\b|syndicat|convention collective|gewerkschaft|tarifvertrag|freedom of association|vrijheid van vereniging",
+     '"[X%] of our [employees / factory workers] are covered by a collective labour agreement, as of [date]. Workers can '
+     '[form or join a union / elect representatives] without penalty, confirmed by [source, e.g. an audit or the labour '
+     'inspectorate]. Details: [link]."',
+     '"100% of our factory workers are covered by a collective labour agreement, as of 31 December 2025. Workers can '
+     'join a union without penalty, confirmed by the national labour inspectorate. Details: nordwind.example/labour."'),
+    ('training', r"training|opleiding|vorming|formation\b|schulung|weiterbildung|skills|vaardigheden|development programme|talent development|ontwikkeling van medewerkers",
+     '"In [year], [X%] of our [employees / workers] took part in [named training programme], on average [X hours] each. '
+     'The training covers [topics]. Take-up is measured by [how you count]. Details: [link]."',
+     '"In 2025, 82% of our employees took part in the Nordwind Academy, on average 14 hours each. The training covers '
+     'safety, machine operation and first aid. Take-up is measured from attendance records. Details: '
+     'nordwind.example/academy."'),
+]
+_SOCIAL_TOPIC_TYPES=('human',)
+
+# Phrases that contain a topic word without being about that topic ("natural resources" is not a claim about
+# natural ingredients), and the wording of a broad human-rights policy, which mentions wages, child labour,
+# unions and training only in passing -- for those the broad human-rights template stays.
+_TOPIC_NOISE=re.compile(r"natural (?:resources|capital|gas|disasters?|environment)|natuurlijke (?:hulpbronnen|rijkdommen|omgeving)|ressources naturelles|nat[uü]rliche ressourcen|european union|europese unie|union europ[eé]enne|europ[aä]ische union")
+_SOCIAL_BROAD_RE=re.compile(r"human[- ]rights?|mensenrechten|droits (?:de l.)?homme|menschenrecht")
+
+def _topic_for_text(topics, text, min_hits=1):
+    """The topic whose wording occurs most often in `text` (ties: the earlier entry), or None."""
+    low=_TOPIC_NOISE.sub(' ',re.sub(r'\s+',' ',str(text or '').lower()))
+    best=None; best_hits=0
+    for entry in topics:
+        hits=len(re.findall(entry[1],low))
+        if hits>best_hits:
+            best,best_hits=entry,hits
+    if best is not None and best_hits<min_hits:
+        return None
+    return best
+
+def _pick_rewrite(table, default, claim_type, claim_text='', topics=(), topic_types=(), broad_re=None):
+    """(template, example) for a claim. The claim TYPE chooses the framing; for the broad types listed in
+    `topic_types` (and for any unrecognised type) what the claim text is ABOUT chooses a topic-specific template.
+    With `broad_re`, a text that matches it (a broad policy statement) needs two mentions of a topic to switch."""
     t=(claim_type or '').lower()
     if is_placeholder_finding(t):
         return ('','')
-    for keys,template,example in table:
-        if any(k in t for k in keys):
-            return (template,example)
-    return default
+    matched=next(((tpl,ex) for keys,tpl,ex in table if any(k in t for k in keys)),None)
+    if topics and (matched is None or any(k in t for k in topic_types)):
+        broad=bool(broad_re and broad_re.search(str(claim_text or '').lower()))
+        entry=_topic_for_text(topics,claim_text,2 if broad else 1)
+        if entry:
+            return (entry[2],entry[3])
+    return matched or default
 
-def green_ready_to_use_rewrite(claim_type):
+def green_ready_to_use_rewrite(claim_type, claim_text=''):
     """A literal, fill-in-the-blank example rewrite -- not abstract guidance on what to disclose, but an actual
-    sentence the company can copy and complete with its own facts (see _GREEN_REWRITES above)."""
-    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type)[0]
+    sentence the company can copy and complete with its own facts (see _GREEN_REWRITES above). The claim text lets
+    the rewrite follow the claim's topic (suppliers, energy, water, ...) for the broad claim types."""
+    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES)[0]
 
-def green_rewrite_example(claim_type):
+def green_rewrite_example(claim_type, claim_text=''):
     """The same sentence completed for an invented company, shown next to the template (always labelled fictional)."""
-    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type)[1]
+    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES)[1]
 
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
@@ -4079,8 +4218,9 @@ def enrich_green_finding(f, trigger=''):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
-    f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''))
-    f['rewrite_example']=green_rewrite_example(f.get('type',''))
+    _rw_text=analysis_text+' '+str(f.get('matched_phrase') or trigger or '')
+    f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''),_rw_text)
+    f['rewrite_example']=green_rewrite_example(f.get('type',''),_rw_text)
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -4596,6 +4736,11 @@ def _strip_pdf_glyph_artifacts(txt):
     txt = re.sub(r'\\[0-7]{1,3}', '', txt)
     txt = re.sub(r'([A-Za-zÀ-ÿ])\s+-([A-Za-zÀ-ÿ])', r'\1-\2', txt)
     txt = re.sub(r'([A-Za-zÀ-ÿ])-\s+([A-Za-zÀ-ÿ])', r'\1-\2', txt)
+    # A typographic hyphen (U+2010/U+2011) followed by a space is a LINE-BREAK hyphen that the PDF kept (reported live:
+    # "leveranci\u2010 ers" inside a quoted claim): the word was split across two lines, so join it back together.
+    # A soft hyphen (U+00AD) is never visible text.
+    txt = re.sub(r'([a-zà-ÿ])[\u2010\u2011]\s+([a-zà-ÿ])', r'\1\2', txt)
+    txt = txt.replace('\u00ad', '')
     return txt
 
 def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False):
@@ -9007,14 +9152,14 @@ _SOCIAL_REWRITE_DEFAULT=(
     'labour inspectorate (letter dated February 2026). This covers our Porto factory only. Evidence: '
     'nordwind.example/labour."')
 
-def social_ready_to_use_rewrite(claim_type):
+def social_ready_to_use_rewrite(claim_type, claim_text=''):
     """Literal, fill-in-the-blank example rewrite for social/forced-labour claim types in plain language -- see
     _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply."""
-    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type)[0]
+    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE)[0]
 
-def social_rewrite_example(claim_type):
+def social_rewrite_example(claim_type, claim_text=''):
     """The same sentence completed for an invented company (always labelled fictional where shown)."""
-    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type)[1]
+    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE)[1]
 
 def enrich_social_finding(f, trigger=''):
     analysis_text=_v93_analysis_text(f)
@@ -9039,8 +9184,9 @@ def enrich_social_finding(f, trigger=''):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), analysis_text)
-    f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''))
-    f['rewrite_example']=social_rewrite_example(f.get('type',''))
+    _rw_text=analysis_text+' '+str(f.get('matched_phrase') or trigger or '')
+    f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''),_rw_text)
+    f['rewrite_example']=social_rewrite_example(f.get('type',''),_rw_text)
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 

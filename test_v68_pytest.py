@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_6_plain_language_rewrites'
+    assert app.APP_VERSION == 'hostable_v96_7_topic_relevant_rewrites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7247,6 +7247,8 @@ def _all_rewrite_pairs():
         pairs.append((ty, app.green_ready_to_use_rewrite(ty), app.green_rewrite_example(ty)))
     for ty in _ALL_SOCIAL_REWRITE_CLAIM_TYPES:
         pairs.append((ty, app.social_ready_to_use_rewrite(ty), app.social_rewrite_example(ty)))
+    for name, _rx, template, example in app._GREEN_TOPICS + app._SOCIAL_TOPICS:
+        pairs.append(('topic:' + name, template, example))
     return pairs
 
 
@@ -7281,7 +7283,7 @@ def test_rewrite_examples_are_marked_fictional_and_name_no_real_company_claim():
     text = ' '.join(pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text().split())
     assert 'Fictional example, for illustration only' in text
     assert 'fill in the [brackets]' in text
-    assert 'Nordwind' in text
+    assert 'nordwind' in text.lower()
 
 
 def test_rewrite_texts_fit_the_pdf_budgets_without_being_cut_off():
@@ -7303,3 +7305,93 @@ def test_findings_carry_the_rewrite_example_and_the_frontend_shows_it():
     html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
     assert 'rewriteExample(' in html and 'Fictional example, for illustration only' in html
     assert 'replace each [bracket] with your own facts' in html.lower()
+
+
+def test_rewrite_example_reaches_the_claim_inventory_for_green_and_social_claims():
+    """v96.6 follow-up: build_claim_inventory() (used for social claims) dropped rewrite_example, so only green
+    claims showed the fictional example. Every inventory row that has a template must also carry its example."""
+    txt = ('Our new bottle is eco-friendly. We guarantee that all suppliers respect human rights. '
+           'We make a positive impact on communities. 100% natural.')
+    r = app.analyse_uploaded_document('t.txt', txt, 'Testco', '', document_coverage=None)
+    inv = r['claim_inventory']
+    assert {x['dimension'] for x in inv} == {'Green', 'Social'}
+    for x in inv:
+        assert x.get('ready_to_use_rewrite'), x['claim_type']
+        assert x.get('rewrite_example'), x['claim_type']
+
+
+def test_user_reported_supplier_scope3_claim_gets_a_supplier_rewrite_not_a_product_one():
+    """v96.6 follow-up (reported live): a generic claim about working with suppliers on Scope 3 emissions was shown
+    the template "[Product or product line] uses X% less water ..." -- irrelevant to what the claim says. The
+    rewrite now follows the claim's topic. The PDF line-break hyphen ("leveranci‐ ers") is also repaired."""
+    text = ("Samenwerken met leveranci‐ ers die over certificeringen inzake milieuvriendelijke praktijken beschikken. "
+            "Leveranciers betrekken om Scope 3-emissies te verminderen via dialoog en pilootprojecten (30% tegen 2026; 70% tegen 2030).")
+    cleaned = app._strip_pdf_glyph_artifacts(text)
+    assert 'leveranciers die' in cleaned and '‐' not in cleaned
+    for ty in ('Generic environmental claim', 'Future environmental-performance claim'):
+        template = app.green_ready_to_use_rewrite(ty, cleaned)
+        example = app.green_rewrite_example(ty, cleaned)
+        assert 'suppliers' in template.lower() and 'suppliers' in example.lower(), ty
+        assert 'water' not in template.lower() and 'product line' not in template.lower(), ty
+
+
+_RELEVANCE_CASES = [
+    # (claim type, claim wording, a phrase the matching rewrite must contain)
+    ('Generic environmental claim', 'We are committed to sustainable packaging solutions', 'packaging type'),
+    ('Generic environmental claim', 'Nous utilisons de l’énergie verte et renouvelable', 'electricity'),
+    ('Generic environmental claim', 'Wir sparen Wasser und schützen Ressourcen', 'water per'),
+    ('Generic environmental claim', 'Eco-friendly bags that are biodegradable', 'breaks down'),
+    ('Generic environmental claim', 'We protect nature and biodiversity', 'habitat'),
+    ('Generic environmental claim', 'Our fleet is greener with electric vehicles', 'vehicles'),
+    ('Generic environmental claim', 'We reduce waste', 'waste from'),
+    ('Generic environmental claim', 'Climate-friendly production, lower CO2 emissions', 'greenhouse-gas'),
+    ('Generic environmental claim', 'We protect natural resources', 'What the claim is about'),
+    ('Generic environmental claim', 'Onze producten zijn duurzaam', 'What the claim is about'),
+    ('Absolute or purity environmental wording', '100% natural, chemical-free ingredients', 'contains no'),
+    ('Absolute or purity environmental wording', 'zero waste to landfill', 'waste from'),
+    ('Absolute or purity environmental wording', 'fully recyclable', 'can be'),
+    ('Future environmental-performance claim', 'Tegen 2030 gebruiken we 100% hernieuwbare energie', 'electricity'),
+    ('Future environmental-performance claim', 'We aim to be more sustainable in the future', 'We aim to'),
+    ('Comparative environmental claim', "greener than competitors' packaging", 'less'),
+    ('Climate-neutrality or offsetting claim', 'carbon neutral supply chain', 'greenhouse-gas'),
+    ('Legal requirement presented as green benefit', 'water quality required by law', 'is required by'),
+]
+
+
+def test_green_rewrite_follows_claim_type_and_topic():
+    for ty, text, phrase in _RELEVANCE_CASES:
+        assert phrase.lower() in app.green_ready_to_use_rewrite(ty, text).lower(), (ty, text)
+        assert app.green_rewrite_example(ty, text), (ty, text)
+
+
+def test_social_rewrite_follows_claim_type_and_topic_but_keeps_broad_policies_broad():
+    h = 'Human-rights / labour-rights claim'
+    assert 'living wage' in app.social_ready_to_use_rewrite(h, 'We pay a living wage to all employees')
+    assert 'living wage' in app.social_ready_to_use_rewrite(h, 'Wij betalen een leefbaar loon')
+    assert 'child labour' in app.social_ready_to_use_rewrite(h, 'Child labour is banned; we audit child labour risk')
+    assert 'training' in app.social_ready_to_use_rewrite(h, 'We offer training and skills development')
+    # a broad policy that mentions a topic once, or "European Union", keeps the human-rights template
+    assert 'To respect human rights' in app.social_ready_to_use_rewrite(h, 'Our human rights policy covers child labour and wages')
+    assert 'To respect human rights' in app.social_ready_to_use_rewrite(h, 'We respect human rights across the European Union')
+    # other social types are never overridden by a topic word
+    assert 'forced labour' in app.social_ready_to_use_rewrite('Forced-labour product or supply-chain claim', 'no forced labour, living wage')
+    assert 'suppliers' in app.social_ready_to_use_rewrite('Supplier-responsibility / sourcing claim', 'responsible sourcing').lower()
+
+
+def test_real_scan_gives_each_finding_a_rewrite_that_matches_its_topic():
+    txt = ("Our packaging is eco-friendly. We cooperate with suppliers to reduce Scope 3 emissions and are sustainable. "
+           "We pay a living wage to all employees and human rights matter to us.")
+    r = app.analyse_uploaded_document('t.txt', txt, 'Testco', '', document_coverage=None)
+    by_text = {}
+    for x in r['claim_inventory']:
+        by_text[x['claim_text']] = x
+        assert x['ready_to_use_rewrite'] and x['rewrite_example']
+    for claim_text, x in by_text.items():
+        low = claim_text.lower()
+        tpl = x['ready_to_use_rewrite'].lower()
+        if 'packaging' in low and 'supplier' not in low:
+            assert 'packaging type' in tpl, claim_text
+        if 'supplier' in low:
+            assert 'suppliers' in tpl, claim_text
+        if 'living wage' in low:
+            assert 'living wage' in tpl, claim_text
