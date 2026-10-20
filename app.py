@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_16_crawl_slow_site_grace"
-APP_RELEASE_LABEL="v95.16"
+APP_VERSION="hostable_v95_17_name_resolution_abbreviated_domains"
+APP_RELEASE_LABEL="v95.17"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -9921,6 +9921,26 @@ def _v64_root_label(host):
     return parts[-2]
 
 
+def _v66_label_abbreviates_brand(label, company_name):
+    """True when a domain label is the company name with its LAST word shortened, which is how
+    many companies register their domain: "Gaasch Packaging" -> gaaschpack.eu, "Smith Consulting"
+    -> smithconsult.com. Reported on a live scan: searching "Gaasch Packaging" by name found
+    nothing, because the real domain label (gaaschpack) matched no alias (gaaschpackaging), the
+    search hit scored only 41 and the domain guesses all started from the full name.
+
+    Deliberately strict so it cannot reintroduce the unrelated-site mismatches fixed earlier
+    (lotus.com for "Lotus Bakeries", homeinvest.com for "Home Invest Belgium"): every word except
+    the last must appear in full, and at least three letters of the last word must follow, so a
+    label that merely drops the last word ("lotus", "homeinvest") never matches."""
+    tokens=[t for t in _v64_norm(company_name).split() if t not in _V60_CORPORATE_WORDS and len(t)>=2]
+    label=_v64_compact(label)
+    if len(tokens)<2 or not label: return False
+    head=''.join(_v64_compact(t) for t in tokens[:-1]); last=_v64_compact(tokens[-1])
+    if not head or not label.startswith(head): return False
+    rest=label[len(head):]
+    return 3<=len(rest)<len(last) and last.startswith(rest)
+
+
 def _v64_known_site(name):
     key=_v64_norm(name)
     if key in V64_CANONICAL_COMPANY_SITES:
@@ -10220,7 +10240,8 @@ def _v65_official_candidate_score(result, company_name):
     known_root=_root_domain((urlparse(known).hostname or '')) if known else ''
     if known_root and root==known_root:
         score+=120
-    if label in compacts or any(label==c+s for c in compacts for s in V65_CORPORATE_SUFFIXES):
+    abbreviated=_v66_label_abbreviates_brand(label,company_name) and bool(title_count or content_count)
+    if label in compacts or abbreviated or any(label==c+s for c in compacts for s in V65_CORPORATE_SUFFIXES):
         score+=80
     if title_count:
         score+=35
@@ -10230,7 +10251,7 @@ def _v65_official_candidate_score(result, company_name):
     if any(term in relation for term in V65_RELATED_TERMS):
         score+=10
     # A result requires target evidence. A generic 'official' page is insufficient.
-    if not (title_count or content_count or label in compacts):
+    if not (title_count or content_count or label in compacts or abbreviated):
         return -999
     return score
 
@@ -10285,7 +10306,11 @@ def _v72_guess_domain_bases(name):
         stripped_compact=_v64_compact(stripped)
         if stripped_compact and len(stripped_compact)>=3 and stripped_compact not in bases:
             bases.append(stripped_compact)
-    return bases[:4]
+    if len(tokens)>=2:
+        short=''.join(_v64_compact(t) for t in tokens[:-1])+_v64_compact(tokens[-1])[:4]
+        if len(_v64_compact(tokens[-1]))>4 and short not in bases:
+            bases.insert(1,short)
+    return bases[:5]
 
 def _v72_guess_domain_candidates(name):
     bases=_v72_guess_domain_bases(name)
@@ -10321,7 +10346,7 @@ def _v72_validate_guessed_domain(url, name):
     compacts={_v64_compact(a) for a in aliases if len(_v64_compact(a))>=3}
     host=(urlparse(final_url or url).hostname or '').lower().removeprefix('www.')
     root_label=_v64_compact(_v64_root_label(host))
-    if root_label not in compacts:
+    if root_label not in compacts and not _v66_label_abbreviates_brand(root_label,name):
         return None
     title=_v72_extract_title(html)
     title_count,_=_v64_alias_occurrences(title,aliases)

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_16_crawl_slow_site_grace'
+    assert app.APP_VERSION == 'hostable_v95_17_name_resolution_abbreviated_domains'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7028,3 +7028,34 @@ def test_crawl_extends_its_budget_once_for_a_slow_site(monkeypatch):
     deadline = app.time.time() + 5
     _, pages, _ = app.crawl('https://example.com', max_extra_pages=8, deadline=deadline, log=[])
     assert sum(1 for p in pages if '/sustainability/p' in p) >= 3, pages
+
+
+def test_company_name_resolves_to_a_domain_that_abbreviates_the_last_word():
+    """Reported on a live scan: searching "Gaasch Packaging" by name gave no usable result,
+    because the real domain (gaaschpack.eu) abbreviates the last word of the name. The search hit
+    scored only 41 (no alias matched the domain label), and every domain guess started from the
+    full name (gaaschpackaging). A domain label that is the name with its last word shortened must
+    count as a brand match -- but never a label that merely drops the last word, which is how
+    lotus.com / homeinvest.com were wrongly matched before."""
+    hit = {'url': 'https://gaaschpack.eu/', 'title': 'Gaasch Packaging | Glass bottles, caps and closures',
+           'content': 'Gaasch Packaging is a Luxembourg based packaging company.'}
+    assert app._v65_official_candidate_score(hit, 'Gaasch Packaging') >= 70
+    assert 'gaaschpack' in app._v72_guess_domain_bases('Gaasch Packaging')
+    assert app._v66_label_abbreviates_brand('gaaschpack', 'Gaasch Packaging')
+    assert app._v66_label_abbreviates_brand('lotusbak', 'Lotus Bakeries')
+    for label, name in [('lotus', 'Lotus Bakeries'), ('homeinvest', 'Home Invest Belgium'), ('gaasch', 'Gaasch Packaging'),
+                        ('gaaschpackaging', 'Gaasch Packaging')]:
+        assert not app._v66_label_abbreviates_brand(label, name), (label, name)
+    assert app._v65_official_candidate_score({'url': 'https://lotus.com', 'title': 'Lotus Cars', 'content': 'x'}, 'Lotus Bakeries') < 70
+
+
+def test_guessed_abbreviated_domain_is_validated_against_the_company_name(monkeypatch):
+    """The credential-free path (no search API): gaaschpack.eu must validate for the name
+    "Gaasch Packaging" when its live page names the company, and a same-label page that does not
+    name the company must still be rejected."""
+    html = '<html><head><title>Gaasch Packaging</title></head><body>' + 'Gaasch Packaging makes glass bottles. ' * 20 + '</body></html>'
+    monkeypatch.setattr(app, '_open_public_url', lambda url, **k: (html.encode(), 'text/html', url))
+    assert app._v72_validate_guessed_domain('https://www.gaaschpack.eu', 'Gaasch Packaging')
+    other = '<html><head><title>Something else</title></head><body>' + 'Unrelated content here. ' * 30 + '</body></html>'
+    monkeypatch.setattr(app, '_open_public_url', lambda url, **k: (other.encode(), 'text/html', url))
+    assert not app._v72_validate_guessed_domain('https://www.gaaschpack.eu', 'Gaasch Packaging')
