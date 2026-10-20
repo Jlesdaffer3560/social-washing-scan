@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_0_confirm_website_menu'
+    assert app.APP_VERSION == 'hostable_v96_1_confirm_menu_ignores_directories'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7070,6 +7070,11 @@ def test_resolve_company_candidates_is_confident_only_when_the_answer_is_unambig
     monkeypatch.setattr(app, '_v66_company_search_results', lambda name: clear)
     res = app.resolve_company_candidates('Gaasch Packaging')
     assert res['confident'] is True and res['candidates'][0]['host'] == 'gaaschpack.eu'
+
+    noise = clear + [{'url': 'https://find-and-update.company-information.service.gov.uk/company/1', 'title': 'GAASCH PACKAGING (UK) LIMITED overview',
+                      'content': 'Gaasch Packaging (UK) Limited company overview.'}]
+    monkeypatch.setattr(app, '_v66_company_search_results', lambda name: noise)
+    assert app.resolve_company_candidates('Gaasch Packaging')['confident'] is True, 'a registry page that merely names the company is not a rival website'
 
     rival = clear + [{'url': 'https://gaaschpackaging.example/', 'title': 'Gaasch Packaging Ltd', 'content': 'Gaasch Packaging Ltd, a different company.'}]
     monkeypatch.setattr(app, '_v66_company_search_results', lambda name: rival)
