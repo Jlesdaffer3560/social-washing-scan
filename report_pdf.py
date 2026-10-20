@@ -548,6 +548,12 @@ def ready_to_use_rewrite_text(claim, max_chars=220):
     return bounded_text(raw, max_chars) if raw else ""
 
 
+def rewrite_example_text(claim, max_chars=300):
+    """The short FICTIONAL example (an invented company) that illustrates the fill-in template."""
+    raw = clean_text(claim.get("rewrite_example") or "")
+    return bounded_text(raw, max_chars) if raw else ""
+
+
 def _is_verifiable_occurrence(occ):
     """v93.38: has a real, non-generic source AND enough quoted context to actually show
     subject/scope -- a cheap, honest proxy for "can a reader check this", not a claim about
@@ -1159,7 +1165,7 @@ def other_occurrence_excerpts(cluster, max_items=2, max_chars=115):
     return candidates[:max_items]
 
 
-def claim_card(cluster, excerpt_chars=220, material=False, ref=None):
+def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_example=True):
     # External code review, point 12: "gebruik vaste bevindingnummers door het hele rapport"
     # -- risk_driver_table() on page 1 already numbers this same [material]+additional list
     # 1/2/3 ("What needs attention"), but the page-2 detail cards below showed no number at
@@ -1280,7 +1286,8 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None):
     # stronger, unproven claim.
     uncertain = Paragraph(f'<b>WHAT REMAINS UNCERTAIN</b><br/><font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
-    ready_rewrite = ready_to_use_rewrite_text(claim, 320 if material else 230)
+    ready_rewrite = ready_to_use_rewrite_text(claim, 420 if material else 400)
+    example_rewrite = rewrite_example_text(claim, 380 if material else 340)
     if ready_rewrite:
         # v93.62: a monospaced Courier treatment for the example wording read as code/technical
         # output rather than as suggested prose -- per reviewer feedback, replaced with a plain
@@ -1288,7 +1295,9 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None):
         # could use" in a business document. The backend's ready_to_use_rewrite text already
         # comes wrapped in its own literal quote marks (see green/social_ready_to_use_rewrite()
         # in app.py), so no quote marks are added here on top of those.
-        action_html += f'<br/><font color="#6B7398">Example wording — verify and complete before use:</font> <i>{esc(ready_rewrite)}</i>'
+        action_html += f'<br/><font color="#6B7398">Reusable wording — fill in the [brackets], then verify:</font> <i>{esc(ready_rewrite)}</i>'
+        if example_rewrite and show_example:
+            action_html += f'<br/><font color="#6B7398">Fictional example, for illustration only (not about this company):</font> <i>{esc(example_rewrite)}</i>'
     action = Paragraph(action_html, ST["small_dark"])
     # External review (ChatGPT): the legal-basis BADGE next to the title (e.g. "Potentially
     # Prohibited (UCPD Annex I, as amended by EmpCo)") was never explained -- the reader saw
@@ -1847,11 +1856,16 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
 
     # PAGE 2 -- the evidence itself: exact quotes, why they matter, what to do.
     flow += header_block(data, "Company claim-risk report · Findings in detail")
+    # The fictional example is the same for every claim of one type, so it is shown once (on the first card of
+    # that type) instead of repeating on each card -- this keeps the findings pages short.
+    examples_shown = {rewrite_example_text(material.get('representative') or {}, 380)}
     flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True, ref=1))); flow.append(Spacer(1, 3.6*mm))
     flow.append(section_title("Additional findings"))
     if additional:
         for idx, c in enumerate(additional, 2):
-            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False, ref=idx))); flow.append(Spacer(1, 2.6*mm))
+            ex_text = rewrite_example_text(c.get('representative') or {}, 380)
+            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False, ref=idx, show_example=(ex_text not in examples_shown))))
+            examples_shown.add(ex_text); flow.append(Spacer(1, 2.6*mm))
     elif clusters:
         # Only shown when there genuinely IS a single top finding and no others -- "no
         # additional finding" implies at least one finding exists. External code review: this

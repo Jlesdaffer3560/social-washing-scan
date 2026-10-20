@@ -97,9 +97,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_5_no_stale_page_cache"
-APP_RELEASE_LABEL="v96.5"
-APP_RELEASE_DATE="2026-10-17"
+APP_VERSION="hostable_v96_6_plain_language_rewrites"
+APP_RELEASE_LABEL="v96.6"
+APP_RELEASE_DATE="2026-10-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -3863,52 +3863,95 @@ def green_claim_evidence_questions(claim_type):
         return common+['Is the statement merely legal compliance?','Is it presented separately from voluntary sustainability performance?']
     return common
 
-def green_ready_to_use_rewrite(claim_type):
-    """A literal, fill-in-the-blank example rewrite -- not abstract guidance on what to
-    disclose, but an actual sentence structure the company can copy and complete with its own
-    facts. Nothing inside [brackets] is invented or assumed true; it marks exactly what still
-    needs to be supplied before the wording can be reused."""
+# Ready-to-use rewrites (v96.6). Every claim type gets TWO texts:
+#  * a fill-in TEMPLATE: a real sentence in plain language in which every [bracket] says, in everyday words,
+#    what the company still has to fill in (nothing inside a bracket is invented or assumed true), and
+#  * a short FICTIONAL EXAMPLE of the same sentence completed for an invented company, so a reader who is
+#    not an expert can see what a good answer looks like. The example is always labelled as fictional.
+# Plain wording on purpose: no "attribute", "scope", "baseline" or "methodology" without saying what is meant.
+_GREEN_REWRITES=[
+    (('climate','offset'),
+     '"We have cut our greenhouse-gas emissions by [X%] between [start year] and [latest year]. This covers [which '
+     'emissions: only our own sites and energy / also our suppliers and products] and is calculated with [name of the '
+     'calculation method, e.g. the GHG Protocol]. The emissions we have not cut are handled through [name of the '
+     'specific programme]; details at [link]."',
+     '"Nordwind Packaging cut its greenhouse-gas emissions by 28% between 2019 and 2025. This covers our own factories '
+     'and the electricity we buy, and is calculated with the GHG Protocol. The emissions we have not cut are handled '
+     'through the Delta Forest Restoration programme; details at nordwind.example/climate."'),
+    (('label','certification'),
+     '"Certified under [exact name of the label or scheme] by [name of the independent certifier], certificate number '
+     '[number], valid until [date]. It covers [which products or sites]. Check it at [link to the certifier\'s public '
+     'register]."',
+     '"Our cotton tote bags are certified under the GreenTextile Standard by Certico Audit, certificate number 12345, '
+     'valid until 31 March 2027. It covers the tote bags made at our Porto factory. Check it at certico.example/register."'),
+    (('recycl','circular'),
+     '"[X%] of the [material, e.g. plastic] in [this product / this packaging] is recycled material, [from household '
+     'waste / from factory waste], checked against [name of the standard or test]. It can be recycled in [named '
+     'countries or collection systems], as long as [condition, e.g. the lid is removed]."',
+     '"40% of the plastic in the Aqua bottle is recycled material from household waste, checked against the Global '
+     'Recycled Standard. The bottle can be recycled through household plastic collection in Belgium and the '
+     'Netherlands, as long as the cap is removed."'),
+    (('generic',),
+     '"[Product or product line] [states one concrete fact with a number, e.g. uses X% less water, contains X% recycled '
+     'material, or holds a named certificate]. This is measured with [name of the method or standard], applies to [this '
+     'product only / the whole collection] and dates from [month and year]. Full details: [link]."',
+     '"The Nordwind Aqua bottle uses 32% less water in production than our 2022 model. This is measured with the ISO '
+     '14046 water-footprint method, applies to the Aqua bottle only and dates from June 2026. Full details: '
+     'nordwind.example/aqua."'),
+    (('legal requirement',),
+     '"[Feature] is required by [name of the law, e.g. EU REACH] and we comply with it. We do not present this as an '
+     'extra sustainability benefit."',
+     '"Our toys contain none of the restricted substances listed in EU REACH, as the law requires. This is a legal '
+     'minimum, not an extra sustainability benefit."'),
+    (('absolute','purity'),
+     '"[X%] of [which part, e.g. this product\'s packaging] can be [one concrete thing, e.g. recycled through normal '
+     'household collection] in [country or region], based on [name of the test or standard]. This does not apply to '
+     '[exceptions, e.g. the lid]."',
+     '"95% of the Nordwind cardboard box (by weight) can be recycled through normal household paper collection in '
+     'Belgium and the Netherlands, based on the EN 13430 recyclability test. This does not apply to the plastic window."'),
+    (('comparative',),
+     '"[Product] causes [X%] less [what, e.g. CO2 emissions per unit / water use] than [named comparison: the previous '
+     'version / a named competitor product], based on [name of the study or method, date]. The comparison covers [what '
+     'is compared, e.g. production only / the full life cycle]. Full data: [link]."',
+     '"The new Nordwind Aqua bottle causes 18% less CO2 per bottle than the 2022 Aqua bottle, based on an independent '
+     'life-cycle study by GreenLab (May 2026). The comparison covers production and transport, not use at home. Full '
+     'data: nordwind.example/aqua-study."'),
+    (('future',),
+     '"We aim to [concrete goal, e.g. cut our emissions by X%] by [year]. The plan to get there has these main steps: '
+     '[steps with dates]. It is published at [link] and checked [how often and by whom, e.g. every year by an external '
+     'auditor]."',
+     '"We aim to cut our greenhouse-gas emissions by 50% by 2030, compared with 2019. The main steps are: all factories '
+     'on renewable electricity by 2027 and electric delivery vans by 2029. The plan is published at '
+     'nordwind.example/plan and checked every year by an external auditor."'),
+    (('visual',),
+     '"The [name of the icon or badge] means [what it stands for, e.g. the product is certified under a named scheme], '
+     'awarded by [name of the organisation that grants it]. The criteria are explained at [link]."',
+     '"The Green Leaf badge on our boxes means the product is certified under the GreenTextile Standard, awarded by '
+     'Certico Audit. The criteria are explained at certico.example/criteria."'),
+]
+_GREEN_REWRITE_DEFAULT=(
+    '"[A concrete statement that can be checked, with numbers], based on [name of the method or standard, and date]. '
+    'It covers [exactly what: which product, site or period]. Evidence: [link]."',
+    '"Our Porto factory used 100% renewable electricity in 2025, checked by an independent auditor (report dated '
+    'March 2026). This covers the Porto factory only. Evidence: nordwind.example/energy."')
+
+def _pick_rewrite(table, default, claim_type):
     t=(claim_type or '').lower()
     if is_placeholder_finding(t):
-        return ''
-    if 'climate' in t or 'offset' in t:
-        return ('"We have reduced our [Scope 1 and 2 / Scope 1, 2 and 3] emissions by [X%] since [baseline year], measured '
-                 'according to [methodology, e.g. the GHG Protocol]. Remaining emissions are addressed through [name of '
-                 'specific removal/offset programme]; details at [link]."')
-    if 'label' in t or 'certification' in t:
-        return ('"Certified [exact scheme name, e.g. GOTS / Fairtrade / EU Ecolabel] by [certifying body], certificate '
-                 'number [X], valid until [date], covering [product/site scope]. Verify at [certifier registry link]."')
-    if 'recycl' in t or 'circular' in t:
-        return ('"Contains [X%] recycled [material] ([post-consumer/post-industrial]), verified per [standard, e.g. GRS], '
-                 'covering [product/packaging scope]. Recyclable in [specific regions/facilities], subject to [conditions]."')
-    if 'generic' in t:
-        # v93.63: "Generic environmental claim" is a broad catch-all covering claims about
-        # water, energy, packaging, sourcing, materials or anything else -- the fixed example
-        # "e.g. '70% recycled cotton'" shown here regardless of the claim's actual topic was
-        # confirmed as exactly the kind of mismatched, irrelevant example a second reviewer
-        # flagged (e.g. shown next to an energy-efficiency or biodegradable-packaging claim
-        # that has nothing to do with cotton or recycling). Describes the KIND of attribute
-        # needed instead of naming an unrelated one.
-        return ('"[Product/product line] has [a specific, verifiable attribute relevant to this claim — e.g. a measured '
-                 'percentage, test result or certification], based on [methodology/standard], covering [this product only / '
-                 'this collection], as of [date]. Full methodology: [link]."')
-    if 'legal requirement' in t:
-        return '"[Feature] complies with [specific law/regulation, e.g. EU REACH]."'
-    if 'absolute' in t or 'purity' in t:
-        return ('"[X%] of [specific scope, e.g. this product\'s packaging] is [specific attribute, e.g. recyclable '
-                 'through standard municipal collection] in [region/market], based on [test standard/method]. [State any '
-                 'exclusions or conditions]."')
-    if 'comparative' in t:
-        return ('"[Product] has [X%] lower [specific impact metric, e.g. CO2e per unit] than [named comparator or '
-                 'previous version], based on [methodology/study, date], covering [scope of comparison]. Full data: [link]."')
-    if 'future' in t:
-        return ('"We aim to reach [specific target, e.g. net zero Scope 1 and 2] by [year], with an implementation plan '
-                 'covering [key milestones], published at [link] and reviewed [annually / by whom]."')
-    if 'visual' in t:
-        return ('"[Icon/badge name] represents [specific certification scheme] awarded by [certifying body]; see [link] '
-                 'for scope and criteria."')
-    return ('"[Specific, verifiable statement], based on [methodology/standard/date], covering [exact scope]. Full '
-            'evidence: [link]."')
+        return ('','')
+    for keys,template,example in table:
+        if any(k in t for k in keys):
+            return (template,example)
+    return default
+
+def green_ready_to_use_rewrite(claim_type):
+    """A literal, fill-in-the-blank example rewrite -- not abstract guidance on what to disclose, but an actual
+    sentence the company can copy and complete with its own facts (see _GREEN_REWRITES above)."""
+    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type)[0]
+
+def green_rewrite_example(claim_type):
+    """The same sentence completed for an invented company, shown next to the template (always labelled fictional)."""
+    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type)[1]
 
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
@@ -4037,6 +4080,7 @@ def enrich_green_finding(f, trigger=''):
     f.update(classify_legal_basis(f))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
     f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''))
+    f['rewrite_example']=green_rewrite_example(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -4277,7 +4321,7 @@ def build_green_claim_inventory(findings):
         # this builder dropped it when assembling the frontend-facing claim, so every green
         # claim card's "Legal basis" box (and the badge's hover tooltip) rendered empty.
         # Reported live on Delhaize.
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'rewrite_example':f.get('rewrite_example',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -8914,38 +8958,63 @@ def social_blacklisted_indicator(claim_type, trigger, claim_text):
         return 'Potentially misleading social claim if human-rights/labour wording is not backed by a disclosed due-diligence process, grievance mechanism and remedy evidence. Social characteristics fall under EmpCo Art. 6(1)(b) but, unlike specific environmental Annex I practices, are assessed case-by-case rather than via a fixed blacklist.'
     return 'No direct regulatory-blacklist indicator identified, but claim-specific substantiation is still required.'
 
+_SOCIAL_REWRITES=[
+    (('forced','modern slavery'),
+     '"To prevent forced labour in [product or supply chain], we [name the specific check, e.g. trace the raw material '
+     'back to the farm or mine], assess the risks with [name of the method] and have a written process to put things '
+     'right if a problem is found. Last reviewed on [date]. Full policy: [link]."',
+     '"To prevent forced labour in our cotton supply chain, we trace the cotton back to the farm, assess the risks with '
+     'the OECD due-diligence method and have a written process to put things right if a problem is found. Last '
+     'reviewed on 15 May 2026. Full policy: nordwind.example/forced-labour."'),
+    (('supply','supplier','sourcing'),
+     '"[X%] of our [group of suppliers, e.g. first-tier suppliers], together supplying [X%] of our [product category], '
+     'were audited against [name of the standard, e.g. amfori BSCI] in [year]. [X] problems found were fixed. Full '
+     'data: [link]."',
+     '"86% of our first-tier suppliers, together supplying 92% of our textiles, were audited against the amfori BSCI '
+     'standard in 2025. 41 of the 47 problems found were fixed by year-end. Full data: nordwind.example/suppliers."'),
+    (('human','labour','labor'),
+     '"To respect human rights in [part of the business], we [describe how we find the biggest risks], offer a way to '
+     'report concerns at [link or contact] and commit to put things right where harm is found. We review this every '
+     '[how often]; last review: [date]."',
+     '"To respect human rights in our factories, we interview workers every year to find the biggest risks, offer a '
+     'confidential reporting line at nordwind.example/report and commit to put things right where harm is found. We '
+     'review this every year; last review: 10 March 2026."'),
+    (('safety','welfare','health'),
+     '"At [site or activity] we recorded [X] accidents per [1,000,000 hours worked] in [year], measured with [name of '
+     'the safety system], checked by [auditor or method]. This does not include [exceptions, e.g. contractors]."',
+     '"At our Porto factory we recorded 2.1 accidents per 1,000,000 hours worked in 2025, measured with the ISO 45001 '
+     'safety system and checked by an external auditor. This does not include temporary contractors."'),
+    (('diversity','inclusion','equality'),
+     '"[X%] of [group of roles, e.g. senior management positions] are held by [group, e.g. women] as of [date], '
+     'measured by [how you count, e.g. headcount on 31 December]. Full breakdown: [link]."',
+     '"38% of senior management positions are held by women as of 31 December 2025, measured by headcount across the '
+     'whole company. Full breakdown: nordwind.example/diversity."'),
+    (('aspirational','future'),
+     '"Since [start year] we have achieved [measurable result]. We now aim for [concrete goal] by [year], and report '
+     'progress each year in [named report]."',
+     '"Since 2020 we have reduced factory accidents by 45%. We now aim for zero lost-time accidents by 2028, and report '
+     'progress each year in our sustainability report."'),
+    (('community','social-impact','social impact'),
+     '"In [year], our [named programme] reached [number] [people or communities] in [named place]. This is measured by '
+     '[what you count and how]. Full report: [link]."',
+     '"In 2025, our Nordwind Schools programme reached 1,200 children in three villages in northern Portugal. This is '
+     'measured by yearly school enrolment records. Full report: nordwind.example/schools."'),
+]
+_SOCIAL_REWRITE_DEFAULT=(
+    '"[A concrete statement that can be checked, with numbers], based on [name of the method or standard, and date]. '
+    'It covers [exactly what: which group, site or period]. Evidence: [link]."',
+    '"In 2025, 100% of our factory workers were covered by a collective labour agreement, confirmed by the national '
+    'labour inspectorate (letter dated February 2026). This covers our Porto factory only. Evidence: '
+    'nordwind.example/labour."')
+
 def social_ready_to_use_rewrite(claim_type):
-    """Literal, fill-in-the-blank example rewrite for social/forced-labour claim types --
-    see green_ready_to_use_rewrite() for the rationale. Bracketed placeholders mark facts only
-    the company can supply; nothing inside them is invented or assumed true."""
-    t=(claim_type or '').lower()
-    if is_placeholder_finding(t):
-        return ''
-    if 'forced' in t or 'modern slavery' in t:
-        return ('"Our forced-labour risk-management approach for [product/supply chain] includes [specific traceability '
-                 'mechanism], [named risk-assessment methodology] and a documented remediation process, most recently '
-                 'reviewed on [date]. Full policy: [link]."')
-    if 'supply' in t or 'supplier' in t or 'sourcing' in t:
-        return ('"[X%] of [named tier, e.g. Tier 1] suppliers, covering [X%] of [product category] sourcing, were '
-                 'audited against [named standard, e.g. amfori BSCI] in [year], with [X] corrective actions closed. Full '
-                 'data: [link]."')
-    if 'human' in t or 'labour' in t or 'labor' in t:
-        return ('"Our human-rights due-diligence process for [scope] includes [salient-risk assessment method], a '
-                 'grievance channel at [link/contact], and remedy commitments reviewed [frequency]. Latest review: [date]."')
-    if 'safety' in t or 'welfare' in t or 'health' in t:
-        return ('"[Facility/operation] recorded [X] incidents per [X hours worked] in [year], tracked via [named '
-                 'safety-management system], audited by [auditor/method]. [State any exclusions]."')
-    if 'diversity' in t or 'inclusion' in t or 'equality' in t:
-        return ('"[X%] of [role level, e.g. leadership positions] are held by [group], as of [date], measured via '
-                 '[methodology]. Full breakdown: [link]."')
-    if 'aspirational' in t or 'future' in t:
-        return ('"Since [baseline year], we have achieved [specific measured outcome], and are working towards '
-                 '[specific target] by [year], tracked via [named KPI/report]."')
-    if 'community' in t or 'social-impact' in t or 'social impact' in t:
-        return ('"In [year], our [named programme] reached [X specific beneficiaries/communities] in [named location], '
-                 'measured by [named indicator/methodology]. Full report: [link]."')
-    return ('"[Specific, verifiable statement], based on [methodology/standard/date], covering [exact scope]. Full '
-            'evidence: [link]."')
+    """Literal, fill-in-the-blank example rewrite for social/forced-labour claim types in plain language -- see
+    _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply."""
+    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type)[0]
+
+def social_rewrite_example(claim_type):
+    """The same sentence completed for an invented company (always labelled fictional where shown)."""
+    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type)[1]
 
 def enrich_social_finding(f, trigger=''):
     analysis_text=_v93_analysis_text(f)
@@ -8971,6 +9040,7 @@ def enrich_social_finding(f, trigger=''):
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), analysis_text)
     f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''))
+    f['rewrite_example']=social_rewrite_example(f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 

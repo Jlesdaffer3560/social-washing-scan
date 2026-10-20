@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_5_no_stale_page_cache'
+    assert app.APP_VERSION == 'hostable_v96_6_plain_language_rewrites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -5522,7 +5522,7 @@ def test_claim_card_example_wording_is_not_monospaced_and_not_double_quoted():
     doc = SimpleDocTemplate(buf, pagesize=rp.A4)
     doc.build([card])
     import pypdf
-    text = pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    text = ' '.join(pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text().split())
     assert '""[Product]' not in text, 'must not double the backend-supplied quote marks'
     assert '[Product] has [a specific attribute].' in text
 
@@ -5582,7 +5582,7 @@ def test_generic_claim_rewrite_example_does_not_name_an_unrelated_attribute():
     specific, unrelated commodity."""
     example = app.green_ready_to_use_rewrite('Generic environmental claim')
     assert 'cotton' not in example.lower()
-    assert 'recycled' not in example.lower() or 'attribute relevant to this claim' in example.lower()
+    assert 'attribute' not in example.lower()
     assert '[' in example and ']' in example, 'still a fill-in-the-blank template, not a fixed statement'
 
 
@@ -7224,3 +7224,82 @@ def test_page_is_never_cached_and_an_open_tab_is_told_about_a_new_version():
     text = Path('frontend.html').read_text(encoding='utf-8')
     assert '<meta name="app-version" content="{{APP_VERSION}}"' in text
     assert 'id="updateBanner"' in text and 'checkForNewVersion' in text and "visibilitychange" in text
+
+
+_ALL_REWRITE_CLAIM_TYPES = [
+    'Climate / offsetting claims', 'Carbon / Offsetting Claim Check', 'Label, Icon & Visual Claim Check',
+    'Recycled / recyclable material claim', 'Circularity / Durability / Repairability Check',
+    'Generic environmental claim', 'Legal requirement presented as green benefit',
+    'Absolute or purity environmental wording', 'Comparative environmental claim',
+    'Future environmental-performance claim', 'Visual green-claim indicator', 'Something unmapped',
+]
+_ALL_SOCIAL_REWRITE_CLAIM_TYPES = [
+    'Forced-labour product or supply-chain claim', 'Supply-chain or supplier-responsibility claim',
+    'Human-rights / labour-rights claim', 'Safety, welfare and health claim',
+    'Diversity, equality and inclusion claim', 'Aspirational or future social-performance claim',
+    'Community / social-impact claim', 'Social claim',
+]
+
+
+def _all_rewrite_pairs():
+    pairs = []
+    for ty in _ALL_REWRITE_CLAIM_TYPES:
+        pairs.append((ty, app.green_ready_to_use_rewrite(ty), app.green_rewrite_example(ty)))
+    for ty in _ALL_SOCIAL_REWRITE_CLAIM_TYPES:
+        pairs.append((ty, app.social_ready_to_use_rewrite(ty), app.social_rewrite_example(ty)))
+    return pairs
+
+
+def test_every_ready_to_use_rewrite_uses_plain_language_and_has_a_fictional_example():
+    """v96.6: the rewrite templates used jargon such as "a specific, verifiable attribute relevant to this claim"
+    that a non-expert could not fill in. For EVERY claim type (green and social, plus the unmapped fallback) the
+    template must avoid that word and similar jargon, still be a bracketed fill-in sentence, and come with a short
+    completed example (no brackets left, so it reads as a finished sentence)."""
+    for ty, template, example in _all_rewrite_pairs():
+        assert template and example, ty
+        for text in (template, example):
+            low = text.lower()
+            assert 'attribute' not in low, (ty, text)
+            assert 'scope 1' not in low and 'baseline' not in low and 'methodology' not in low, (ty, text)
+        assert '[' in template and ']' in template, ty
+        assert '[' not in example and ']' not in example, (ty, example)
+        assert example != template
+
+
+def test_rewrite_examples_are_marked_fictional_and_name_no_real_company_claim():
+    """The example is an INVENTED company ("Nordwind"), never presented as the scanned company's own wording."""
+    import report_pdf as rp
+    claim = _pdf_finding(0, 'Generic environmental claim', 'High', 'Our products are sustainable.', 60, source='s0')
+    claim['ready_to_use_rewrite'] = app.green_ready_to_use_rewrite('Generic environmental claim')
+    claim['rewrite_example'] = app.green_rewrite_example('Generic environmental claim')
+    card = rp.claim_card({'representative': claim, 'occurrences': [claim]}, material=True)
+    from reportlab.platypus import SimpleDocTemplate
+    import io as _io
+    buf = _io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=rp.A4).build([card])
+    import pypdf
+    text = ' '.join(pypdf.PdfReader(_io.BytesIO(buf.getvalue())).pages[0].extract_text().split())
+    assert 'Fictional example, for illustration only' in text
+    assert 'fill in the [brackets]' in text
+    assert 'Nordwind' in text
+
+
+def test_rewrite_texts_fit_the_pdf_budgets_without_being_cut_off():
+    """A template or example cut off mid-sentence reads as a defect; the budgets in claim_card must be at least as
+    long as the longest text of every claim type."""
+    import report_pdf as rp
+    for ty, template, example in _all_rewrite_pairs():
+        for material in (True, False):
+            c = {'ready_to_use_rewrite': template, 'rewrite_example': example}
+            assert rp.ready_to_use_rewrite_text(c, 420 if material else 400) == rp.clean_text(template), (ty, material)
+            assert rp.rewrite_example_text(c, 380 if material else 340) == rp.clean_text(example), (ty, material)
+
+
+def test_findings_carry_the_rewrite_example_and_the_frontend_shows_it():
+    f = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': 'Our products are sustainable.',
+                                  'risk': 'High'}) if hasattr(app, 'enrich_green_finding') else None
+    if f is not None:
+        assert f.get('rewrite_example') and 'attribute' not in f['ready_to_use_rewrite'].lower()
+    html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
+    assert 'rewriteExample(' in html and 'Fictional example, for illustration only' in html
+    assert 'replace each [bracket] with your own facts' in html.lower()
