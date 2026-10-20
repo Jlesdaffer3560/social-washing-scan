@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_1_confirm_menu_ignores_directories"
-APP_RELEASE_LABEL="v96.1"
+APP_VERSION="hostable_v96_2_confirm_menu_drops_weak_mentions"
+APP_RELEASE_LABEL="v96.2"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -10429,7 +10429,10 @@ def resolve_company_candidates(name, max_candidates=5):
             if hit:
                 final_url,_len=hit
                 consider(final_url,'',75,'Domain guess confirmed by the page content')
-    ranked=sorted(by_root.values(),key=lambda c:(-c['score'],len(c['host'])))[:max_candidates]
+    ranked=sorted(by_root.values(),key=lambda c:(-c['score'],len(c['host'])))
+    # The menu lists plausible websites, not every page that mentions the name: weak hits (stock-quote
+    # pages, news, directories score ~45-55) are dropped unless nothing stronger exists.
+    ranked=([c for c in ranked if c['score']>=60] or ranked[:3])[:max_candidates]
     # A rival only blocks confidence when it is itself a strong brand/domain match (>=80): company
     # registries, directories and news pages that merely mention the name score ~50-65 and are not
     # alternative official websites ("Gaasch Packaging" also hits Companies House and a trade directory).

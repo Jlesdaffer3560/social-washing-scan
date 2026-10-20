@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_1_confirm_menu_ignores_directories'
+    assert app.APP_VERSION == 'hostable_v96_2_confirm_menu_drops_weak_mentions'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7129,3 +7129,17 @@ def test_frontend_offers_a_website_menu_for_uncertain_company_names():
     assert 'chosen_url:c.url' in text
     assert 'None of these' in text and 'Open site' in text
     assert 'if(!res.confident){showResolveMenu(' in text
+
+
+def test_resolve_company_candidates_menu_drops_weak_mentions(monkeypatch):
+    """The "which website?" menu must list plausible websites only: a stock-quote page or directory that
+    merely mentions the company (score ~45-55) is not offered unless nothing stronger exists."""
+    monkeypatch.setattr(app, '_v64_known_site', lambda name: '')
+    hits = [{'url': 'https://www.homeinvestbelgium.be/', 'title': 'Home Invest Belgium', 'content': 'Home Invest Belgium is a Belgian real estate company.'},
+            {'url': 'https://stockanalysis.com/quote/homi', 'title': 'Home Invest Belgium (EBR:HOMI) Company Profile', 'content': 'Home Invest Belgium profile and share price.'}]
+    monkeypatch.setattr(app, '_v66_company_search_results', lambda name: hits)
+    res = app.resolve_company_candidates('Home Invest Belgium')
+    assert [c['host'] for c in res['candidates']] == ['homeinvestbelgium.be']
+    monkeypatch.setattr(app, '_v66_company_search_results', lambda name: hits[1:])
+    monkeypatch.setattr(app, '_v72_validate_guessed_domain', lambda url, name: None)
+    assert [c['host'] for c in app.resolve_company_candidates('Home Invest Belgium')['candidates']] == ['stockanalysis.com']
