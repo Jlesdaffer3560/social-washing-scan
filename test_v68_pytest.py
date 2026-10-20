@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_15_crawl_retry_on_timeout'
+    assert app.APP_VERSION == 'hostable_v95_16_crawl_slow_site_grace'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7000,3 +7000,31 @@ def test_crawl_keeps_the_same_pages_when_a_slower_page_answers_after_a_faster_on
         _, pages, _ = app.crawl('https://example.com', max_extra_pages=3, deadline=None, log=[])
         results.append(pages)
     assert results[0] == results[1], results
+
+
+def test_crawl_extends_its_budget_once_for_a_slow_site(monkeypatch):
+    """A target that keeps timing out spends the whole crawl budget waiting, so retries never ran.
+    After a batch with two or more timeouts, crawl() grants a one-time extension
+    (CRAWL_SLOW_SITE_GRACE_SECONDS) so the retried pages still get fetched."""
+    import time as _time
+    state = {'t0': _time.time()}
+    real_time = _time.time
+    fake_now = {'offset': 0.0}
+    monkeypatch.setattr(app.time, 'time', lambda: real_time() + fake_now['offset'])
+    def fake_fetch_html(url, timeout=7):
+        return '<html><body>' + ''.join(f'<a href="/sustainability/p{i}">p{i}</a>' for i in range(4)) + '</body></html>', url
+    calls = {}
+    def fetch(url, timeout=8):
+        calls[url] = calls.get(url, 0) + 1
+        if '/sustainability/p' not in url:
+            raise ValueError('404')
+        if calls[url] == 1:
+            fake_now['offset'] += 3.0
+            raise TimeoutError('The read operation timed out')
+        return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fetch)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    deadline = app.time.time() + 5
+    _, pages, _ = app.crawl('https://example.com', max_extra_pages=8, deadline=deadline, log=[])
+    assert sum(1 for p in pages if '/sustainability/p' in p) >= 3, pages

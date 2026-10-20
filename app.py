@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_15_crawl_retry_on_timeout"
-APP_RELEASE_LABEL="v95.15"
+APP_VERSION="hostable_v95_16_crawl_slow_site_grace"
+APP_RELEASE_LABEL="v95.16"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -148,6 +148,7 @@ CRAWL_TARGET_EXTRA_PAGES=max(3, min(10, int(os.environ.get("CRAWL_TARGET_EXTRA_P
 CRAWL_MAX_PAGE_ATTEMPTS=max(CRAWL_TARGET_EXTRA_PAGES, min(24, int(os.environ.get("CRAWL_MAX_PAGE_ATTEMPTS", "14"))))
 CRAWL_BUDGET_SECONDS=max(16, min(35, int(os.environ.get("CRAWL_BUDGET_SECONDS", "24"))))
 CRAWL_FETCH_WORKERS=max(2, min(5, int(os.environ.get("CRAWL_FETCH_WORKERS", "4"))))
+CRAWL_SLOW_SITE_GRACE_SECONDS=10
 ENABLE_READER_FALLBACK=os.environ.get("ENABLE_READER_FALLBACK", "1").strip().lower() not in {"0","false","no","off"}
 JINA_API_KEY=os.environ.get("JINA_API_KEY", "").strip()
 
@@ -1749,7 +1750,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     # requests, and (b) queues the page for ONE retry with a longer timeout, and a retry that
     # succeeds replaces the earlier failure in the log.
     workers=CRAWL_FETCH_WORKERS
-    fail_count={}
+    fail_count={}; grace_used=False
     while cursor<len(candidates) and successful<max_extra_pages and attempts<max_attempts and time.time()<deadline-2:
         batch=candidates[cursor:cursor+workers]; cursor+=len(batch); attempts+=len(batch)
         per_timeout=min(8,max(3,remaining()-1))
@@ -1861,10 +1862,15 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                     fail_count[link]=fail_count.get(link,0)+1
                     if fail_count[link]>1 and log is not None: log[:]=[x for x in log if not (x.get('url')==link and x.get('ok') is False)]
                     _log_fetch_failure(log,link,TimeoutError('Fetch exceeded the remaining crawl time budget and was abandoned.'),source=source)
-                    batch_timeouts+=1
         finally:
             executor.shutdown(wait=False)
-        if batch_timeouts>=2: workers=max(2,workers-2)
+        if batch_timeouts>=2:
+            workers=max(2,workers-2)
+            # A slow target spends the crawl budget waiting on timeouts, not on content: grant a
+            # one-time extension so the retries below have time to run (bounded, and only for
+            # sites that are actually struggling).
+            if not grace_used:
+                deadline+=CRAWL_SLOW_SITE_GRACE_SECONDS; grace_used=True
         if retry_pool: candidates[cursor:cursor]=retry_pool
         if discovered:
             # v93.90: newly discovered second-hop links were sorted only relative to EACH
