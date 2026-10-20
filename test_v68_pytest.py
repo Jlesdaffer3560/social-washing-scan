@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v95_17_name_resolution_abbreviated_domains'
+    assert app.APP_VERSION == 'hostable_v96_0_confirm_website_menu'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7059,3 +7059,68 @@ def test_guessed_abbreviated_domain_is_validated_against_the_company_name(monkey
     other = '<html><head><title>Something else</title></head><body>' + 'Unrelated content here. ' * 30 + '</body></html>'
     monkeypatch.setattr(app, '_open_public_url', lambda url, **k: (other.encode(), 'text/html', url))
     assert not app._v72_validate_guessed_domain('https://www.gaaschpack.eu', 'Gaasch Packaging')
+
+
+def test_resolve_company_candidates_is_confident_only_when_the_answer_is_unambiguous(monkeypatch):
+    """Feature: when a company NAME cannot be matched to one website with full certainty, the user
+    must confirm the right site from a menu. confident=True only for a verified known site or one
+    clearly dominant candidate with no plausible rival on another domain."""
+    monkeypatch.setattr(app, '_v64_known_site', lambda name: '')
+    clear = [{'url': 'https://gaaschpack.eu/', 'title': 'Gaasch Packaging | Glass bottles', 'content': 'Gaasch Packaging is a packaging company.'}]
+    monkeypatch.setattr(app, '_v66_company_search_results', lambda name: clear)
+    res = app.resolve_company_candidates('Gaasch Packaging')
+    assert res['confident'] is True and res['candidates'][0]['host'] == 'gaaschpack.eu'
+
+    rival = clear + [{'url': 'https://gaaschpackaging.example/', 'title': 'Gaasch Packaging Ltd', 'content': 'Gaasch Packaging Ltd, a different company.'}]
+    monkeypatch.setattr(app, '_v66_company_search_results', lambda name: rival)
+    res = app.resolve_company_candidates('Gaasch Packaging')
+    assert res['confident'] is False
+    assert [c['host'] for c in res['candidates']][0] == 'gaaschpack.eu' and len(res['candidates']) == 2
+
+    monkeypatch.setattr(app, '_v64_known_site', lambda name: 'https://www.delhaize.be')
+    known = app.resolve_company_candidates('Delhaize')
+    assert known['confident'] is True and known['candidates'][0]['host'] == 'delhaize.be'
+
+
+def test_resolve_company_candidates_falls_back_to_validated_domain_guesses(monkeypatch):
+    """No search provider / no strong search hit: plausible domain guesses are confirmed against the
+    live page content, and a single such guess is still NOT 'confident' (so the user confirms it)."""
+    monkeypatch.setattr(app, '_v64_known_site', lambda name: '')
+    monkeypatch.setattr(app, '_v66_company_search_results', lambda name: [])
+    monkeypatch.setattr(app, '_v72_validate_guessed_domain',
+                        lambda url, name: ('https://gaaschpack.eu', 5000) if url.startswith('https://www.gaaschpack.eu') else None)
+    res = app.resolve_company_candidates('Gaasch Packaging')
+    assert [c['host'] for c in res['candidates']] == ['gaaschpack.eu']
+    assert res['confident'] is False
+    monkeypatch.setattr(app, '_v72_validate_guessed_domain', lambda url, name: None)
+    assert app.resolve_company_candidates('Gaasch Packaging') == {'confident': False, 'candidates': []}
+
+
+def test_scan_with_a_user_confirmed_website_does_not_guess_again(monkeypatch):
+    """After the user picks a website from the menu, analyse_url() must scan exactly that site and not
+    run name resolution again (which could pick a different one), and the entered name stays the hint."""
+    seen = {}
+    def boom(raw): raise AssertionError('resolve_scan_input must not run when the user chose a website')
+    def fake_crawl(original_url, overall_deadline=None, company_name_hint=''):
+        seen['url'] = original_url; seen['hint'] = company_name_hint
+        raise RuntimeError('stop after capturing the resolved target')
+    monkeypatch.setattr(app, 'resolve_scan_input', boom)
+    monkeypatch.setattr(app, 'crawl_with_related_sites', fake_crawl)
+    try:
+        app.analyse_url('Gaasch Packaging', '', 'https://gaaschpack.co.uk')
+    except ValueError:  # analyse_url wraps the crawl error; the target was captured before it
+        pass
+    assert seen['url'].rstrip('/') == 'https://gaaschpack.co.uk'
+    assert 'gaasch' in seen['hint'].lower()
+
+
+def test_frontend_offers_a_website_menu_for_uncertain_company_names():
+    """The scan form must ask the user to confirm the website (menu of options, an 'open site' preview
+    link and a 'none of these' escape) when the name is not matched with certainty, and must send the
+    chosen website with the scan request."""
+    text = Path('frontend.html').read_text(encoding='utf-8')
+    assert 'id="resolveMenu"' in text
+    assert '/api/resolve/company' in text
+    assert 'chosen_url:c.url' in text
+    assert 'None of these' in text and 'Open site' in text
+    assert 'if(!res.confident){showResolveMenu(' in text

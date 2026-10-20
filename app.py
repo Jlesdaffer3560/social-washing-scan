@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v95_17_name_resolution_abbreviated_domains"
-APP_RELEASE_LABEL="v95.17"
+APP_VERSION="hostable_v96_0_confirm_website_menu"
+APP_RELEASE_LABEL="v96.0"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -4964,7 +4964,7 @@ def _describe_fetch_error(err):
     return str(err)
 
 
-def analyse_url_v27(raw, company_number=''):
+def analyse_url_v27(raw, company_number='', chosen_url=''):
     kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
     # v93.21: a company number is enough on its own to run a scan -- the name/website
     # field can be left empty entirely. If a number was given but could not be resolved
@@ -4992,7 +4992,13 @@ def analyse_url_v27(raw, company_number=''):
         resolution_input=kbo_info['name']
     else:
         resolution_input=raw
-    original_url,resolution_note=resolve_scan_input(resolution_input); fallback_note=resolution_note or ''; related_notes=[]
+    if chosen_url:
+        # The user picked this website from the "which website is it?" menu: nothing left to guess, so no
+        # resolution note (a note would wrongly flag the scan as unverified).
+        original_url,resolution_note=norm_url(chosen_url),''
+    else:
+        original_url,resolution_note=resolve_scan_input(resolution_input)
+    fallback_note=resolution_note or ''; related_notes=[]
     # v93.24: the user gave their own explicit URL/domain AND KBO separately lists an
     # official website for this number -- if they disagree, that is worth a visible note
     # (not a hard error: a company can legitimately run several regional/sub-brand sites,
@@ -5283,8 +5289,8 @@ def green_negative_compact_sources(results, limit=5):
     return compact_sources([r for r in results if is_green_negative_source(r)], limit)
 
 # Override v26 endpoint implementation with v27 implementation.
-def analyse_url(raw, company_number=''):
-    return analyse_url_v27(raw, company_number)
+def analyse_url(raw, company_number='', chosen_url=''):
+    return analyse_url_v27(raw, company_number, chosen_url)
 
 
 # -----------------------------
@@ -8014,6 +8020,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_history_delete_selected()
         try:
             data=self._read_json()
+            if self.path=='/api/resolve/company':
+                # Cheap look-up (search + a few live checks, no crawl): same access code as a scan, own rate-limit bucket.
+                if not _access_code_ok(data): return self._json({'error':'Invalid or missing access code.','access_denied':True},401)
+                if not _rate_limit_allowed(client,'resolve',RATE_LIMIT_SCANS*4): return self._json({'error':'Too many look-ups. Try again later.'},429)
+                return self._json(resolve_company_candidates(str(data.get('name','') or '')[:200]))
             if self.path in {'/api/scan/url','/api/scan/document'}:
                 # v93.43: checked before the rate limit and concurrency semaphore so a wrong/
                 # missing access code never consumes either -- an invited tester's own budget
@@ -8032,7 +8043,8 @@ class Handler(BaseHTTPRequestHandler):
                         # raise a clear ValueError if the number turns out unverifiable and no
                         # name/url was given either.
                         if not u and not company_number: return self._json({'error':'No company name, website or company number provided'},400)
-                        result=analyse_url(u,company_number)
+                        chosen_url=str(data.get('chosen_url','') or '').strip()
+                        result=analyse_url(u,company_number,chosen_url) if chosen_url else analyse_url(u,company_number)
                         _v92_save_scan_history(result,'url',client)
                     else:
                         filename=data.get('filename','uploaded_document'); content=data.get('content_base64','')
@@ -10355,6 +10367,73 @@ def _v72_validate_guessed_domain(url, name):
         return (final_url or url), len(html)
     return None
 
+def _v66_company_search_results(name):
+    """Web-search hits for "<name> official company website" (Tavily, then Google), honouring the
+    provider cooldowns. Shared by resolve_company_website() and resolve_company_candidates()."""
+    query=f'"{name}" official company website'
+    results=[]
+    # v91: these two calls used to bypass search_public_sources() entirely, so they never
+    # benefited from the provider cooldown added there -- meaning a quota-exhausted Tavily/
+    # Google account still paid full request+retry latency here on the FIRST search call of
+    # EVERY single scan, before the cooldown from the crawl's own external-signal queries
+    # could ever kick in. Checking/setting the same cooldown here closes that gap.
+    if not _v90_provider_in_cooldown('Tavily'):
+        try:
+            a=tavily_search(query,max_results=6) or []
+            for r in a: r.setdefault('provider','Tavily')
+            results.extend(a)
+        except Exception: _v90_note_provider_result('Tavily')
+    if not _v90_provider_in_cooldown('Google Custom Search'):
+        try:
+            b=google_search(query,max_results=6) or []
+            for r in b: r.setdefault('provider','Google Custom Search')
+            seen={_v60_canonical_url(r.get('url','')) for r in results}
+            results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
+        except Exception: _v90_note_provider_result('Google Custom Search')
+    return results
+
+
+def resolve_company_candidates(name, max_candidates=5):
+    """Possible official websites for a bare company name, for the "which website is it?" menu.
+
+    Returns {"confident": bool, "candidates": [{"url","host","title","score","reason"}, ...]}
+    best match first. "confident" is True only when the answer is unambiguous: a verified entry in
+    the known-site list, or one clearly dominant candidate (strong brand/domain/title match) with no
+    plausible rival on a different domain. Anything less is not confident, so the user is asked to
+    confirm instead of being scanned on a guess. Every candidate is a domain whose own host, title or
+    page text names the company, never a bare search hit."""
+    name=re.sub(r'\s+',' ',str(name or '')).strip()
+    if not name: return {'confident':False,'candidates':[]}
+    known=_v64_known_site(name)
+    if known:
+        host=(urlparse(known).hostname or known).lower()
+        return {'confident':True,'candidates':[{'url':f'https://{host}','host':host.removeprefix('www.'),'title':'','score':120,'reason':'Verified official website'}]}
+    by_root={}
+    def consider(url,title,score,reason):
+        host=(urlparse(url).hostname or '').lower()
+        if not host: return
+        root=_root_domain(host)
+        cur=by_root.get(root)
+        if cur is None or score>cur['score']:
+            by_root[root]={'url':f'https://{host}','host':host.removeprefix('www.'),'title':re.sub(r'\s+',' ',str(title or '')).strip()[:90],'score':int(score),'reason':reason}
+    for r in _v66_company_search_results(name):
+        score=_v65_official_candidate_score(r,name)
+        if score>=40: consider(r.get('url',''),r.get('title',''),score,'Found by web search')
+    if not any(c['score']>=70 for c in by_root.values()):
+        # No strong search match (or no search provider): confirm plausible domain guesses live,
+        # within a short budget, exactly like resolve_company_website() does.
+        deadline=time.time()+12
+        for cand in _v72_guess_domain_candidates(name):
+            if time.time()>=deadline: break
+            hit=_v72_validate_guessed_domain(cand,name)
+            if hit:
+                final_url,_len=hit
+                consider(final_url,'',75,'Domain guess confirmed by the page content')
+    ranked=sorted(by_root.values(),key=lambda c:(-c['score'],len(c['host'])))[:max_candidates]
+    confident=bool(ranked) and ranked[0]['score']>=100 and not any(c['score']>=60 for c in ranked[1:])
+    return {'confident':confident,'candidates':ranked}
+
+
 def resolve_company_website(name):
     """Resolve a bare company name to a website URL.
 
@@ -10379,26 +10458,7 @@ def resolve_company_website(name):
     if known:
         host=urlparse(known).hostname or known
         return known, f'Company name "{name}" was resolved to the verified official domain {host}. Related official sustainability/group sites may also be checked when coverage is limited.'
-    query=f'"{name}" official company website'
-    results=[]
-    # v91: these two calls used to bypass search_public_sources() entirely, so they never
-    # benefited from the provider cooldown added there -- meaning a quota-exhausted Tavily/
-    # Google account still paid full request+retry latency here on the FIRST search call of
-    # EVERY single scan, before the cooldown from the crawl's own external-signal queries
-    # could ever kick in. Checking/setting the same cooldown here closes that gap.
-    if not _v90_provider_in_cooldown('Tavily'):
-        try:
-            a=tavily_search(query,max_results=6) or []
-            for r in a: r.setdefault('provider','Tavily')
-            results.extend(a)
-        except Exception: _v90_note_provider_result('Tavily')
-    if not _v90_provider_in_cooldown('Google Custom Search'):
-        try:
-            b=google_search(query,max_results=6) or []
-            for r in b: r.setdefault('provider','Google Custom Search')
-            seen={_v60_canonical_url(r.get('url','')) for r in results}
-            results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
-        except Exception: _v90_note_provider_result('Google Custom Search')
+    results=_v66_company_search_results(name)
     ranked=sorted(((_v65_official_candidate_score(r,name),r) for r in results),key=lambda x:x[0],reverse=True)
     if ranked and ranked[0][0]>=70:
         host=(urlparse(ranked[0][1].get('url','')).hostname or '').lower()
