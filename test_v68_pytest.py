@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_2_confirm_menu_drops_weak_mentions'
+    assert app.APP_VERSION == 'hostable_v96_3_registries_not_official_sites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7136,10 +7136,17 @@ def test_resolve_company_candidates_menu_drops_weak_mentions(monkeypatch):
     merely mentions the company (score ~45-55) is not offered unless nothing stronger exists."""
     monkeypatch.setattr(app, '_v64_known_site', lambda name: '')
     hits = [{'url': 'https://www.homeinvestbelgium.be/', 'title': 'Home Invest Belgium', 'content': 'Home Invest Belgium is a Belgian real estate company.'},
-            {'url': 'https://stockanalysis.com/quote/homi', 'title': 'Home Invest Belgium (EBR:HOMI) Company Profile', 'content': 'Home Invest Belgium profile and share price.'}]
+            {'url': 'https://share-quotes.example/quote/homi', 'title': 'Home Invest Belgium (EBR:HOMI) Company Profile', 'content': 'Home Invest Belgium profile and share price.'}]
     monkeypatch.setattr(app, '_v66_company_search_results', lambda name: hits)
     res = app.resolve_company_candidates('Home Invest Belgium')
     assert [c['host'] for c in res['candidates']] == ['homeinvestbelgium.be']
     monkeypatch.setattr(app, '_v66_company_search_results', lambda name: hits[1:])
     monkeypatch.setattr(app, '_v72_validate_guessed_domain', lambda url, name: None)
-    assert [c['host'] for c in app.resolve_company_candidates('Home Invest Belgium')['candidates']] == ['stockanalysis.com']
+    assert [c['host'] for c in app.resolve_company_candidates('Home Invest Belgium')['candidates']] == ['share-quotes.example']
+
+
+def test_company_registers_and_quote_pages_are_never_offered_as_the_official_website():
+    """A Companies House page or a stock-quote page names the company but is not its website; it must score as non-official."""
+    for url in ('https://find-and-update.company-information.service.gov.uk/company/123',
+                'https://stockanalysis.com/quote/homi', 'https://www.cnbc.com/quotes/HOMI-BE', 'https://opencorporates.com/companies/be/1'):
+        assert app._v65_official_candidate_score({'url': url, 'title': 'Gaasch Packaging', 'content': 'Gaasch Packaging'}, 'Gaasch Packaging') == -999, url

@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_2_confirm_menu_drops_weak_mentions"
-APP_RELEASE_LABEL="v96.2"
+APP_VERSION="hostable_v96_3_registries_not_official_sites"
+APP_RELEASE_LABEL="v96.3"
 APP_RELEASE_DATE="2026-10-17"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 RATE_LIMIT_WINDOW_SECONDS=max(60, int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "3600")))
@@ -682,6 +682,10 @@ NON_OFFICIAL_SITE_DOMAINS = {
     'forbes.com','wsj.com','ft.com','nytimes.com','yahoo.com','google.com','duckduckgo.com','bing.com',
     'trustpilot.com','pitchbook.com','owler.com','zoominfo.com','apple.com','play.google.com','amazon.com',
     'ecosia.org','yelp.com','github.com','medium.com','pinterest.com',
+    # Company registers, finance/quote pages and business directories: they name a company but are never
+    # its official website (they otherwise show up as 'candidates' in the website-confirmation menu).
+    'service.gov.uk','companieshouse.gov.uk','opencorporates.com','northdata.com','kompass.com',
+    'dnb.com','stockanalysis.com','cnbc.com','marketscreener.com','morningstar.com','investing.com','finance.yahoo.com',
     # v93.66: third-party ESG/CSR report AGGREGATOR/DIRECTORY sites -- they host or index
     # thousands of companies' own reports and describe their own database/search service
     # ("Search 26,288 responsibility reports... from 4,488 global companies"), not the
