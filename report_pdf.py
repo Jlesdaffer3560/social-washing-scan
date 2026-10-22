@@ -554,6 +554,28 @@ def rewrite_example_text(claim, max_chars=300):
     return bounded_text(raw, max_chars) if raw else ""
 
 
+def other_rewrites(cluster, limit=2, max_chars=400):
+    """Occurrences in one group (one claim TYPE) can be about different things -- packaging, suppliers, a
+    biodegradable bag -- and each gets the rewrite that fits ITS wording. The card shows the representative's
+    rewrite in full; this returns [(wording label, template)] for up to `limit` other occurrences whose rewrite
+    differs, so no quoted wording is left with a rewrite that does not match it."""
+    rep = cluster["representative"]
+    seen = {clean_text(rep.get("ready_to_use_rewrite") or "")}
+    out = []
+    for occ in sorted(cluster["occurrences"], key=lambda o: (-risk_rank(o), -float(o.get("claim_score") or 0))):
+        if occ is rep:
+            continue
+        template = clean_text(occ.get("ready_to_use_rewrite") or "")
+        if not template or template in seen:
+            continue
+        seen.add(template)
+        label = trigger_phrase(occ) or bounded_text(clean_text(claim_excerpt(occ, 200)), 40)
+        out.append((bounded_text(label, 40), bounded_text(template, max_chars)))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _is_verifiable_occurrence(occ):
     """v93.38: has a real, non-generic source AND enough quoted context to actually show
     subject/scope -- a cheap, honest proxy for "can a reader check this", not a claim about
@@ -1298,6 +1320,8 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
         action_html += f'<br/><font color="#6B7398">Reusable wording — fill in the [brackets], then verify:</font> <i>{esc(ready_rewrite)}</i>'
         if example_rewrite and show_example:
             action_html += f'<br/><font color="#6B7398">Fictional example, for illustration only (not about this company):</font> <i>{esc(example_rewrite)}</i>'
+        for label, template in other_rewrites(cluster, 2 if material else 1):
+            action_html += f'<br/><font color="#6B7398">Different wording, “{esc(label)}” — reusable version:</font> <i>{esc(template)}</i>'
     action = Paragraph(action_html, ST["small_dark"])
     # External review (ChatGPT): the legal-basis BADGE next to the title (e.g. "Potentially
     # Prohibited (UCPD Annex I, as amended by EmpCo)") was never explained -- the reader saw
@@ -1860,13 +1884,18 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     # that type) instead of repeating on each card -- this keeps the findings pages short.
     examples_shown = {rewrite_example_text(material.get('representative') or {}, 380)}
     flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True, ref=1))); flow.append(Spacer(1, 3.6*mm))
-    flow.append(section_title("Additional findings"))
+    additional_title = section_title("Additional findings")
     if additional:
         for idx, c in enumerate(additional, 2):
             ex_text = rewrite_example_text(c.get('representative') or {}, 380)
-            flow.append(KeepTogether(claim_card(c, min(190, excerpt_chars), False, ref=idx, show_example=(ex_text not in examples_shown))))
+            card_flow = claim_card(c, min(190, excerpt_chars), False, ref=idx, show_example=(ex_text not in examples_shown))
+            # the heading stays with the FIRST card: with the longer rewrite text the first card may no longer fit
+            # under the top finding, and a heading alone at the bottom of a page reads as a layout error
+            flow.append(KeepTogether([additional_title, card_flow] if idx == 2 else [card_flow]))
             examples_shown.add(ex_text); flow.append(Spacer(1, 2.6*mm))
-    elif clusters:
+    else:
+        flow.append(additional_title)
+    if not additional and clusters:
         # Only shown when there genuinely IS a single top finding and no others -- "no
         # additional finding" implies at least one finding exists. External code review: this
         # used to also fire for a scan with ZERO findings at all (material is then

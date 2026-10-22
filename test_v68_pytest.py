@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_7_topic_relevant_rewrites'
+    assert app.APP_VERSION == 'hostable_v96_8_rewrite_per_wording'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2167,6 +2167,8 @@ def test_fetch_page_content_returns_final_url_based_link_base(monkeypatch):
     def fake_open(url,timeout=8,max_bytes=None,**k):
         return html.encode(),'text/html','https://example.com/en/sustainability/'
     monkeypatch.setattr(app,'_open_public_url',fake_open)
+    # the page is deliberately short, which would otherwise trigger the live Reader fallback (a real network call)
+    monkeypatch.setattr(app,'ENABLE_READER_FALLBACK',False)
     text,kind,method,links,link_base,final_url=app.fetch_page_content('https://example.com/sustainability')
     assert link_base=='https://example.com/en/sustainability/'
     assert final_url=='https://example.com/en/sustainability/'
@@ -7248,6 +7250,8 @@ def _all_rewrite_pairs():
     for ty in _ALL_SOCIAL_REWRITE_CLAIM_TYPES:
         pairs.append((ty, app.social_ready_to_use_rewrite(ty), app.social_rewrite_example(ty)))
     for name, _rx, template, example in app._GREEN_TOPICS + app._SOCIAL_TOPICS:
+        if template is None:
+            continue  # neutrality reuses the climate template
         pairs.append(('topic:' + name, template, example))
     return pairs
 
@@ -7395,3 +7399,62 @@ def test_real_scan_gives_each_finding_a_rewrite_that_matches_its_topic():
             assert 'suppliers' in tpl, claim_text
         if 'living wage' in low:
             assert 'living wage' in tpl, claim_text
+
+
+def _real_scan_pdf(text):
+    import io as _io
+    import pypdf
+    import report_pdf as rp
+    r = app.analyse_uploaded_document('t.txt', text, 'Testco', '', document_coverage=None)
+    payload = app._unsigned_report_payload(app.decode_report_token(app.create_report_token(r)))
+    pdf = rp.build_company_report_pdf(payload)
+    pages = [' '.join(p.extract_text().split()) for p in pypdf.PdfReader(_io.BytesIO(pdf)).pages]
+    return r, pages
+
+
+_MIXED_TOPIC_TEXT = ("Our packaging is eco-friendly and fully recyclable. Our bags are biodegradable and 100% natural. "
+                     "Our new bottle is greener than competitors and better for the planet. "
+                     "Certified by an eco label with the green leaf logo. No forced labour in our products.")
+
+
+def test_company_pdf_gives_each_wording_in_a_group_its_own_matching_rewrite():
+    """v96.8: one group (claim type) can hold wording about different things. The card showed only the
+    representative's rewrite, so the other quoted wording ("biodegradable", "better for the planet") kept a rewrite
+    that did not fit it. Each distinct rewrite is now shown, labelled with the wording it belongs to."""
+    r, pages = _real_scan_pdf(_MIXED_TOPIC_TEXT)
+    text = ' '.join(pages)
+    assert 'Different wording' in text
+    assert 'breaks down' in text, 'the biodegradable wording must get the biodegradable rewrite'
+    assert 'packaging type' in text
+    assert 'Fictional example, for illustration only' in text
+    assert 'attribute' not in text.lower()
+
+
+def test_company_pdf_never_leaves_the_additional_findings_heading_alone_at_the_page_bottom():
+    r, pages = _real_scan_pdf(_MIXED_TOPIC_TEXT)
+    for page in pages:
+        if 'ADDITIONAL FINDINGS' in page.upper() and 'Additional findings' in page:
+            assert '#2' in page, 'the heading must stay on the same page as the first additional finding'
+
+
+def test_neutrality_wording_always_gets_the_climate_rewrite_and_the_trigger_decides_first():
+    f = 'Future environmental-performance claim'
+    text = 'We are carbon neutral and net zero by 2040 and cooperate with suppliers on emissions'
+    assert 'greenhouse-gas' in app.green_ready_to_use_rewrite(f, text, 'net zero')
+    assert 'offset' in app.green_ready_to_use_rewrite(f, text, 'net zero').lower() or 'not cut' in app.green_ready_to_use_rewrite(f, text, 'net zero')
+    a = 'Absolute or purity environmental wording'
+    both = 'Our bags are biodegradable and 100% natural'
+    assert 'contains no' in app.green_ready_to_use_rewrite(a, both, '100% natural')
+    assert 'breaks down' in app.green_ready_to_use_rewrite('Generic environmental claim', both, 'eco-friendly')
+
+
+def test_no_attribute_jargon_in_the_user_facing_evidence_and_action_text():
+    assert not any('attribute' in x.lower() for x in app.green_evidence_checklist({'type': 'Generic environmental claim'}))
+    src = Path(app.__file__).read_text(encoding='utf-8')
+    for phrase in ('exact product attribute', 'exact environmental attribute', 'Specify the exact attribute', 'specify exact attribute'):
+        assert phrase not in src, phrase
+
+
+def test_frontend_shows_a_matching_rewrite_for_other_wording_in_the_group():
+    html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
+    assert 'function otherRewritesHtml(' in html and '${otherRewritesHtml(cluster)}' in html

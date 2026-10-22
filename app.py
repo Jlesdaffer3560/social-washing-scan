@@ -97,8 +97,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_7_topic_relevant_rewrites"
-APP_RELEASE_LABEL="v96.7"
+APP_VERSION="hostable_v96_8_rewrite_per_wording"
+APP_RELEASE_LABEL="v96.8"
 APP_RELEASE_DATE="2026-10-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -3942,6 +3942,11 @@ _GREEN_REWRITE_DEFAULT=(
 # wording); the topic with the most hits wins, ties go to the earlier entry. If no topic is recognised the neutral
 # template of the claim type is used.
 _GREEN_TOPICS=[
+    # neutrality wording ("carbon neutral", "net zero") needs the climate/offsetting disclosures whatever else the
+    # sentence mentions, so it wins as soon as it occurs (see _STRONG_TOPICS)
+    ('neutral',
+     r"carbon[- ]neutral|climate[- ]neutral|co2[- ]neutral|co₂[- ]neutral|net[- ]zero|klimaatneutraal|co2-neutraal|koolstofneutraal|neutre en carbone|neutralit[eé] carbone|klimaneutral|co2-neutral|netto-?nul|z[eé]ro [eé]mission nette",
+     None,None),
     ('supplier',
      r"supplier|supply[- ]chain|value[- ]chain|procure|scope 3|leverancier|toeleverancier|waardeketen|ketenpartner|inkoop|fournisseur|cha[iî]ne d|achats responsables|lieferant|lieferkette|beschaffung",
      '"We work with suppliers on [specific environmental goal, e.g. cutting emissions in the supply chain] through [what you '
@@ -4019,6 +4024,7 @@ _GREEN_TOPICS=[
 # Claim types for which the topic overrides the type's own template: the broad ones. Specific types (climate
 # neutrality, labels, recycled material, legal requirement, comparison, icon) already say what is needed.
 _GREEN_TOPIC_TYPES=('generic','absolute','purity','future')
+_STRONG_TOPICS={'neutral'}
 
 _SOCIAL_TOPICS=[
     ('childlabour', r"child labou?r|kinderarbeid|travail des enfants|kinderarbeit|child work",
@@ -4061,13 +4067,22 @@ def _topic_for_text(topics, text, min_hits=1):
     best=None; best_hits=0
     for entry in topics:
         hits=len(re.findall(entry[1],low))
+        if hits and entry[0] in _STRONG_TOPICS:
+            return _resolve_topic(entry)
         if hits>best_hits:
             best,best_hits=entry,hits
     if best is not None and best_hits<min_hits:
         return None
-    return best
+    return _resolve_topic(best) if best else None
 
-def _pick_rewrite(table, default, claim_type, claim_text='', topics=(), topic_types=(), broad_re=None):
+def _resolve_topic(entry):
+    """A topic without its own text (neutrality) uses the climate/offsetting template of the type table."""
+    if entry[2] is None:
+        keys,tpl,ex=_GREEN_REWRITES[0]
+        return (entry[0],entry[1],tpl,ex)
+    return entry
+
+def _pick_rewrite(table, default, claim_type, claim_text='', topics=(), topic_types=(), broad_re=None, trigger=''):
     """(template, example) for a claim. The claim TYPE chooses the framing; for the broad types listed in
     `topic_types` (and for any unrecognised type) what the claim text is ABOUT chooses a topic-specific template.
     With `broad_re`, a text that matches it (a broad policy statement) needs two mentions of a topic to switch."""
@@ -4077,20 +4092,21 @@ def _pick_rewrite(table, default, claim_type, claim_text='', topics=(), topic_ty
     matched=next(((tpl,ex) for keys,tpl,ex in table if any(k in t for k in keys)),None)
     if topics and (matched is None or any(k in t for k in topic_types)):
         broad=bool(broad_re and broad_re.search(str(claim_text or '').lower()))
-        entry=_topic_for_text(topics,claim_text,2 if broad else 1)
+        # the exact wording that triggered the finding (e.g. "100% natural") decides first; the surrounding text second
+        entry=_topic_for_text(topics,trigger,1) or _topic_for_text(topics,claim_text,2 if broad else 1)
         if entry:
             return (entry[2],entry[3])
     return matched or default
 
-def green_ready_to_use_rewrite(claim_type, claim_text=''):
+def green_ready_to_use_rewrite(claim_type, claim_text='', trigger=''):
     """A literal, fill-in-the-blank example rewrite -- not abstract guidance on what to disclose, but an actual
     sentence the company can copy and complete with its own facts (see _GREEN_REWRITES above). The claim text lets
     the rewrite follow the claim's topic (suppliers, energy, water, ...) for the broad claim types."""
-    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES)[0]
+    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)[0]
 
-def green_rewrite_example(claim_type, claim_text=''):
+def green_rewrite_example(claim_type, claim_text='', trigger=''):
     """The same sentence completed for an invented company, shown next to the template (always labelled fictional)."""
-    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES)[1]
+    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)[1]
 
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
@@ -4218,9 +4234,9 @@ def enrich_green_finding(f, trigger=''):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['evidence_questions']=green_claim_evidence_questions(f.get('type',''))
-    _rw_text=analysis_text+' '+str(f.get('matched_phrase') or trigger or '')
-    f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''),_rw_text)
-    f['rewrite_example']=green_rewrite_example(f.get('type',''),_rw_text)
+    _rw_trigger=str(f.get('matched_phrase') or trigger or '')
+    f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''),analysis_text,_rw_trigger)
+    f['rewrite_example']=green_rewrite_example(f.get('type',''),analysis_text,_rw_trigger)
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -4466,7 +4482,7 @@ def build_green_claim_inventory(findings):
 
 def green_evidence_checklist(f):
     t=(f.get('type','')+' '+f.get('issue','')).lower()
-    base=['scope of the claim','specific environmental attribute','reporting period','methodology','limitations and exclusions','verification or certification basis']
+    base=['scope of the claim','specific environmental benefit and the figures behind it','reporting period','methodology','limitations and exclusions','verification or certification basis']
     if 'climate' in t or 'carbon' in t or 'offset' in t: return base+['emission scopes','baseline','actual reductions vs offsets','residual emissions','transition-plan milestones']
     if 'comparative' in t: return base+['comparator product/service','equivalent comparison basis','data date','maintenance of updated information']
     if 'label' in t or 'certification' in t: return base+['certification scheme owner','criteria','audit basis','validity period']
@@ -5808,7 +5824,7 @@ GREEN_CLAIMS=[
    'milieuvriendelijk','milieuvriendelijke','ecologisch','ecologische','klimaatvriendelijk','klimaatvriendelijke','beter voor het milieu','beter voor de planeet','goed voor het milieu','goed voor de planeet','groen product','groene producten','groene keuze','eco product','eco producten','duurzaam product','duurzame producten','duurzame keuze','duurzame collectie','duurzaam assortiment','duurzame materialen','100% duurzaam','volledig duurzaam','natuurlijk product','natuurlijke producten','biogebaseerd product',
    'energie-efficiënt','koolstofvriendelijk','zacht voor het milieu','vriend van de natuur','milieucorrect','biologisch afbreekbaar',
    "respectueux de l'environnement","respectueuse de l'environnement",'écologique','écologiques','respectueux du climat','meilleur pour la planète','bon pour la planète','produit vert','produits verts','choix vert','choix écologique','produit écologique','produits écologiques','produit durable','produits durables','choix durable','collection durable','gamme durable','matériaux durables','100% durable','entièrement durable','produit naturel','produits naturels','produit biosourcé',
-   'efficace sur le plan énergétique','respectueux du carbone','doux pour l\'environnement','ami de la nature','écologiquement correct','biodégradable'],'Generic environmental claim','High','EmpCo risk: a generic environmental claim (not clearly and prominently specified on the same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.','Replace generic wording with a precise, evidence-backed claim stating the exact product attribute, scope, geography, methodology, period and limitations.'),
+   'efficace sur le plan énergétique','respectueux du carbone','doux pour l\'environnement','ami de la nature','écologiquement correct','biodégradable'],'Generic environmental claim','High','EmpCo risk: a generic environmental claim (not clearly and prominently specified on the same medium) is prohibited under UCPD Annex I point 4a unless recognised excellent environmental performance relevant to the claim can be demonstrated; this applies to consumer-facing (B2C) commercial practices.','Replace generic wording with a precise, evidence-backed claim stating the exact product feature or figure, scope, geography, methodology, period and limitations.'),
  (['carbon neutral','climate neutral','co2 neutral','co₂ neutral','net zero product','carbon negative','carbon positive','climate positive','carbon compensated','climate compensated','offset-based','offsetting','compensated emissions','reduced climate impact',
    # External UX review: a Dutch adjective placed directly before a noun takes an extra "-e"
    # ("klimaatneutraal" -> "klimaatneutrale werking"), the same rule already applied to the
@@ -5831,7 +5847,7 @@ GREEN_CLAIMS=[
    'nous serons neutres en carbone','nous visons la neutralité carbone','nous travaillons vers le zéro net','engagés vers le zéro net','zéro net d\'ici 2030','zéro net d\'ici 2040','zéro net d\'ici 2050','climat positif d\'ici','neutre en carbone d\'ici','feuille de route de décarbonation'],'Future environmental-performance claim','High','EmpCo risk: future environmental-performance claims require clear, objective, publicly available and verifiable commitments supported by a realistic implementation plan.','Add a public implementation plan, milestones, resources, governance, progress indicators, verification basis and scope limitations.'),
  (['all natural','100% natural','chemical free','zero impact','no impact','zero waste','waste free','pollution free','fully recyclable','100% recyclable','completely biodegradable','fully biodegradable','plastic free','100% recycled',
    'volledig natuurlijk','100% natuurlijk','chemievrij','geen impact','nul impact','zero waste','afvalvrij','vervuilingsvrij','volledig recyclebaar','100% recyclebaar','volledig biologisch afbreekbaar','plasticvrij','100% gerecycleerd','100% gerecycled',
-   'tout naturel','100% naturel','sans produits chimiques','aucun impact','impact zéro','zéro déchet','sans déchets','sans pollution','entièrement recyclable','100% recyclable','entièrement biodégradable','sans plastique','100% recyclé'],'Absolute or purity environmental wording','High','EmpCo risk: absolute environmental wording creates a high evidence burden and can mislead when scope, conditions or limitations are missing.','Qualify the claim and specify exact attribute, scope, conditions, test method, limitations and evidence.'),
+   'tout naturel','100% naturel','sans produits chimiques','aucun impact','impact zéro','zéro déchet','sans déchets','sans pollution','entièrement recyclable','100% recyclable','entièrement biodégradable','sans plastique','100% recyclé'],'Absolute or purity environmental wording','High','EmpCo risk: absolute environmental wording creates a high evidence burden and can mislead when scope, conditions or limitations are missing.','Qualify the claim and specify the exact feature or figure, scope, conditions, test method, limitations and evidence.'),
  (['compliant with environmental law','meets legal requirements','according to legal standards','required by law','legal requirement','eu compliant','regulation compliant',
    'conform milieuwetgeving','voldoet aan wettelijke vereisten','volgens wettelijke normen','wettelijk verplicht','wettelijke vereiste','eu-conform','conform de regelgeving',
    'conforme à la législation environnementale','répond aux exigences légales','selon les normes légales','requis par la loi','exigence légale','conforme ue','conforme à la réglementation'],'Legal requirement presented as green benefit','High','EmpCo risk: presenting a requirement imposed by law on all products of the category on the Union market as a distinctive feature of the trader’s offer is a blacklisted-practice indicator (Annex I point 10a).','Do not present legal compliance as a differentiating sustainability benefit. Separate legal compliance from voluntary improvements.'),
@@ -8357,8 +8373,8 @@ V55_GREEN_EXTRA_PATTERNS = [
      'électronique durable','technologie durable',
      'mobilité durable','transport durable','véhicule durable','véhicules durables',
      'énergie durable','banque durable','investissement durable','finance durable'],
-     'EmpCo risk: broad environmental wording such as sustainable, eco, conscious, preferred or lower-impact can be misleading where the exact environmental attribute, scope and evidence are not clear on the same medium.',
-     'Specify the exact attribute, product/material scope, baseline, method, evidence, reporting period and limitations.'),
+     'EmpCo risk: broad environmental wording such as sustainable, eco, conscious, preferred or lower-impact can be misleading where the exact environmental benefit, scope and evidence are not clear on the same medium.',
+     'Specify the exact benefit, product/material scope, baseline, method, evidence, reporting period and limitations.'),
     # v93.85: 'fully recyclable'/'entièrement recyclable' removed -- exact duplicates of phrases
     # already in "Absolute or purity environmental wording" (GREEN_CLAIMS), so the same sentence
     # produced two separate findings under two different type names/risk levels. Kept in the
@@ -8373,7 +8389,7 @@ V55_GREEN_EXTRA_PATTERNS = [
      'milieuvriendelijk','milieuvriendelijke','beter voor de planeet','goed voor de planeet','klimaatvriendelijk','groene keuze','groen product',
      "respectueux de l'environnement",'respectueux du climat','meilleur pour la planète','bon pour la planète','choix vert','choix écologique','produit vert','produit écologique'],
      'EmpCo risk: generic environmental claims are high-sensitivity claims and may be prohibited if they are not specified clearly and prominently or backed by recognised excellent environmental performance.',
-     'Replace generic wording with a specific, evidence-backed statement on the exact attribute and scope.'),
+     'Replace generic wording with a specific, evidence-backed statement on the exact benefit and scope.'),
 ]
 
 V55_SOCIAL_EXTRA_PATTERNS = [
@@ -9152,14 +9168,14 @@ _SOCIAL_REWRITE_DEFAULT=(
     'labour inspectorate (letter dated February 2026). This covers our Porto factory only. Evidence: '
     'nordwind.example/labour."')
 
-def social_ready_to_use_rewrite(claim_type, claim_text=''):
+def social_ready_to_use_rewrite(claim_type, claim_text='', trigger=''):
     """Literal, fill-in-the-blank example rewrite for social/forced-labour claim types in plain language -- see
     _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply."""
-    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE)[0]
+    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)[0]
 
-def social_rewrite_example(claim_type, claim_text=''):
+def social_rewrite_example(claim_type, claim_text='', trigger=''):
     """The same sentence completed for an invented company (always labelled fictional where shown)."""
-    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE)[1]
+    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)[1]
 
 def enrich_social_finding(f, trigger=''):
     analysis_text=_v93_analysis_text(f)
@@ -9184,9 +9200,9 @@ def enrich_social_finding(f, trigger=''):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), analysis_text)
-    _rw_text=analysis_text+' '+str(f.get('matched_phrase') or trigger or '')
-    f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''),_rw_text)
-    f['rewrite_example']=social_rewrite_example(f.get('type',''),_rw_text)
+    _rw_trigger=str(f.get('matched_phrase') or trigger or '')
+    f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''),analysis_text,_rw_trigger)
+    f['rewrite_example']=social_rewrite_example(f.get('type',''),analysis_text,_rw_trigger)
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
