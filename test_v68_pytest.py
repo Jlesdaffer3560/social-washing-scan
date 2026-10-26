@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_9_sector_relevant_examples'
+    assert app.APP_VERSION == 'hostable_v96_10_pdf_example_not_cut_off'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7298,7 +7298,7 @@ def test_rewrite_texts_fit_the_pdf_budgets_without_being_cut_off():
         for material in (True, False):
             c = {'ready_to_use_rewrite': template, 'rewrite_example': example}
             assert rp.ready_to_use_rewrite_text(c, 420 if material else 400) == rp.clean_text(template), (ty, material)
-            assert rp.rewrite_example_text(c, 380 if material else 340) == rp.clean_text(example), (ty, material)
+            assert rp.rewrite_example_text(c, 420) == rp.clean_text(example), (ty, material)
 
 
 def test_findings_carry_the_rewrite_example_and_the_frontend_shows_it():
@@ -7577,3 +7577,14 @@ def test_sector_wrapper_is_idempotent_and_keeps_unknown_sectors_general():
     twice = app._apply_sector_to_rewrite_examples(once)
     assert once['findings'][0]['rewrite_example'] == _rx.example('generic', '') == twice['findings'][0]['rewrite_example']
     assert app._apply_sector_to_rewrite_examples(None) is None
+
+
+def test_no_sector_example_is_cut_off_in_the_company_pdf():
+    """Sector-specific examples are longer than the general ones; the PDF budget must hold the longest of all."""
+    import report_pdf as rp
+    for label in _SECTOR_SAMPLE_LABELS.values():
+        for key in _template_keys():
+            ex = _rx.example(key, label)
+            assert rp.rewrite_example_text({'rewrite_example': ex}) == rp.clean_text(ex), (label, key, len(ex))
+    for key, tpl in _template_keys().items():
+        assert rp.ready_to_use_rewrite_text({'ready_to_use_rewrite': tpl}, 400) == rp.clean_text(tpl), key

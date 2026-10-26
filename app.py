@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_9_sector_relevant_examples"
-APP_RELEASE_LABEL="v96.9"
+APP_VERSION="hostable_v96_10_pdf_example_not_cut_off"
+APP_RELEASE_LABEL="v96.10"
 APP_RELEASE_DATE="2026-10-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about

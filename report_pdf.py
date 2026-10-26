@@ -548,7 +548,7 @@ def ready_to_use_rewrite_text(claim, max_chars=220):
     return bounded_text(raw, max_chars) if raw else ""
 
 
-def rewrite_example_text(claim, max_chars=300):
+def rewrite_example_text(claim, max_chars=420):
     """The short FICTIONAL example (an invented company) that illustrates the fill-in template."""
     raw = clean_text(claim.get("rewrite_example") or "")
     return bounded_text(raw, max_chars) if raw else ""
@@ -1309,7 +1309,7 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
     uncertain = Paragraph(f'<b>WHAT REMAINS UNCERTAIN</b><br/><font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
     ready_rewrite = ready_to_use_rewrite_text(claim, 420 if material else 400)
-    example_rewrite = rewrite_example_text(claim, 380 if material else 340)
+    example_rewrite = rewrite_example_text(claim, 420)
     if ready_rewrite:
         # v93.62: a monospaced Courier treatment for the example wording read as code/technical
         # output rather than as suggested prose -- per reviewer feedback, replaced with a plain
@@ -1882,12 +1882,12 @@ def _build_once(data, additional_limit=2, external_limit=2, excerpt_chars=220, s
     flow += header_block(data, "Company claim-risk report · Findings in detail")
     # The fictional example is the same for every claim of one type, so it is shown once (on the first card of
     # that type) instead of repeating on each card -- this keeps the findings pages short.
-    examples_shown = {rewrite_example_text(material.get('representative') or {}, 380)}
+    examples_shown = {rewrite_example_text(material.get('representative') or {}, 420)}
     flow.append(section_title("Top finding")); flow.append(KeepTogether(claim_card(material, excerpt_chars, True, ref=1))); flow.append(Spacer(1, 3.6*mm))
     additional_title = section_title("Additional findings")
     if additional:
         for idx, c in enumerate(additional, 2):
-            ex_text = rewrite_example_text(c.get('representative') or {}, 380)
+            ex_text = rewrite_example_text(c.get('representative') or {}, 420)
             card_flow = claim_card(c, min(190, excerpt_chars), False, ref=idx, show_example=(ex_text not in examples_shown))
             # the heading stays with the FIRST card: with the longer rewrite text the first card may no longer fit
             # under the top finding, and a heading alone at the bottom of a page reads as a layout error
