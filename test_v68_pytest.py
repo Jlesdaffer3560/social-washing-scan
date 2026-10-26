@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_8_rewrite_per_wording'
+    assert app.APP_VERSION == 'hostable_v96_9_sector_relevant_examples'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7244,15 +7244,15 @@ _ALL_SOCIAL_REWRITE_CLAIM_TYPES = [
 
 
 def _all_rewrite_pairs():
+    """(label, template, example) for every claim type AND every topic template, with the general example."""
+    import rewrite_examples as rx
     pairs = []
     for ty in _ALL_REWRITE_CLAIM_TYPES:
         pairs.append((ty, app.green_ready_to_use_rewrite(ty), app.green_rewrite_example(ty)))
     for ty in _ALL_SOCIAL_REWRITE_CLAIM_TYPES:
         pairs.append((ty, app.social_ready_to_use_rewrite(ty), app.social_rewrite_example(ty)))
-    for name, _rx, template, example in app._GREEN_TOPICS + app._SOCIAL_TOPICS:
-        if template is None:
-            continue  # neutrality reuses the climate template
-        pairs.append(('topic:' + name, template, example))
+    for name, _rx_, template, key in app._GREEN_TOPICS + app._SOCIAL_TOPICS:
+        pairs.append(('topic:' + name, template, rx.example(key, '')))
     return pairs
 
 
@@ -7458,3 +7458,122 @@ def test_no_attribute_jargon_in_the_user_facing_evidence_and_action_text():
 def test_frontend_shows_a_matching_rewrite_for_other_wording_in_the_group():
     html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
     assert 'function otherRewritesHtml(' in html and '${otherRewritesHtml(cluster)}' in html
+
+
+import rewrite_examples as _rx
+
+
+def _template_keys():
+    keys = {}
+    for _k, tpl, key in app._GREEN_REWRITES + app._SOCIAL_REWRITES:
+        keys[key] = tpl
+    for _n, _rx_, tpl, key in app._GREEN_TOPICS + app._SOCIAL_TOPICS:
+        keys[key] = tpl
+    keys[app._GREEN_REWRITE_DEFAULT[1]] = app._GREEN_REWRITE_DEFAULT[0]
+    keys[app._SOCIAL_REWRITE_DEFAULT[1]] = app._SOCIAL_REWRITE_DEFAULT[0]
+    return keys
+
+
+_SECTOR_SAMPLE_LABELS = {
+    'general': '', 'finance': 'Banking and financial services (NACE K)', 'energy': 'Energy and utilities (NACE D)',
+    'waste': 'Waste management and environmental services (NACE E)', 'construction': 'Infrastructure and construction (NACE F)',
+    'transport': 'Transport and logistics (NACE H)', 'retail': 'Food retail and supermarkets (NACE G)',
+    'textile': 'Fast fashion and apparel retail (NACE G)', 'hospitality': 'Accommodation and food service activities (NACE I)',
+    'agri': 'Agriculture, farming and animal production (NACE A)', 'food': 'Food and beverage manufacturing (NACE C)',
+    'digital': 'Digital and technology services (NACE J)', 'manufacturing': 'Chemicals manufacturing (NACE C)',
+    'services': 'Professional and business services (NACE M)',
+}
+
+
+def test_every_template_has_a_fictional_example_for_every_sector_and_all_of_them_render_cleanly():
+    """v96.9: the fictional example is adapted to the sector of the scanned company. Every template key must have an
+    example, every sector profile must define every token, and no example may keep an unresolved {token}."""
+    base = set(_rx.PROFILES['general'])
+    assert set(_rx.PROFILES) == set(_SECTOR_SAMPLE_LABELS)
+    for name, tokens in _rx.PROFILES.items():
+        assert set(tokens) == base, name
+    for prof, overrides in _rx.OVERRIDES.items():
+        assert prof in _rx.PROFILES and set(overrides) <= set(_rx.EXAMPLES), prof
+    assert set(_template_keys()) <= set(_rx.EXAMPLES), set(_template_keys()) - set(_rx.EXAMPLES)
+    for prof, label in _SECTOR_SAMPLE_LABELS.items():
+        assert _rx.profile_for_sector(label) == prof, (prof, label)
+        for key in _template_keys():
+            text = _rx.example(key, label)
+            assert text.startswith('"') and text.endswith('"'), (prof, key)
+            assert '{' not in text and '}' not in text, (prof, key, text)
+            assert 'attribute' not in text.lower(), (prof, key)
+            assert 60 <= len(text) <= 460, (prof, key, len(text))
+
+
+def test_fictional_examples_do_not_show_products_that_do_not_exist_in_the_sector():
+    """A bank must not be shown a bottle, a supermarket must not be shown a factory, and so on."""
+    forbidden = {
+        'finance': ['bottle', 'factory', 'jeans', 'cotton', 'oat ', 'dairy', 'guest night', 'turbine', 'tonne of product'],
+        'services': ['bottle', 'factory', 'jeans', 'cotton', 'oat ', 'dairy', 'guest night', 'turbine'],
+        'digital': ['bottle', 'jeans', 'cotton', 'oat ', 'dairy', 'guest night', 'turbine'],
+        'energy': ['bottle', 'jeans', 'cotton', 'oat ', 'dairy', 'guest night'],
+        'hospitality': ['factory', 'jeans', 'cotton', 'oat ', 'dairy', 'turbine'],
+        'retail': ['factory', 'jeans', 'turbine', 'guest night'],
+        'transport': ['bottle', 'jeans', 'cotton', 'oat ', 'dairy', 'guest night', 'turbine'],
+        'construction': ['bottle', 'jeans', 'cotton', 'oat ', 'dairy', 'guest night', 'turbine'],
+    }
+    for prof, words in forbidden.items():
+        for key in _template_keys():
+            low = _rx.example(key, _SECTOR_SAMPLE_LABELS[prof]).lower()
+            for w in words:
+                assert w not in low, (prof, key, w, low)
+    # and the sector's own vocabulary does show up where it matters
+    assert 'fund' in _rx.example('generic', _SECTOR_SAMPLE_LABELS['finance']).lower()
+    assert 'store' in _rx.example('generic', _SECTOR_SAMPLE_LABELS['retail']).lower()
+    assert 'guest night' in _rx.example('generic', _SECTOR_SAMPLE_LABELS['hospitality']).lower()
+    assert 'data centre' in _rx.example('generic', _SECTOR_SAMPLE_LABELS['digital']).lower()
+
+
+def test_every_sector_name_the_app_can_produce_maps_to_a_sensible_profile():
+    expected = {'Fast fashion and apparel retail (NACE G)': 'textile', 'Pharmaceuticals and nutrition manufacturing (NACE C)': 'manufacturing',
+                'Insurance (NACE K)': 'finance', 'Real estate and property management (NACE L)': 'construction',
+                'Automotive (NACE C)': 'manufacturing', 'Discount retail (NACE G)': 'retail', 'Mining and quarrying (NACE B)': 'manufacturing',
+                'Food service and catering (NACE I)': 'hospitality', 'Human health and social work activities (NACE Q)': 'services'}
+    for name in set(app.SECTOR_KEYWORD_NAMES.values()):
+        assert _rx.profile_for_sector(name) in _rx.PROFILES, name
+    for name, prof in expected.items():
+        assert _rx.profile_for_sector(name) == prof, name
+    assert _rx.profile_for_sector('') == 'general' and _rx.profile_for_sector('Sector not explicitly identified') == 'general'
+
+
+def test_scan_result_examples_follow_the_sector_of_the_scanned_company():
+    """The sector is only known once the whole scan is done; the examples must then follow it (a bank is shown a
+    fund, not a bottle) in every list of the result and also in the inventory used by the PDF."""
+    text = 'Our sustainable investment funds are eco-friendly and 100% green. We are a leading bank for savings and loans.'
+    r = app.analyse_uploaded_document('t.txt', text, 'Testbank', '', document_coverage=None)
+    label = (r.get('sector') or {}).get('name') or (r.get('company') or {}).get('sector') or ''
+    assert _rx.profile_for_sector(label) == 'finance', label
+    seen = 0
+    for lst in ('findings', 'green_findings', 'claim_inventory'):
+        for x in r.get(lst) or []:
+            if x.get('rewrite_key'):
+                seen += 1
+                assert x['rewrite_example'] == _rx.example(x['rewrite_key'], label), (lst, x['rewrite_key'])
+                assert 'bottle' not in x['rewrite_example'].lower()
+    assert seen
+
+
+def test_new_topics_finance_buildings_sourcing_durability_route_to_their_own_rewrite():
+    g = 'Generic environmental claim'
+    assert app.green_rewrite_key(g, 'Our sustainable investment funds follow ESG rules') == 'finance'
+    assert app.green_rewrite_key(g, 'Een duurzaam gebouw met energielabel A en BREEAM Excellent') == 'buildings'
+    assert app.green_rewrite_key(g, 'We buy responsibly sourced cocoa and palm oil') == 'sourcing'
+    assert app.green_rewrite_key(g, 'Built to last: repairable products with spare parts') == 'durability'
+    assert 'fund' in app.green_ready_to_use_rewrite(g, 'sustainable investment fund').lower()
+    assert 'energy label' in app.green_ready_to_use_rewrite(g, 'energy label A building').lower()
+    # a topic must not be triggered by an unrelated word
+    assert app.green_rewrite_key(g, 'Our European Union partners value our sustainable growth') == 'generic'
+
+
+def test_sector_wrapper_is_idempotent_and_keeps_unknown_sectors_general():
+    r = {'sector': {'name': ''}, 'company': {'sector': 'Sector not explicitly identified'},
+         'findings': [{'rewrite_key': 'generic', 'rewrite_example': 'x'}]}
+    once = app._apply_sector_to_rewrite_examples(r)
+    twice = app._apply_sector_to_rewrite_examples(once)
+    assert once['findings'][0]['rewrite_example'] == _rx.example('generic', '') == twice['findings'][0]['rewrite_example']
+    assert app._apply_sector_to_rewrite_examples(None) is None
