@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_10_pdf_example_not_cut_off'
+    assert app.APP_VERSION == 'hostable_v96_11_sector_not_from_claim_words'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7588,3 +7588,33 @@ def test_no_sector_example_is_cut_off_in_the_company_pdf():
             assert rp.rewrite_example_text({'rewrite_example': ex}) == rp.clean_text(ex), (label, key, len(ex))
     for key, tpl in _template_keys().items():
         assert rp.ready_to_use_rewrite_text({'ready_to_use_rewrite': tpl}, 400) == rp.clean_text(tpl), key
+
+
+def test_sector_is_not_inferred_from_the_words_of_a_sustainability_claim():
+    """v96.11: a document full of claims mentions sector words without being in that sector. A French product text
+    saying "sans produits chimiques" was labelled "Chemicals manufacturing" (which also drove the example sentences),
+    and "100% renewable energy" or "energy-efficient" would make any company an energy utility."""
+    cases = [
+        'Nos produits sont 100% naturels et sans produits chimiques. Nous sommes neutres en carbone.',
+        'Our cleaning products are free of harmful chemicals and chemical-free. We are a trusted brand.',
+        'Onze producten zijn zonder schadelijke chemische stoffen en vrij van chemicaliën.',
+        'We use 100% renewable energy and green electricity in everything we do. Our buildings are energy-efficient.',
+        'Notre énergie verte est durable et notre consommation énergie-économie est faible.',
+    ]
+    for text in cases:
+        r = app.analyse_uploaded_document('t.txt', text, 'Testco', '', document_coverage=None)
+        name = (r.get('sector') or {}).get('name') or ''
+        assert 'Chemicals' not in name and 'Energy and utilities' not in name, (text, name)
+
+
+def test_a_company_that_really_is_in_the_sector_is_still_recognised():
+    cases = {
+        'We are a chemical manufacturer producing specialty chemicals for industry.': 'Chemicals',
+        'We are an energy supplier selling electricity and gas to households.': 'Energy and utilities',
+        'Our bank offers savings accounts and loans to families.': 'Banking',
+        'Wij zijn een chemisch bedrijf dat chemische producten maakt, ook zonder oplosmiddelen.': 'Chemicals',
+    }
+    for text, expected in cases.items():
+        r = app.analyse_uploaded_document('t.txt', text, 'Testco', '', document_coverage=None)
+        assert expected in ((r.get('sector') or {}).get('name') or ''), (text, r.get('sector'))
+    assert '\x08' not in Path(app.__file__).read_text(encoding='utf-8'), 'a backspace character crept into the source'

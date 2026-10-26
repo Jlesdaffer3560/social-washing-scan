@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_10_pdf_example_not_cut_off"
-APP_RELEASE_LABEL="v96.10"
+APP_VERSION="hostable_v96_11_sector_not_from_claim_words"
+APP_RELEASE_LABEL="v96.11"
 APP_RELEASE_DATE="2026-10-20"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1963,6 +1963,23 @@ def _strip_client_industry_clauses(text):
     out.append(text[last:])
     return ''.join(out)
 
+# A document or page full of sustainability CLAIMS mentions sector words without being in that sector: "free of harmful
+# chemicals" / "sans produits chimiques" is not a chemicals company, "100% renewable energy" is not an energy utility,
+# "energy-efficient" is not an energy supplier. Reproduced on a French product document whose claims ("sans produits
+# chimiques") made the scan label the company "Chemicals manufacturing", which then also drove the example sentences.
+# These phrases are removed before the sector keywords are matched; a company that really is in the sector still
+# matches through its own descriptions ("we are a chemical manufacturer", "energy supplier").
+_CLAIM_CONTEXT_RE=re.compile(
+    r"\b(?:free (?:of|from)|without|sans|zonder|vrij van|geen|ohne|frei von|libre de|exempt de|sin)\s+(?:[\w\u00c0-\u00ff'\u2019-]+\s+){0,2}[\w\u00c0-\u00ff'\u2019-]+"
+    r"|\b[\w\u00c0-\u00ff]+-free\b"
+    r"|\b(?:renewable|green|clean|sustainable|low[- ]carbon|solar|wind|hernieuwbare|groene|duurzame|verte|vertes|renouvelables?|erneuerbare|gr[u\u00fc]ne)\s+(?:energy|energie|\u00e9nergie|electricity|elektriciteit|stroom|power|strom)\b"
+    r"|\b(?:energy|energie|\u00e9nergie)[- ](?:efficien\w*|saving\w*|consumption|use|besparing\w*|verbruik|[\u00e9e]conomie\w*)"
+    r"|\b(?:energie|\u00e9nergie)s?\s+(?:verte|vertes|renouvelables?|propre|propres|groene|hernieuwbare|duurzame|erneuerbare)\b",
+    re.IGNORECASE)
+
+def _strip_claim_context(text):
+    return _CLAIM_CONTEXT_RE.sub(' ',text)
+
 _NACE_CODE_OVERRIDE={
     '20.20':('Medium','Agrochemicals and crop protection (NACE C)'),
 }
@@ -2085,7 +2102,7 @@ def infer_sector(company,text,page_segments=None,homepage_url=None,nace_activiti
                         match=seg; break
             homepage_text=(match or page_segments[0]).get('text','') or ''
         lower=(company.get("sector","")+" "+(homepage_text[:8000] if homepage_text else text[:15000])).lower()
-        lower=_strip_client_industry_clauses(lower)
+        lower=_strip_claim_context(_strip_client_industry_clauses(lower))
         level="Medium"; basis="default medium exposure"
         for lvl,terms,risks in SECTOR_RULES:
             # v93.24: was plain substring containment (`t in lower`) -- reproduced two real
