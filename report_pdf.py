@@ -258,7 +258,7 @@ def first_sentence(value, max_chars=190) -> str:
 
 
 def _is_unassessed(text):
-    return any(x in text for x in ("not assessed", "unassessed", "unknown", "not available", "n/a"))
+    return any(x in text for x in ("not assessed", "unassessed", "unknown", "not available", "n/a", "inconclusive"))
 
 
 def risk_color(risk):
@@ -969,6 +969,7 @@ def summary_box(data, clusters):
     # and the concrete first action (rewrite_text()), instead of a generic area-of-concern list.
     global_score = data.get("global_score", data.get("overall_score", "—"))
     global_risk = data.get("global_risk", data.get("overall_risk", "Not assessed"))
+    inconclusive = bool(data.get("result_inconclusive"))
     if clusters:
         top = clusters[0]["representative"]
         count_word = "One claim needs" if len(clusters) == 1 else f"{len(clusters)} claims need"
@@ -979,12 +980,17 @@ def summary_box(data, clusters):
     else:
         lead = "We did not find a sustainability claim that needs clearer wording or stronger evidence, based on the material reviewed."
         detail = ""
+    if inconclusive and not clusters:
+        lead = "This scan is inconclusive."
+        detail = "Too little of the website could be read, and no claim was found in the part that could. Please run the scan again or upload the relevant documents."
     score_line = (f'Overall score: {esc(global_score)}/100 — {esc(global_risk)} claim risk. '
                   f"This reflects the wording and evidence gaps found — not a share of unlawful claims, and not a rating of the company's overall sustainability performance.")
     # External review: wrapping the WHOLE multi-sentence conclusion in <b> made this box read
     # as a wall of bold text once point 9 made it name the specific issue and action instead of
     # a single short templated line. Bold only the lead fact (the count); the explanation that
     # follows reads at normal weight, same as any other paragraph in the report.
+    if inconclusive:
+        score_line = 'Overall score: not rated (inconclusive), because too little of the site could be read.'
     conclusion_html = f'<b>{esc(lead)}</b>' + (f' {esc(detail)}' if detail else '')
     left = Paragraph(f'{conclusion_html}<br/><font color="#4A5578" size="8">{score_line}</font>', ST["body_dark"])
     # External code review, point 9: the side note always told the reader to "verify the
@@ -1058,6 +1064,14 @@ def entity_context_bar(data):
 def score_row(data):
     column_width = CONTENT_W / 3
     card_width = column_width - 4
+    if data.get("result_inconclusive"):
+        # only the fixed baseline was computed (too little of the site could be read, no claim found): no number, no risk colour
+        note = "Too little of the site could be read to rate it."
+        cards = [score_card(label, "\u2014", "Inconclusive", note=note, card_width=card_width)
+                 for label in ("Overall claims risk", "Green claims risk", "Social claims risk")]
+        row = Table([cards], colWidths=[column_width] * 3)
+        row.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        return row
     cards = [score_card("Overall claims risk", data.get("global_score", data.get("overall_score", "—")), data.get("global_risk", data.get("overall_risk", "Not assessed")), card_width=card_width), score_card("Green claims risk", data.get("green_score", "—"), data.get("green_risk", "Not assessed"), card_width=card_width), score_card("Social claims risk", data.get("social_score", "—"), data.get("social_risk", "Not assessed"), card_width=card_width)]
     t = Table([cards], colWidths=[column_width] * 3)
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))

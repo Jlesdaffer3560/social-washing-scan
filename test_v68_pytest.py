@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_11_sector_not_from_claim_words'
+    assert app.APP_VERSION == 'hostable_v96_12_inconclusive_when_site_unreadable'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7618,3 +7618,50 @@ def test_a_company_that_really_is_in_the_sector_is_still_recognised():
         r = app.analyse_uploaded_document('t.txt', text, 'Testco', '', document_coverage=None)
         assert expected in ((r.get('sector') or {}).get('name') or ''), (text, r.get('sector'))
     assert '\x08' not in Path(app.__file__).read_text(encoding='utf-8'), 'a backspace character crept into the source'
+
+
+def _crawl_entry(url, ok, status=200, source='linked'):
+    return {'url': url, 'ok': ok, 'http_status': status if (ok or status != 200) else None, 'chars': 2500 if ok else 0, 'thin': False,
+            'error': None if ok else 'The read operation timed out', 'method': 'direct' if ok else 'failed', 'source': source}
+
+
+def test_scan_that_could_read_only_part_of_the_site_and_found_no_claim_is_inconclusive_not_low():
+    """v96.12: delhaize.be answers pages in 8-20 s; 3 of 6 pages timed out, no claim was found in the rest and the scan
+    was shown as a confident "Low 14/100" (an earlier scan that read more of the site had been High). Such a result
+    carries only the fixed baseline and must be flagged inconclusive."""
+    pages = [{'url': 'https://x.example/', 'text': 'a ' * 800}, {'url': 'https://x.example/b', 'text': 'b ' * 800}]
+    log = [_crawl_entry('https://x.example/', True), _crawl_entry('https://x.example/b', True),
+           _crawl_entry('https://x.example/c', False), _crawl_entry('https://x.example/d', False),
+           _crawl_entry('https://x.example/e', False), _crawl_entry('https://x.example/f', True)]
+    ext = {'enabled': True, 'results': []}
+    res = app.build_confidence(pages, ext, [], log, no_claims_at_all=True)
+    assert res['inconclusive'] is True and res['level'] == 'Insufficient coverage'
+    # the same crawl with a retained claim is NOT inconclusive: there is something to rate
+    res2 = app.build_confidence(pages, ext, [{'type': 'Generic environmental claim'}], log, no_claims_at_all=False)
+    assert res2['inconclusive'] is False
+    # a fully read site with no claims is a genuine, confident Low
+    ok_log = [_crawl_entry('https://x.example/' + c, True) for c in 'abcdef']
+    res3 = app.build_confidence(pages, ext, [], ok_log, no_claims_at_all=True)
+    assert res3['inconclusive'] is False and res3['level'] != 'Insufficient coverage'
+    # speculative 404 guesses never count as failures
+    log4 = [_crawl_entry('https://x.example/', True), _crawl_entry('https://x.example/b', True)] + \
+           [_crawl_entry('https://x.example/g%d' % i, False, status=404, source='common_path') for i in range(6)]
+    assert app.build_confidence(pages, ext, [], log4, no_claims_at_all=True)['inconclusive'] is False
+
+
+def test_inconclusive_result_is_shown_as_inconclusive_in_the_web_ui_and_the_pdf():
+    html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
+    assert 'result_inconclusive' in html and "'Inconclusive'" in html and '.risk.not-assessed' in html
+    import io as _io
+    import pypdf
+    import report_pdf as rp
+    data = _pdf_test_data([])
+    data['result_inconclusive'] = True
+    data['data_reliability_warning'] = '3 of 6 page fetches failed (e.g. HTTP 403/blocked or unreachable). A low risk score may reflect limited access.'
+    pdf = rp.build_company_report_pdf(data)
+    text = ' '.join(' '.join(p.extract_text().split()) for p in pypdf.PdfReader(_io.BytesIO(pdf)).pages)
+    assert 'inconclusive' in text.lower()
+    assert text.lower().count('inconclusive') >= 4, 'the score cards must say Inconclusive too'
+    data['result_inconclusive'] = False
+    pdf2 = rp.build_company_report_pdf(data)
+    assert 'inconclusive' not in ' '.join(p.extract_text() for p in pypdf.PdfReader(_io.BytesIO(pdf2)).pages).lower()

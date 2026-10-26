@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_11_sector_not_from_claim_words"
-APP_RELEASE_LABEL="v96.11"
-APP_RELEASE_DATE="2026-10-20"
+APP_VERSION="hostable_v96_12_inconclusive_when_site_unreadable"
+APP_RELEASE_LABEL="v96.12"
+APP_RELEASE_DATE="2026-10-26"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -2666,7 +2666,7 @@ def build_engagement_questions(findings,ext):
         if q not in out: out.append(q)
     return out[:6]
 
-def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None,duplicate_content_info=None):
+def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None,duplicate_content_info=None,no_claims_at_all=None):
     # v93.30: every check below that reasons about "how many pages were reviewed" used
     # len(pages) -- the count of pages the crawler successfully FETCHED, not how many
     # actually contributed real text to the analysed document (build_scan_inventory()
@@ -2763,11 +2763,19 @@ def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None,
     # can also mean a small, genuinely reachable site with little to say; "Insufficient coverage"
     # specifically flags that most of the crawl failed outright, so there usually isn't enough
     # material to draw ANY conclusion from, favourable or not.
+    # A scan that could read only part of the site AND found no claim at all says nothing about the company: the
+    # numbers are only the fixed baseline (reported live: delhaize.be, whose pages answer in 8-20 s, lost 3 of 6 pages
+    # to time-outs and was shown as a confident "Low 14/100", where an earlier scan that read more of the site was
+    # "High"). Such a result is flagged `inconclusive` and shown as "Inconclusive" instead of a risk level.
+    nothing_found=no_findings if no_claims_at_all is None else bool(no_claims_at_all)
+    inconclusive=bool(nothing_found and attempted and (len(blocked)/attempted>=0.4 or (n_pages<=1 and blocked)))
     if attempted and len(blocked)/attempted >= 0.75 and n_pages <= 1:
+        level_str="Insufficient coverage"
+    elif inconclusive:
         level_str="Insufficient coverage"
     else:
         level_str="High" if pts>=5 else "Medium" if pts>=3 else "Low"
-    result={"level":level_str,"reasons":reasons,"attempted":attempted,"blocked":len(blocked)}
+    result={"level":level_str,"reasons":reasons,"attempted":attempted,"blocked":len(blocked),"inconclusive":inconclusive}
     if reliability_warning:
         result["reliability_warning"]=reliability_warning
     return result
@@ -5382,7 +5390,10 @@ def analyse_url_v27(raw, company_number='', chosen_url=''):
     _inv_summary=scan_inventory.get('summary',{}) if isinstance(scan_inventory,dict) else {}
     analysed_page_count=max(0,_inv_summary.get('reviewed_total',len(pages))-_inv_summary.get('retrieved_not_analysed',0))
     methodology='Sustainability Claims Risk Scan. The assessment separates green and social claim signals. Green claims are assessed through an EmpCo / Directive (EU) 2024/825 lens for consumer-facing environmental claims (Member States must transpose by 27 March 2026; rules apply from 27 September 2026), with explicit modules for generic claims, carbon/offsetting, labels/icons, future claims, comparisons, legal-requirement claims and same-medium specification. Social claims are assessed through claim wording, evidence gap, external contradictory context and sector exposure, with a specific Forced Labour Regulation / Regulation (EU) 2024/3015 lens for product, supplier, import/export, traceability, forced-labour and modern-slavery claims (core prohibition and enforcement provisions apply from 14 December 2027; this is a market-access/customs regime, not a claims law, and creates no new due-diligence obligation of its own per Art. 1(3)). Clear indications of EmpCo or Forced Labour Regulation risk receive a higher weighting than broader responsible-business claims mainly linked to OECD Guidelines, UNGC or UNGP expectations. External public-source signals exclude company-owned websites, policies, reports and supplier documents; those may be used as evidence but not as external stakeholder signals. Sector exposure is included as a baseline sensitivity factor but should not create a High-risk result without problematic claim wording, evidence gaps or contradictory context.'
-    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log,analysed_page_count=analysed_page_count,duplicate_content_info=duplicate_content_info)
+    _no_green=(not green_fs) or is_placeholder_finding(green_fs[0].get('type',''))
+    _no_social=(not social_fs) or is_placeholder_finding(social_fs[0].get('type',''))
+    confidence_result=build_confidence(pages,social_ext,social_fs,crawl_log,analysed_page_count=analysed_page_count,duplicate_content_info=duplicate_content_info,no_claims_at_all=(_no_green and _no_social))
+    result_inconclusive=bool(confidence_result.get('inconclusive'))
     reliability_warning=confidence_result.get('reliability_warning')
     # Use the same expected-guess-filtered counts the warning text itself is based on (see
     # build_confidence), so the "(X/Y pages failed)" prefix never disagrees with the warning
@@ -5432,6 +5443,8 @@ def analyse_url_v27(raw, company_number='', chosen_url=''):
         screening_conclusion=f'UCPD Annex I wording match (as amended by EmpCo): automatic {level(green_score)} | '+screening_conclusion
     if reliability_warning:
         screening_conclusion=f'⚠ Low confidence ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) | '+screening_conclusion
+    if result_inconclusive:
+        screening_conclusion=f'Inconclusive: too little of the site could be read ({crawl_pages_failed}/{crawl_pages_attempted} pages failed) and no claim was found | '+screening_conclusion
     entity_context_indicator=build_entity_context_indicator(sec, ctx, green_targeted, social_targeted, external_verification_status)
     # v93.31: green_fs/social_fs are the FULL analysis lists (scoring, red flags, the action
     # plan, regulatory summary and source attribution above all already used the complete
@@ -5446,6 +5459,7 @@ def analyse_url_v27(raw, company_number='', chosen_url=''):
         'screening_conclusion':screening_conclusion,
         'empco_blacklist_floor_applied':empco_blacklist_floor,
         'data_reliability_warning':reliability_warning,
+        'result_inconclusive':result_inconclusive,
         'crawl_diagnostics':{'pages_attempted':crawl_pages_attempted,'pages_failed':crawl_pages_failed,'pages_thin':crawl_pages_thin,'pages_retrieved_via_fallback':len([e for e in crawl_log if e.get('ok') and e.get('method')=='reader_fallback']),'detail':crawl_log},
         'methodology':methodology,'company':comp,'sector':sec,'context':ctx,'document_audience':audience,
         'findings':all_claims,'green_findings':green_findings_display,'social_findings':social_findings_display,
