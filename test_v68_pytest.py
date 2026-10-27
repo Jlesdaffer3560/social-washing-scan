@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_14_report_accuracy'
+    assert app.APP_VERSION == 'hostable_v96_15_parent_company_documents'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7754,3 +7754,57 @@ def test_scan_whose_pages_mostly_needed_the_fallback_and_found_no_claim_is_also_
     assert app.build_confidence(pages, ext, [{'type': 'Generic environmental claim'}], log, no_claims_at_all=False)['inconclusive'] is False
     one = [fb('a')] + [_crawl_entry('https://x.example/' + c, True) for c in 'bcdefg']
     assert app.build_confidence(pages, ext, [], one, no_claims_at_all=True)['inconclusive'] is False
+
+
+def test_parent_group_document_is_analysed_but_labelled_as_a_group_document(monkeypatch):
+    """v96.15: the Lidl scan analysed the Schwarz Group human-rights policy (the group that owns Lidl; the policy itself says
+    it "includes the retail chains Kaufland and Lidl") as if it were Lidl's own text, with nothing in the report showing
+    that it is a group document. It is a legitimate source, so it stays in the analysis -- but is labelled with its issuer
+    in the register and on every finding taken from it. A document that does not name the company at all is excluded;
+    a document of the company itself (named repeatedly, wherever hosted) is unchanged."""
+    cdn_group = 'https://assets.ctfassets.net/abc/Schwarz_Group_Human_Rights_Policy.pdf'
+    cdn_own = 'https://assets.ctfassets.net/abc/Lidl_Sustainability_Overview.pdf'
+    cdn_other = 'https://assets.ctfassets.net/abc/Unrelated_Company_Policy.pdf'
+    group_text = ('Schwarz Group Human Rights Policy Statement. The Schwarz Group, which includes the retail chains Kaufland and Lidl, '
+                  'recognizes its responsibility to respect human rights. ' + 'We strive to respect, promote and protect human rights across the Schwarz Group. ' * 8)
+    own_text = ('Lidl sustainability overview. Lidl works with suppliers on responsible sourcing. At Lidl we reduce packaging. '
+                'Lidl publishes progress every year. ') * 6
+    other_text = ('Acme Holding Policy. Acme Holding commits to fair labour practices in all its factories and offices. ') * 10
+    def fake_fetch_html(url, timeout=7):
+        return ('<html><body><a href="%s">A</a><a href="%s">B</a><a href="%s">C</a></body></html>' % (cdn_group, cdn_own, cdn_other)), url
+    def fake_fetch_page_content(url, timeout=8):
+        texts = {cdn_group: group_text, cdn_own: own_text, cdn_other: other_text}
+        if url in texts:
+            return (texts[url], 'pdf', 'direct', [], url, url)
+        raise Exception('not found')
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    log = []
+    text, pages, chunks = app.crawl('https://mediacenter.lidl.com', max_extra_pages=5, deadline=None, log=log)
+    assert cdn_own in pages and cdn_group in pages and cdn_other not in pages
+    group_entries = [e for e in log if e.get('group_issuer')]
+    assert len(group_entries) == 1 and group_entries[0]['group_issuer'] == 'Schwarz Group' and group_entries[0]['url'] == cdn_group
+    assert [e['url'] for e in log if e.get('skipped_other_entity')] == [cdn_other]
+    inv = app.build_scan_inventory(pages, [], log, full_text='\n\n'.join(chunks))
+    docs = {d['url']: d for d in inv['documents']}
+    assert docs[cdn_group]['group_issuer'] == 'Schwarz Group' and docs[cdn_own]['group_issuer'] == ''
+    assert inv['summary']['skipped_other_entity'] == 1 and inv['skipped_other_entity'][0]['url'] == cdn_other
+    claims = [{'source_url': cdn_group, 'claim': 'We respect human rights.'}, {'source_url': cdn_own, 'claim': 'We reduce packaging.'}]
+    app.attach_claim_counts_to_inventory(inv, claims)
+    assert claims[0]['source_group_issuer'] == 'Schwarz Group' and 'source_group_issuer' not in claims[1]
+    import report_pdf as rp
+    assert 'group document, Schwarz Group' in rp.claim_source(dict(claims[0], source_label='ENG Policy.pdf'))
+    assert 'group document' not in rp.claim_source(dict(claims[1], source_label='Overview.pdf'))
+
+
+def test_document_relation_rule_own_group_other_and_edge_cases():
+    cdn = 'https://cdn.sanity.io/files/x/report.pdf'
+    assert app._v96_document_about_other_entity(cdn, 'AB InBev annual report. AB InBev cuts emissions. AB InBev targets.', 'www.ab-inbev.com') == ('own', '')
+    assert app._v96_document_about_other_entity(cdn, 'Colruyt Group report. Colruyt targets. Colruyt Group results.', 'www.colruytgroup.com', 'Colruyt Group') == ('own', '')
+    assert app._v96_document_about_other_entity('https://www.lidl.be/a.pdf', 'Policy of another group.', 'www.lidl.be') == ('own', '')
+    assert app._v96_document_about_other_entity(cdn, 'Some text', '') == ('own', '')
+    assert app._v96_document_about_other_entity(cdn, 'Schwarz Group policy covering Lidl and Kaufland.', 'mediacenter.lidl.com') == ('group', 'Schwarz Group')
+    assert app._v96_document_about_other_entity(cdn, 'Schwarz Group policy about itself.', 'mediacenter.lidl.com')[0] == 'other'
+    html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
+    assert 'Excluded: document of another company' in html and 'Group document: issued by' in html and 'source_group_issuer' in html

@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_14_report_accuracy"
-APP_RELEASE_LABEL="v96.14"
+APP_VERSION="hostable_v96_15_parent_company_documents"
+APP_RELEASE_LABEL="v96.15"
 APP_RELEASE_DATE="2026-10-26"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1555,6 +1555,55 @@ def _log_fetch_failure(log,url,err,source='discovered'):
                     'error':_describe_fetch_error(err),'method':'failed','source':source})
 
 
+_ISSUER_RE=re.compile(r"([A-Z\u00c4\u00d6\u00dc][\w&.\-]+(?:\s+[A-Z][\w&.\-]+){0,2}\s+(?:Group|Gruppe|Groupe|Holding|AG|GmbH|SE|NV|SA|Ltd|Inc|plc|Foundation|Stiftung))")
+_LEGAL_FORM_WORDS={'group','groupe','gruppe','holding','nv','sa','bv','bvba','srl','sprl','ag','gmbh','se','ltd','inc','plc','the','and','of'}
+
+def _v96_brand_patterns(host,company_hint=''):
+    """Regexes for the name of the company being scanned, from its web address (mediacenter.lidl.com -> lidl) and, when
+    known, the entered name. A hyphen or space in the name is optional (ab-inbev also matches "AB InBev")."""
+    labels=[]
+    parts=[x for x in str(host or '').lower().split('.') if x]
+    if len(parts)>=2:
+        sld=parts[-2]
+        if sld in {'co','com','org','net','gov','ac'} and len(parts)>=3: sld=parts[-3]
+        labels.append(sld)
+    for w in re.findall(r"[A-Za-z0-9\u00c0-\u00ff&\-]{3,}",str(company_hint or '')):
+        if w.lower() not in _LEGAL_FORM_WORDS: labels.append(w.lower())
+    out=[]
+    for lab in dict.fromkeys(labels):
+        if len(lab)<3: continue
+        bits=[re.escape(b) for b in re.split(r"[-_\s]+",lab) if b]
+        if bits: out.append(re.compile(r"(?<![a-z0-9])"+r"[\s\-]?".join(bits)+r"(?![a-z0-9])",re.I))
+    return out
+
+def _v96_document_about_other_entity(link,text,host,company_hint=''):
+    """Classify a page/document hosted OUTSIDE the scanned company's own domain by how it relates to that company:
+      ('own','')      the company's name appears 3+ times: its own communication (wherever it is hosted);
+      ('group',X)     the name appears once or twice: a document issued by X (for example a parent group such as the
+                      Schwarz Group for Lidl) that names the company -- analysed, but labelled as a group-level document;
+      ('other',X)     the company is not named at all: not about this company, so not analysed.
+    Reported on Lidl: the Schwarz Group human-rights policy was analysed as Lidl's own communication without any sign
+    that it is a group document."""
+    try:
+        if not link or not host or same_domain(link,host): return ('own','')
+        pats=_v96_brand_patterns(host,company_hint)
+        if not pats: return ('own','')
+        mentions=sum(len(pt.findall(text or '')) for pt in pats)
+        if mentions>=3: return ('own','')
+        m=_ISSUER_RE.search((text or '')[:600])
+        issuer=(m.group(1).strip() if m else '')
+        return (('group' if mentions>=1 else 'other'),issuer)
+    except Exception:
+        return ('own','')
+
+def _log_fetch_skipped_other_entity(log,url,chars,issuer,source='discovered',content_kind='html'):
+    """Retrieved fine but not analysed: the text is not clearly about the scanned company (see
+    _v96_document_about_other_entity()). Shown in the coverage register as its own category."""
+    if log is not None:
+        log.append({'url':url,'ok':True,'skipped_other_entity':True,'issuer':issuer,'chars':chars,'thin':False,'error':None,
+                    'method':'skipped_other_entity','source':source,'content_kind':content_kind})
+
+
 def _log_fetch_skipped_outdated(log,url,chars,year,source='discovered',content_kind='html'):
     """A page/document WAS successfully retrieved but is excluded from the analysed text because
     it predates DOCUMENT_SCREENING_CUTOFF_YEAR (see _v93_document_predates_screening_cutoff()).
@@ -1837,10 +1886,15 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                             _log_fetch_skipped_duplicate(log,link,len(t),final_canon,source=source,content_kind=kind)
                         elif stale_year is not None and stale_year<DOCUMENT_SCREENING_CUTOFF_YEAR:
                             _log_fetch_skipped_outdated(log,link,len(t),stale_year,source=source,content_kind=kind)
+                        elif _v96_document_about_other_entity(link,t,host)[0]=='other':
+                            _log_fetch_skipped_other_entity(log,link,len(t),_v96_document_about_other_entity(link,t,host)[1],source=source,content_kind=kind)
                         else:
                             if final_canon: seen_final.add(final_canon)
                             if fail_count.get(link) and log is not None: log[:]=[e for e in log if not (e.get('url')==link and e.get('ok') is False)]
                             _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
+                            _doc_rel=_v96_document_about_other_entity(link,t,host)
+                            if _doc_rel[0]=='group' and log:
+                                log[-1]['group_issuer']=_doc_rel[1] or 'another organisation'
                             if successful<max_extra_pages:
                                 label='REPORT (PDF): ' if kind=='pdf' else 'PAGE: '
                                 chunks.append('\n\n'+label+link+'\n'+t)
@@ -3246,6 +3300,7 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
             'source_type':'Document / PDF' if is_document else 'Website page','domain':domain,
             'document_type':doc.get('document_type') or ('PDF document' if is_document else 'Website page'),
             'audience_assessment':doc.get('audience_assessment') or 'Not assessed','empco_relevance':doc.get('empco_relevance') or 'Not assessed',
+            'group_issuer':log.get('group_issuer') or '',
             'fetch_method':log.get('method') or ('uploaded' if not url.startswith(('http://','https://')) else 'direct'),
             'discovery_source':log.get('source') or ('uploaded' if not url.startswith(('http://','https://')) else 'reviewed'),
             'characters_extracted':extracted or analysed,'characters_analysed':analysed,
@@ -3291,6 +3346,17 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
             'detected_year':year,'reason':f'Dated {year} -- excluded because it predates the {DOCUMENT_SCREENING_CUTOFF_YEAR} screening cutoff for the company\'s own communication.' if year else 'Excluded as outdated.',
             'discovery_source':entry.get('source') or 'discovered'})
 
+    skipped_other_entity=[]; other_seen=set()
+    for entry in crawl_log:
+        if not isinstance(entry,dict) or not entry.get('skipped_other_entity') or not entry.get('url'): continue
+        key=canon(entry.get('url'))
+        if key in other_seen: continue
+        other_seen.add(key)
+        issuer=entry.get('issuer') or ''
+        skipped_other_entity.append({'url':entry.get('url'),'name':page_name_from_url(entry.get('url')),'issuer':issuer,
+            'reason':('This document is issued by '+issuer+' and does not name the scanned company, so it was not analysed as the company\'s own communication.') if issuer else 'This document is hosted outside the company\'s own website and does not name the scanned company, so it was not analysed as the company\'s own communication.',
+            'discovery_source':entry.get('source') or 'discovered'})
+
     # v93.89: a page that redirected to the exact same final URL as one already captured under
     # a different starting link (see _log_fetch_skipped_duplicate()) was retrieved successfully
     # but is neither a normal "reviewed" source (it never entered chunks/pages) nor a "failed"
@@ -3319,14 +3385,27 @@ def build_scan_inventory(pages, documents_checked=None, crawl_log=None, full_tex
                        'limited_text':status_counts.get('Limited text extracted',0),
                        'retrieved_not_analysed':status_counts.get('Retrieved but not analysed due to budget',0),
                        'skipped_outdated':len(skipped_outdated),
+                       'skipped_other_entity':len(skipped_other_entity),
                        'skipped_duplicate':len(skipped_duplicate)},
             'website_pages':page_items,'documents':document_items,'failed_fetches':failed,'domains':domains,
-            'skipped_outdated':skipped_outdated,'skipped_duplicate':skipped_duplicate,
+            'skipped_outdated':skipped_outdated,'skipped_other_entity':skipped_other_entity,'skipped_duplicate':skipped_duplicate,
             'note':''}
 
 
 def attach_claim_counts_to_inventory(inventory, claims):
     if not isinstance(inventory,dict): return inventory
+    # A document issued by a parent/group company that names the scanned company (see _v96_document_about_other_entity())
+    # is analysed, but every finding taken from it carries the issuer, so the report can say "group document".
+    try:
+        group_by_url={_canonical_url(str(i.get('url') or '')):i.get('group_issuer') for i in
+                      list(inventory.get('website_pages') or [])+list(inventory.get('documents') or []) if i.get('group_issuer')}
+        if group_by_url:
+            for claim in claims or []:
+                if isinstance(claim,dict):
+                    key=_canonical_url(str(claim.get('source_url') or ''))
+                    if key in group_by_url: claim['source_group_issuer']=group_by_url[key]
+    except Exception:
+        pass
     items=list(inventory.get('website_pages') or [])+list(inventory.get('documents') or [])
     for item in items:
         item['claim_signal_count']=0; item['claim_dimensions']=[]

@@ -203,7 +203,10 @@ def build_methodology_pdf():
         'the website returns to it. On a multilingual site (for example Dutch and French) the other language version may therefore not be '
         'read; scan it separately if you need it. <b>Uploaded documents.</b> A document is analysed in full up to about 1,000,000 '
         'characters (roughly 400 pages). Large PDFs are read in your own browser, and only their text is sent. Anything beyond the limit is '
-        'reported as not analysed.', STY['body']))
+        'reported as not analysed. <b>Documents of a parent or other company.</b> A document hosted outside the company&rsquo;s own website that names the '
+        'scanned company only once or twice (for example the human-rights policy of its parent group) is analysed, but it is labelled as a '
+        'group document with the name of its issuer, because it describes the group&rsquo;s policy. A document that does not name the '
+        'scanned company at all is not analysed as its own communication and is listed in the coverage register as excluded. ', STY['body']))
     flow.append(Spacer(1, 5))
     signal_rows = [
         ('Type of claim kept', 'Examples', 'Why it matters'),

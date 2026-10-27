@@ -400,7 +400,11 @@ def claim_source(claim):
     if source.startswith("http"):
         parsed = urlparse(source)
         filename = parsed.path.rsplit("/", 1)[-1]
-        return filename or parsed.netloc.replace("www.", "")
+        source = filename or parsed.netloc.replace("www.", "")
+    # a statement taken from a document of the parent/group company says so: it describes the group's policy
+    issuer = clean_text(claim.get("source_group_issuer") or "")
+    if issuer:
+        source = f"{bounded_text(source, 60)} (group document, {issuer})"
     return source
 
 
