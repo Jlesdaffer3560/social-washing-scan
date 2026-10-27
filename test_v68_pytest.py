@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_15_parent_company_documents'
+    assert app.APP_VERSION == 'hostable_v96_16_missing_pages_and_about_crawl'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7808,3 +7808,42 @@ def test_document_relation_rule_own_group_other_and_edge_cases():
     assert app._v96_document_about_other_entity(cdn, 'Schwarz Group policy about itself.', 'mediacenter.lidl.com')[0] == 'other'
     html = (Path(__file__).parent / 'frontend.html').read_text(encoding='utf-8')
     assert 'Excluded: document of another company' in html and 'Group document: issued by' in html and 'source_group_issuer' in html
+
+
+def test_missing_page_404_is_not_rescued_by_the_reader_fallback(monkeypatch):
+    import pytest
+    """v96.16: dandoy.be -- guessed paths such as /sustainability returned HTTP 404 directly, but the Reader fallback then
+    returned the site's own "page not found" screen (414 characters) and it was logged as a reviewed fallback page. A
+    404/410 is final; a 403 may be a scanner block and still goes to the fallback."""
+    from urllib.error import HTTPError
+    reader_calls = []
+    def fake_open(url, timeout=7, accept='', max_bytes=0, deadline=None):
+        raise HTTPError(url, fake_open.code, 'x', {}, None)
+    def fake_reader(url, timeout=9):
+        reader_calls.append(url)
+        return 'Oops! The page you are looking for is not available. ' * 10
+    monkeypatch.setattr(app, '_open_public_url', fake_open)
+    monkeypatch.setattr(app, 'fetch_reader_text', fake_reader)
+    monkeypatch.setattr(app, 'ENABLE_READER_FALLBACK', True)
+    for code in (404, 410):
+        fake_open.code = code
+        with pytest.raises(HTTPError):
+            app.fetch_page_content('https://x.example/sustainability')
+    assert reader_calls == []
+    fake_open.code = 403
+    assert app.fetch_page_content('https://x.example/page')[2] == 'reader_fallback'
+    assert len(reader_calls) == 1
+
+
+def test_about_and_values_pages_are_crawl_candidates_and_outrank_guessed_paths():
+    """v96.16: the page with a company's labels, values and ambition is often just /about/; it held no sustainability word, so
+    it was never crawled (dandoy.be). Whole segments only: 'commission' / 'permission' do not count."""
+    for u in ('https://x.be/about/', 'https://x.be/nl/over-ons/', 'https://x.be/fr/a-propos/', 'https://x.be/en/our-values',
+              'https://x.be/qui-sommes-nous', 'https://x.be/ambition'):
+        assert app.relevant(u) is True, u
+    for u in ('https://x.be/commission', 'https://x.be/permission/form', 'https://x.be/services/transport/', 'https://x.be/contact'):
+        assert app.relevant(u) is False, u
+    ranked = sorted([('https://x.be/sustainability', 'common_path'), ('https://x.be/about/', 'linked'),
+                     ('https://x.be/contact/', 'linked')], key=app._candidate_score)
+    assert ranked[1][0] == 'https://x.be/about/' or ranked[0][0] == 'https://x.be/about/'
+    assert ranked.index(('https://x.be/about/', 'linked')) < ranked.index(('https://x.be/contact/', 'linked'))

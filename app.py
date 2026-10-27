@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_15_parent_company_documents"
-APP_RELEASE_LABEL="v96.15"
-APP_RELEASE_DATE="2026-10-26"
+APP_VERSION="hostable_v96_16_missing_pages_and_about_crawl"
+APP_RELEASE_LABEL="v96.16"
+APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -1346,7 +1346,11 @@ def fetch_page_content(url,timeout=7):
         direct_error=e
         direct_short=''
     remaining_for_reader=deadline-time.time()
-    if ENABLE_READER_FALLBACK and remaining_for_reader>1.5 and not url.lower().split('?')[0].endswith(('.xml','.txt')):
+    # A 404/410 means the page does not exist. The Reader fallback would return the site's own "page not found" screen as
+    # if it were content (dandoy.be: 7 guessed paths such as /sustainability came back as "fallback pages" with 414 characters
+    # of error-page text and were counted as reviewed). 401/403 still go to the fallback: those may be a scanner block.
+    page_missing=isinstance(direct_error,HTTPError) and direct_error.code in (404,410)
+    if ENABLE_READER_FALLBACK and not page_missing and remaining_for_reader>1.5 and not url.lower().split('?')[0].endswith(('.xml','.txt')):
         try:
             # Reader returns extracted text only, with no reliable redirect information of its
             # own -- the best available "final URL" here is the requested url itself.
@@ -1390,6 +1394,11 @@ _RELEVANT_SUBSTRING_TERMS=('sustain','responsib','human','rights','divers','incl
 # candidate queue without having to special-case any one retailer's URL scheme.
 _CATALOG_ID_SEGMENT_RE=re.compile(r'^[a-z]{1,3}\d{4,}$')
 
+# The page where a company states its values, ambition, labels and certifications is often called just "About" (dandoy.be: the
+# only page with its labels and ambition is /about/, which was never crawled because the path holds no sustainability word).
+# Matched as whole path segments so "commission" or "permission" do not count.
+_RELEVANT_ABOUT_SEGMENT_RE=re.compile(r'(?:^|/)(?:about|about-us|about-\w+|who-we-are|our-company|our-mission|our-values|mission|values|vision|ambitions?|labels|certifications?|over-ons|over-ons-\w+|a-propos|qui-sommes-nous|notre-mission|nos-valeurs|onze-missie|onze-waarden|missie|waarden|valeurs)(?:/|$)')
+
 def relevant(h):
     h=h.lower()
     path=urlparse(h).path if '://' in h else h
@@ -1409,6 +1418,8 @@ def relevant(h):
     if _CATALOG_ID_SEGMENT_RE.match(last_segment) and not any(k in last_segment for k in _RELEVANT_SUBSTRING_TERMS):
         return False
     if any(k in path for k in _RELEVANT_SUBSTRING_TERMS):
+        return True
+    if _RELEVANT_ABOUT_SEGMENT_RE.search(path):
         return True
     # 'green' and 'planet' collide with ordinary grocery/retail product names (e.g.
     # "evergreen", "planetarium") when matched as a raw substring. Require them to appear
@@ -1650,6 +1661,9 @@ def _candidate_score(item):
     # the bottom of the ranked queue and toward the CRAWL_MAX_PAGE_ATTEMPTS cutoff whenever it
     # competed against English or common-path candidates. Added NL/FR terms at the same weights
     # as their English equivalents.
+    # An actual link to an About/values/ambition page must outrank a guessed path that probably does not exist
+    # (dandoy.be: /about/ held the labels and ambition but fell below the 14-attempt cut-off behind 14 guessed 404 paths).
+    if source=='linked' and _RELEVANT_ABOUT_SEGMENT_RE.search(urlparse(low).path): score+=25
     for word,weight in [('sustainab',55),('esg',50),('responsib',45),('human-right',45),('modern-slavery',45),('climate',38),('environment',35),('supplier',32),('annual',25),('report',24),('people',18),('planet',18),('impact',16),('governance',15),
         ('duurzaam',55),('verantwoord',45),('mensenrecht',45),('moderne-slavernij',45),('klimaat',38),('milieu',35),('leverancier',32),('jaarverslag',25),('mensen',18),('planeet',18),('bestuur',15),
         ('durabilite',55),('durable',55),('responsab',45),('droits-humain',45),('esclavage-moderne',45),('climat',38),('environnement',35),('fournisseur',32),('annuel',25),('rapport',24),('personnes',18),('planete',18),('gouvernance',15)]:
