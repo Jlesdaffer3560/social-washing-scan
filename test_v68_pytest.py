@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_16_missing_pages_and_about_crawl'
+    assert app.APP_VERSION == 'hostable_v96_17_stable_external_signals'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7847,3 +7847,55 @@ def test_about_and_values_pages_are_crawl_candidates_and_outrank_guessed_paths()
                      ('https://x.be/contact/', 'linked')], key=app._candidate_score)
     assert ranked[1][0] == 'https://x.be/about/' or ranked[0][0] == 'https://x.be/about/'
     assert ranked.index(('https://x.be/about/', 'linked')) < ranked.index(('https://x.be/contact/', 'linked'))
+
+
+def test_external_search_results_are_cached_so_a_repeat_scan_reads_the_same_sources(monkeypatch):
+    """v96.17: Lidl showed different external signals on two scans a few hours apart. A successful, non-empty answer to a
+    query is now remembered, so the repeat scan gets the same sources (and spends no search credit)."""
+    monkeypatch.setattr(app, '_EXTERNAL_SEARCH_CACHE', {})
+    monkeypatch.setattr(app, 'EXTERNAL_SEARCH_CACHE_SECONDS', 3600)
+    calls = []
+    answers = [[{'title': 'A', 'url': 'https://news.example/a', 'content': 'x', 'score': 1}],
+               [{'title': 'B', 'url': 'https://news.example/b', 'content': 'y', 'score': 1}]]
+    def fake_uncached(query, max_results=8, topic='general', include_domains=None, exclude_domains=None, search_depth='basic'):
+        calls.append(query)
+        return answers[len(calls) - 1], [{'provider': 'Tavily', 'status': 'ok', 'results': 1}]
+    monkeypatch.setattr(app, '_search_public_sources_uncached', fake_uncached)
+    first, att1 = app.search_public_sources('"Lidl" greenwashing', 10, topic='news')
+    second, att2 = app.search_public_sources('"Lidl"  GREENWASHING', 10, topic='news')
+    assert [r['title'] for r in first] == [r['title'] for r in second] == ['A']
+    assert len(calls) == 1 and att2[0].get('cached') is True and att2[0]['status'] == 'ok'
+    third, _ = app.search_public_sources('"Lidl" greenwashing', 10, topic='general')  # another topic is another query
+    assert [r['title'] for r in third] == ['B'] and len(calls) == 2
+
+
+def test_failed_or_empty_external_searches_are_not_cached(monkeypatch):
+    monkeypatch.setattr(app, '_EXTERNAL_SEARCH_CACHE', {})
+    monkeypatch.setattr(app, 'EXTERNAL_SEARCH_CACHE_SECONDS', 3600)
+    outcomes = [([], [{'provider': 'Tavily', 'status': 'failed', 'error': '429'}]),
+                ([], [{'provider': 'Tavily', 'status': 'ok', 'results': 0}]),
+                ([{'title': 'A', 'url': 'https://news.example/a', 'content': 'x', 'score': 1}], [{'provider': 'Tavily', 'status': 'ok', 'results': 1}])]
+    calls = []
+    def fake_uncached(*a, **k):
+        calls.append(1)
+        return outcomes[len(calls) - 1]
+    monkeypatch.setattr(app, '_search_public_sources_uncached', fake_uncached)
+    for _ in range(3):
+        app.search_public_sources('"Lidl" complaint', 10)
+    assert len(calls) == 3
+    app.search_public_sources('"Lidl" complaint', 10)
+    assert len(calls) == 3
+
+
+def test_one_failed_search_request_does_not_switch_the_provider_off(monkeypatch):
+    """v96.17: the cooldown started on the first failure, so one slow request skipped every later query of the scan. It needs two
+    failures in a row, and a success resets the count."""
+    monkeypatch.setattr(app, '_PROVIDER_FAILURES', {})
+    monkeypatch.setattr(app, '_PROVIDER_COOLDOWN_UNTIL', {})
+    app._v90_note_provider_result('Tavily')
+    assert app._v90_provider_in_cooldown('Tavily') is False
+    app._v96_note_provider_ok('Tavily')
+    app._v90_note_provider_result('Tavily')
+    assert app._v90_provider_in_cooldown('Tavily') is False
+    app._v90_note_provider_result('Tavily')
+    assert app._v90_provider_in_cooldown('Tavily') is True

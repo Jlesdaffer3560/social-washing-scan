@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_16_missing_pages_and_about_crawl"
-APP_RELEASE_LABEL="v96.16"
+APP_VERSION="hostable_v96_17_stable_external_signals"
+APP_RELEASE_LABEL="v96.17"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -11870,9 +11870,22 @@ def _v90_provider_in_cooldown(provider):
     with _PROVIDER_COOLDOWN_LOCK:
         return time.time()<_PROVIDER_COOLDOWN_UNTIL.get(provider,0)
 
+_PROVIDER_FAILURES={}
+_PROVIDER_FAILURES_BEFORE_COOLDOWN=2
+
 def _v90_note_provider_result(provider):
+    """Called on a provider failure. v96.17: the cooldown used to start on the FIRST failure, so one slow or rate-limited request
+    switched the provider off for 90 s and every remaining query of the scan was skipped -- the same company then showed fewer
+    external signals on one run than on the previous one (Lidl). It now starts on the second failure in a row; one success
+    (see _v96_note_provider_ok) resets the count."""
     with _PROVIDER_COOLDOWN_LOCK:
-        _PROVIDER_COOLDOWN_UNTIL[provider]=time.time()+_PROVIDER_COOLDOWN_SECONDS
+        _PROVIDER_FAILURES[provider]=_PROVIDER_FAILURES.get(provider,0)+1
+        if _PROVIDER_FAILURES[provider]>=_PROVIDER_FAILURES_BEFORE_COOLDOWN:
+            _PROVIDER_COOLDOWN_UNTIL[provider]=time.time()+_PROVIDER_COOLDOWN_SECONDS
+
+def _v96_note_provider_ok(provider):
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_FAILURES[provider]=0
 
 def tavily_search(q,max_results=5,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
     """Tavily search with optional news/source controls for the external-signal layer."""
@@ -11941,7 +11954,39 @@ def _v71_google_query(query,include_domains=None,exclude_domains=None):
     return value
 
 
+# v96.17: web-search providers do not return the same list twice (Lidl: one run showed a renewable-energy article and an
+# investigation report, the next a court ruling and missed the first two). A successful, non-empty answer to a query is
+# remembered for a day, so a repeat scan of the same company reads the same sources, and a provider that fails later in the
+# day does not make signals disappear. It also saves search credits.
+EXTERNAL_SEARCH_CACHE_SECONDS=int(os.environ.get('EXTERNAL_SEARCH_CACHE_SECONDS','86400') or 0)
+_EXTERNAL_SEARCH_CACHE={}
+_EXTERNAL_SEARCH_CACHE_LOCK=threading.Lock()
+_EXTERNAL_SEARCH_CACHE_MAX=400
+
+def _v96_search_cache_key(query,max_results,topic,include_domains,exclude_domains,search_depth):
+    return (re.sub(r'\s+',' ',str(query or '')).strip().lower(),int(max_results),str(topic),
+            tuple(sorted(set(include_domains or []))),tuple(sorted(set(exclude_domains or []))),str(search_depth))
+
 def search_public_sources(query,max_results=8,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
+    """Cached front for _search_public_sources_uncached(): see EXTERNAL_SEARCH_CACHE_SECONDS."""
+    if EXTERNAL_SEARCH_CACHE_SECONDS<=0:
+        return _search_public_sources_uncached(query,max_results,topic,include_domains,exclude_domains,search_depth)
+    key=_v96_search_cache_key(query,max_results,topic,include_domains,exclude_domains,search_depth)
+    now=time.time()
+    with _EXTERNAL_SEARCH_CACHE_LOCK:
+        hit=_EXTERNAL_SEARCH_CACHE.get(key)
+        if hit and now-hit[0]<EXTERNAL_SEARCH_CACHE_SECONDS:
+            return [dict(i) for i in hit[1]],[{'provider':'cache','status':'ok','results':len(hit[1]),'cached':True}]
+    results,attempts=_search_public_sources_uncached(query,max_results,topic,include_domains,exclude_domains,search_depth)
+    if results and any(a.get('status')=='ok' for a in attempts):
+        with _EXTERNAL_SEARCH_CACHE_LOCK:
+            if len(_EXTERNAL_SEARCH_CACHE)>=_EXTERNAL_SEARCH_CACHE_MAX:
+                for old in sorted(_EXTERNAL_SEARCH_CACHE,key=lambda k:_EXTERNAL_SEARCH_CACHE[k][0])[:_EXTERNAL_SEARCH_CACHE_MAX//4]:
+                    _EXTERNAL_SEARCH_CACHE.pop(old,None)
+            _EXTERNAL_SEARCH_CACHE[key]=(now,[dict(i) for i in results])
+    return results,attempts
+
+def _search_public_sources_uncached(query,max_results=8,topic='general',include_domains=None,exclude_domains=None,search_depth='basic'):
     """Combine configured providers while preserving source and company-domain controls."""
     attempts=[]; gathered=[]
     def _run(provider):
@@ -11953,6 +11998,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
             try:
                 res=serper_search(query,max_results,include_domains=include_domains,exclude_domains=exclude_domains)
                 for item in res: item['provider']=provider
+                _v96_note_provider_ok(provider)
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
                 _v90_note_provider_result(provider)
@@ -11965,6 +12011,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
             try:
                 res=tavily_search(query,max_results,topic=topic,include_domains=include_domains,exclude_domains=exclude_domains,search_depth=search_depth)
                 for item in res: item['provider']=provider
+                _v96_note_provider_ok(provider)
                 return res,{'provider':provider,'status':'ok','results':len(res)}
             except Exception as exc:
                 _v90_note_provider_result(provider)
@@ -11976,6 +12023,7 @@ def search_public_sources(query,max_results=8,topic='general',include_domains=No
         try:
             res=google_search(_v71_google_query(query,include_domains,exclude_domains),max_results)
             for item in res: item['provider']=provider
+            _v96_note_provider_ok(provider)
             return res,{'provider':provider,'status':'ok','results':len(res)}
         except Exception as exc:
             _v90_note_provider_result(provider)

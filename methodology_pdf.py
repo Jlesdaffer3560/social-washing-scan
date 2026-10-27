@@ -352,6 +352,11 @@ def build_methodology_pdf():
         (Paragraph('Excluded', STY['td_b']), Paragraph('Company-owned sources, positive or neutral news, articles mainly about competitors, duplicates, or results with too little evidence of a link to the company or the claim. No effect on the score.', STY['td'])),
     ]
     flow.append(section_table(ext_rows, [W * 0.22, W * 0.78]))
+    flow.append(Spacer(1, 3))
+    flow.append(Paragraph(
+        'Search engines do not return exactly the same list every time. To keep two scans of the same company comparable, the answer to each '
+        'search is remembered for 24 hours, so a repeat scan within that time reads the same outside sources. A search that failed or found '
+        'nothing is not remembered. A scan only treats a search provider as unavailable after two failed requests in a row.', STY['body']))
 
     flow.append(CondPageBreak(60 * mm))
     flow.append(Paragraph('8. Coverage, confidence and source status', STY['h2']))
@@ -363,7 +368,7 @@ def build_methodology_pdf():
         (Paragraph('Retrieved and partially analysed', STY['td_b']), Paragraph('Only part of the text from the source was included in the analysis (&ldquo;Partly reviewed&rdquo;).', STY['td'])),
         (Paragraph('Limited text extracted', STY['td_b']), Paragraph('The page or document gave too little usable text for a full assessment, for example because it builds its content with scripts the scan cannot read, or because the text could not be extracted.', STY['td'])),
         (Paragraph('Retrieved but not analysed', STY['td_b']), Paragraph('The source was fetched, but it was not analysed because the scan reached its limit on how much text it can process.', STY['td'])),
-        (Paragraph('Failed / skipped', STY['td_b']), Paragraph('The source could not be opened, was a duplicate, had low relevance, or fell outside the number of pages the scan reads. It does not support any finding.', STY['td'])),
+        (Paragraph('Failed / skipped', STY['td_b']), Paragraph('The source could not be opened, was a duplicate, had low relevance, or fell outside the number of pages the scan reads. A page that does not exist (HTTP 404) is listed here and is not retried through a fallback text-extraction method. It does not support any finding.', STY['td'])),
         (Paragraph('Excluded as outdated', STY['td_b']), Paragraph('The source was retrieved, but it is dated before the screening cut-off (see below) for a company&rsquo;s own communication, so it was not analysed.', STY['td'])),
     ]
     flow.append(section_table(coverage_rows, [W * 0.31, W * 0.69]))
