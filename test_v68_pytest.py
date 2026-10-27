@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_12_inconclusive_when_site_unreadable'
+    assert app.APP_VERSION == 'hostable_v96_13_methodology_up_to_date'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7665,3 +7665,37 @@ def test_inconclusive_result_is_shown_as_inconclusive_in_the_web_ui_and_the_pdf(
     data['result_inconclusive'] = False
     pdf2 = rp.build_company_report_pdf(data)
     assert 'inconclusive' not in ' '.join(p.extract_text() for p in pypdf.PdfReader(_io.BytesIO(pdf2)).pages).lower()
+
+
+def _methodology_text():
+    import pypdf
+    r = pypdf.PdfReader(str(Path(__file__).parent / 'methodology.pdf'))
+    return ' '.join(' '.join((p.extract_text() or '') for p in r.pages).split())
+
+
+def test_methodology_document_matches_the_scoring_code_and_the_latest_features():
+    """v96.13: the served methodology.pdf is a static file; it must state what the code actually does. Checks the facts
+    that changed or are easy to let drift: weights, audience factors and Annex I minimum, the Inconclusive rule, the
+    reusable wording / fictional example fields, language, website confirmation, large documents and the sector rule."""
+    t = _methodology_text()
+    # weights used by _recalibrated_score (0.50 / 0.22 / 0.20 / 0.08)
+    for w in ('50% (main factor)', '22%', '20%', '8% (adjustment)'):
+        assert w in t, w
+    # audience factors and the Annex I minimum (75 * factor) as implemented
+    assert app._v93_audience_factor({'audience': 'Client-facing'}) == 1.0
+    assert app._v93_audience_factor({'audience': 'Mixed channel set'}) == 0.90
+    assert app._v93_audience_factor({'audience': 'Investor'}) == 0.75
+    assert 'audience factor' in t and '1.0' in t and '0.9' in t and '0.75' in t
+    assert round(75 * 0.75) == 56 and round(75 * 0.90) == 68 and 'about 56' in t and '68/100' in t
+    # bands as implemented by level()
+    assert app.level(74) == 'High' and app.level(75) == 'Very high' and app.level(49) == 'Medium' and app.level(24) == 'Low'
+    for band in ('0 \u2013 24 Low', '25 \u2013 49 Medium', '50 \u2013 74 High', '75 \u2013 100 Very high'):
+        assert band in t, band
+    # inconclusive rule, rewrites, website confirmation, language and document limits, sector rule, slow sites
+    assert 'Inconclusive' in t and 'about 40%' in t
+    assert 'Reusable wording' in t and 'Fictional example' in t
+    assert 'confirm it' in t and 'language version' in t
+    assert '1,000,000' in t and str(app.DOC_ANALYSIS_MAX_CHARS) == '1000000'
+    assert 'official activity code' in t and 'chemical-free' in t
+    assert 'retries a page once' in t
+    assert 'Last updated' in t and '2026' in t
