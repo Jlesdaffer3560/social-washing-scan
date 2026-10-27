@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_13_methodology_up_to_date'
+    assert app.APP_VERSION == 'hostable_v96_14_report_accuracy'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7699,3 +7699,58 @@ def test_methodology_document_matches_the_scoring_code_and_the_latest_features()
     assert 'official activity code' in t and 'chemical-free' in t
     assert 'retries a page once' in t
     assert 'Last updated' in t and '2026' in t
+
+
+def test_annex_i_wording_is_not_future_tense_once_empco_applies(monkeypatch):
+    """v96.14: reports dated 27 October 2026 still said "automatically treated as unfair once EmpCo applies (27 September
+    2026)" although EmpCo has applied since that date. The wording follows the calendar; before the date it stays as it was."""
+    claim = {'type': 'Generic environmental claim', 'claim': 'Our products are eco-friendly.', 'risk': 'High'}
+    monkeypatch.setattr(app, '_empco_applicable_now', lambda: True)
+    now = app.classify_legal_basis(dict(claim, blacklisted_practice_indicator=True))
+    assert 'since EmpCo started to apply (27 September 2026)' in now['legal_basis_short']
+    assert 'once EmpCo applies' not in now['legal_basis_short']
+    monkeypatch.setattr(app, '_empco_applicable_now', lambda: False)
+    before = app.classify_legal_basis(dict(claim, blacklisted_practice_indicator=True))
+    assert 'once EmpCo applies (27 September 2026)' in before['legal_basis_short']
+
+
+def test_inconclusive_scan_is_stored_without_a_score_so_history_and_batch_report_do_not_rank_it_as_low():
+    import batch_report_pdf as bp
+    assert app._v92_history_score_fields({'result_inconclusive': True, 'global_score': 14, 'global_risk': 'Low'}) == \
+        ((None, 'Inconclusive'),) * 3
+    assert app._v92_history_score_fields({'global_score': 61, 'global_risk': 'High', 'green_score': 68, 'green_risk': 'High',
+                                          'social_score': 48, 'social_risk': 'Medium'}) == ((61, 'High'), (68, 'High'), (48, 'Medium'))
+    rows = [{'company': 'A', 'global_score': 70, 'global_risk': 'High'}, {'company': 'B', 'global_score': None, 'global_risk': 'Inconclusive'}]
+    agg = bp._aggregate(rows)
+    assert agg['risk_counts'].get('Not assessed') == 1 and agg['risk_counts'].get('Low') == 0
+
+
+def test_claim_excerpt_context_window_never_ends_in_the_middle_of_a_word():
+    """v96.14: the company report showed "...we document these attributes of qu" and "...Lidl is a member at the
+    internation": the context window after the flagged phrase stopped mid-word with no sign it was cut."""
+    import report_pdf as rp
+    text = ('The assortment policies rely on high-quality, sustainable products, and we document these attributes of '
+            'quality through measurable criteria that are audited every year by an independent party in all countries.')
+    claim = {'claim_text': text, 'matched_phrase': 'sustainable products'}
+    for max_chars in (80, 100, 115, 140, 220):
+        out = rp.claim_excerpt(claim, max_chars)
+        assert 'sustainable products' in out, (max_chars, out)
+        if out.endswith('\u2026'):
+            body = out[:-1]
+            # the last word before the ellipsis is a complete word of the source text
+            last = body.split()[-1].strip('.,;:')
+            assert last in text.split() or last in text.replace(',', ' ').split(), (max_chars, out)
+        assert len(out) <= max_chars + 1, (max_chars, len(out))
+    # a short text is returned unchanged
+    assert rp.claim_excerpt({'claim_text': 'Our products are sustainable.', 'matched_phrase': 'sustainable'}, 115) == 'Our products are sustainable.'
+
+
+def test_scan_whose_pages_mostly_needed_the_fallback_and_found_no_claim_is_also_inconclusive():
+    pages = [{'url': 'https://x.example/', 'text': 'a ' * 800}]
+    fb = lambda n: dict(_crawl_entry('https://x.example/' + n, True), method='reader_fallback')
+    log = [fb('a'), fb('b'), fb('c'), _crawl_entry('https://x.example/d', True), _crawl_entry('https://x.example/e', True)]
+    ext = {'enabled': True, 'results': []}
+    assert app.build_confidence(pages, ext, [], log, no_claims_at_all=True)['inconclusive'] is True
+    assert app.build_confidence(pages, ext, [{'type': 'Generic environmental claim'}], log, no_claims_at_all=False)['inconclusive'] is False
+    one = [fb('a')] + [_crawl_entry('https://x.example/' + c, True) for c in 'bcdefg']
+    assert app.build_confidence(pages, ext, [], one, no_claims_at_all=True)['inconclusive'] is False

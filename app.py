@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_13_methodology_up_to_date"
-APP_RELEASE_LABEL="v96.13"
+APP_VERSION="hostable_v96_14_report_accuracy"
+APP_RELEASE_LABEL="v96.14"
 APP_RELEASE_DATE="2026-10-26"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -2768,7 +2768,11 @@ def build_confidence(pages,ext,findings,crawl_log=None,analysed_page_count=None,
     # to time-outs and was shown as a confident "Low 14/100", where an earlier scan that read more of the site was
     # "High"). Such a result is flagged `inconclusive` and shown as "Inconclusive" instead of a risk level.
     nothing_found=no_findings if no_claims_at_all is None else bool(no_claims_at_all)
-    inconclusive=bool(nothing_found and attempted and (len(blocked)/attempted>=0.4 or (n_pages<=1 and blocked)))
+    # pages that could only be read through the public text-extraction fallback count as unreliable too: the same company
+    # site gave 68/100 on one run and 14/100 on the next (mediacenter.lidl.com) when its pages came back through that
+    # fallback and the claims were no longer in the extracted text.
+    unreliable=len(blocked)+len(fallback_pages)
+    inconclusive=bool(nothing_found and attempted and (unreliable/attempted>=0.4 or (n_pages<=1 and blocked)))
     if attempted and len(blocked)/attempted >= 0.75 and n_pages <= 1:
         level_str="Insufficient coverage"
     elif inconclusive:
@@ -2979,6 +2983,13 @@ def reader_friendly_summary(company, sector, findings, external_research, score,
 # This scanner therefore distinguishes consumer-facing pages from investor/internal reports.
 
 _EMPCO_APPLICABILITY_DATE=datetime.date(2026,9,27)
+def _empco_annex_i_timing():
+    """Wording for when the new Annex I practices become unfair. EmpCo applies from 27 September 2026, so a report made
+    after that date must not say "once EmpCo applies" (future tense) -- it did, on reports dated 27 October 2026."""
+    if _empco_applicable_now():
+        return 'since EmpCo started to apply (27 September 2026)'
+    return 'once EmpCo applies (27 September 2026)'
+
 def _empco_applicable_now():
     """External code review: several "EmpCo readiness" strings were hardcoded to always say
     things like "...ahead of the applicability date" / "should be prepared...ahead of that
@@ -3841,7 +3852,7 @@ def classify_legal_basis(f):
             'legal_basis_label': 'Potentially Prohibited (UCPD Annex I, as amended by EmpCo)',
             'legal_basis_short': ('On the fixed list added to Annex I of the Unfair Commercial Practices Directive '
                                    '(2005/29/EC) by EmpCo (Directive (EU) 2024/825): automatically treated as unfair '
-                                   'once EmpCo applies (27 September 2026) if the described conditions are met. No '
+                                   +_empco_annex_i_timing()+' if the described conditions are met. No '
                                    'case-by-case balancing test is needed -- only whether the wording fits the listed '
                                    'practice.'),
         }
@@ -5061,8 +5072,8 @@ def build_regulatory_risk_summary(green_findings, social_findings, audience):
             'explanation':('Two different legal tests apply to sustainability claims. "Potentially Prohibited" claims match the '
                             'wording of a fixed list EmpCo adds to Annex I of the Unfair Commercial Practices Directive (self-declared labels, generic claims, offset-based neutrality '
                             'claims, legal compliance presented as a benefit) as detected by this automated screening; practices that '
-                            'actually meet the described conditions become automatically unfair once EmpCo applies on 27 September '
-                            '2026, with no case-by-case balancing test -- but this flags the wording pattern only, not a confirmed '
+                            'actually meet the described conditions are automatically unfair '+_empco_annex_i_timing().replace('(27 September 2026)','(27 September 2026),')+' '
+                            'with no case-by-case balancing test -- but this flags the wording pattern only, not a confirmed '
                             'finding. "Problematic" claims are not on that fixed list but can still be found misleading after an '
                             'individual assessment under general UCPD rules (Art. 6/7, or Art. 6(2)(d) for future claims) -- the '
                             'outcome depends on context, evidence and consumer impact.' + channel_caveat),
@@ -6475,6 +6486,17 @@ def _v93_fetch_visit_stats():
     finally:
         conn.close()
 
+def _v92_history_score_fields(result):
+    """(global, green, social) as (score, risk) pairs for the history table. An inconclusive scan (too little of the site
+    could be read, no claim found) carries only a fixed baseline, so it is stored with no score and the risk
+    "Inconclusive": the history, the exports and the batch report then show it as not assessed instead of ranking or
+    counting it as a reassuring Low."""
+    if result.get('result_inconclusive'):
+        return ((None,'Inconclusive'),(None,'Inconclusive'),(None,'Inconclusive'))
+    return ((result.get('global_score'),str(result.get('global_risk','') or '')[:50]),
+            (result.get('green_score'),str(result.get('green_risk','') or '')[:50]),
+            (result.get('social_score'),str(result.get('social_risk','') or '')[:50]))
+
 def _v92_save_scan_history(result,scan_type,client_ip):
     """Best-effort log of a completed scan. Never raises -- a database problem must
     never turn a successful scan into a failed response for the person using the tool."""
@@ -6549,12 +6571,7 @@ def _v92_save_scan_history(result,scan_type,client_ip):
                      str(comp.get('company','') or '')[:300],
                      str(comp.get('sector','') or '')[:300],
                      str(result.get('original_url') or result.get('source_label') or '')[:1000],
-                     result.get('global_score'),
-                     str(result.get('global_risk','') or '')[:50],
-                     result.get('green_score'),
-                     str(result.get('green_risk','') or '')[:50],
-                     result.get('social_score'),
-                     str(result.get('social_risk','') or '')[:50],
+                     *[v for pair in _v92_history_score_fields(result) for v in pair],
                      str(audience.get('audience','') or '')[:200],
                      len(real_findings),
                      str(result.get('screening_conclusion','') or '')[:2000],

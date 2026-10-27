@@ -420,6 +420,18 @@ def trigger_phrase(claim):
 _NEGATION_RE = re.compile(r"\b(not|never|without|isn't|doesn't|cannot|can't|no longer|niet|geen|nooit|zonder)\b", re.I)
 
 
+def _close_excerpt(snippet, source_text, end, keep_until):
+    """A context window that stops inside the source text used to end in the middle of a word with nothing to show it was
+    cut ("...we document these attributes of qu"). End it at a word boundary and mark the cut with an ellipsis. The
+    flagged phrase (everything up to `keep_until` in `snippet`) is never cut."""
+    if end >= len(source_text):
+        return snippet
+    cut = snippet.rfind(" ")
+    if cut > keep_until:
+        snippet = snippet[:cut]
+    return snippet.rstrip(" ,;:.\u2013-") + "\u2026"
+
+
 def claim_excerpt(claim, max_chars=220):
     text = clean_text(claim.get("claim_text") or claim.get("claim") or "")
     if len(text) <= max_chars:
@@ -454,6 +466,7 @@ def claim_excerpt(claim, max_chars=220):
                 after_budget = remaining
             end = min(len(text), i + len(phrase) + after_budget)
             snippet = text[start:end]
+            snippet = _close_excerpt(snippet, text, end, (i + len(phrase)) - start)
             if start:
                 snippet = prefix_label + snippet
             result = bounded_text(snippet, max_chars)
@@ -472,7 +485,9 @@ def claim_excerpt(claim, max_chars=220):
             if negations and negations[-1].start() < start and negations[-1].group().lower() not in result.lower():
                 wider_start = negations[-1].start()
                 wider_after = max(0, remaining - (i - wider_start) - len(prefix_label))
-                wider_snippet = prefix_label + text[wider_start:min(len(text), i + len(phrase) + wider_after)]
+                wider_end = min(len(text), i + len(phrase) + wider_after)
+                wider_body = _close_excerpt(text[wider_start:wider_end], text, wider_end, (i + len(phrase)) - wider_start)
+                wider_snippet = prefix_label + wider_body
                 wider_result = bounded_text(wider_snippet, max_chars)
                 if phrase.lower() in wider_result.lower():
                     result = wider_result

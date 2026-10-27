@@ -369,7 +369,7 @@ def build_methodology_pdf():
         '<b>Confidence</b> shows how much of the company&rsquo;s communication the scan could read. It reflects the coverage of sources, the '
         'quality of the text extraction, access failures, the use of fallback methods, whether claims were found, and whether an external '
         'search was done. It is reported separately from claim risk. A low risk score combined with limited coverage must never be read as '
-        'proof that risky claims are absent. When about 40% or more of the pages could not be read and no claim was kept from the rest, '
+        'proof that risky claims are absent. When about 40% or more of the pages could not be read (or could only be read through a fallback text-extraction method) and no claim was kept from the rest, '
         'the scan shows <b>Inconclusive</b> instead of a score, because the numbers would then only reflect a fixed starting value and say '
         'nothing about the company.', STY['body']))
     flow.append(Spacer(1, 6))
