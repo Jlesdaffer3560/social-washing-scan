@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_17_stable_external_signals'
+    assert app.APP_VERSION == 'hostable_v96_18_bhrrc_query'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7899,3 +7899,13 @@ def test_one_failed_search_request_does_not_switch_the_provider_off(monkeypatch)
     assert app._v90_provider_in_cooldown('Tavily') is False
     app._v90_note_provider_result('Tavily')
     assert app._v90_provider_in_cooldown('Tavily') is True
+
+
+def test_both_dimensions_run_a_dedicated_business_and_human_rights_centre_query():
+    """v96.17: the BHRRC case profiles for Lidl were found on one scan and missed on the next because they depended on one broad
+    multi-site query. Each dimension now also runs a query restricted to business-humanrights.org, within the query cap."""
+    for dim in ('green', 'social'):
+        specs = app._v71_query_specs('Lidl', dim)
+        bh = [s for s in specs if s.get('include_domains') == ['business-humanrights.org']]
+        assert len(bh) == 1 and '"lidl"' in bh[0]['query'].lower()
+        assert specs.index(bh[0]) < app.EXTERNAL_SIGNAL_MAX_QUERIES

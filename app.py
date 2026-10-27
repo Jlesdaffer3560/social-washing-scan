@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_17_stable_external_signals"
-APP_RELEASE_LABEL="v96.17"
+APP_VERSION="hostable_v96_18_bhrrc_query"
+APP_RELEASE_LABEL="v96.18"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -12101,6 +12101,10 @@ def _v71_query_specs(company_name,dimension):
             # greenwashing complaint is likewise likely to be filed with it.
             {'query':f'{qs} misleidende duurzaamheidsclaim klacht Reclame Code Commissie greenwashing','topic':'general','search_depth':'advanced'},
             {'query':f'{qs} allégation environnementale trompeuse plainte ARPP','topic':'general','search_depth':'advanced'},
+            # v96.17: the Business & Human Rights Resource Centre keeps case profiles and allegations per company (for Lidl: the
+            # misleading-advertising lawsuit over fair-labour claims). They only surfaced when the one broad stakeholder-list
+            # query happened to return them, so they were present on one Lidl scan and missing on the next. Own query, one site.
+            {'query':f'{q} lawsuit allegations misleading claims','topic':'general','include_domains':['business-humanrights.org']},
         ]
     stakeholder=_V71_REGULATOR_DOMAINS+_V71_SOCIAL_STAKEHOLDER_DOMAINS
     return [
@@ -12115,6 +12119,7 @@ def _v71_query_specs(company_name,dimension):
         # queries above.
         {'query':f'{qs} dwangarbeid misstanden arbeidsomstandigheden klacht','topic':'general','search_depth':'advanced'},
         {'query':f'{qs} travail forcé plainte conditions de travail','topic':'general','search_depth':'advanced'},
+        {'query':f'{q} lawsuit allegations workers response','topic':'general','include_domains':['business-humanrights.org']},
     ]
 
 
