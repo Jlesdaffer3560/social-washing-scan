@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_20_access_code_expiry'
+    assert app.APP_VERSION == 'hostable_v96_21_dates_and_old_cases'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7956,3 +7956,48 @@ def test_client_access_code_expires_after_its_last_valid_day(monkeypatch):
     monkeypatch.setenv('EXTRA_ACCESS_CODES', 'Beta=BETA-9@2026-12-31,Open=OPEN-1')
     monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2027, 1, 5))
     assert app._access_code_ok({'access_code': 'beta-9'}) is False and app._access_code_ok({'access_code': 'open-1'}) is True
+
+
+def test_update_statements_date_a_document_for_the_screening_cutoff():
+    """v96.21: "Last updated May 2020" has no report keyword next to the year, so the Schwarz Group policy on the Lidl scan was never
+    seen as older than the 1 January 2025 cut-off. A year after an update/publication phrase now counts -- but only with a month,
+    a colon or a day, so "updated 2020 emissions data" does not exclude a current page."""
+    f = app._v96_extract_update_year
+    assert f('Policy.\nLast updated May 2020. We respect rights.') == 2020
+    assert f('Human rights policy\nStand: Mai 2020') == 2020
+    assert f('Beleid. Laatst bijgewerkt: 12 maart 2019.') == 2019
+    assert f('Politique. Dernière mise à jour : juin 2021') == 2021
+    assert f('Published 14 March 2024 by us.') == 2024
+    assert f('x' * 3000 + ' Last revised: 3 Feb 2022') == 2022  # also looked for at the end of the text
+    assert f('updated 2020 emissions data are shown') is None
+    assert f('We were founded in 2018 and grew.') is None
+    assert app._v93_document_predates_screening_cutoff('https://x.example/policy.pdf', 'Policy statement. Last updated May 2020.') is True
+    assert app._v93_document_predates_screening_cutoff('https://x.example/policy', 'Policy statement. Last updated May 2026.') is False
+    assert '\x08' not in Path(app.__file__).read_text(encoding='utf-8')
+
+
+def test_deal_news_headline_is_not_an_external_concern():
+    item = {'title': 'Lidl, Sysco, Natwest & BAE Systems ink renewable PPAs to power UK sites - edie.net',
+            'url': 'https://www.edie.net/lidl-ppas/', 'content': 'The PPA announcements follow criticism of grid delays and a complaint about planning rules.'}
+    for dim in ('green', 'social'):
+        assert app._v69_external_polarity(item, dim)[0] is False
+    adverse = dict(item, title='Lidl signs deal after court ruling on greenwashing complaint')
+    assert app._v69_external_polarity(adverse, 'green')[0] is True
+
+
+def test_older_and_closed_external_cases_are_labelled_and_weighed_lighter():
+    f = app._v96_external_age_status
+    assert f({'title': 'Lidl lawsuit', 'content': 'The Hamburg agency sued in 2010.', 'published_date': ''}) == 'older'
+    assert f({'title': 'x', 'content': 'Lidl withdrew the claims after the case was closed.'}) == 'closed'
+    assert f({'title': 'x', 'content': 'ruling', 'published_date': 'Wed, 14 Oct 2026 00:00:00 GMT'}) == 'recent'
+    assert f({'title': 'x', 'content': 'no date anywhere'}) == 'unknown'
+    def row(i, extra=''):
+        return {'title': f'Lidl workers lawsuit {i}', 'url': f'https://news.example/{i}', 'content': f'Court hears human rights lawsuit about wages. {extra}',
+                'credibility': 'High', 'published_date': 'Wed, 14 Oct 2026 00:00:00 GMT'}
+    current = app.strict_external_context_risk({'results': [row(1), row(2), row(3)]}, 'Lidl')
+    closed = app.strict_external_context_risk({'results': [row(1, 'The case was closed.'), row(2, 'The case was closed.'), row(3, 'The case was closed.')]}, 'Lidl')
+    assert current['score'] >= 65 and closed['score'] < current['score']
+    cs = app.compact_sources([{'title': 'Lidl lawsuit (re working conditions)', 'url': 'https://www.business-humanrights.org/x', 'content': 'Sued in 2010.', 'published_date': ''}], 5, 'social')[0]
+    assert cs['age_status'] == 'older' and cs['published_date'] == 'Date not available (age not verified)'
+    import report_pdf as rp
+    assert rp.external_signal_card(cs, 400) is not None  # renders with the age note

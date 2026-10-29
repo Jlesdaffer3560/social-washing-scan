@@ -1465,7 +1465,12 @@ def external_signal_card(signal, width):
     status = bounded_text(signal.get("status") or "Status unclear", 38)
     review = bounded_text(signal.get("review_status") or "Included — needs a human check", 50)
     source = signal.get("source_name") or urlparse(clean_text(signal.get("url"))).netloc.replace("www.", "") or clean_text(signal.get("category") or "External source")
-    date = clean_text(signal.get("published_date") or "Date not available")
+    date = clean_text(signal.get("published_date") or "Date not available (age not verified)")
+    age = clean_text(signal.get("age_status") or "")
+    if age == "closed":
+        date += " · reported as closed, weighed lighter"
+    elif age == "older":
+        date += " · older case, weighed lighter"
     content = first_sentence(signal.get("content") or "", 160)
     related = clean_text(signal.get("related_claim_area") or ("Environmental claims" if signal.get("dimension") == "green" else "Social / labour claims"))
     # v93.61: make the title a clickable link to its source when a real http(s) URL is present,

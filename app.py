@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_20_access_code_expiry"
-APP_RELEASE_LABEL="v96.20"
+APP_VERSION="hostable_v96_21_dates_and_old_cases"
+APP_RELEASE_LABEL="v96.21"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1541,7 +1541,28 @@ def _v93_extract_report_year(url,text):
                 window=low[max(0,m.start()-radius):m.end()+radius]
                 if _REPORT_YEAR_KEYWORD_RE.search(window):
                     return year
-    return None
+    return _v96_extract_update_year(text)
+
+# v96.21: a policy that states "Last updated May 2020" has no report keyword next to its year, so the check above never saw it
+# (the Schwarz Group human-rights policy on the Lidl scan). A year directly after an update/publication phrase counts as the
+# document's date too -- looked for at the start AND the end of the text, where policies usually carry it.
+_MONTHS_RE=r'(?:jan(?:uary|uari|vier)?|feb(?:ruary|ruari|rero)?|f[ée]v(?:rier)?|mar(?:ch|s|t)?|m[äa]r(?:z)?|maart|apr(?:il)?|avr(?:il)?|may|mai|mei|jun(?:e|i)?|juin|jul(?:y|i)?|juil(?:let)?|aug(?:ust|ustus)?|ao[uû]t|sep(?:t|tember)?|oct(?:ober)?|okt(?:ober)?|nov(?:ember)?|dec(?:ember)?|d[ée]c(?:embre)?|dez(?:ember)?)'
+_UPDATE_DATE_RE=re.compile(
+    r'(?:last\s+(?:updated|revised|reviewed|amended)|updated|revised|reviewed|amended|effective(?:\s+(?:from|as\s+of|date))?|published|issued|valid\s+(?:from|as\s+of)|'
+    r'version(?:\s+date)?|status|stand|as\s+of|dated?|laatst\s+(?:bijgewerkt|aangepast|herzien)|bijgewerkt|gepubliceerd|geldig\s+vanaf|'
+    r'mis\s+[àa]\s+jour|derni[èe]re\s+mise\s+[àa]\s+jour|publi[ée]|en\s+vigueur)\b[\s:,.\-–]{0,6}(?:on\s+|in\s+|per\s+|le\s+|am\s+)?(?:\d{1,2}(?:st|nd|rd|th)?\.?\s+(?:of\s+)?)?'
+    r'(?:'+_MONTHS_RE+r'\.?,?\s+(?:\d{1,2},?\s+)?)?(20[12]\d)\b',re.I)
+
+def _v96_extract_update_year(text):
+    """Year of an explicit 'last updated / published / effective <month> <year>' statement near the start or end of the text, else None."""
+    text=text or ''
+    years=[]
+    for chunk in (text[:2500],text[-2500:] if len(text)>2500 else ''):
+        for m in _UPDATE_DATE_RE.finditer(chunk):
+            # a bare year ("updated 2020 emissions data") is not a document date; it needs a month or a colon ("Status: 2019")
+            if re.search(_MONTHS_RE+r'\b',m.group(0)[:-4],re.I) or ':' in m.group(0)[:-4]:
+                years.append(int(m.group(1)))
+    return max(years) if years else None
 
 def _v93_document_predates_screening_cutoff(url,text):
     """True only when _v93_extract_report_year() finds an explicit, confident report year
@@ -2891,8 +2912,13 @@ def strict_external_context_risk(external_research, company_name=""):
             urls.add(r.get("url"))
         if company_key and company_key in txt:
             company_hits += 1
+        # v96.21: a case that is 6+ years old or reported as closed / settled stays in the report, but counts as background
+        # (a medium signal), not as a serious current allegation -- e.g. the closed 2010 Lidl lawsuit.
         if any(t in txt for t in serious_terms):
-            serious_hits += 1
+            if _v96_external_age_status(r) in ('older','closed'):
+                medium_hits += 1
+            else:
+                serious_hits += 1
         if any(t in txt for t in medium_terms):
             medium_hits += 1
         if r.get("credibility") in ["High","Medium-high"] or any(x in txt for x in ["oecd","europa.eu",".gov","reuters","bbc","ft.com","amnesty","human rights watch"]):
@@ -4419,8 +4445,9 @@ def green_evidence_signal_score(page_text, findings):
 
 def green_external_context_risk(ext):
     if not ext or not ext.get('enabled'): return {'score':0,'note':'External green-source search not enabled.'}
-    text=' '.join((r.get('title','')+' '+r.get('content','')+' '+r.get('url','')).lower() for r in ext.get('results',[]))
-    if not text.strip(): return {'score':0,'note':'External green search returned no usable source signals.'}
+    text=' '.join((r.get('title','')+' '+r.get('content','')+' '+r.get('url','')).lower() for r in ext.get('results',[])
+                  if _v96_external_age_status(r) not in ('older','closed'))
+    if not text.strip(): return {'score':0,'note':'External green search returned no usable source signals (older or closed cases are shown but not scored).'}
     severe=['greenwashing','misleading','lawsuit','court','regulator','authority','fine','penalty','ban','prohibited','advertising standards','complaint']
     claim=['carbon neutral','offset','net zero','sustainable','recyclable','environmental claim','eco-friendly','climate neutral']
     sh=[t for t in severe if t in text]; ch=[t for t in claim if t in text]
@@ -10480,6 +10507,27 @@ def _v64_primary_competitors_in_title(title,target_aliases):
 
 
 
+_CLOSED_CASE_RE=re.compile(r"\b(?:case|matter|proceedings?|lawsuit|complaint)\s+(?:is\s+|was\s+|has\s+been\s+)?(?:now\s+)?(?:closed|dismissed|settled|withdrawn)\b|\bstatus\s*[:\-]?\s*closed\b|\bconsent\s+decree\b|\bwas\s+settled\b|\bwithdrew\s+(?:the\s+)?(?:claims?|complaint|suit)\b",re.I)
+EXTERNAL_OLD_AFTER_YEARS=6
+
+def _v96_external_age_status(r):
+    """'older' (6+ years old), 'closed' (text says the case was closed / settled / withdrawn), 'recent', or 'unknown' (no date at all).
+    Older and closed items stay in the report but are weighed lighter in the score (see strict_external_context_risk())."""
+    r=r or {}
+    txt=' '.join(str(r.get(k,'') or '') for k in ('title','content'))
+    if _CLOSED_CASE_RE.search(txt):
+        return 'closed'
+    this_year=datetime.date.today().year
+    year=None
+    m=re.search(r'\b(19[89]\d|20[0-4]\d)\b',str(r.get('published_date','') or ''))
+    if m: year=int(m.group(1))
+    if year is None:
+        hints=[int(y) for y in re.findall(r'\b(20[0-4]\d)\b',txt) if int(y)<=this_year]
+        if hints: year=max(hints)
+    if year is None:
+        return 'unknown'
+    return 'older' if this_year-year>=EXTERNAL_OLD_AFTER_YEARS else 'recent'
+
 def compact_sources(results,limit=6,dimension=None):
     out=[]
     for r in _dedupe_similar_sources(results or [])[:limit]:
@@ -10493,7 +10541,8 @@ def compact_sources(results,limit=6,dimension=None):
         out.append({'title':(r.get('title','') or '')[:170],'url':url,'source_name':host or kind,
             'content':_v62_clean_external_content(r.get('content',''))[:320],
             'category':kind,'source_kind':kind,'credibility':source_credibility(r),'provider':r.get('provider',''),
-            'published_date':r.get('published_date','') or 'Date not available','status':_source_status(txt),
+            'published_date':r.get('published_date','') or 'Date not available (age not verified)','status':_source_status(txt),
+            'age_status':_v96_external_age_status(r),
             # v93.64: "Retained -- manual verification required" read as internal-process
             # jargon to a report reader; "Included" plainly says what happened to the source,
             # "needs a human check" plainly says what's still outstanding.
@@ -11524,7 +11573,10 @@ _V69_POSITIVE_HEADLINE_TERMS=(
     'partnership','partners with','collaboration','wins award','awarded','recognised','recognized',
     'certified','certification achieved','reports progress','milestone','cuts emissions',
     'reduces emissions','reaches target','opens new','invests in','initiative to','commits to',
-    'pledges to','success story','named leader','tops ranking','improves sustainability'
+    'pledges to','success story','named leader','tops ranking','improves sustainability',
+    # v96.21: deal / expansion news (a Lidl renewable-PPA article was listed as an external concern)
+    'ink','inks','signs','signed','secures','secured','agreement','power purchase','ppa','ppas','deal',
+    'expands','expansion','opens','joins','teams up','selected','wins','tops','invests','investment'
 )
 _V69_EXONERATION_TERMS=(
     'cleared of','acquitted','complaint dismissed','case dismissed','no evidence of',
