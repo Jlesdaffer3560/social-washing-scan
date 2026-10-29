@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_22_group_weight_and_empco_floor"
-APP_RELEASE_LABEL="v96.22"
+APP_VERSION="hostable_v96_23_languages_and_slow_sites"
+APP_RELEASE_LABEL="v96.23"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1679,7 +1679,8 @@ def _is_timeout_error(err):
 def _candidate_score(item):
     url,source=item
     low=url.lower(); score=0
-    if source=='linked': score+=35
+    if source=='language_alternate': score+=120
+    elif source=='linked': score+=35
     elif source=='sitemap': score+=25
     elif source=='common_path': score-=5
     if low.split('?')[0].endswith('.pdf'): score+=70
@@ -1733,6 +1734,40 @@ def _distribute_text_budget(chunks,total_budget,floor_chars=4000):
     return [c[:caps[i]] for i,c in enumerate(chunks)]
 
 
+_LANG_PATH_RE=re.compile(r'^/(nl|fr|en|de)(?:[-_][a-z]{2})?/?$',re.I)
+_LANG_NAMES={'nl','fr','en','de'}
+
+def _v96_alternate_language_urls(html,base_url,links,max_alternates=2):
+    """Entry pages of the OTHER languages of a multilingual site (Belgian companies are often NL + FR + EN). A server that picks the
+    language from the browser's Accept-Language header serves ONE language (lidl.be: French), so the other language was never read.
+    Taken from <link rel="alternate" hreflang=...> and from language-switch links such as /nl/ or /fr/. Same domain only."""
+    try:
+        html=html or ''
+        lang_m=re.search(r'<html[^>]*\blang=["\']?([a-zA-Z]{2})',html,re.I)
+        current=(lang_m.group(1).lower() if lang_m else '')
+        found={}
+        for tag in re.findall(r'<link\b[^>]*>',html,re.I):
+            if not re.search(r'rel=["\']alternate["\']',tag,re.I): continue
+            hl=re.search(r'hreflang=["\']([a-zA-Z]{2})(?:[-_][a-zA-Z]{2})?["\']',tag,re.I); hr=re.search(r'href=["\']([^"\']+)["\']',tag,re.I)
+            if hl and hr and hl.group(1).lower() in _LANG_NAMES:
+                found.setdefault(hl.group(1).lower(),urljoin(base_url,hr.group(1)))
+        for href in links or []:
+            full=urljoin(base_url,href)
+            path=urlparse(full).path
+            m=_LANG_PATH_RE.match(path)
+            if m and not urlparse(full).query:
+                found.setdefault(m.group(1).lower(),full)
+        out=[]
+        for lang in ('nl','fr','en','de'):
+            u=found.get(lang)
+            if u and lang!=current and same_domain(u,urlparse(base_url).hostname or '') and _canonical_url(u)!=_canonical_url(base_url):
+                out.append(u)
+        return out[:max_alternates]
+    except Exception:
+        return []
+
+SLOW_SITE_SECONDS=5.0
+
 def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='primary'):
     """Crawl the homepage and continue through a ranked candidate queue until the target
     number of usable extra pages is reached. Individual failures no longer consume the whole
@@ -1745,8 +1780,17 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     # Homepage: direct HTML first so internal links can be discovered; Reader fallback if the
     # direct request is blocked. Reader text cannot provide a reliable link list.
     homepage_method='direct'; links=[]; homepage_link_base=url; homepage_trusted_host_base=url
+    homepage_html=''; _home_started=time.time()
     try:
-        html,homepage_final_url=fetch_html(url,timeout=min(7,remaining()))
+        try:
+            html,homepage_final_url=fetch_html(url,timeout=min(7,remaining()))
+        except Exception as first_error:
+            # v96.23: delhaize.be needs 9-19 s for its homepage; the 7 s attempt timed out, the Reader fallback was then the only
+            # way in (or nothing) and the scan ended Inconclusive. A timeout (not a refusal) is retried ONCE with a longer limit.
+            if not _is_timeout_error(first_error) and 'handshake' not in str(first_error).lower() or remaining()<14:
+                raise
+            html,homepage_final_url=fetch_html(url,timeout=min(22,remaining()-5))
+        homepage_html=html
         text,links,base_href=parse_html(html)
         homepage_link_base=_link_resolution_base(url,homepage_final_url,base_href)
         # v93.31: the domain-TRUST boundary (host, used below for same_domain() checks,
@@ -1775,6 +1819,10 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             _log_fetch_failure(log,url,direct_error,source='homepage')
             raise
     _log_fetch_success(log,url,len(text),method=homepage_method,source='homepage',content_kind='html')
+    # A site that needs more than SLOW_SITE_SECONDS for its own homepage (delhaize.be: 9-19 s, even for a 404) cannot afford the
+    # guesswork below: every guessed path or sitemap probe costs a full slow request and the whole budget went on pages that do not
+    # exist, so the scan ended Inconclusive. On such a site only links the homepage really contains are tried, with a longer timeout.
+    slow_site=(time.time()-_home_started)>SLOW_SITE_SECONDS
     # v93.31: host was derived from the ORIGINALLY REQUESTED url, not where the homepage
     # actually ended up after a redirect. homepage_link_base already resolves to the final
     # URL (falling back to the requested one when no redirect/reader-fallback info is
@@ -1810,8 +1858,11 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
         # company's own page carries the same risk as any other page content review.
         if relevant(full) or is_pdf:
             add_candidate(full,'linked',allow_cross_domain=is_pdf)
+    for alt in _v96_alternate_language_urls(homepage_html,homepage_link_base,links):
+        add_candidate(alt,'language_alternate')
+    linked_count=len(candidates)
 
-    if time.time()<deadline-2:
+    if time.time()<deadline-2 and not (slow_site and linked_count>=3):
         try:
             # A retail/grocery site's sitemap index can have several large child sitemaps
             # (product/category listings), and discover_sitemap_urls() fetches up to 8 of
@@ -1829,8 +1880,9 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             pass
 
     scheme=urlparse(homepage_trusted_host_base).scheme or urlparse(url).scheme or 'https'
-    for path in COMMON_PUBLIC_PATHS:
-        add_candidate(f'{scheme}://{host}{path}','common_path')
+    if not (slow_site and linked_count>=3):
+        for path in COMMON_PUBLIC_PATHS:
+            add_candidate(f'{scheme}://{host}{path}','common_path')
 
     candidates.sort(key=_candidate_score)
     candidates=candidates[:CRAWL_MAX_PAGE_ATTEMPTS]
@@ -1855,7 +1907,8 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     while cursor<len(candidates) and successful<max_extra_pages and attempts<max_attempts and time.time()<deadline-2:
         batch=candidates[cursor:cursor+workers]; cursor+=len(batch); attempts+=len(batch)
         per_timeout=min(8,max(3,remaining()-1))
-        if any(fail_count.get(u) for u,_ in batch): per_timeout=min(12,max(4,remaining()-1))
+        if slow_site: per_timeout=min(16,max(8,remaining()-1))
+        if any(fail_count.get(u) for u,_ in batch): per_timeout=min(max(12,per_timeout),max(4,remaining()-1))
         discovered=[]; batch_timeouts=0; retry_pool=[]
         executor=ThreadPoolExecutor(max_workers=min(workers,len(batch)))
         futures={executor.submit(fetch_page_content,u,per_timeout):(u,source) for u,source in batch}
@@ -5436,7 +5489,7 @@ def analyse_url_v27(raw, company_number='', chosen_url=''):
             txt,pages,related_notes,crawl_log,duplicate_content_info=crawl_with_related_sites(original_url,overall_deadline=scan_deadline)
         url=original_url
     except Exception as first_error:
-        raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)} No country-domain substitution was attempted; verify the exact official URL and try again.')
+        raise ValueError(f'Could not scan {original_url}: {_describe_fetch_error(first_error)} No country-domain substitution was attempted; verify the exact official URL and try again.'+_v96_did_you_mean(original_url,first_error))
     comp=infer_company(url,txt,company_name_hint)
     company_identity_check=None
     if kbo_info:
@@ -10979,6 +11032,89 @@ def _v66_company_search_results(name):
             results.extend(r for r in b if _v60_canonical_url(r.get('url','')) not in seen)
         except Exception: _v90_note_provider_result('Google Custom Search')
     return results
+
+
+_GENERIC_NAME_WORDS=('transports','transport','logistics','logistique','groupe','group','groep','holding','services','service','international','belgium','belgique','europe')
+
+def _v96_name_variants(label):
+    """The brand a mistyped domain label probably stands for: the label as written, and the label without a generic business word at
+    its start or end ("transportsdandoy" -> "dandoy")."""
+    compact=re.sub(r'[^a-z0-9]','',label.lower())
+    out=[label.strip()] if label.strip() else []
+    words=sorted(_GENERIC_NAME_WORDS,key=len,reverse=True)
+    for w in words:
+        if compact.startswith(w) and len(compact)-len(w)>=4: out.append(compact[len(w):]); break
+    for w in words:
+        if compact.endswith(w) and len(compact)-len(w)>=4: out.append(compact[:-len(w)]); break
+    return list(dict.fromkeys(v for v in out if len(v)>=4))
+
+def _v96_did_you_mean(original_url,err):
+    """When the entered domain does not exist (DNS failure), suggest the official website of the company the name seems to stand for:
+    "transportsdandoy.com" does not exist, the company is on dandoy.be. Only a SUGGESTION in the error text -- never scanned or
+    substituted automatically, so the entity lock stays intact. Candidates come from the web search (when one is configured) and
+    from conventional domains whose own page names the brand, checked in parallel within a short budget. '' when nothing credible."""
+    try:
+        if 'could not be resolved' not in _describe_fetch_error(err).lower():
+            return ''
+        host=(urlparse(original_url).hostname or '').lower().removeprefix('www.')
+        parts=host.split('.')
+        label=parts[-2] if len(parts)>=2 and parts[-2] not in {'co','com','org','net','gov','ac'} else (parts[-3] if len(parts)>=3 else '')
+        label=re.sub(r'[-_]+',' ',label).strip()
+        if len(label)<4:
+            return ''
+        asked=_root_domain(host)
+        variants=_v96_name_variants(label)
+        found=[]
+        if external_search_configured():
+            for v in variants:
+                for c in resolve_company_candidates(v,max_candidates=3).get('candidates',[]):
+                    if c.get('score',0)>=60: found.append((c['url'],c.get('title','')))
+                if found: break
+        if not found:
+            guesses=[]
+            for v in variants:
+                guesses+=_v72_guess_domain_candidates(v)
+            guesses=[g for g in dict.fromkeys(guesses) if _root_domain(urlparse(g).hostname or '')!=asked]
+            pool=ThreadPoolExecutor(max_workers=6)
+            try:
+                futures=[(g,pool.submit(_v96_validate_suggestion,g,_v96_variant_for(g,variants))) for g in guesses]
+                end=time.time()+14
+                for g,fut in futures:
+                    try: hit=fut.result(timeout=max(0.1,end-time.time()))
+                    except Exception: hit=None
+                    if hit:
+                        found.append((hit[0].rstrip('/'),'')); break
+            finally:
+                pool.shutdown(wait=False,cancel_futures=True)   # never hold the error response back for slow guesses
+        found=[(u,t) for u,t in found if _root_domain(urlparse(u).hostname or '')!=asked]
+        if not found:
+            return ''
+        url,title=found[0]
+        return f' Did you mean {url}'+(f' ({title})' if title else '')+'? Check that it is the right company, then scan that address.'
+    except Exception:
+        return ''
+
+def _v96_validate_suggestion(url,brand):
+    """Like _v72_validate_guessed_domain(), but with a patient timeout: this runs only after a scan already failed, and the real site
+    may be slow (dandoy.be answers in about 10 s). Returns (final_url,length) when the page names the brand, else None."""
+    try:
+        data,ctype,final_url=_open_public_url(url,timeout=14,accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',max_bytes=400000)
+        if 'html' not in ctype: return None
+        raw=data.decode('utf-8',errors='ignore')
+        text,_,_=parse_html(raw)
+        title=re.search(r'<title[^>]*>(.*?)</title>',raw,re.I|re.S)
+        hay=((title.group(1) if title else '')+' '+text[:6000]).lower()
+        key=re.sub(r'[^a-z0-9]','',brand.lower())
+        if key and key in re.sub(r'[^a-z0-9]','',hay): return (final_url,len(data))
+    except Exception:
+        return None
+    return None
+
+def _v96_variant_for(guess_url,variants):
+    base=(urlparse(guess_url).hostname or '').lower().removeprefix('www.').split('.')[0]
+    for v in variants:
+        if re.sub(r'[^a-z0-9]','',v.lower())==base: return v
+    return variants[0] if variants else base
 
 
 def resolve_company_candidates(name, max_candidates=5):

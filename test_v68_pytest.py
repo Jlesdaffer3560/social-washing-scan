@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_22_group_weight_and_empco_floor'
+    assert app.APP_VERSION == 'hostable_v96_23_languages_and_slow_sites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8038,3 +8038,77 @@ def test_group_document_findings_are_weighed_lighter_in_the_score():
     g = [{'source_url': 'https://cdn.example/policy.pdf', 'claim_score': 50}, {'source_url': 'https://www.lidl.be/a', 'claim_score': 50}]
     app._v96_tag_group_document_findings(g, log)
     assert g[0]['from_group_document'] == 'Schwarz Group' and 'from_group_document' not in g[1]
+
+
+def _crawl_with(monkeypatch, home_html, pages_text, fetched=None, home_error_first=False):
+    import time as _t
+    fetched = fetched if fetched is not None else []
+    state = {'n': 0}
+    def fake_fetch_html(u, timeout=7):
+        state['n'] += 1
+        if home_error_first and state['n'] == 1:
+            raise TimeoutError('The read operation timed out')
+        return home_html, u
+    def fake_fetch_page_content(u, timeout=8):
+        fetched.append(u)
+        if u in pages_text:
+            return (pages_text[u], 'html', 'direct', [], u, u)
+        raise Exception('not found')
+    monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
+    monkeypatch.setattr(app, 'fetch_page_content', fake_fetch_page_content)
+    monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
+    monkeypatch.setattr(app, 'ENABLE_READER_FALLBACK', False)  # the thin fake homepage must not trigger a real network call
+    log = []
+    text, pages, chunks = app.crawl('https://www.shop.be', max_extra_pages=6, deadline=_t.time() + 60, log=log)
+    return pages, log, fetched, state
+
+
+def test_crawl_also_reads_the_other_language_of_a_multilingual_site(monkeypatch):
+    """v96.23: lidl.be answers in ONE language (French), so the Dutch claims were never read. The alternate-language entry pages
+    (hreflang / /nl/ links) are crawled too."""
+    html = ('<html lang="fr"><head><link rel="alternate" hreflang="nl" href="https://www.shop.be/nl/"></head><body>'
+            '<a href="/fr/durabilite">Durabilité</a></body></html>' + 'x' * 10)
+    nl_text = 'Duurzaamheid bij Shop. Wij verminderen verpakkingen. ' * 6
+    pages, log, fetched, _ = _crawl_with(monkeypatch, html, {'https://www.shop.be/nl': nl_text, 'https://www.shop.be/fr/durabilite': 'Durabilité chez Shop. ' * 20})
+    assert any(p.rstrip('/').endswith('/nl') for p in pages)
+    assert fetched[0].rstrip('/').endswith('/nl')  # the other language is tried before guessed paths
+
+
+def test_slow_homepage_gets_one_longer_retry_and_skips_guessed_paths(monkeypatch):
+    """v96.23: delhaize.be needs 9-19 s for a page. The homepage is retried once after a timeout, and on a slow site only links the
+    homepage really contains are tried -- not a dozen guessed paths that each cost a full slow request."""
+    monkeypatch.setattr(app, 'SLOW_SITE_SECONDS', -1)
+    links = ''.join(f'<a href="/about/sustainable-{i}">s{i}</a>' for i in range(4))
+    html = '<html lang="nl"><body>' + links + '</body></html>' + 'y' * 10
+    texts = {f'https://www.shop.be/about/sustainable-{i}': 'Duurzaam beleid van Shop. ' * 20 for i in range(4)}
+    pages, log, fetched, state = _crawl_with(monkeypatch, html, texts, home_error_first=True)
+    assert state['n'] == 2                                  # the homepage was retried once
+    assert len(pages) >= 4                                  # homepage + linked pages were read
+    assert not any(u.endswith(('/sustainability', '/csr', '/esg', '/climate')) for u in fetched)   # no guessed paths
+
+
+def test_unresolvable_domain_suggests_the_real_website_without_scanning_it(monkeypatch):
+    """v96.23: "transportsdandoy.com" does not exist; the company is dandoy.be. The error now says "Did you mean ...?" -- a suggestion
+    only, never an automatic substitution."""
+    assert app._v96_name_variants('transportsdandoy') == ['transportsdandoy', 'dandoy']
+    monkeypatch.setattr(app, 'external_search_configured', lambda: False)
+    def fake_open(url, timeout=7, accept='', max_bytes=0, deadline=None):
+        if 'www.dandoy.be' in url:
+            return b'<html><head><title>Transport, Logistics and Warehousing in Europe | Dandoy</title></head><body>Dandoy since 1925</body></html>', 'text/html', 'https://www.dandoy.be/'
+        raise OSError('no such host')
+    monkeypatch.setattr(app, '_open_public_url', fake_open)
+    err = ValueError('The domain name could not be resolved (it may not exist, or may be misspelled).')
+    hint = app._v96_did_you_mean('https://www.transportsdandoy.com', err)
+    assert 'Did you mean https://www.dandoy.be' in hint and 'Check that it is the right company' in hint
+    assert app._v96_did_you_mean('https://www.transportsdandoy.com', ValueError('the website returned HTTP 404.')) == ''   # only for DNS failures
+    monkeypatch.setattr(app, '_open_public_url', lambda *a, **k: (_ for _ in ()).throw(OSError('no such host')))
+    assert app._v96_did_you_mean('https://www.zzqqxxnotacompany.com', err) == ''
+
+
+def test_scan_error_for_unknown_domain_carries_the_suggestion(monkeypatch):
+    monkeypatch.setattr(app, 'crawl_with_related_sites', lambda *a, **k: (_ for _ in ()).throw(ValueError('The domain name could not be resolved (it may not exist, or may be misspelled).')))
+    monkeypatch.setattr(app, '_v96_did_you_mean', lambda url, err: ' Did you mean https://www.dandoy.be? Check that it is the right company, then scan that address.')
+    import pytest
+    with pytest.raises(ValueError) as e:
+        app.analyse_url_v27('https://www.transportsdandoy.com')
+    assert 'No country-domain substitution was attempted' in str(e.value) and 'Did you mean https://www.dandoy.be' in str(e.value)
