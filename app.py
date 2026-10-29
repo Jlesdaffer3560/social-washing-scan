@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_19_client_access_codes"
-APP_RELEASE_LABEL="v96.19"
+APP_VERSION="hostable_v96_20_access_code_expiry"
+APP_RELEASE_LABEL="v96.20"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -6173,34 +6173,62 @@ def _access_code_ok(data):
 # v96.19: besides the shared ACCESS_CODE, a prospect or client can get a code of their own (e.g. one for Gaasch Packaging)
 # so access can be given and withdrawn per party without touching the main code. The codes are stored as SHA-256 hashes of the
 # upper-cased code, never in clear text, so the repository does not reveal them. Withdraw a code by deleting its line.
-# More codes can also be added without a release through the EXTRA_ACCESS_CODES environment variable: "label=CODE,label2=CODE2".
-_EXTRA_ACCESS_CODE_HASHES={
-    'Gaasch Packaging':'b4dc6c04c73ffa02993e42c16cdc2d2d99262d15a3b9c90ff9aef4896d6bf934',
+# v96.20: a code can carry an end date ('valid_until', inclusive, Brussels time); after it the code is refused with its own message.
+# More codes can also be added without a release through the EXTRA_ACCESS_CODES environment variable:
+# "label=CODE,label2=CODE2@2026-12-31" (the part after @ is the optional last valid day).
+_EXTRA_ACCESS_CODES={
+    'Gaasch Packaging':{'hash':'b4dc6c04c73ffa02993e42c16cdc2d2d99262d15a3b9c90ff9aef4896d6bf934','valid_until':'2026-11-30'},
 }
 
 def _access_code_digest(value):
     return hashlib.sha256(_normalize_access_code(value).upper().encode('utf-8')).hexdigest()
 
-def _extra_access_code_hashes():
-    out=dict(_EXTRA_ACCESS_CODE_HASHES)
+def _extra_access_codes():
+    out={k:dict(v) for k,v in _EXTRA_ACCESS_CODES.items()}
     for part in os.environ.get('EXTRA_ACCESS_CODES','').split(','):
-        label,sep,code=part.partition('=')
+        label,sep,rest=part.partition('=')
+        code,_,until=rest.partition('@')
         if sep and label.strip() and code.strip():
-            out[label.strip()]=_access_code_digest(code)
+            out[label.strip()]={'hash':_access_code_digest(code),'valid_until':until.strip()}
     return out
 
-def _access_code_label(data):
-    """Which code the request carries: 'shared' for ACCESS_CODE, the party's name for an extra code, None when it matches none."""
+def _today_brussels():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.datetime.now(ZoneInfo('Europe/Brussels')).date()
+    except Exception:
+        return (datetime.datetime.utcnow()+datetime.timedelta(hours=1)).date()
+
+def _access_code_expired(entry):
+    until=str((entry or {}).get('valid_until') or '').strip()
+    if not until:
+        return False
+    try:
+        return _today_brussels()>datetime.date.fromisoformat(until)
+    except ValueError:
+        return True  # an unreadable end date must never leave a code open for ever
+
+def _access_code_match(data):
+    """(label, expired) for the code in the request: label is 'shared' for ACCESS_CODE, the party's name for an extra code, None when
+    it matches none; expired is True when an extra code matched but its end date has passed."""
     supplied=_normalize_access_code(data.get('access_code','')) if isinstance(data,dict) else ''
     if not supplied:
-        return None
+        return None,False
     if ACCESS_CODE and hmac.compare_digest(supplied.encode('utf-8'),_normalize_access_code(ACCESS_CODE).encode('utf-8')):
-        return 'shared'
+        return 'shared',False
     digest=_access_code_digest(supplied)
-    for label,expected in _extra_access_code_hashes().items():
-        if hmac.compare_digest(digest,expected):
-            return label
-    return None
+    for label,entry in _extra_access_codes().items():
+        if hmac.compare_digest(digest,entry['hash']):
+            return label,_access_code_expired(entry)
+    return None,False
+
+def _access_code_label(data):
+    """The code's owner ('shared' or a party's name), or None when the code is unknown or has expired."""
+    label,expired=_access_code_match(data)
+    return None if expired else label
+
+def _access_denied_message(data):
+    return 'This access code has expired. Please ask Durably for a new one.' if _access_code_match(data)[1] else 'Invalid or missing access code.'
 
 
 def _v93_read_form_body(handler):
@@ -8447,14 +8475,14 @@ class Handler(BaseHTTPRequestHandler):
             data=self._read_json()
             if self.path=='/api/resolve/company':
                 # Cheap look-up (search + a few live checks, no crawl): same access code as a scan, own rate-limit bucket.
-                if not _access_code_ok(data): return self._json({'error':'Invalid or missing access code.','access_denied':True},401)
+                if not _access_code_ok(data): return self._json({'error':_access_denied_message(data),'access_denied':True},401)
                 if not _rate_limit_allowed(client,'resolve',RATE_LIMIT_SCANS*4): return self._json({'error':'Too many look-ups. Try again later.'},429)
                 return self._json(resolve_company_candidates(str(data.get('name','') or '')[:200]))
             if self.path in {'/api/scan/url','/api/scan/document'}:
                 # v93.43: checked before the rate limit and concurrency semaphore so a wrong/
                 # missing access code never consumes either -- an invited tester's own budget
                 # shouldn't shrink because someone else is guessing codes.
-                if not _access_code_ok(data): return self._json({'error':'Invalid or missing access code.','access_denied':True},401)
+                if not _access_code_ok(data): return self._json({'error':_access_denied_message(data),'access_denied':True},401)
                 _label=_access_code_label(data) if ACCESS_CODE else None
                 if _label and _label!='shared': print(f"[access] scan started with the code of: {_label}",flush=True)
                 if not _rate_limit_allowed(client,'scan',RATE_LIMIT_SCANS): return self._json({'error':'Scan rate limit reached. Try again later.'},429)

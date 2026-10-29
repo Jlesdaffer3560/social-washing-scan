@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_19_client_access_codes'
+    assert app.APP_VERSION == 'hostable_v96_20_access_code_expiry'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7914,7 +7914,7 @@ def test_both_dimensions_run_a_dedicated_business_and_human_rights_centre_query(
 def test_client_specific_access_code_works_next_to_the_shared_code(monkeypatch):
     """v96.19: a prospect gets a code of their own; the shared ACCESS_CODE keeps working; neither opens up the other."""
     monkeypatch.setattr(app, 'ACCESS_CODE', 'letmein')
-    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODE_HASHES', {'Acme Prospect': app._access_code_digest('ACME-TEST1-CODE2')})
+    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODES', {'Acme Prospect': {'hash': app._access_code_digest('ACME-TEST1-CODE2'), 'valid_until': ''}})
     monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
     assert app._access_code_ok({'access_code': 'letmein'}) and app._access_code_label({'access_code': 'letmein'}) == 'shared'
     assert app._access_code_ok({'access_code': 'ACME-TEST1-CODE2'})
@@ -7928,7 +7928,31 @@ def test_client_specific_access_code_works_next_to_the_shared_code(monkeypatch):
 
 def test_gaasch_access_code_is_registered_only_as_a_hash():
     src = Path(app.__file__).read_text(encoding='utf-8')
-    assert 'Gaasch Packaging' in app._EXTRA_ACCESS_CODE_HASHES
-    digest = app._EXTRA_ACCESS_CODE_HASHES['Gaasch Packaging']
+    assert 'Gaasch Packaging' in app._EXTRA_ACCESS_CODES
+    digest = app._EXTRA_ACCESS_CODES['Gaasch Packaging']['hash']
     assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
     assert 'GAASCH-' not in src.upper().replace("'GAASCH PACKAGING'", '').replace('GAASCH PACKAGING', '')
+
+
+def test_client_access_code_expires_after_its_last_valid_day(monkeypatch):
+    """v96.20: the Gaasch Packaging code is valid through 30 November 2026 (inclusive, Brussels time)."""
+    import datetime as dt
+    monkeypatch.setattr(app, 'ACCESS_CODE', 'letmein')
+    monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
+    assert app._EXTRA_ACCESS_CODES['Gaasch Packaging']['valid_until'] == '2026-11-30'
+    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODES', {'Acme': {'hash': app._access_code_digest('ACME-1'), 'valid_until': '2026-11-30'}})
+    req = {'access_code': 'acme-1'}
+    for day, ok in ((dt.date(2026, 10, 29), True), (dt.date(2026, 11, 30), True), (dt.date(2026, 12, 1), False), (dt.date(2027, 3, 1), False)):
+        monkeypatch.setattr(app, '_today_brussels', lambda day=day: day)
+        assert app._access_code_ok(req) is ok, day
+        assert app._access_code_ok({'access_code': 'letmein'}) is True  # the shared code never expires
+    assert 'expired' in app._access_denied_message(req)
+    assert app._access_denied_message({'access_code': 'nonsense'}) == 'Invalid or missing access code.'
+    # an unreadable end date closes the code instead of leaving it open
+    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODES', {'Acme': {'hash': app._access_code_digest('ACME-1'), 'valid_until': 'soon'}})
+    assert app._access_code_ok(req) is False
+    # environment variable form: label=CODE@date
+    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODES', {})
+    monkeypatch.setenv('EXTRA_ACCESS_CODES', 'Beta=BETA-9@2026-12-31,Open=OPEN-1')
+    monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2027, 1, 5))
+    assert app._access_code_ok({'access_code': 'beta-9'}) is False and app._access_code_ok({'access_code': 'open-1'}) is True
