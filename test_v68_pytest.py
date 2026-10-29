@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_21_dates_and_old_cases'
+    assert app.APP_VERSION == 'hostable_v96_22_group_weight_and_empco_floor'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8001,3 +8001,40 @@ def test_older_and_closed_external_cases_are_labelled_and_weighed_lighter():
     assert cs['age_status'] == 'older' and cs['published_date'] == 'Date not available (age not verified)'
     import report_pdf as rp
     assert rp.external_signal_card(cs, 400) is not None  # renders with the age note
+
+
+def test_year_in_a_link_to_a_report_does_not_make_a_web_page_outdated():
+    """v96.21: the Lidl CSR hub pages link to "our 2023 Corporate Social Responsibility Report"; six current pages were dropped as
+    outdated because of that link text. For web pages only the heading area counts, and "our / the / read ..." + year is a reference."""
+    body = 'Good for people\n' + 'We care about our colleagues. ' * 20 + '\nOur publications at a glance\nour 2023 Corporate Social Responsibility Report\n'
+    assert app._v93_extract_report_year('https://x.example/csr/good-for-people', body, 'html') is None
+    assert app._v93_extract_report_year('https://x.example/csr/good-for-people', 'Annual Report 2022\nCompany', 'html') == 2022
+    assert app._v93_extract_report_year('https://x.example/r.pdf', 'Sustainability Report 2022 cover page', 'pdf') == 2022
+    assert app._v93_extract_report_year('https://x.example/files/report-2021.pdf', 'x', 'pdf') == 2021
+
+
+def test_single_ambition_wording_floors_empco_at_high_and_group_documents_never_floor():
+    f = app._v93_apply_empco_blacklist_floor
+    ambition = {'blacklisted_practice_indicator': True, 'claim': 'Our ambition is to offer sustainable transport by using as many green practices as possible.'}
+    present = {'blacklisted_practice_indicator': True, 'claim': 'Our trucks are eco-friendly.'}
+    assert f(10, 10, [ambition]) == (50, 50, True)                       # one ambition: High, not Very high
+    assert f(10, 10, [present]) == (75, 75, True)                         # a present-tense claim: full floor
+    assert f(10, 10, [ambition, dict(ambition, claim='We aim to be climate friendly.')]) == (75, 75, True)  # two matches
+    assert f(60, 60, [ambition]) == (60, 60, True)                        # never lowers a higher score
+    assert f(10, 10, [dict(present, from_group_document='Schwarz Group')]) == (10, 10, False)
+    assert f(10, 10, [ambition], {'channel': 'x'}) [0] <= 50
+
+
+def test_group_document_findings_are_weighed_lighter_in_the_score():
+    own = [{'type': 'Aspirational or future social-performance claim', 'claim_score': 60, 'risk': 'High'}]
+    grp = [{'type': 'Aspirational or future social-performance claim', 'claim_score': 60, 'risk': 'High', 'from_group_document': 'Schwarz Group'} for _ in range(4)]
+    d = app._v96_discount_group_findings(own + grp)
+    assert len(d) == 3 and sum(1 for x in d if x.get('from_group_document')) == 2          # every other group finding counts
+    assert all(x['claim_score'] == 36 and x['blacklisted_practice_indicator'] is False for x in d if x.get('from_group_document'))
+    assert [x for x in d if not x.get('from_group_document')][0]['claim_score'] == 60        # own pages unchanged
+    assert app._v96_discount_group_findings(own) == own
+    # tagging from the crawl log
+    log = [{'url': 'https://cdn.example/policy.pdf', 'ok': True, 'group_issuer': 'Schwarz Group'}]
+    g = [{'source_url': 'https://cdn.example/policy.pdf', 'claim_score': 50}, {'source_url': 'https://www.lidl.be/a', 'claim_score': 50}]
+    app._v96_tag_group_document_findings(g, log)
+    assert g[0]['from_group_document'] == 'Schwarz Group' and 'from_group_document' not in g[1]

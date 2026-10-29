@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_21_dates_and_old_cases"
-APP_RELEASE_LABEL="v96.21"
+APP_VERSION="hostable_v96_22_group_weight_and_empco_floor"
+APP_RELEASE_LABEL="v96.22"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1526,18 +1526,25 @@ DOCUMENT_SCREENING_CUTOFF_YEAR=2025
 _REPORT_YEAR_KEYWORD_RE=re.compile(r'(report|annual|sustainab|csr|esg|impact|jaarverslag|duurzaam|rapport|durabilit)',re.I)
 _REPORT_YEAR_RE=re.compile(r'\b(20\d{2})\b')
 
-def _v93_extract_report_year(url,text):
+def _v93_extract_report_year(url,text,kind=None):
     """Returns an integer year if the URL/filename or the opening portion of the document's
     own text clearly names this as a dated report (a 4-digit year within ~40 characters of a
     report-type keyword), else None. Deliberately conservative -- a bare year anywhere in a URL
     or page (e.g. a product model number, a "founded in 2018" aside) is NOT enough on its own;
     only a year that co-occurs with an explicit report/annual/sustainability-type keyword is
     treated as the document's own publication/reporting year."""
-    for haystack,radius in ((url or '',40),((text or '')[:2000],70)):
+    # v96.21: on an ordinary web page (kind 'html') a report year in the body is usually a LINK to a report ("our 2023 Corporate
+    # Social Responsibility Report" on the Lidl hub pages), not the date of the page itself -- six current Lidl CSR pages were dropped
+    # as "outdated" for that reason. For web pages only the heading area counts, and a year introduced by "our / the / read / see /
+    # download / view / latest" is a reference, not a date. PDFs (a report's cover page) keep the wider window.
+    is_page=(kind=='html')
+    for idx,(haystack,radius) in enumerate(((url or '',40),((text or '')[:(400 if is_page else 2000)],70))):
         low=haystack.lower()
         for m in _REPORT_YEAR_RE.finditer(low):
             year=int(m.group(1))
             if 2015<=year<=2035:
+                if is_page and idx==1 and re.search(r'\b(?:our|the|read|see|view|download|latest|new|annual)\s+$',low[max(0,m.start()-14):m.start()]):
+                    continue
                 window=low[max(0,m.start()-radius):m.end()+radius]
                 if _REPORT_YEAR_KEYWORD_RE.search(window):
                     return year
@@ -1895,7 +1902,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                         # can be discovered) and still logged, just under a distinct status so
                         # the coverage register shows it as knowingly excluded, not silently
                         # missing or "failed to access".
-                        stale_year=_v93_extract_report_year(link,t)
+                        stale_year=_v93_extract_report_year(link,t,kind)
                         # v93.89: two different pre-redirect candidate URLs (e.g. "/about-us"
                         # and "/about") can both redirect to the exact same final page. `seen`
                         # only deduplicates the pre-redirect candidate URLs used to BUILD the
@@ -4548,6 +4555,16 @@ def _v93_ext_verification_status(ext, targeted):
     return 'Performed — no relevant external signal identified'
 
 
+EMPCO_FLOOR_FULL=75
+EMPCO_FLOOR_ASPIRATIONAL=50
+_ASPIRATION_RE=re.compile(r"\b(?:our\s+ambitions?\s+is|ambitions?\s+is\s+to|we\s+aim|aims?\s+to|we\s+strive|strive\s+to|striving|aspire|aspiration|our\s+goal|goal\s+is|we\s+intend|intend\s+to|we\s+want\s+to|we\s+wish|we\s+hope|we\s+plan\s+to|as\s+(?:much|many)\b[^.]{0,60}\bas\s+possible|streven\s+naar|onze\s+ambitie|ons\s+doel|nous\s+visons|notre\s+ambition|notre\s+objectif|nous\s+nous\s+effor)",re.I)
+
+def _v96_finding_text(f):
+    return ' '.join(str(f.get(k) or '') for k in ('claim','claim_text','excerpt','evidence','text'))
+
+def _v96_is_aspirational_claim(text):
+    return bool(_ASPIRATION_RE.search(text or ''))
+
 def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings, audience=None):
     """A retained green claim with blacklisted_practice_indicator=True matches a FIXED
     pattern on EmpCo Annex I -- the Directive (EU) 2024/825 practices automatically
@@ -4578,10 +4595,15 @@ def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings,
     calc_green_score/calc_score so an Annex I wording match in mostly-internal material still
     lands solidly in the elevated "High" band rather than being ignored, without overstating
     it as automatically "Very high" the way genuinely client-facing material is."""
-    has_blacklisted=any(f.get('blacklisted_practice_indicator') for f in green_findings or [])
-    if not has_blacklisted:
+    # v96.22: a document of the parent/group company is not consumer advertising, so it never triggers the Annex I floor; and ONE
+    # Annex I match that is only an ambition ("our ambition is to offer sustainable ... as many ... as possible") floors at 50
+    # (High) instead of 75 (Very high). Two or more matches, or a match worded as a present-tense claim, keep the full floor.
+    flagged=[f for f in green_findings or [] if f.get('blacklisted_practice_indicator') and not f.get('from_group_document')]
+    if not flagged:
         return green_score, overall_score, False
-    floor_value=round(75*_v93_audience_factor(audience)) if audience is not None else 75
+    only_aspiration=len(flagged)==1 and _v96_is_aspirational_claim(_v96_finding_text(flagged[0]))
+    base=EMPCO_FLOOR_ASPIRATIONAL if only_aspiration else EMPCO_FLOOR_FULL
+    floor_value=round(base*_v93_audience_factor(audience)) if audience is not None else base
     return max(green_score, floor_value), max(overall_score, floor_value), True
 
 def _why_score_global_text(overall, green_score, social_score, empco_blacklist_floor, document_scan=False):
@@ -5444,6 +5466,7 @@ def analyse_url_v27(raw, company_number='', chosen_url=''):
     green_fs=detect_green_claims(txt)
     green_fs=assign_sources_to_findings(green_fs,page_segments,documents_checked)
     social_fs=assign_sources_to_findings(social_fs,page_segments,documents_checked)
+    _v96_tag_group_document_findings(green_fs,social_fs,crawl_log)
     # Website scans should include external public-source signals. Uploaded internal
     # documents remain separate and do not run external search in analyse_uploaded_document().
     social_ext=external(comp['company'], social_fs, pages)
@@ -5714,6 +5737,42 @@ GENERIC_GREEN_EXCLUSIONS = [
     'sustainability targets','sustainability goals','sustainability programme','sustainability program',
     'annual report','esg report','csrd','download','privacy policy','terms of use','cookie'
 ]
+
+def _v96_tag_group_document_findings(*finding_lists_and_log):
+    """Marks findings whose source is a document issued by a parent/group company (see _v96_document_about_other_entity()):
+    they describe the group's policy, not the scanned company's own communication, and are weighed lighter in the score."""
+    *lists,log=finding_lists_and_log
+    groups={}
+    for e in log or []:
+        if isinstance(e,dict) and e.get('group_issuer') and e.get('url'):
+            groups[_canonical_url(str(e['url']))]=e['group_issuer']
+    if not groups:
+        return
+    for lst in lists:
+        for f in lst or []:
+            if isinstance(f,dict):
+                issuer=groups.get(_canonical_url(str(f.get('source_url') or '')))
+                if issuer:
+                    f['from_group_document']=issuer
+
+GROUP_DOCUMENT_SCORE_WEIGHT=0.6
+
+def _v96_discount_group_findings(material):
+    """Findings from a group-level document count lighter: their claim score is multiplied by GROUP_DOCUMENT_SCORE_WEIGHT, they do
+    not count as an EmpCo Annex I (consumer-advertising) match, and only every other one adds to the claim count. Findings from the
+    company's own pages are unchanged."""
+    own=[f for f in material if not f.get('from_group_document')]
+    group=sorted((f for f in material if f.get('from_group_document')),key=lambda f:-(f.get('claim_score',0) or 0))
+    if not group:
+        return material
+    kept=group[:(len(group)+1)//2]
+    out=list(own)
+    for f in kept:
+        g=dict(f)
+        g['claim_score']=round((f.get('claim_score',0) or 0)*GROUP_DOCUMENT_SCORE_WEIGHT)
+        g['blacklisted_practice_indicator']=False
+        out.append(g)
+    return out
 
 def _material_findings(findings):
     return [f for f in (findings or []) if not is_placeholder_finding(f.get('type',''))]
@@ -6086,7 +6145,7 @@ def _v86_claim_local_text(findings, page_segments, full_text):
 
 
 def calc_green_score(findings, sector, ext, page_text, audience, page_segments=None):
-    material=_material_findings(findings)
+    material=_v96_discount_group_findings(_material_findings(findings))
     local_text=_v86_claim_local_text(findings, page_segments, page_text)
     substantiation, evidence_notes=green_evidence_signal_score(local_text, findings)
     external_context=green_external_context_risk(ext)
@@ -6104,7 +6163,7 @@ def calc_green_score(findings, sector, ext, page_text, audience, page_segments=N
     return score, comps, external_context
 
 def calc_score(findings,sector,context,external_research=None,page_text="",company_name="",audience=None,page_segments=None):
-    material=_material_findings(findings)
+    material=_v96_discount_group_findings(_material_findings(findings))
     local_text=_v86_claim_local_text(findings, page_segments, page_text)
     substantiation, evidence_notes=evidence_signal_score(local_text, findings)
     external_context=strict_external_context_risk(external_research or {}, company_name)
