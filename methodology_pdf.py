@@ -184,6 +184,10 @@ def build_methodology_pdf():
         'For material aimed at clients or consumers, the minimum is 75/100 (the Very high band), because EmpCo and the UCPD apply most '
         'directly there. For material that is mainly investor or internal/governance content, the minimum is lower (about 56&ndash;68/100, '
         'usually the High band), because the rules reach that material only indirectly.<br/>'
+        'The full minimum applies when two or more claims match, or when one claim is worded as a present-tense statement. When the only '
+        'match is a single wording that is an <b>ambition</b> (for example &ldquo;our ambition is to offer sustainable solutions&rdquo;), '
+        'the minimum is 50/100 (the High band) instead. A claim taken from a document of a parent or group company does not trigger the '
+        'minimum at all, because that is not advertising by the scanned company.<br/>'
         'The rule can only raise a score. If the normal calculation already reaches the minimum, nothing changes. Social claims have no '
         'fixed Annex I list (they are assessed case by case, using the Forced Labour Regulation framework in Section 1), so this rule '
         'never raises the social score.', STY['body']))
@@ -199,14 +203,21 @@ def build_methodology_pdf():
     flow.append(Spacer(1, 4))
     flow.append(Paragraph(
         '<b>Choosing the website.</b> If you enter a company name instead of a web address, the scan looks for the official website and '
-        'asks you to confirm it whenever it is not certain which one is meant. <b>Language.</b> The scan reads the language version that '
-        'the website returns to it. On a multilingual site (for example Dutch and French) the other language version may therefore not be '
-        'read; scan it separately if you need it. <b>Uploaded documents.</b> A document is analysed in full up to about 1,000,000 '
+        'asks you to confirm it whenever it is not certain which one is meant. If the web address does not exist, the error message may '
+        'suggest the address of a company with a similar name (&ldquo;Did you mean&hellip;?&rdquo;); the suggestion is never scanned '
+        'automatically. <b>Language.</b> The scan reads the language version that the website returns to it and also the entry page of '
+        'the other languages the site announces (for example Dutch next to French), but it does not read every page in every language, '
+        'so scan a specific language page separately if you need full coverage. <b>Pages that are read.</b> Besides pages whose address '
+        'mentions sustainability, the scan reads About, Values, Mission and Ambition pages, where labels and certifications are often '
+        'described. A page that does not exist (HTTP 404) is never read through a fallback method. On a very slow website the scan '
+        'retries the homepage once with a longer limit and tries only the links the homepage really contains. <b>Uploaded documents.</b> A document is analysed in full up to about 1,000,000 '
         'characters (roughly 400 pages). Large PDFs are read in your own browser, and only their text is sent. Anything beyond the limit is '
         'reported as not analysed. <b>Documents of a parent or other company.</b> A document hosted outside the company&rsquo;s own website that names the '
         'scanned company only once or twice (for example the human-rights policy of its parent group) is analysed, but it is labelled as a '
         'group document with the name of its issuer, because it describes the group&rsquo;s policy. A document that does not name the '
-        'scanned company at all is not analysed as its own communication and is listed in the coverage register as excluded. ', STY['body']))
+        'scanned company at all is not analysed as its own communication and is listed in the coverage register as excluded. In the '
+        'score, claims taken from a group document count at 60% of their weight, and only every other one is counted in the number of '
+        'claims.', STY['body']))
     flow.append(Spacer(1, 5))
     signal_rows = [
         ('Type of claim kept', 'Examples', 'Why it matters'),
@@ -356,7 +367,10 @@ def build_methodology_pdf():
     flow.append(Paragraph(
         'Search engines do not return exactly the same list every time. To keep two scans of the same company comparable, the answer to each '
         'search is remembered for 24 hours, so a repeat scan within that time reads the same outside sources. A search that failed or found '
-        'nothing is not remembered. A scan only treats a search provider as unavailable after two failed requests in a row.', STY['body']))
+        'nothing is not remembered. A scan only treats a search provider as unavailable after two failed requests in a row. Signals that '
+        'were retained in an earlier scan of the same company are kept for 180 days and added to later scans, after passing the same '
+        'checks again; the report marks them as found in an earlier scan. Each scan also searches the Business &amp; Human Rights Resource '
+        'Centre separately, because that site keeps case profiles per company.', STY['body']))
 
     flow.append(CondPageBreak(60 * mm))
     flow.append(Paragraph('8. Coverage, confidence and source status', STY['h2']))
@@ -384,10 +398,13 @@ def build_methodology_pdf():
     flow.append(Paragraph(
         '<b>Screening cut-off for the company&rsquo;s own communication.</b> A page or document from the company&rsquo;s own website is left '
         'out of the analysis when it is clearly dated before 1 January 2025. &ldquo;Clearly dated&rdquo; means a year next to a word such as '
-        'report, annual or sustainability, in the web address or in the text itself. Sustainability communication changes quickly, so an '
+        'report, annual or sustainability in the web address or in the heading of a page or the first page of a PDF, or a statement such '
+        'as &ldquo;last updated May 2020&rdquo; at the start or end of the text. A link on a page to &ldquo;our 2023 report&rdquo; does '
+        'not make that page itself old. Sustainability communication changes quickly, so an '
         'older report no longer reflects the company&rsquo;s current claims. The cut-off applies only to the company&rsquo;s own pages and '
-        'documents. It never applies to outside signals (news, NGO, regulator or union coverage, Section 7), which are independent reporting '
-        'and are reviewed whatever their age.', STY['body']))
+        'documents. It never removes outside signals (news, NGO, regulator or union coverage, Section 7), which are independent reporting. '
+        'A signal that is six or more years old, or that reports a closed, settled or withdrawn case, stays in the report but counts only '
+        'as background in the score, and the report says so. A signal without a date is labelled &ldquo;age not verified&rdquo;.', STY['body']))
 
     flow.append(Paragraph('9. Score example', STY['h2']))
     example_rows = [

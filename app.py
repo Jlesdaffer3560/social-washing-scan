@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_23_languages_and_slow_sites"
-APP_RELEASE_LABEL="v96.23"
+APP_VERSION="hostable_v96_24_external_signal_memory"
+APP_RELEASE_LABEL="v96.24"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -10654,7 +10654,7 @@ def compact_sources(results,limit=6,dimension=None):
             'content':_v62_clean_external_content(r.get('content',''))[:320],
             'category':kind,'source_kind':kind,'credibility':source_credibility(r),'provider':r.get('provider',''),
             'published_date':r.get('published_date','') or 'Date not available (age not verified)','status':_source_status(txt),
-            'age_status':_v96_external_age_status(r),
+            'age_status':_v96_external_age_status(r),'seen_in_earlier_scan':bool(r.get('from_earlier_scan')),
             # v93.64: "Retained -- manual verification required" read as internal-process
             # jargon to a report reader; "Included" plainly says what happened to the source,
             # "needs a human check" plainly says what's still outstanding.
@@ -10681,6 +10681,98 @@ def targeted_negative_sources(results,company_name,limit=5,reviewed_pages=None,n
 
 
 
+# v96.24: external search never returns the same list twice, so signals found on one scan (the Business & Human Rights Centre cases
+# on Lidl) vanished on the next. Retained signals are now remembered per company and dimension in the scan-history database (when
+# DATABASE_URL is configured) and merged into later scans, after passing the same checks again. Without a database nothing changes.
+EXTERNAL_MEMORY_DAYS=180
+EXTERNAL_MEMORY_MAX_PER_COMPANY=40
+_V96_MEMORY_READY=False
+
+def _v96_memory_key(company,reviewed_pages=None):
+    """Stable key for a company: the registrable domain of the first reviewed page, else the compact company name."""
+    for page in reviewed_pages or []:
+        host=urlparse(str(page)).hostname if '://' in str(page) else None
+        if host:
+            root=_root_domain(host)
+            if root: return root
+    return _v64_compact(company or '')
+
+def _v96_memory_ensure(conn):
+    global _V96_MEMORY_READY
+    if _V96_MEMORY_READY: return
+    with conn.cursor() as cur:
+        cur.execute("""CREATE TABLE IF NOT EXISTS external_signal_memory (
+            company_key TEXT NOT NULL, dimension TEXT NOT NULL, url_key TEXT NOT NULL, payload TEXT NOT NULL,
+            first_seen TIMESTAMPTZ NOT NULL DEFAULT now(), last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (company_key, dimension, url_key))""")
+    conn.commit()
+    _V96_MEMORY_READY=True
+
+def _v96_memory_load(key,dimension):
+    """Signals remembered for this company and dimension (newest first), or [] when there is no database or nothing stored."""
+    if not key or not DATABASE_URL: return []
+    conn=_v92_db_connect()
+    if conn is None: return []
+    try:
+        _v96_memory_ensure(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT payload FROM external_signal_memory WHERE company_key=%s AND dimension=%s AND last_seen > now() - (%s || ' days')::interval ORDER BY last_seen DESC LIMIT %s",
+                        (key,dimension,str(EXTERNAL_MEMORY_DAYS),EXTERNAL_MEMORY_MAX_PER_COMPANY))
+            rows=cur.fetchall()
+        out=[]
+        for (payload,) in rows:
+            try: out.append(json.loads(payload))
+            except Exception: pass
+        return out
+    except Exception:
+        return []
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+def _v96_memory_save(key,dimension,items):
+    if not key or not items or not DATABASE_URL: return
+    conn=_v92_db_connect()
+    if conn is None: return
+    try:
+        _v96_memory_ensure(conn)
+        with conn.cursor() as cur:
+            for item in items[:EXTERNAL_MEMORY_MAX_PER_COMPANY]:
+                url_key=_v60_canonical_url(item.get('url',''))
+                if not url_key: continue
+                slim={k:(v[:700] if isinstance(v,str) else v) for k,v in item.items() if isinstance(v,(str,int,float,bool)) and not k.startswith('_')}
+                slim['from_earlier_scan']=False
+                cur.execute("""INSERT INTO external_signal_memory (company_key,dimension,url_key,payload) VALUES (%s,%s,%s,%s)
+                               ON CONFLICT (company_key,dimension,url_key) DO UPDATE SET payload=EXCLUDED.payload, last_seen=now()""",
+                            (key,dimension,url_key,json.dumps(slim)))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+def _v96_merge_signal_memory(company,dimension,ranked,reviewed_pages=None):
+    """(merged_ranked, remembered_count). Signals from earlier scans that are not in this scan's results are added back -- after
+    passing the SAME entity / ownership / polarity checks again against this scan's pages -- and flagged from_earlier_scan."""
+    try:
+        key=_v96_memory_key(company,reviewed_pages)
+        earlier=_v96_memory_load(key,dimension)
+        have={_v60_canonical_url(r.get('url','')) for r in ranked}
+        extra=[dict(e,from_earlier_scan=True) for e in earlier if _v60_canonical_url(e.get('url','')) not in have]
+        kept=_v60_rank_dedupe(extra,company,dimension,30,reviewed_pages) if extra else []
+        for k in kept: k['from_earlier_scan']=True
+        _v96_memory_save(key,dimension,ranked)
+        if not kept: return ranked,0
+        merged=_v60_rank_dedupe(list(ranked)+kept,company,dimension,30,reviewed_pages)
+        flagged={_v60_canonical_url(k.get('url','')) for k in kept}
+        for m in merged:
+            if _v60_canonical_url(m.get('url','')) in flagged: m['from_earlier_scan']=True
+        return merged,sum(1 for m in merged if m.get('from_earlier_scan'))
+    except Exception:
+        return ranked,0
+
+
 def _v64_external_response(company,findings,dimension,reviewed_pages=None):
     configured=external_search_configured()
     themes=(green_query_themes(findings or []) if dimension=='green' else query_themes_from_findings(findings or []))
@@ -10689,6 +10781,8 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
     if not configured:
         return {'enabled':False,'summary':'External public-source search is not enabled because no search provider (TAVILY_API_KEY, SERPER_API_KEY, or GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX) is configured.','results':[],'compact_sources':[],'providers_used':[],'provider_attempts':[],'query_themes':themes,'queries_run':[],'raw_result_count':0,'search_diagnostics':empty_diag}
     ranked,allr,attempts,providers,run_queries,diagnostics=_v64_search_dimension(company,findings,dimension,reviewed_pages)
+    ranked,remembered=_v96_merge_signal_memory(company,dimension,ranked,reviewed_pages)
+    diagnostics['remembered_count']=remembered
     # An attempt can fail outright (provider error/timeout/quota) rather than simply return
     # zero results. Those are very different situations: a quota-exhausted or rate-limited
     # provider means the search never actually ran, which is not evidence of a clean record
@@ -10725,6 +10819,8 @@ def _v64_external_response(company,findings,dimension,reviewed_pages=None):
         summary=f"External search returned {diagnostics['raw_result_count']} result(s), but none passed the direct-entity, external-ownership, negative-polarity and {dimension}-relevance checks."
     else:
         summary='No external public-source result was returned by the configured providers.'
+    if remembered:
+        summary+=f' {remembered} of these signal(s) were found in earlier scans of this company and are kept so that they do not disappear between scans.'
     if search_partially_failed:
         summary+=(f' Note: only {ok_attempts} of {ok_attempts+failed_attempts} provider/query attempt(s) actually '
                    f'ran ({failed_attempts} failed on a provider error or quota limit) -- this reflects partial '

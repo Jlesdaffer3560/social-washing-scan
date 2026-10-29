@@ -1467,6 +1467,8 @@ def external_signal_card(signal, width):
     source = signal.get("source_name") or urlparse(clean_text(signal.get("url"))).netloc.replace("www.", "") or clean_text(signal.get("category") or "External source")
     date = clean_text(signal.get("published_date") or "Date not available (age not verified)")
     age = clean_text(signal.get("age_status") or "")
+    if signal.get("seen_in_earlier_scan"):
+        date += " · also found in an earlier scan"
     if age == "closed":
         date += " · reported as closed, weighed lighter"
     elif age == "older":

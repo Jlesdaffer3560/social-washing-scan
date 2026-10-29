@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_23_languages_and_slow_sites'
+    assert app.APP_VERSION == 'hostable_v96_24_external_signal_memory'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8112,3 +8112,45 @@ def test_scan_error_for_unknown_domain_carries_the_suggestion(monkeypatch):
     with pytest.raises(ValueError) as e:
         app.analyse_url_v27('https://www.transportsdandoy.com')
     assert 'No country-domain substitution was attempted' in str(e.value) and 'Did you mean https://www.dandoy.be' in str(e.value)
+
+
+def test_external_signals_are_remembered_per_company_and_merged_into_later_scans(monkeypatch):
+    """v96.24: the Business & Human Rights Centre cases for Lidl were found on one scan and gone on the next. Retained signals are
+    stored per company + dimension and merged back into later scans (after the same checks), flagged as found in an earlier scan."""
+    store = {}
+    monkeypatch.setattr(app, '_v96_memory_load', lambda key, dim: [dict(x) for x in store.get((key, dim), [])])
+    def save(key, dim, items):
+        store[(key, dim)] = [dict(x) for x in items] + [x for x in store.get((key, dim), []) if x.get('url') not in {i.get('url') for i in items}]
+    monkeypatch.setattr(app, '_v96_memory_save', save)
+    bhrrc = {'title': 'Lidl lawsuit (re working conditions in Bangladesh) - Business and Human Rights Centre',
+             'url': 'https://www.business-humanrights.org/en/case-profile-lidl-lawsuit', 'published_date': '',
+             'content': 'The Consumer Protection Agency alleged that the working conditions in Bangladeshi textile plants supplying Lidl were poor; a lawsuit was filed.'}
+    news = {'title': 'Court revives action alleging Lidl failed to pay workers', 'url': 'https://www.natlawreview.com/article/lidl-workers',
+            'published_date': 'Wed, 14 Oct 2026 00:00:00 GMT',
+            'content': 'The court allowed a lawsuit by workers against Lidl over unpaid wages and working conditions in the supply chain.'}
+    pages = ['https://mediacenter.lidl.com']
+    first, n1 = app._v96_merge_signal_memory('Lidl', 'social', app._v60_rank_dedupe([bhrrc], 'Lidl', 'social', 30, pages), pages)
+    assert [x['url'] for x in first] == [bhrrc['url']] and n1 == 0
+    second_current = app._v60_rank_dedupe([news], 'Lidl', 'social', 30, pages)
+    second, n2 = app._v96_merge_signal_memory('Lidl', 'social', second_current, pages)
+    urls = {x['url']: x for x in second}
+    assert set(urls) == {bhrrc['url'], news['url']} and n2 == 1
+    assert urls[bhrrc['url']]['from_earlier_scan'] is True and not urls[news['url']].get('from_earlier_scan')
+    cs = app.compact_sources(second, 5, 'social')
+    assert {c['url']: c['seen_in_earlier_scan'] for c in cs} == {bhrrc['url']: True, news['url']: False}
+    # another company never receives them
+    other, n3 = app._v96_merge_signal_memory('Colruyt', 'social', [], ['https://www.colruyt.be'])
+    assert other == [] and n3 == 0
+    # a remembered item that no longer passes the checks (company-owned page) is dropped, not resurrected
+    store[('lidl.com', 'social')] = store.get(('lidl.com', 'social'), []) + [{'title': 'Lidl human rights policy', 'url': 'https://mediacenter.lidl.com/human-rights', 'content': 'Lidl respects human rights.'}]
+    again, _ = app._v96_merge_signal_memory('Lidl', 'social', [], pages)
+    assert all('mediacenter.lidl.com' not in x['url'] for x in again)
+
+
+def test_memory_without_database_is_a_no_op(monkeypatch):
+    monkeypatch.setattr(app, 'DATABASE_URL', '')
+    assert app._v96_memory_load('lidl.com', 'social') == []
+    app._v96_memory_save('lidl.com', 'social', [{'url': 'https://x.example/a', 'title': 'x'}])
+    kept, n = app._v96_merge_signal_memory('Lidl', 'social', [{'url': 'https://x.example/a'}], ['https://www.lidl.be'])
+    assert kept == [{'url': 'https://x.example/a'}] and n == 0
+    assert app._v96_memory_key('Lidl', ['https://mediacenter.lidl.com/x']) == 'lidl.com'
