@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_18_bhrrc_query'
+    assert app.APP_VERSION == 'hostable_v96_19_client_access_codes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7909,3 +7909,26 @@ def test_both_dimensions_run_a_dedicated_business_and_human_rights_centre_query(
         bh = [s for s in specs if s.get('include_domains') == ['business-humanrights.org']]
         assert len(bh) == 1 and '"lidl"' in bh[0]['query'].lower()
         assert specs.index(bh[0]) < app.EXTERNAL_SIGNAL_MAX_QUERIES
+
+
+def test_client_specific_access_code_works_next_to_the_shared_code(monkeypatch):
+    """v96.19: a prospect gets a code of their own; the shared ACCESS_CODE keeps working; neither opens up the other."""
+    monkeypatch.setattr(app, 'ACCESS_CODE', 'letmein')
+    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODE_HASHES', {'Acme Prospect': app._access_code_digest('ACME-TEST1-CODE2')})
+    monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
+    assert app._access_code_ok({'access_code': 'letmein'}) and app._access_code_label({'access_code': 'letmein'}) == 'shared'
+    assert app._access_code_ok({'access_code': 'ACME-TEST1-CODE2'})
+    assert app._access_code_label({'access_code': ' acme-test1-code2 '}) == 'Acme Prospect'
+    assert app._access_code_label({'access_code': 'ACME–TEST1–CODE2'}) == 'Acme Prospect'
+    for bad in ({}, {'access_code': ''}, {'access_code': 'ACME-TEST1'}, {'access_code': 'wrong'}, None, 'letmein'):
+        assert not app._access_code_ok(bad)
+    monkeypatch.setenv('EXTRA_ACCESS_CODES', 'Beta Co=BETA-CODE-9, Other=OTHER-1')
+    assert app._access_code_label({'access_code': 'beta-code-9'}) == 'Beta Co' and app._access_code_label({'access_code': 'other-1'}) == 'Other'
+
+
+def test_gaasch_access_code_is_registered_only_as_a_hash():
+    src = Path(app.__file__).read_text(encoding='utf-8')
+    assert 'Gaasch Packaging' in app._EXTRA_ACCESS_CODE_HASHES
+    digest = app._EXTRA_ACCESS_CODE_HASHES['Gaasch Packaging']
+    assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
+    assert 'GAASCH-' not in src.upper().replace("'GAASCH PACKAGING'", '').replace('GAASCH PACKAGING', '')
