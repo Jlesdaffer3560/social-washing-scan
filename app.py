@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_26_translations_count_once"
-APP_RELEASE_LABEL="v96.26"
+APP_VERSION="hostable_v96_27_usage_test_row_removed"
+APP_RELEASE_LABEL="v96.27"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -6846,10 +6846,32 @@ def _v96_note_access(data,action,target,client_ip):
     try:
         if not ACCESS_CODE or not DATABASE_URL: return
         label,expired=_access_code_match(data)
-        if not label: return
+        if not label or not str(target or '').strip(): return   # a request with nothing to look up or scan is not use of the tool
         threading.Thread(target=_v96_record_access_usage,args=(label,'expired attempt' if expired else action,target,client_ip),daemon=True).start()
     except Exception:
         pass
+
+def _v96_cleanup_test_usage():
+    """One-off removal of the single row left by the developer's own check of the Gaasch code on 30 October 2026 (an empty-address
+    request at about 15:55 Brussels time), so the panel shows only the client's own use. Narrow on purpose: that code, 'scan', no
+    target, inside a ten-minute window. Idempotent, best-effort, runs at start-up."""
+    if not DATABASE_URL: return 0
+    conn=_v92_db_connect()
+    if conn is None: return 0
+    try:
+        _v96_usage_ensure(conn)
+        with conn.cursor() as cur:
+            cur.execute("""DELETE FROM access_code_usage WHERE code_label=%s AND action='scan' AND COALESCE(target,'')=''
+                           AND used_at >= TIMESTAMPTZ '2026-10-30 15:45:00 Europe/Brussels' AND used_at < TIMESTAMPTZ '2026-10-30 16:05:00 Europe/Brussels'""",
+                        ('Gaasch Packaging',))
+            n=cur.rowcount
+        conn.commit()
+        return n
+    except Exception:
+        return 0
+    finally:
+        try: conn.close()
+        except Exception: pass
 
 def _v96_fetch_access_usage(recent=15):
     """({label: {first_used,last_used,scans,lookups,expired_attempts}}, [recent events]) for the /history panel; empty when unavailable."""
@@ -12761,5 +12783,6 @@ analyse_uploaded_document=_with_sector_rewrites(analyse_uploaded_document)
 analyse_url_v27=_with_sector_rewrites(analyse_url_v27)
 
 def main():
+    threading.Thread(target=_v96_cleanup_test_usage,daemon=True).start()
     print(f"Sustainability Claims Risk Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Serper configured:",bool(SERPER_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("External search configured:",external_search_configured()); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()

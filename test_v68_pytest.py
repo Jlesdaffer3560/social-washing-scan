@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_26_translations_count_once'
+    assert app.APP_VERSION == 'hostable_v96_27_usage_test_row_removed'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8244,3 +8244,30 @@ def test_same_claim_in_several_languages_counts_once_in_the_score():
     ambition_nl = f('Onze ambitie is om duurzame transport- en logistieke oplossingen aan te bieden met zoveel mogelijk groene werkwijzen voor al onze klanten.')
     ambition_fr = f('Notre ambition est de proposer des solutions de transport durables avec le plus de pratiques vertes possible pour nos clients.')
     assert app._v93_apply_empco_blacklist_floor(10, 10, [ambition_en, ambition_nl, ambition_fr]) == (50, 50, True)
+
+
+def test_request_without_target_is_not_recorded_and_test_row_cleanup_is_narrow(monkeypatch):
+    import threading as _th, time as _t
+    monkeypatch.setattr(app, 'ACCESS_CODE', 'letmein')
+    monkeypatch.setattr(app, 'DATABASE_URL', 'postgresql://example/db')
+    seen = []
+    monkeypatch.setattr(app, '_v96_record_access_usage', lambda *a: seen.append(a))
+    app._v96_note_access({'access_code': 'letmein'}, 'scan', '', 'ip'); app._v96_note_access({'access_code': 'letmein'}, 'scan', '   ', 'ip')
+    _t.sleep(0.2)
+    assert seen == []
+    statements = []
+    class Cur:
+        rowcount = 1
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params=None): statements.append((' '.join(sql.split()), params))
+    class Conn:
+        def cursor(self): return Cur()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app, '_v92_db_connect', lambda: Conn())
+    monkeypatch.setattr(app, '_V96_USAGE_READY', True)
+    assert app._v96_cleanup_test_usage() == 1
+    sql, params = statements[-1]
+    assert sql.startswith('DELETE FROM access_code_usage WHERE code_label=%s') and params == ('Gaasch Packaging',)
+    assert "COALESCE(target,'')=''" in sql and "2026-10-30 15:45:00" in sql and "2026-10-30 16:05:00" in sql
