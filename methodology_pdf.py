@@ -217,7 +217,8 @@ def build_methodology_pdf():
         'group document with the name of its issuer, because it describes the group&rsquo;s policy. A document that does not name the '
         'scanned company at all is not analysed as its own communication and is listed in the coverage register as excluded. In the '
         'score, claims taken from a group document count at 60% of their weight, and only every other one is counted in the number of '
-        'claims.', STY['body']))
+        'claims. When the scan reads several language versions of a site, the same statement in three languages counts once: only the '
+        'language with the most findings is counted in the score, although every finding is still shown.', STY['body']))
     flow.append(Spacer(1, 5))
     signal_rows = [
         ('Type of claim kept', 'Examples', 'Why it matters'),

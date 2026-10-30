@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_25_access_code_usage"
-APP_RELEASE_LABEL="v96.25"
+APP_VERSION="hostable_v96_26_translations_count_once"
+APP_RELEASE_LABEL="v96.26"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -4651,7 +4651,7 @@ def _v93_apply_empco_blacklist_floor(green_score, overall_score, green_findings,
     # v96.22: a document of the parent/group company is not consumer advertising, so it never triggers the Annex I floor; and ONE
     # Annex I match that is only an ambition ("our ambition is to offer sustainable ... as many ... as possible") floors at 50
     # (High) instead of 75 (Very high). Two or more matches, or a match worded as a present-tense claim, keep the full floor.
-    flagged=[f for f in green_findings or [] if f.get('blacklisted_practice_indicator') and not f.get('from_group_document')]
+    flagged=_v96_collapse_translations([f for f in green_findings or [] if f.get('blacklisted_practice_indicator') and not f.get('from_group_document')])
     if not flagged:
         return green_score, overall_score, False
     only_aspiration=len(flagged)==1 and _v96_is_aspirational_claim(_v96_finding_text(flagged[0]))
@@ -5810,10 +5810,39 @@ def _v96_tag_group_document_findings(*finding_lists_and_log):
 
 GROUP_DOCUMENT_SCORE_WEIGHT=0.6
 
+_LANG_WORDS={
+    'en':{'the','and','of','to','our','we','is','are','with','for','that','this','by','in','as','on','at','from','your','their'},
+    'nl':{'de','het','een','en','van','wij','voor','met','onze','ons','zijn','bij','dat','dit','door','naar','ook','om','te','op'},
+    'fr':{'le','la','les','des','et','nous','notre','nos','pour','avec','une','dans','du','sur','par','que','est','sont','au','aux'},
+}
+
+def _v96_guess_language(text):
+    """'en' / 'nl' / 'fr' from common function words, or '' when there is no clear winner."""
+    words=re.findall(r"[a-zà-ÿ']+",(text or '').lower())
+    if not words: return ''
+    score={lang:sum(1 for w in words if w in vocab) for lang,vocab in _LANG_WORDS.items()}
+    best=max(score,key=score.get)
+    others=sorted((v for k,v in score.items() if k!=best),reverse=True)
+    return best if score[best]>=2 and score[best]>others[0] else ''
+
+def _v96_collapse_translations(material):
+    """A site read in several languages (see _v96_alternate_language_urls()) states the same claim once per language, and each version
+    was counted as a separate claim. When the findings are in more than one language, only the findings of the language with the most
+    of them are counted in the score (ties: English, then Dutch, then French); findings whose language is unclear always count.
+    Every finding is still SHOWN; this only prevents one statement in three languages from counting three times."""
+    langs=[_v96_guess_language(f.get('full_claim_text') or f.get('claim') or f.get('claim_text') or '') for f in material]
+    present={l for l in langs if l}
+    if len(present)<2:
+        return material
+    counts={l:langs.count(l) for l in present}
+    keep=max(sorted(present,key=lambda l:('en','nl','fr').index(l) if l in ('en','nl','fr') else 9),key=lambda l:counts[l])
+    return [f for f,l in zip(material,langs) if not l or l==keep]
+
 def _v96_discount_group_findings(material):
     """Findings from a group-level document count lighter: their claim score is multiplied by GROUP_DOCUMENT_SCORE_WEIGHT, they do
     not count as an EmpCo Annex I (consumer-advertising) match, and only every other one adds to the claim count. Findings from the
     company's own pages are unchanged."""
+    material=_v96_collapse_translations(material)
     own=[f for f in material if not f.get('from_group_document')]
     group=sorted((f for f in material if f.get('from_group_document')),key=lambda f:-(f.get('claim_score',0) or 0))
     if not group:
@@ -10804,8 +10833,8 @@ def _v96_memory_load(key,dimension):
     try:
         _v96_memory_ensure(conn)
         with conn.cursor() as cur:
-            cur.execute("SELECT payload FROM external_signal_memory WHERE company_key=%s AND dimension=%s AND last_seen > now() - (%s || ' days')::interval ORDER BY last_seen DESC LIMIT %s",
-                        (key,dimension,str(EXTERNAL_MEMORY_DAYS),EXTERNAL_MEMORY_MAX_PER_COMPANY))
+            cur.execute("SELECT payload FROM external_signal_memory WHERE company_key=%s AND dimension=%s AND last_seen > now() - make_interval(days => %s::int) ORDER BY last_seen DESC LIMIT %s",
+                        (key,dimension,int(EXTERNAL_MEMORY_DAYS),EXTERNAL_MEMORY_MAX_PER_COMPANY))
             rows=cur.fetchall()
         out=[]
         for (payload,) in rows:

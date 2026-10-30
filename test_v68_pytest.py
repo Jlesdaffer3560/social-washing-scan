@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_25_access_code_usage'
+    assert app.APP_VERSION == 'hostable_v96_26_translations_count_once'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8221,3 +8221,26 @@ def test_usage_queries_run_against_the_database_when_configured(monkeypatch):
     statements.clear()
     app._v96_record_access_usage('Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.4')
     assert any('INSERT INTO access_code_usage' in s for s in statements)
+
+
+def test_same_claim_in_several_languages_counts_once_in_the_score():
+    """v96.23 reads the other language versions of a site, which stated each claim up to three times (dandoy.be: English, Dutch and
+    French). Only the language with the most findings counts in the score; every finding is still shown."""
+    assert app._v96_guess_language('Our ambition is to offer sustainable transport solutions for all of our customers.') == 'en'
+    assert app._v96_guess_language('Wij streven ernaar om duurzame transportoplossingen aan te bieden voor onze klanten.') == 'nl'
+    assert app._v96_guess_language('Nous visons à offrir des solutions de transport durables pour nos clients.') == 'fr'
+    assert app._v96_guess_language('Dandoy') == ''
+    def f(text, score=50):
+        return {'claim': text, 'claim_score': score, 'blacklisted_practice_indicator': True, 'type': 'Generic environmental claim'}
+    en = f('Our ambition is to offer sustainable transport solutions for all of our customers.')
+    nl = f('Wij streven ernaar om duurzame transportoplossingen aan te bieden voor onze klanten.')
+    fr = f('Nous visons à offrir des solutions de transport durables pour nos clients.')
+    assert app._v96_collapse_translations([en, nl, fr]) == [en]                       # one statement, three languages: counted once
+    assert app._v96_collapse_translations([en, nl, dict(nl, claim='Onze vloot rijdt met milieuvriendelijke brandstof voor de regio.')]) != [en]  # the language with more findings wins
+    assert app._v96_collapse_translations([en, f('Dandoy')]) == [en, f('Dandoy')]    # unclear language always counts
+    assert app._v96_collapse_translations([nl]) == [nl]
+    # the EmpCo minimum: the same ambition in three languages is ONE match -> High (50), not Very high (75)
+    ambition_en = f('Our ambition is to offer sustainable transport and logistics solutions by using as many green practices as possible for all of our customers.')
+    ambition_nl = f('Onze ambitie is om duurzame transport- en logistieke oplossingen aan te bieden met zoveel mogelijk groene werkwijzen voor al onze klanten.')
+    ambition_fr = f('Notre ambition est de proposer des solutions de transport durables avec le plus de pratiques vertes possible pour nos clients.')
+    assert app._v93_apply_empco_blacklist_floor(10, 10, [ambition_en, ambition_nl, ambition_fr]) == (50, 50, True)
