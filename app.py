@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_24_external_signal_memory"
-APP_RELEASE_LABEL="v96.24"
+APP_VERSION="hostable_v96_25_access_code_usage"
+APP_RELEASE_LABEL="v96.25"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -6779,6 +6779,90 @@ def _v93_fetch_visit_stats():
     finally:
         conn.close()
 
+# v96.25: which access code was used, when and for what -- shown on /history. The browser's access gate checks nothing by itself, so
+# "using a code" means a look-up or a scan reaching the server with that code in it. Only the code's NAME is stored, never the code.
+_V96_USAGE_READY=False
+
+def _v96_usage_ensure(conn):
+    global _V96_USAGE_READY
+    if _V96_USAGE_READY: return
+    with conn.cursor() as cur:
+        cur.execute("""CREATE TABLE IF NOT EXISTS access_code_usage (
+            id SERIAL PRIMARY KEY, used_at TIMESTAMPTZ NOT NULL DEFAULT now(), code_label TEXT NOT NULL,
+            action TEXT NOT NULL, target TEXT, client_ip TEXT)""")
+        cur.execute('CREATE INDEX IF NOT EXISTS access_code_usage_label_idx ON access_code_usage (code_label, used_at DESC)')
+    conn.commit()
+    _V96_USAGE_READY=True
+
+def _v96_record_access_usage(label,action,target,client_ip):
+    """Best-effort insert; never raises and never delays the request (see _v96_note_access, which runs it in a background thread)."""
+    if not DATABASE_URL or not label: return
+    conn=_v92_db_connect()
+    if conn is None: return
+    try:
+        _v96_usage_ensure(conn)
+        with conn.cursor() as cur:
+            cur.execute('INSERT INTO access_code_usage (code_label,action,target,client_ip) VALUES (%s,%s,%s,%s)',
+                        (str(label)[:80],str(action)[:30],str(target or '')[:200],str(client_ip or '')[:64]))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+def _v96_note_access(data,action,target,client_ip):
+    """Records one use of an access code (a look-up or a scan; an attempt with an expired code is recorded as such). Does nothing when
+    the gate is off or the request carries no known code. Runs in a daemon thread: the database may need seconds to wake up."""
+    try:
+        if not ACCESS_CODE or not DATABASE_URL: return
+        label,expired=_access_code_match(data)
+        if not label: return
+        threading.Thread(target=_v96_record_access_usage,args=(label,'expired attempt' if expired else action,target,client_ip),daemon=True).start()
+    except Exception:
+        pass
+
+def _v96_fetch_access_usage(recent=15):
+    """({label: {first_used,last_used,scans,lookups,expired_attempts}}, [recent events]) for the /history panel; empty when unavailable."""
+    if not DATABASE_URL: return {},[]
+    conn=_v92_db_connect()
+    if conn is None: return {},[]
+    try:
+        _v96_usage_ensure(conn)
+        fmt="'YYYY-MM-DD HH24:MI'"
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT code_label, to_char(MIN(used_at) AT TIME ZONE 'Europe/Brussels',{fmt}), to_char(MAX(used_at) AT TIME ZONE 'Europe/Brussels',{fmt}),
+                            COUNT(*) FILTER (WHERE action='scan'), COUNT(*) FILTER (WHERE action='lookup'), COUNT(*) FILTER (WHERE action='expired attempt')
+                            FROM access_code_usage GROUP BY code_label ORDER BY MAX(used_at) DESC""")
+            summary={r[0]:{'first_used':r[1],'last_used':r[2],'scans':r[3],'lookups':r[4],'expired_attempts':r[5]} for r in cur.fetchall()}
+            cur.execute(f"""SELECT to_char(used_at AT TIME ZONE 'Europe/Brussels',{fmt}), code_label, action, target, client_ip
+                            FROM access_code_usage ORDER BY used_at DESC LIMIT %s""",(int(recent),))
+            events=[{'at':r[0],'label':r[1],'action':r[2],'target':r[3] or '','ip':r[4] or ''} for r in cur.fetchall()]
+        return summary,events
+    except Exception:
+        return {},[]
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+def _v96_access_usage_html(summary,events):
+    """The /history panel. Every value comes from the database (a target is user input), so everything is escaped."""
+    summary=summary or {}
+    if not summary and not events:
+        return ('<div class="card"><h2 style="margin:0 0 4px;font-size:18px">Access code usage</h2>'
+                '<p class="small" style="margin:0">No use of an access code has been recorded yet. Use is recorded from the moment this feature went live: '
+                'a company look-up or a scan with the code counts as use.</p></div>')
+    names=lambda l:'Shared code' if l=='shared' else l
+    rows=''.join(f'<tr><td><strong>{html_escape(names(l))}</strong></td><td>{html_escape(v["first_used"])}</td><td>{html_escape(v["last_used"])}</td>'
+                 f'<td>{v["scans"]}</td><td>{v["lookups"]}</td><td>{v["expired_attempts"] or "&mdash;"}</td></tr>' for l,v in summary.items())
+    ev=''.join(f'<tr><td>{html_escape(e["at"])}</td><td>{html_escape(names(e["label"]))}</td><td>{html_escape(e["action"])}</td>'
+               f'<td>{html_escape(e["target"])}</td><td>{html_escape(e["ip"])}</td></tr>' for e in events)
+    return (f'<div class="card"><h2 style="margin:0 0 4px;font-size:18px">Access code usage</h2>'
+            '<p class="small" style="margin:0 0 10px">Per access code: when it was first and last used, and how many scans and company look-ups were made with it (Brussels time).</p>'
+            f'<table><thead><tr><th>Code</th><th>First used</th><th>Last used</th><th>Scans</th><th>Look-ups</th><th>After expiry</th></tr></thead><tbody>{rows}</tbody></table>'
+            f'<p class="small" style="margin:14px 0 6px">Most recent use</p>'
+            f'<table><thead><tr><th>When</th><th>Code</th><th>Action</th><th>Company / address</th><th>IP</th></tr></thead><tbody>{ev}</tbody></table></div>')
+
 def _v92_history_score_fields(result):
     """(global, green, social) as (score, risk) pairs for the history table. An inconclusive scan (too little of the site
     could be read, no claim found) carries only a fixed baseline, so it is stored with no score and the risk
@@ -7815,7 +7899,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
                               min_global=None,min_green=None,min_social=None,min_findings=None,top_claims=None,
                               date_from=None,date_to=None,sort='company',distinct_scores=None,
                               distinct_companies=None,distinct_dates=None,min_external=None,visit_stats=None,
-                              companies=None,sectors=None,distinct_sectors=None):
+                              companies=None,sectors=None,distinct_sectors=None,access_usage=None):
     # Every value below either comes from the database (company/sector/input_url were
     # themselves derived from a user-supplied scan input, so are NOT trusted) or directly
     # from the request's own query string (the search box's echoed value) -- all of it is
@@ -8116,6 +8200,7 @@ def _v92_render_history_page(rows,total,page,page_size,search,risk='',period='',
 <div class="toolbar"><div><h1>Scan history</h1><p class="small">Every completed scan on this deployment.</p></div>
 <a class="btn secondary" href="/history/logout">Log out</a></div>
 {stats_html}
+{_v96_access_usage_html(*(access_usage or ({},[])))}
 {top_claims_html}
 <div class="card">
 <form method="GET" action="/history" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -8430,9 +8515,10 @@ class Handler(BaseHTTPRequestHandler):
             distinct_sectors=_v92_fetch_distinct_sectors()
             distinct_dates=_v92_fetch_distinct_dates()
             visit_stats=_v93_fetch_visit_stats()
+            access_usage=_v96_fetch_access_usage()
             return self._send(_v92_render_history_page(rows,total,page,page_size,search,risk,period,stats,ids,
                 min_global,min_green,min_social,min_findings,top_claims,date_from,date_to,sort,distinct_scores,
-                distinct_companies,distinct_dates,min_external,visit_stats,companies,sectors,distinct_sectors))
+                distinct_companies,distinct_dates,min_external,visit_stats,companies,sectors,distinct_sectors,access_usage))
         if self.path=='/history/export.csv' or self.path.startswith('/history/export.csv?'):
             if not (DATABASE_URL and HISTORY_ADMIN_PASSWORD):
                 return self._json({'error':'Scan history is not configured for this deployment.'},404)
@@ -8614,6 +8700,7 @@ class Handler(BaseHTTPRequestHandler):
             data=self._read_json()
             if self.path=='/api/resolve/company':
                 # Cheap look-up (search + a few live checks, no crawl): same access code as a scan, own rate-limit bucket.
+                _v96_note_access(data,'lookup',str(data.get('name','') or '')[:200],client)
                 if not _access_code_ok(data): return self._json({'error':_access_denied_message(data),'access_denied':True},401)
                 if not _rate_limit_allowed(client,'resolve',RATE_LIMIT_SCANS*4): return self._json({'error':'Too many look-ups. Try again later.'},429)
                 return self._json(resolve_company_candidates(str(data.get('name','') or '')[:200]))
@@ -8621,6 +8708,7 @@ class Handler(BaseHTTPRequestHandler):
                 # v93.43: checked before the rate limit and concurrency semaphore so a wrong/
                 # missing access code never consumes either -- an invited tester's own budget
                 # shouldn't shrink because someone else is guessing codes.
+                _v96_note_access(data,'scan',str(data.get('url') or data.get('company_name') or data.get('filename') or data.get('company_number') or '')[:200],client)
                 if not _access_code_ok(data): return self._json({'error':_access_denied_message(data),'access_denied':True},401)
                 _label=_access_code_label(data) if ACCESS_CODE else None
                 if _label and _label!='shared': print(f"[access] scan started with the code of: {_label}",flush=True)

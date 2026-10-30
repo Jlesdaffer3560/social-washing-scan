@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_24_external_signal_memory'
+    assert app.APP_VERSION == 'hostable_v96_25_access_code_usage'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8154,3 +8154,70 @@ def test_memory_without_database_is_a_no_op(monkeypatch):
     kept, n = app._v96_merge_signal_memory('Lidl', 'social', [{'url': 'https://x.example/a'}], ['https://www.lidl.be'])
     assert kept == [{'url': 'https://x.example/a'}] and n == 0
     assert app._v96_memory_key('Lidl', ['https://mediacenter.lidl.com/x']) == 'lidl.com'
+
+
+def test_access_code_use_is_recorded_per_code_without_storing_the_code(monkeypatch):
+    """v96.25: Gaasch Packaging's use of its code is visible on /history. Only the code's NAME is stored."""
+    import threading as _th
+    monkeypatch.setattr(app, 'ACCESS_CODE', 'letmein')
+    monkeypatch.setattr(app, 'DATABASE_URL', 'postgresql://example/db')
+    monkeypatch.setattr(app, '_EXTRA_ACCESS_CODES', {'Gaasch Packaging': {'hash': app._access_code_digest('GAASCH-TEST1-CODE2'), 'valid_until': '2026-11-30'}})
+    monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
+    seen = []
+    done = _th.Event()
+    def fake_record(label, action, target, ip):
+        seen.append((label, action, target, ip)); done.set()
+    monkeypatch.setattr(app, '_v96_record_access_usage', fake_record)
+    import datetime as dt
+    monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 11, 3))
+    app._v96_note_access({'access_code': 'gaasch-test1-code2'}, 'scan', 'https://gaaschpack.eu', '1.2.3.4')
+    assert done.wait(3) and seen == [('Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.4')]
+    done.clear(); seen.clear()
+    app._v96_note_access({'access_code': 'letmein'}, 'lookup', 'Gaasch Packaging', '1.2.3.4')
+    assert done.wait(3) and seen[0][:2] == ('shared', 'lookup')
+    seen.clear()
+    app._v96_note_access({'access_code': 'wrong'}, 'scan', 'x', 'ip'); app._v96_note_access({}, 'scan', 'x', 'ip')
+    done.wait(0.3)
+    assert seen == []                                           # unknown codes leave no trace
+    monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 12, 2))
+    done.clear()
+    app._v96_note_access({'access_code': 'GAASCH-TEST1-CODE2'}, 'scan', 'x', 'ip')
+    assert done.wait(3) and seen[0][:2] == ('Gaasch Packaging', 'expired attempt')
+    monkeypatch.setattr(app, 'ACCESS_CODE', '')                 # gate off: nothing recorded
+    seen.clear(); done.clear(); app._v96_note_access({'access_code': 'letmein'}, 'scan', 'x', 'ip'); done.wait(0.3)
+    assert seen == []
+
+
+def test_history_page_shows_access_code_usage_and_escapes_it():
+    summary = {'Gaasch Packaging': {'first_used': '2026-11-03 09:12', 'last_used': '2026-11-05 14:40', 'scans': 2, 'lookups': 4, 'expired_attempts': 0},
+               'shared': {'first_used': '2026-10-01 08:00', 'last_used': '2026-11-05 15:00', 'scans': 30, 'lookups': 50, 'expired_attempts': 0}}
+    events = [{'at': '2026-11-05 14:40', 'label': 'Gaasch Packaging', 'action': 'scan', 'target': 'https://gaaschpack.eu<script>', 'ip': '1.2.3.4'}]
+    html = app._v96_access_usage_html(summary, events)
+    assert 'Gaasch Packaging' in html and '2026-11-05 14:40' in html and 'Shared code' in html and '<script>' not in html and '&lt;script&gt;' in html
+    assert 'No use of an access code has been recorded yet' in app._v96_access_usage_html({}, [])
+    page = app._v92_render_history_page([], 0, 1, 25, '', access_usage=(summary, events))
+    assert 'Access code usage' in page and 'Gaasch Packaging' in page
+
+
+def test_usage_queries_run_against_the_database_when_configured(monkeypatch):
+    statements = []
+    class Cur:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params=None): statements.append(' '.join(sql.split()))
+        def fetchall(self):
+            return [('Gaasch Packaging', '2026-11-03 09:12', '2026-11-05 14:40', 2, 4, 0)] if 'GROUP BY' in statements[-1] else \
+                   [('2026-11-05 14:40', 'Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.4')]
+    class Conn:
+        def cursor(self): return Cur()
+        def commit(self): pass
+        def close(self): pass
+    monkeypatch.setattr(app, 'DATABASE_URL', 'postgresql://example/db')
+    monkeypatch.setattr(app, '_V96_USAGE_READY', False)
+    monkeypatch.setattr(app, '_v92_db_connect', lambda: Conn())
+    summary, events = app._v96_fetch_access_usage()
+    assert summary['Gaasch Packaging'] == {'first_used': '2026-11-03 09:12', 'last_used': '2026-11-05 14:40', 'scans': 2, 'lookups': 4, 'expired_attempts': 0}
+    assert events[0]['target'] == 'https://gaaschpack.eu' and any('CREATE TABLE IF NOT EXISTS access_code_usage' in s for s in statements)
+    statements.clear()
+    app._v96_record_access_usage('Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.4')
+    assert any('INSERT INTO access_code_usage' in s for s in statements)
