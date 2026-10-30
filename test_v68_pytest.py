@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v96_27_usage_test_row_removed'
+    assert app.APP_VERSION == 'hostable_v97_0_claim_page_numbers'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -3070,7 +3070,7 @@ def test_document_upload_discloses_page_count_truncation_even_under_the_characte
     import base64
     short_pdf_text = 'This document describes our general operations in detail. Our product is climate neutral.'
 
-    def fake_extract(data, max_pages=60, return_coverage=False):
+    def fake_extract(data, max_pages=60, return_coverage=False, pages_out=None):
         assert return_coverage is True
         return short_pdf_text, {'original_chars': len(short_pdf_text), 'analyzed_chars': len(short_pdf_text),
             'total_pages': 61, 'pages_analyzed': 60}
@@ -8271,3 +8271,85 @@ def test_request_without_target_is_not_recorded_and_test_row_cleanup_is_narrow(m
     sql, params = statements[-1]
     assert sql.startswith('DELETE FROM access_code_usage WHERE code_label=%s') and params == ('Gaasch Packaging',)
     assert "COALESCE(target,'')=''" in sql and "2026-10-30 15:45:00" in sql and "2026-10-30 16:05:00" in sql
+
+
+def _v97_make_pdf(pages):
+    import io
+    from reportlab.pdfgen import canvas
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    for lines in pages:
+        y = 780
+        for line in lines:
+            c.drawString(50, y, line); y -= 18
+        c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+_V97_CLAIM = 'Our new delivery fleet is climate neutral and fully eco-friendly thanks to certified carbon credits that we buy every year.'
+_V97_PAGES = [
+    ['Annual report of Examplo Transport.', 'This first page describes the company, its history and its locations in Belgium and Luxembourg.'],
+    ['Our fleet.', _V97_CLAIM, 'We operate from three depots and employ drivers in each country.'],
+    ['Governance.', 'The board meets four times per year and reviews the progress of every department.'],
+]
+
+
+def test_claim_is_found_on_its_pdf_page_and_ambiguous_wording_is_not_guessed(monkeypatch):
+    monkeypatch.setattr(app, '_V97_PAGE_INDEX', {})
+    app._v97_register_pages('https://example.com/report.pdf', [(1, 'Intro text about the company.'), (2, _V97_CLAIM + ' More text.'), (3, 'Closing words.')])
+    assert app._v97_find_pages('https://example.com/report.pdf', _V97_CLAIM) == 'p. 2'
+    assert app._v97_find_pages('https://example.com/report.pdf', 'Totally different statement about something else entirely here') == ''
+    assert app._v97_find_pages('https://example.com/other.pdf', _V97_CLAIM) == ''                    # unknown document: no page
+    app._v97_register_pages('https://example.com/dup.pdf', [(3, 'we are committed to a sustainable future for all'), (9, 'we are committed to a sustainable future for all')])
+    assert app._v97_find_pages('https://example.com/dup.pdf', 'we are committed to a sustainable future for all') == 'pp. 3, 9'
+    many = [(n, 'we are committed to a sustainable future for all') for n in range(1, 8)]
+    app._v97_register_pages('https://example.com/many.pdf', many)
+    assert app._v97_find_pages('https://example.com/many.pdf', 'we are committed to a sustainable future for all') == ''   # on too many pages to name one
+
+
+def test_pdf_fetched_from_the_web_registers_its_pages_and_claims_get_the_page(monkeypatch):
+    monkeypatch.setattr(app, '_V97_PAGE_INDEX', {})
+    data = _v97_make_pdf(_V97_PAGES)
+    url = 'https://example.com/docs/sustainability-report.pdf'
+    monkeypatch.setattr(app, '_open_public_url', lambda *a, **k: (data, 'application/pdf', url))
+    text, kind, *_ = app.fetch_page_content(url)
+    assert kind == 'pdf' and 'climate neutral' in text
+    claims = [{'claim_text': _V97_CLAIM, 'full_claim_text': _V97_CLAIM, 'claim_type': 'Climate neutral claim'}]
+    out = app.assign_claim_sources(claims, [{'url': url, 'text': text}], [])
+    assert out[0]['source_url'] == url and out[0]['source_page'] == 'p. 2'
+    # findings carry it too
+    findings = [{'claim': _V97_CLAIM, 'full_claim_text': _V97_CLAIM, 'type': 'Climate neutral claim'}]
+    findings = app.assign_sources_to_findings(findings, [{'url': url, 'text': text}], [])
+    assert findings[0]['source_page'] == 'p. 2'
+
+
+def test_uploaded_pdf_claims_show_their_page_and_the_page_texts_do_not_leak_into_the_result(monkeypatch):
+    import base64
+    monkeypatch.setattr(app, '_V97_PAGE_INDEX', {})
+    data = _v97_make_pdf(_V97_PAGES)
+    txt, coverage = app.decode_uploaded_document('fleet.pdf', base64.b64encode(data).decode(), 'application/pdf')
+    assert [n for n, _ in coverage['_page_texts']] == [1, 2, 3]
+    result = app.analyse_uploaded_document('fleet.pdf', txt, 'Examplo', document_coverage=coverage)
+    assert '_page_texts' not in json.dumps(result)
+    pages = {c.get('source_page') for c in result['claim_inventory'] if 'climate neutral' in (c.get('full_claim_text') or '').lower()} if 'claim_inventory' in result else set()
+    assert 'p. 2' in pages
+
+
+def test_browser_extracted_pdf_text_keeps_its_page_markers_apart_from_the_text():
+    raw = '[[[PAGE 1]]]\n' + 'First page text about the company and where it operates. ' * 3 + '\n[[[PAGE 2]]]\n' + _V97_CLAIM + '\n[[[PAGE 3]]]\n' + 'Governance text. ' * 6
+    txt, coverage = app.decode_extracted_text('big.pdf', raw, 3, 3)
+    assert '[[[PAGE' not in txt and _V97_CLAIM in txt
+    assert [n for n, _ in coverage['_page_texts']] == [1, 2, 3]
+    # an older browser that sends no markers still works, just without pages
+    txt2, cov2 = app.decode_extracted_text('big.pdf', 'plain text ' * 30, 3, 3)
+    assert '_page_texts' not in cov2
+
+
+def test_page_is_shown_next_to_the_source_in_report_screen_and_exports():
+    import report_pdf
+    assert report_pdf.claim_source({'source_label': 'sustainability report', 'source_page': 'p. 12'}) == 'sustainability report, p. 12'
+    assert report_pdf.claim_source({'source_label': 'a very long document name ' * 5, 'source_page': 'pp. 3, 9'}, 40).endswith(', pp. 3, 9')
+    assert report_pdf.claim_source({'source_label': 'homepage'}) == 'homepage'
+    html = Path('frontend.html').read_text(encoding='utf-8')
+    assert "r.source_page?', '+r.source_page" in html and "'#page='+pg[1]" in html and "'[[[PAGE '+i+']]]" in html

@@ -395,16 +395,22 @@ def score_relationship_text(data, max_chars=320):
     return "The overall score is a weighted combination of the green and social scores below; neither one automatically dominates the result."
 
 
-def claim_source(claim):
+def claim_source(claim, max_name=None):
     source = clean_text(claim.get("source_label") or claim.get("source_url") or "Reviewed material")
     if source.startswith("http"):
         parsed = urlparse(source)
         filename = parsed.path.rsplit("/", 1)[-1]
         source = filename or parsed.netloc.replace("www.", "")
+    if max_name:
+        source = bounded_text(source, max_name)
     # a statement taken from a document of the parent/group company says so: it describes the group's policy
     issuer = clean_text(claim.get("source_group_issuer") or "")
     if issuer:
         source = f"{bounded_text(source, 60)} (group document, {issuer})"
+    # the page of a PDF the wording was found on ("p. 12"), so the reader can go straight to it
+    page = clean_text(claim.get("source_page") or "")
+    if page:
+        source = f"{source}, {page}"
     return source
 
 
@@ -1175,7 +1181,7 @@ def full_claim_inventory_table(data, max_rows=60, ref_lookup=None):
             Paragraph(str(idx), ST["table"]),
             Paragraph(area, ST["table_dark"]),
             Paragraph(highlighted_excerpt(claim, 100), ST["table"]),
-            Paragraph(esc(bounded_text(claim_source(claim), 40)), ST["table"]),
+            Paragraph(esc(claim_source(claim, 40)), ST["table"]),
         ])
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])

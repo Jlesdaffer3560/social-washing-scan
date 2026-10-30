@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v96_27_usage_test_row_removed"
-APP_RELEASE_LABEL="v96.27"
+APP_VERSION="hostable_v97_0_claim_page_numbers"
+APP_RELEASE_LABEL="v97.0"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1325,8 +1325,10 @@ def fetch_page_content(url,timeout=7):
     try:
         data,ctype,final_url=_open_public_url(url,timeout=timeout,max_bytes=5000000,deadline=deadline)
         if 'pdf' in ctype or url.lower().split('?')[0].endswith('.pdf'):
-            text=extract_pdf_text_best_effort(data)
+            page_rows=[]
+            text=extract_pdf_text_best_effort(data,pages_out=page_rows)
             if len(text)>=80:
+                _v97_register_pages([url,final_url],page_rows)
                 return text,'pdf','direct',[],final_url,final_url
             direct_error=ValueError('PDF text extraction returned insufficient content.')
         elif 'html' in ctype:
@@ -3634,6 +3636,7 @@ def assign_claim_sources(claims, page_segments, documents):
                         best=best_guess
         if best:
             c['source_url']=best
+            c['source_page']=_v97_find_pages(best,txt)
             # External UX review follow-up: page_name_from_url() replaces "-"/"_" with spaces,
             # correct for a URL path slug but wrong for a literal, non-URL source identifier --
             # for an internal-document scan, `best` is the page_segments URL set in
@@ -3655,6 +3658,7 @@ def assign_claim_sources(claims, page_segments, documents):
             # v57n: be explicit rather than guessing wrong -- an unclear source is more honest
             # and more useful to a reviewer than a confidently wrong one.
             c['source_url']=''
+            c['source_page']=''
             c['source_label']='Reviewed material (exact source page could not be confidently matched)'
     return claims
 
@@ -3677,7 +3681,7 @@ def assign_sources_to_findings(findings, page_segments, documents):
         proxy.append({'claim_text':f.get('full_claim_text') or f.get('claim',''), 'claim_type':f.get('type','')})
     proxy=assign_claim_sources(proxy, page_segments, documents)
     for f, c in zip(findings or [], proxy):
-        for k in ['source_url','source_label','audience_group','audience_lens','source_interpretation']:
+        for k in ['source_url','source_label','source_page','audience_group','audience_lens','source_interpretation']:
             if c.get(k): f[k]=c[k]
     return findings
 
@@ -4986,7 +4990,69 @@ def _strip_pdf_glyph_artifacts(txt):
     txt = txt.replace('\u00ad', '')
     return txt
 
-def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False):
+# v97.0: a claim is shown with the document it comes from, but a PDF is read into ONE long text, so the page was lost. The text of
+# every PDF page is now kept (per source, in memory, newest 60 documents) and a claim is looked up on those pages afterwards, so the
+# report can say "p. 12". Web pages have no page numbers and are not affected.
+_V97_PAGE_INDEX={}
+_V97_PAGE_INDEX_MAX=60
+_V97_PAGE_MARKER_RE=re.compile(r'\n?\[\[\[PAGE (\d{1,5})\]\]\]\n?')
+
+def _v97_norm(text):
+    t=_strip_pdf_glyph_artifacts(str(text or ''))
+    return re.sub(r'\s+',' ',t).strip().lower()
+
+def _v97_key(source):
+    src=str(source or '').strip()
+    if src.lower().startswith(('http://','https://')):
+        try: return _canonical_url(src)
+        except Exception: return src
+    return src
+
+def _v97_register_pages(sources,pages):
+    """pages: [(page_number, text)]. Stored under every given source (the requested and the final address of a PDF)."""
+    try:
+        rows=[(int(n),_v97_norm(t)) for n,t in pages or [] if t]
+        rows=[r for r in rows if r[1]]
+        if not rows: return
+        for src in sources if isinstance(sources,(list,tuple)) else [sources]:
+            key=_v97_key(src)
+            if not key: continue
+            _V97_PAGE_INDEX.pop(key,None)
+            _V97_PAGE_INDEX[key]=rows
+        while len(_V97_PAGE_INDEX)>_V97_PAGE_INDEX_MAX:
+            _V97_PAGE_INDEX.pop(next(iter(_V97_PAGE_INDEX)),None)
+    except Exception:
+        pass
+
+def _v97_page_label(pages):
+    pages=sorted(set(pages or []))
+    if not pages: return ''
+    return ('p. ' if len(pages)==1 else 'pp. ')+', '.join(str(n) for n in pages)
+
+def _v97_find_pages(source,claim_text):
+    """'p. 12' / 'pp. 12, 40' for the page(s) of the source document that contain the claim wording, else ''. Tries the longest piece of
+    the claim first, then shorter pieces and a piece from the middle (the stored excerpt may carry a prepended context sentence); a piece
+    that occurs on more than three pages is not specific enough to name a page."""
+    try:
+        rows=_V97_PAGE_INDEX.get(_v97_key(source))
+        if not rows: return ''
+        words=re.sub(r'\s+',' ',str(claim_text or '')).strip().lower().split()
+        if len(words)<3: return ''
+        probes=[]
+        for n in sorted({min(len(words),40)}|{n for n in (30,20,14,10,7,5) if len(words)>=n},reverse=True):
+            probes.append(' '.join(words[:n]))
+        if len(words)>=14:
+            mid=len(words)//3
+            probes.append(' '.join(words[mid:mid+8]))
+        for probe in probes:
+            hit=[n for n,t in rows if probe in t]
+            if 1<=len(hit)<=3:
+                return _v97_page_label(hit)
+        return ''
+    except Exception:
+        return ''
+
+def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False, pages_out=None):
     """PDF text extraction. Tries pypdf first, which correctly handles FlateDecode
     (the near-universal PDF compression method) and font encoding/ToUnicode maps -- the
     dominant case for professionally produced corporate PDFs (annual/CSR/ESG reports).
@@ -5015,7 +5081,9 @@ def extract_pdf_text_best_effort(data, max_pages=60, return_coverage=False):
                     t=reader.pages[i].extract_text() or ''
                 except Exception:
                     t=''
-                if t: parts.append(t)
+                if t:
+                    parts.append(t)
+                    if pages_out is not None: pages_out.append((i+1,t))
                 pages_analyzed=i+1
                 if sum(len(p) for p in parts) > 200000:
                     break
@@ -5086,6 +5154,13 @@ def decode_extracted_text(filename, text, total_pages=None, pages_read=None):
     (text, coverage) exactly like decode_uploaded_document(), so everything downstream (the character
     cap, the truncation disclosure, page counts) is shared."""
     txt=str(text or '')[:5_000_000]
+    # The browser puts a "[[[PAGE n]]]" line before the text of every page; take the pages apart and keep them for the page lookup.
+    page_rows=[]
+    if _V97_PAGE_MARKER_RE.search(txt):
+        bits=_V97_PAGE_MARKER_RE.split(txt)
+        for k in range(1,len(bits)-1,2):
+            if bits[k+1].strip(): page_rows.append((int(bits[k]),bits[k+1]))
+        txt='\n'.join(b for _,b in page_rows) if page_rows else _V97_PAGE_MARKER_RE.sub('\n',txt)
     txt=_strip_pdf_glyph_artifacts(txt)
     txt=re.sub(r'[ \t]+',' ',txt)
     txt=re.sub(r'[ \t]*\n[ \t]*','\n',txt)
@@ -5105,6 +5180,7 @@ def decode_extracted_text(filename, text, total_pages=None, pages_read=None):
     coverage={'original_chars':original_chars,'analyzed_chars':len(analyzed),
         'truncated':original_chars>DOC_ANALYSIS_MAX_CHARS or page_truncated,
         'total_pages':total,'pages_analyzed':read,'extraction':'browser'}
+    if page_rows: coverage['_page_texts']=page_rows
     return analyzed,coverage
 
 def decode_uploaded_document(filename, content_base64, mime_type=''):
@@ -5128,10 +5204,11 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
         raise ValueError('Uploaded document is too large for this hosted first-pass scan. Please upload an extract below 8 MB (the raw file size, before this upload step\'s base64 encoding).')
     name=(filename or 'uploaded_document').lower()
     page_coverage=None
+    page_rows=[]
     if name.endswith('.docx') or 'wordprocessingml' in (mime_type or '').lower():
         txt=extract_docx_text(data)
     elif name.endswith('.pdf') or 'pdf' in (mime_type or '').lower():
-        txt,page_coverage=extract_pdf_text_best_effort(data, return_coverage=True)
+        txt,page_coverage=extract_pdf_text_best_effort(data, return_coverage=True, pages_out=page_rows)
     else:
         txt=data.decode('utf-8',errors='ignore')
         if '<html' in txt[:500].lower() or '<body' in txt[:1000].lower():
@@ -5162,6 +5239,7 @@ def decode_uploaded_document(filename, content_base64, mime_type=''):
         'truncated':original_chars>DOC_ANALYSIS_MAX_CHARS or page_truncated,
         'total_pages':total_pages,
         'pages_analyzed':pages_analyzed}
+    if page_rows: coverage['_page_texts']=page_rows
     return analyzed_text,coverage
 
 def fetch_document_text(url):
@@ -5321,6 +5399,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     coverage=dict(document_coverage) if document_coverage else {'original_chars':len(text or ''),
         'analyzed_chars':len(text or ''),'truncated':False,'total_pages':None,'pages_analyzed':None}
     coverage.setdefault('truncated', coverage.get('original_chars',0) > coverage.get('analyzed_chars',0))
+    upload_pages=coverage.pop('_page_texts',None)
     coverage_note=''
     if coverage.get('truncated'):
         page_truncated=bool(coverage.get('total_pages') and coverage.get('pages_analyzed') and coverage['pages_analyzed'] < coverage['total_pages'])
@@ -5344,6 +5423,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
                 "first-pass scan. Any claim appearing only after that point was not reviewed and is not reflected in "
                 "this result.")
     source='Uploaded internal document: '+(filename or 'document')
+    if upload_pages: _v97_register_pages(source,upload_pages)
     kbo_info=_v93_lookup_kbo_company(company_number) if company_number else None
     if kbo_info and kbo_info.get('name'):
         company_name_hint=kbo_info['name']
@@ -5384,6 +5464,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     all_claims=build_green_claim_inventory(green_fs)+social_claim_inventory_with_dimension(social_fs)
     for c in all_claims:
         c.setdefault('source_url', source); c.setdefault('source_label', filename or 'Uploaded document'); c.setdefault('audience_lens', audience.get('audience','Internal document')); c.setdefault('audience_group', audience.get('group','internal'))
+        c['source_page']=_v97_find_pages(source,c.get('full_claim_text') or c.get('claim_text'))
     attach_claim_counts_to_inventory(scan_inventory, all_claims)
     green_conclusion=green_washing_conclusion(green_score,green_fs,green_splits.get('substantiation_risk',50),green_splits.get('external_context_risk',0),audience)
     social_conclusion=washing_conclusion(social_score,social_fs,social_splits.get('substantiation_risk',50),social_splits.get('external_context_risk',0))
