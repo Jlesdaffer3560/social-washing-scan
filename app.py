@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_0_claim_page_numbers"
-APP_RELEASE_LABEL="v97.0"
+APP_VERSION="hostable_v97_1_empco_rewrites"
+APP_RELEASE_LABEL="v97.1"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -2760,7 +2760,7 @@ def build_claim_inventory(findings):
     # 'legal_basis_category' and 'legal_basis_label' yet dropped 'legal_basis_short' entirely,
     # so every claim card's "Legal basis" detail box (and the legal-basis badge's own hover
     # tooltip, which reads the same field) rendered empty. Reported live on Delhaize.
-    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite",""),"rewrite_example":f.get("rewrite_example",""),"rewrite_key":f.get("rewrite_key","")} for f in findings]
+    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite",""),"rewrite_example":f.get("rewrite_example",""),"rewrite_key":f.get("rewrite_key",""),"rewrite_subject":f.get("rewrite_subject",""),"rewrite_note":f.get("rewrite_note","")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -4090,13 +4090,54 @@ def green_claim_evidence_questions(claim_type):
 #    expert can see what a good answer looks like. Examples live in rewrite_examples.py, are chosen by the same
 #    `key` as the template and are adapted to the sector of the scanned company (a bank is not shown a bottle).
 # Plain wording on purpose: no "attribute", "scope", "baseline" or "methodology" without saying what is meant.
+# v97.1: ready-to-use rewrites follow EmpCo more closely. Climate neutrality is never repeated (Annex I point 4c bans
+# offset-based neutrality claims about products): the rewrite claims real reductions and shows funded projects as a
+# separate contribution. A future claim needs a published plan, interim targets and a verifier who is independent (UCPD
+# Article 6(2)(d), added by EmpCo). A broad claim about "your collection" or "our packaging" keeps that subject.
+_NEUTRAL_TEMPLATE=(
+    '"We have cut our greenhouse-gas emissions by [X%] between [start year] and [latest year], covering [which '
+    'emissions: only our own sites and energy / also our suppliers and products] and calculated with [name of the '
+    'method, e.g. the GHG Protocol]. Separately, we fund [name of the specific project]; this is a contribution and '
+    'is not deducted from our emissions. Details: [link]."')
+_COMPARATIVE_TEMPLATE=(
+    '"[Product] causes [X%] less [what, e.g. CO2 emissions per unit / water use] than [named comparison: the '
+    'previous version / a named competitor product with the same purpose], based on [name of the study or method, '
+    'date]. The comparison covers [what is compared, e.g. production only / the full life cycle]. Full data: [link]."')
+_VERIFIED_BY=('It is published at [link], and [an independent third-party expert] checks our progress every [period] '
+              'and publishes the findings."')
+_GREEN_FUTURE={
+    'future': ('"We aim to [concrete goal, e.g. cut our emissions by X%] by [year]. The plan to get there has these '
+               'main steps: [steps with dates and the budget set aside]. '+_VERIFIED_BY,'future'),
+    'future_climate': ('"We aim to cut our greenhouse-gas emissions by [X%] by [year], compared with [base year], '
+               'covering [which emissions: only our own sites and energy / also our suppliers and products]. Interim '
+               'target: [X%] by [year]. Offsets do not count towards this target. The plan, with its steps and the '
+               'budget set aside, is published at [link], and [an independent third-party expert] checks our progress '
+               'every [period] and publishes the findings."','future_climate'),
+    'future_energy': ('"We aim to use [X%] renewable electricity at [which sites, or the whole company] by [year], up '
+               'from [X%] in [latest year]. Interim target: [X%] by [year]. The plan, with the contracts and '
+               'investments set aside, is published at [link], and [an independent third-party expert] checks our '
+               'progress every [period] and publishes the findings."','future_energy'),
+    'future_waste': ('"We aim to recycle [X%] of the waste from [which sites or activities] by [year], up from [X%] '
+               'in [latest year], counted by [how you measure it]. Interim target: [X%] by [year]. The plan, with its '
+               'steps and the budget set aside, is published at [link], and [an independent third-party expert] '
+               'checks our progress every [period] and publishes the findings."','future_waste'),
+    'future_packaging': ('"We aim to make [X%] of [our packaging type, e.g. shipping boxes] [reusable / recyclable / '
+               'made from recycled material] by [year], up from [X%] in [latest year] (by weight). Interim target: '
+               '[X%] by [year]. The plan, with its steps and the budget set aside, is published at [link], and [an '
+               'independent third-party expert] checks our progress every [period] and publishes the findings."',
+               'future_packaging'),
+    'future_transport': ('"We aim for [X%] of [our vehicles / our deliveries / the kilometres we drive] to be '
+               'emission-free by [year], up from [X%] in [latest year], measured by [how you count]. Interim target: '
+               '[X%] by [year]. The plan, with the vehicles and charging points we will buy, is published at [link], '
+               'and [an independent third-party expert] checks our progress every [period] and publishes the '
+               'findings."','future_transport'),
+}
+# the topic of a future claim decides which goal the rewrite is about; other topics keep the neutral "future" wording
+_GREEN_FUTURE_ROUTE={'neutral':'future_climate','emissions':'future_climate','energy':'future_energy',
+                     'waste':'future_waste','packaging':'future_packaging','transport':'future_transport'}
+
 _GREEN_REWRITES=[
-    (('climate', 'offset'),
-     '"We have cut our greenhouse-gas emissions by [X%] between [start year] and [latest year]. This covers [which '
-     'emissions: only our own sites and energy / also our suppliers and products] and is calculated with [name of '
-     'the calculation method, e.g. the GHG Protocol]. The emissions we have not cut are handled through [name of '
-     'the specific programme]; details at [link]."',
-     'climate'),
+    (('climate', 'offset'), _NEUTRAL_TEMPLATE, 'neutral'),
     (('label', 'certification'),
      '"Certified under [exact name of the label or scheme] by [name of the independent certifier], certificate '
      'number [number], valid until [date]. It covers [which products or sites]. Check it at [link to the '
@@ -4122,16 +4163,8 @@ _GREEN_REWRITES=[
      'normal household collection] in [country or region], based on [name of the test or standard]. This does not '
      'apply to [exceptions, e.g. the lid]."',
      'absolute'),
-    (('comparative',),
-     '"[Product] causes [X%] less [what, e.g. CO2 emissions per unit / water use] than [named comparison: the '
-     'previous version / a named competitor product], based on [name of the study or method, date]. The comparison '
-     'covers [what is compared, e.g. production only / the full life cycle]. Full data: [link]."',
-     'comparative'),
-    (('future',),
-     '"We aim to [concrete goal, e.g. cut our emissions by X%] by [year]. The plan to get there has these main '
-     'steps: [steps with dates]. It is published at [link] and checked [how often and by whom, e.g. every year by '
-     'an external auditor]."',
-     'future'),
+    (('comparative',), _COMPARATIVE_TEMPLATE, 'comparative'),
+    (('future',), _GREEN_FUTURE['future'][0], 'future'),
     (('visual',),
      '"The [name of the icon or badge] means [what it stands for, e.g. the product is certified under a named '
      'scheme], awarded by [name of the organisation that grants it]. The criteria are explained at [link]."',
@@ -4150,11 +4183,10 @@ _GREEN_REWRITE_DEFAULT=(
 _GREEN_TOPICS=[
     ('neutral',
      'carbon[- ]neutral|climate[- ]neutral|co2[- ]neutral|co₂[- ]neutral|net[- ]zero|klimaatneutraal|co2-neutraal|koolstofneutraal|neutre en carbone|neutralit[eé] carbone|klimaneutral|co2-neutral|netto-?nul|z[eé]ro [eé]mission nette',
-     '"We have cut our greenhouse-gas emissions by [X%] between [start year] and [latest year]. This covers [which '
-     'emissions: only our own sites and energy / also our suppliers and products] and is calculated with [name of '
-     'the calculation method, e.g. the GHG Protocol]. The emissions we have not cut are handled through [name of '
-     'the specific programme]; details at [link]."',
-     'climate'),
+     _NEUTRAL_TEMPLATE, 'neutral'),
+    ('comparison',
+     'better than|greener than|cleaner than|more sustainable than|more eco[- ]?friendly than|more environmentally[- ]friendly than|than (?:the |our )?(?:competition|competitors?|others|other brands|average|alternatives|conventional|market)|beter dan|groener dan|duurzamer dan|milieuvriendelijker dan|meilleur que|plus (?:vert|durable|[eé]cologique) que|besser als|umweltfreundlicher als',
+     _COMPARATIVE_TEMPLATE, 'comparative'),
     ('supplier',
      'supplier|supply[- ]chain|value[- ]chain|procure|scope 3|leverancier|toeleverancier|waardeketen|ketenpartner|inkoop|fournisseur|cha[iî]ne d|achats responsables|lieferant|lieferkette|beschaffung',
      '"We work with suppliers on [specific environmental goal, e.g. cutting emissions in the supply chain] through '
@@ -4165,8 +4197,8 @@ _GREEN_TOPICS=[
     ('finance',
      'sustainable (?:invest|financ|fund|bond|loan)|green (?:bond|loan|fund|financ|invest)|esg fund|\\bsfdr\\b|financed emissions|duurzaam beleggen|duurzame (?:belegging|financiering|lening)|groene (?:obligatie|lening|financiering)|investissement durable|finance durable|nachhaltige (?:geldanlage|investition|finanz)|impact invest',
      '"[Fund, bond or loan name] [states what it finances, e.g. X% of its assets invested in renewable-energy '
-     'projects] as of [date]. It follows [named rules or label, e.g. SFDR Article 8 / a named green-bond '
-     'standard]. The selection and exclusion rules and the full list of holdings are published at [link]."',
+     'projects] as of [date]. It follows [named rules or label, e.g. SFDR Article 8 / the EU Green '
+     'Bond Standard]. The selection and exclusion rules and the full list of holdings are published at [link]."',
      'finance'),
     ('buildings',
      'energy label|energielabel|\\bepc\\b|\\bepb\\b|breeam|\\bleed\\b|\\bdgnb\\b|passive house|passiefhuis|passivhaus|nearly zero|bijna-energieneutraal|energy[- ]efficient (?:building|home|house)|duurzaam gebouw|sustainable building|green building|b[aâ]timent durable|nachhaltiges geb[aä]ude|net-zero building|energieneutral',
@@ -4180,6 +4212,12 @@ _GREEN_TOPICS=[
      'or origin], traced back to [the farm / mine / forest] and checked by [independent party]. The other [X%] is '
      'covered by [what you do about it]. Details: [link]."',
      'sourcing'),
+    ('transport',
+     'transport|logistic|logistiek|\\bfleet|vloot|vehicle|voertuig|vervoer|mobility|mobiliteit|\\bflotte|v[eé]hicule|fahrzeug|shipping|verzending|leveringen',
+     '"In [year], [X%] of [our vehicles / our deliveries / the kilometres we drive] was [emission-free, e.g. '
+     'electric or by rail], measured by [how you count]. Emissions from transport were [X tonnes CO2e], [X%] '
+     '[lower/higher] than in [earlier year]. Details: [link]."',
+     'transport'),
     ('energy',
      'energy|energie|[eé]nergie|electric|elektri|[eé]lectri|renewable|hernieuwbaar|duurzame stroom|groene stroom|renouvelable|erneuerbar|solar|zonne|photovolta|\\bwind(?:energ|park|turbin|kracht)|\\bkwh\\b|\\bstrom\\b',
      '"In [year], [X%] of the electricity we use at [which sites, or the whole company] came from [renewable '
@@ -4203,12 +4241,6 @@ _GREEN_TOPICS=[
      'cardboard / reusable / recyclable in the country of sale], checked against [name of the test or standard]. '
      'This does not cover [exceptions, e.g. the lid or the label]. Details: [link]."',
      'packaging'),
-    ('transport',
-     'transport|logistic|logistiek|\\bfleet|vloot|vehicle|voertuig|vervoer|mobility|mobiliteit|\\bflotte|v[eé]hicule|fahrzeug|shipping|verzending|leveringen',
-     '"In [year], [X%] of [our vehicles / our deliveries / the kilometres we drive] was [emission-free, e.g. '
-     'electric or by rail], measured by [how you count]. Emissions from transport were [X tonnes CO2e], [X%] '
-     '[lower/higher] than in [earlier year]. Details: [link]."',
-     'transport'),
     ('biodiversity',
      'biodivers|\\bnature\\b|\\bnatuur\\b|\\bnatur\\b|habitat|\\bforest|\\bbos(?:sen)?\\b|\\bwoud|deforest|ontbossing|ecosystem|[eé]cosyst|\\bwald\\b|\\bfauna|\\bflora',
      '"At [named site or area] we [specific action, e.g. restored X hectares of habitat / stopped using named '
@@ -4241,8 +4273,8 @@ _GREEN_TOPICS=[
 ]
 # Claim types for which the topic overrides the type's own template: the broad ones. Specific types (climate
 # neutrality, labels, recycled material, legal requirement, comparison, icon) already say what is needed.
-_GREEN_TOPIC_TYPES=('generic','absolute','purity','future')
-_STRONG_TOPICS={'neutral'}
+_GREEN_TOPIC_TYPES=('generic','absolute','purity')
+_STRONG_TOPICS={'neutral','comparison'}
 
 _SOCIAL_TOPICS=[
     ('childlabour',
@@ -4308,19 +4340,82 @@ def _pick_rewrite(table, default, claim_type, claim_text='', topics=(), topic_ty
             return (entry[2],entry[3])
     return matched or default
 
+# What a broad claim is ABOUT. "Our new sustainable collection ..." is about a product range, so the rewrite starts with
+# "Our new collection" and the fictional example is a product (not a company-wide figure). English wording only gets a
+# phrase; for other languages only the category is used, so the example still fits.
+_SUBJ_DET=r"(?:our|this|these|all our|every|each|onze|ons|deze|dit|alle|notre|nos|ce|cette|ces)"
+_SUBJ_PRODUCT=(r"(?:products?|product lines?|ranges?|collections?|lines?|items?|garments?|clothing|apparel|bags?|bottles?|"
+               r"cups?|meals?|menus?|offerings?|services?|solutions?|brands?|series|models?|assortiment|producten|collecties?|"
+               r"artikelen|diensten|aanbod|produits?|gammes?|articles?|offres?|marques?)")
+_SUBJ_COMPANY=r"(?:company|business|organi[sz]ation|operations|group|bedrijf|organisatie|activiteiten|entreprise|activit[eé]s)"
+_SUBJ_GREEN_ADJ=re.compile(r"\b(?:sustainable|eco[- ]?friendly|green(?:er)?|ecological|environmentally[- ]friendly|climate[- ]friendly|"
+                           r"responsible|planet[- ]friendly|clean|natural|eco|duurzame?|groene?|durable|verte?s?)\b\s*",re.I)
+_SUBJ_RE=re.compile(r"\b("+_SUBJ_DET+r")\s+((?:[\w'\u2019\-]+\s+){0,3}?)("+_SUBJ_PRODUCT+r")\b",re.I)
+_SUBJ_COMPANY_RE=re.compile(r"\b(our|the|onze|ons|notre|nos)\s+("+_SUBJ_COMPANY+r")\b",re.I)
+_GENERIC_SUBJECT_TEMPLATES={
+    'product':('"{S} [a concrete fact with a number, e.g. \u201ccontains 40% recycled cotton\u201d or \u201cis certified under a '
+               'named scheme\u201d]. This is measured with [name of the method or standard], applies to [exactly which '
+               'products: one named model / the whole range] and dates from [month and year]. Full details: [link]."'),
+    'company':('"{S} [a concrete fact with a number, e.g. \u201cemitted X% less CO2 in [year]\u201d]. This is measured with [name '
+               'of the method or standard], applies to [exactly which part: this site, this activity or the whole company] '
+               'and dates from [month and year]. Full details: [link]."'),
+}
+
+def _claim_subject(text):
+    """(category, phrase): ('product'|'company'|'', e.g. 'Our new collection'). The phrase is only given for English
+    wording, without green adjectives (the rewrite replaces them by a fact)."""
+    t=re.sub(r'\s+',' ',str(text or ''))
+    english=_v96_guess_language(t)=='en'
+    m=_SUBJ_RE.search(t)
+    if m:
+        phrase=''
+        if english:
+            adj=_SUBJ_GREEN_ADJ.sub('',m.group(2)).strip()
+            if len(adj.split())>2 or re.search(r"\b(?:is|are|was|were|will|have|has|that|which|and|with|for|to|of|from)\b",adj,re.I):
+                adj=''
+            phrase=' '.join(x for x in (m.group(1),adj,m.group(3)) if x)
+            phrase=phrase[:1].upper()+phrase[1:]
+        return 'product',phrase
+    m=_SUBJ_COMPANY_RE.search(t)
+    if m:
+        return 'company',((m.group(1)+' '+m.group(2)).capitalize() if english else '')
+    return '',''
+
+def _green_pick(claim_type, claim_text='', trigger=''):
+    """(template, key) for a green claim. Future claims keep a FUTURE template (goal, interim target, plan, independent
+    verifier) whatever they are about; the topic only chooses the goal. Broad claims about a product or the company
+    keep that subject."""
+    t=(claim_type or '').lower()
+    if is_placeholder_finding(t):
+        return ('','')
+    if 'future' in t:
+        entry=_topic_for_text(_GREEN_TOPICS,trigger,1) or _topic_for_text(_GREEN_TOPICS,claim_text,1)
+        name=entry[0] if entry else ''
+        if name=='supplier':
+            return (entry[2],entry[3])
+        return _GREEN_FUTURE[_GREEN_FUTURE_ROUTE.get(name,'future')]
+    picked=_pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)
+    if picked[1]=='generic':
+        cat,phrase=_claim_subject(claim_text)
+        tpl=_GENERIC_SUBJECT_TEMPLATES.get(cat)
+        if tpl and phrase:
+            return (tpl.replace('{S}',phrase),'generic')
+    return picked
+
 def green_rewrite_key(claim_type, claim_text='', trigger=''):
-    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)[1]
+    return _green_pick(claim_type,claim_text,trigger)[1]
 
 def green_ready_to_use_rewrite(claim_type, claim_text='', trigger=''):
     """A literal, fill-in-the-blank rewrite -- not abstract guidance on what to disclose, but an actual sentence the
     company can copy and complete with its own facts (see _GREEN_REWRITES above). The claim text lets the rewrite
     follow the claim's topic (suppliers, energy, water, ...) for the broad claim types."""
-    return _pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)[0]
+    return _green_pick(claim_type,claim_text,trigger)[0]
 
 def green_rewrite_example(claim_type, claim_text='', trigger='', sector=''):
     """The same sentence completed for an invented company in the sector of the scanned company (always labelled
     fictional where it is shown)."""
-    return rewrite_examples.example(green_rewrite_key(claim_type,claim_text,trigger),sector)
+    key=green_rewrite_key(claim_type,claim_text,trigger)
+    return rewrite_examples.example(key,sector,_claim_subject(claim_text)[0] if key in ('generic','default') else '')
 
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
@@ -4451,7 +4546,9 @@ def enrich_green_finding(f, trigger=''):
     _rw_trigger=str(f.get('matched_phrase') or trigger or '')
     f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''),analysis_text,_rw_trigger)
     f['rewrite_key']=green_rewrite_key(f.get('type',''),analysis_text,_rw_trigger)
-    f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'')
+    f['rewrite_subject']=_claim_subject(analysis_text)[0] if f['rewrite_key'] in ('generic','default') else ''
+    f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'',f['rewrite_subject'])
+    f['rewrite_note']=rewrite_examples.note(f['rewrite_key'],_rw_trigger,f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -4708,7 +4805,7 @@ def build_green_claim_inventory(findings):
         # this builder dropped it when assembling the frontend-facing claim, so every green
         # claim card's "Legal basis" box (and the badge's hover tooltip) rendered empty.
         # Reported live on Delhaize.
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'rewrite_example':f.get('rewrite_example',''),'rewrite_key':f.get('rewrite_key',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'rewrite_example':f.get('rewrite_example',''),'rewrite_key':f.get('rewrite_key',''),'rewrite_subject':f.get('rewrite_subject',''),'rewrite_note':f.get('rewrite_note',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -9756,6 +9853,7 @@ def enrich_social_finding(f, trigger=''):
     f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''),analysis_text,_rw_trigger)
     f['rewrite_key']=social_rewrite_key(f.get('type',''),analysis_text,_rw_trigger)
     f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'')
+    f['rewrite_note']=rewrite_examples.note(f['rewrite_key'],_rw_trigger,f.get('type',''))
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -12837,6 +12935,12 @@ def _apply_sector_to_rewrite_examples(result):
     if not label:
         label=(result.get('company') or {}).get('sector','') if isinstance(result.get('company'),dict) else ''
     label=str(label or '')
+    dom=''
+    try:
+        host=urlparse(str(result.get('original_url') or '')).hostname or ''
+        dom=host[4:] if host.startswith('www.') else host
+    except Exception:
+        dom=''
     seen=set()
     def walk(o,depth=0):
         if id(o) in seen or depth>4:
@@ -12844,7 +12948,9 @@ def _apply_sector_to_rewrite_examples(result):
         if isinstance(o,dict):
             seen.add(id(o))
             if o.get('rewrite_key') and 'rewrite_example' in o:
-                o['rewrite_example']=rewrite_examples.example(o['rewrite_key'],label)
+                o['rewrite_example']=rewrite_examples.example(o['rewrite_key'],label,o.get('rewrite_subject',''))
+            if dom and isinstance(o.get('ready_to_use_rewrite'),str) and '[link]' in o['ready_to_use_rewrite']:
+                o['ready_to_use_rewrite']=o['ready_to_use_rewrite'].replace('[link]','[link on '+dom+']')
             for v in o.values():
                 if isinstance(v,(list,dict)): walk(v,depth+1)
         elif isinstance(o,list):

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_0_claim_page_numbers'
+    assert app.APP_VERSION == 'hostable_v97_1_empco_rewrites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7297,7 +7297,7 @@ def test_rewrite_texts_fit_the_pdf_budgets_without_being_cut_off():
     for ty, template, example in _all_rewrite_pairs():
         for material in (True, False):
             c = {'ready_to_use_rewrite': template, 'rewrite_example': example}
-            assert rp.ready_to_use_rewrite_text(c, 420 if material else 400) == rp.clean_text(template), (ty, material)
+            assert rp.ready_to_use_rewrite_text(c, 480 if material else 470) == rp.clean_text(template), (ty, material)
             assert rp.rewrite_example_text(c, 420) == rp.clean_text(example), (ty, material)
 
 
@@ -7469,6 +7469,8 @@ def _template_keys():
         keys[key] = tpl
     for _n, _rx_, tpl, key in app._GREEN_TOPICS + app._SOCIAL_TOPICS:
         keys[key] = tpl
+    for _fk, (_ft, _fkey) in app._GREEN_FUTURE.items():
+        keys[_fkey] = _ft
     keys[app._GREEN_REWRITE_DEFAULT[1]] = app._GREEN_REWRITE_DEFAULT[0]
     keys[app._SOCIAL_REWRITE_DEFAULT[1]] = app._SOCIAL_REWRITE_DEFAULT[0]
     return keys
@@ -7587,7 +7589,7 @@ def test_no_sector_example_is_cut_off_in_the_company_pdf():
             ex = _rx.example(key, label)
             assert rp.rewrite_example_text({'rewrite_example': ex}) == rp.clean_text(ex), (label, key, len(ex))
     for key, tpl in _template_keys().items():
-        assert rp.ready_to_use_rewrite_text({'ready_to_use_rewrite': tpl}, 400) == rp.clean_text(tpl), key
+        assert rp.ready_to_use_rewrite_text({'ready_to_use_rewrite': tpl}, 450) == rp.clean_text(tpl), key
 
 
 def test_sector_is_not_inferred_from_the_words_of_a_sustainability_claim():
@@ -8353,3 +8355,115 @@ def test_page_is_shown_next_to_the_source_in_report_screen_and_exports():
     assert report_pdf.claim_source({'source_label': 'homepage'}) == 'homepage'
     html = Path('frontend.html').read_text(encoding='utf-8')
     assert "r.source_page?', '+r.source_page" in html and "'#page='+pg[1]" in html and "'[[[PAGE '+i+']]]" in html
+
+
+# ---- v97.1: ready-to-use rewrites and fictional examples follow EmpCo and the claim itself -------------------------
+
+def test_climate_neutrality_rewrite_drops_the_neutrality_claim_and_shows_funding_as_a_contribution():
+    t = 'Climate-neutrality or offsetting claim'
+    tpl = app.green_ready_to_use_rewrite(t, 'We are climate neutral thanks to carbon offsetting', 'climate neutral')
+    assert app.green_rewrite_key(t, 'We are climate neutral thanks to carbon offsetting') == 'neutral'
+    assert 'not deducted from our emissions' in tpl and 'handled through' not in tpl and 'neutral' not in tpl.lower()
+    for label in ('', 'Banking and financial services (NACE K)', 'Energy and utilities (NACE D)', 'Transport and logistics (NACE H)'):
+        ex = _rx.example('neutral', label)
+        assert 'not deducted from our emissions' in ex and 'neutral' not in ex.lower() and 'offset' not in ex.lower(), label
+
+
+def test_future_claims_get_a_future_rewrite_with_interim_target_and_an_independent_expert():
+    f = 'Future environmental-performance claim'
+    cases = [('We aim to be net zero by 2040', 'net zero', 'future_climate', 'Offsets do not count'),
+             ('Tegen 2030 gebruiken we 100% hernieuwbare energie', '', 'future_energy', 'electricity'),
+             ('By 2028 we will recycle all of our waste', '', 'future_waste', 'recycle'),
+             ('We will make all packaging recyclable by 2030', '', 'future_packaging', 'packaging'),
+             ('Our fleet will be fully electric by 2030', '', 'future_transport', 'emission-free'),
+             ('We aim to be more sustainable in the future', '', 'future', 'concrete goal')]
+    for text, trigger, key, phrase in cases:
+        assert app.green_rewrite_key(f, text, trigger) == key, text
+        tpl = app.green_ready_to_use_rewrite(f, text, trigger)
+        assert phrase in tpl and 'independent third-party expert' in tpl and 'publishes the findings' in tpl, (key, tpl)
+        for label in _SECTOR_SAMPLE_LABELS.values():
+            ex = _rx.example(key, label)
+            assert 'independent third-party expert' in ex and 'publishes the findings' in ex and '{' not in ex, (key, label)
+        assert app.green_rewrite_example(f, text, trigger) != tpl
+    # a future claim is never answered with a backward-looking sentence
+    assert not app.green_ready_to_use_rewrite(f, 'We aim to use only renewable energy by 2030').startswith('"In [year]')
+
+
+def test_broad_comparison_gets_the_comparison_rewrite_and_a_comparison_needs_the_same_purpose():
+    g = 'Generic environmental claim'
+    assert app.green_rewrite_key(g, 'Our products are better for the planet than the competition') == 'comparative'
+    assert app.green_rewrite_key(g, 'Onze verpakking is groener dan die van anderen') == 'comparative'
+    assert 'same purpose' in app.green_ready_to_use_rewrite(g, 'Our products are better for the planet than the competition')
+    assert app.green_rewrite_key(g, 'We cut waste by less than 2 tonnes') != 'comparative'
+
+
+def test_rewrite_for_a_product_claim_keeps_the_subject_and_gets_a_product_example():
+    g = 'Generic environmental claim'
+    text = 'Our new sustainable collection is made with care for the environment.'
+    tpl = app.green_ready_to_use_rewrite(g, text, 'sustainable')
+    assert tpl.startswith('"Our new collection [') and 'sustainable' not in tpl.lower() and 'exactly which products' in tpl
+    assert app._claim_subject(text) == ('product', 'Our new collection')
+    assert app._claim_subject('Our company is committed to a better future')[0] == 'company'
+    assert app._claim_subject('We care about the world')[0] == ''
+    # other languages keep the category (so the example fits) but no English phrase in the template
+    assert app._claim_subject('Onze nieuwe collectie is duurzaam gemaakt voor het milieu')[0] == 'product'
+    assert 'What the claim is about' in app.green_ready_to_use_rewrite(g, 'Onze producten zijn duurzaam')
+    # the example is a product in the sector, not a company-wide figure
+    ex = app.green_rewrite_example(g, text, 'sustainable', 'Fast fashion and apparel retail (NACE G)')
+    assert 'Lindhout 501 jeans contain 40% recycled cotton' in ex
+    company = app.green_rewrite_example(g, 'Our company is committed to a sustainable future', 'sustainable', 'Fast fashion and apparel retail (NACE G)')
+    assert 'water used to finish' in company
+    assert _rx.example('generic', 'Banking', 'product') != _rx.example('generic', 'Banking')
+    for label in _SECTOR_SAMPLE_LABELS.values():
+        ex = _rx.example('generic', label, 'product')
+        assert 60 <= len(ex) <= 420 and '{' not in ex, label
+
+
+def test_every_rewrite_has_an_empco_note_that_names_the_rule_and_the_condition_for_use():
+    for key in _template_keys():
+        assert key in _rx.NOTES or key in _rx.NOTE_ALIASES, key
+        n = _rx.note(key, 'eco-friendly')
+        assert len(n) <= 420 and '{' not in n and 'attribute' not in n.lower(), (key, n)
+        assert 'EmpCo' in n or 'UCPD' in n or 'Annex I' in n, key
+    assert '“eco-friendly”' in _rx.note('generic', 'eco-friendly') and 'point 4a' in _rx.note('generic', 'eco-friendly')
+    assert 'the wording used' in _rx.note('generic', '')
+    assert 'point 4c' in _rx.note('neutral') and 'point 2a' in _rx.note('label') and 'point 10a' in _rx.note('legal')
+    assert 'Article 6(2)(d)' in _rx.note('future_climate') and _rx.note('future_energy') == _rx.note('future')
+    assert _rx.note('forced').startswith('Not an EmpCo claim')
+    # the findings carry it, and so does the inventory used by the screen and the PDF
+    r = app.analyse_uploaded_document('t.txt', 'Our eco-friendly packaging is good for the planet. We are climate neutral thanks to offsetting.', 'TestCo', '', document_coverage=None)
+    seen = 0
+    for lst in ('green_findings', 'claim_inventory'):
+        for x in r.get(lst) or []:
+            if x.get('rewrite_key'):
+                seen += 1
+                assert x.get('rewrite_note') and 'rewrite_subject' in x, (lst, x['rewrite_key'])
+    assert seen
+
+
+def test_examples_never_use_the_wording_empco_bans_and_name_no_generic_product():
+    import re
+    banned = re.compile(r'climate[- ]neutral|carbon[- ]neutral|net[- ]zero|eco[- ]?friendly|climate[- ]friendly|planet|environmentally friendly|green fund|green bond(?! standard)', re.I)
+    for label in _SECTOR_SAMPLE_LABELS.values():
+        for key in _rx.EXAMPLES:
+            ex = _rx.example(key, label)
+            assert not banned.search(ex), (label, key, ex)
+
+
+def test_link_placeholder_names_the_scanned_company_own_site_and_the_step_is_idempotent():
+    r = {'original_url': 'https://www.dandoy.be/nl', 'sector': {'name': ''},
+         'findings': [{'rewrite_key': 'generic', 'rewrite_example': 'x', 'ready_to_use_rewrite': '"A fact. Full details: [link]."'}]}
+    once = app._apply_sector_to_rewrite_examples(r)
+    assert once['findings'][0]['ready_to_use_rewrite'] == '"A fact. Full details: [link on dandoy.be]."'
+    assert app._apply_sector_to_rewrite_examples(once)['findings'][0]['ready_to_use_rewrite'] == '"A fact. Full details: [link on dandoy.be]."'
+    up = {'original_url': 'Uploaded internal document: x.pdf', 'findings': [{'ready_to_use_rewrite': '"A fact. [link]."'}]}
+    assert app._apply_sector_to_rewrite_examples(up)['findings'][0]['ready_to_use_rewrite'] == '"A fact. [link]."'
+
+
+def test_pdf_and_screen_show_the_note_under_the_rewrite():
+    import report_pdf as rp
+    assert rp.rewrite_note_text({'rewrite_note': _rx.note('neutral')}) == rp.clean_text(_rx.note('neutral'))
+    assert rp.rewrite_note_text({}) == ''
+    html = Path('frontend.html').read_text(encoding='utf-8')
+    assert 'Why this wording, and when to use it:' in html and 'r.rewrite_note' in html
+    assert 'Why this wording, and when to use it:' in Path('report_pdf.py').read_text(encoding='utf-8')

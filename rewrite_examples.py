@@ -48,10 +48,10 @@ PROFILES = {
         fleet='our shuttle vans', scope='the Zonneduin Seaside hotel', raw='linen', workers='our hotel staff',
         generic='Zonneduin Hotels cut the water used per guest night by 19% between 2022 and 2025. This is measured with sub-meters in each hotel, applies to our own hotels only and dates from March 2026. Full details: zonneduin.example/water.'),
     'finance': dict(Bio='Our bank cards', bldg='Our head office', co='Noorderbank', dom='noorderbank.example', prod='our investment funds', Prod='Our investment funds',
-        thing='the Noorder Green Fund', site='our branches', own_ops='our own offices and branches', unit='customer',
+        thing='the Noorder Renewables Fund', site='our branches', own_ops='our own offices and branches', unit='customer',
         pack='our customer mailings', Pack='Our customer mailings', mat='paper', supp='our suppliers',
-        fleet='our company cars', scope='the Noorder Green Fund only', raw='the raw materials of the companies we finance', workers='our branch staff',
-        generic='The Noorder Green Fund invested 62% of its assets in renewable-energy and energy-saving projects at the end of 2025. This is measured on the fund holdings at 31 December 2025 and the selection rules are published. Full details: noorderbank.example/green-fund.'),
+        fleet='our company cars', scope='the Noorder Renewables Fund only', raw='the raw materials of the companies we finance', workers='our branch staff',
+        generic='The Noorder Renewables Fund invested 62% of its assets in renewable-energy and energy-saving projects at the end of 2025. This is measured on the fund holdings at 31 December 2025 and the selection rules are published. Full details: noorderbank.example/renewables-fund.'),
     'energy': dict(Bio='The hydraulic oil in our wind turbines', bldg='Our new office', co='Brightgrid Energy', dom='brightgrid.example', prod='our electricity', Prod='Our electricity',
         thing='the Brightgrid Wind tariff', site='our power plants', own_ops='our power plants and offices', unit='kWh delivered',
         pack='our customer mailings', Pack='Our customer mailings', mat='paper', supp='our fuel and equipment suppliers',
@@ -94,16 +94,22 @@ PROFILES = {
 # ---------------------------------------------------------------------------------------------------------------
 EXAMPLES = {
     # --- environmental claim types / topics
-    'climate': '"{co} cut its greenhouse-gas emissions by 28% between 2019 and 2025. This covers {own_ops} and the energy we buy, and is calculated with the GHG Protocol. The emissions we have not cut are handled through the Delta Forest Restoration programme; details at {dom}/climate."',
+    'neutral': '"{co} cut its greenhouse-gas emissions by 28% between 2019 and 2025, covering {own_ops} and the energy we buy, calculated with the GHG Protocol. Separately, we fund the Delta Forest Restoration project (12,000 tonnes CO2e in 2025). This is a contribution and is not deducted from our emissions. Details: {dom}/climate."',
     'emissions': '"{co} cut its greenhouse-gas emissions by 28% between 2019 and 2025. This covers {own_ops} and the energy we buy, and is calculated with the GHG Protocol. Target: 50% by 2030. Details: {dom}/climate."',
     'label': '"{co} holds Green Choice certificate number 12345, issued by Certico Audit and valid until 31 March 2027. It covers {scope}. Check it at certico.example/register."',
     'recycl': '"40% of the {mat} in {pack} is recycled material from household waste, checked against the Global Recycled Standard. {Pack} can be recycled through household collection in Belgium and the Netherlands."',
     'generic': '"{generic}"',
     'default': '"{generic}"',
+    'future_climate': '"We aim to cut our greenhouse-gas emissions by 50% by 2030, compared with 2019, covering {own_ops} and the energy we buy. Interim target: 25% by 2027. Offsets do not count towards this target. The plan, with its steps and the budget set aside, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
+    'future_energy': '"We aim to use 100% renewable electricity at {site} by 2028, up from 46% in 2025. Interim target: 75% by 2026. The plan, with the contracts and investments set aside, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
+    'future_waste': '"We aim to recycle 90% of the waste from {site} by 2028, up from 78% in 2025, counted by weight. Interim target: 85% by 2026. The plan, with its steps and the budget set aside, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
+    'future_packaging': '"We aim to make 100% of {pack} recyclable by 2028, up from 62% in 2025 (by weight). Interim target: 80% by 2026. The plan, with its steps and the budget set aside, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
+    'future_transport': '"We aim for 60% of the kilometres driven by {fleet} to be emission-free by 2029, up from 35% in 2025. Interim target: 45% by 2027. The plan, with the vehicles and charging points we will buy, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
+    'product': '"{product_generic}"',
     'legal': '"{Prod} contain none of the substances that EU law restricts, as the law requires. This is a legal minimum, not an extra sustainability benefit."',
     'absolute': '"95% of {pack} (by weight) can be recycled through normal household collection in Belgium and the Netherlands, based on the EN 13430 recyclability test. This does not apply to labels and closures."',
     'comparative': '"{Thing} causes 18% less CO2 per {unit} than the 2022 version, based on an independent life-cycle study by GreenLab (May 2026). The comparison covers production and transport, not use. Full data: {dom}/study."',
-    'future': '"We aim to cut our greenhouse-gas emissions by 50% by 2030, compared with 2019. The main steps are: renewable electricity for {own_ops} by 2027 and a switch to electric vehicles for {fleet} by 2029. The plan is published at {dom}/plan and checked every year by an external auditor."',
+    'future': '"We aim to cut our greenhouse-gas emissions by 50% by 2030, compared with 2019. The main steps are: renewable electricity for {own_ops} by 2027 and a switch to electric vehicles for {fleet} by 2029. The plan is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
     'visual': '"The Green Leaf badge shows that {co} holds Green Choice certificate number 12345 from Certico Audit. The certificate covers {scope}. The criteria are explained at certico.example/criteria."',
     'supplier': '"We work with {supp} to cut emissions in the supply chain through dialogue and pilot projects. In 2025, 30% of our purchasing spend went to suppliers taking part in this work, up from 18% in 2023. Target: 70% by 2030. Progress: {dom}/suppliers."',
     'energy': '"In 2025, 100% of the electricity used at {site} came from wind power bought through guarantees of origin. Our total energy use there was 4.2 GWh, 9% lower than in 2022. Details: {dom}/energy."',
@@ -117,7 +123,7 @@ EXAMPLES = {
     'sourcing': '"In 2025, 82% of our {raw} came from sources certified to the Responsible Sourcing Standard and traced back to the farm or mine, checked by independent audits. The other 18% is covered by a supplier improvement plan. Details: {dom}/sourcing."',
     'durability': '"{Thing} is designed to last at least 10 years of normal use, tested in the {co} lifetime test. We guarantee spare parts for 10 years and offer repairs at {dom}/repair."',
     'buildings': '"{bldg} has energy label A, issued by an accredited assessor in 2025. Its measured energy use is 62 kWh per m² per year, 40% below the average for comparable buildings in Belgium. Details: {dom}/energy-label."',
-    'finance': '"The {co} Green Fund is classified as an SFDR Article 8 fund. At the end of 2025, 62% of its assets were invested in renewable-energy and energy-saving projects. The selection rules and the full holdings are published at {dom}/green-fund."',
+    'finance': '"The {co} Renewables Fund is classified as an SFDR Article 8 fund. At the end of 2025, 62% of its assets were invested in renewable-energy and energy-saving projects. The selection rules and the full holdings are published at {dom}/renewables-fund."',
     # --- social claim types / topics
     'forced': '"To prevent forced labour in our {raw} supply chain, we trace the {raw} back to its origin, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
     'supply': '"86% of our first-tier suppliers, together supplying 92% of our purchases, were audited against the amfori BSCI standard in 2025. 41 of the 47 problems found were fixed by year-end. Full data: {dom}/suppliers."',
@@ -136,13 +142,14 @@ EXAMPLES = {
 # Whole-sentence replacements for a sector where the general wording would not make sense.
 OVERRIDES = {
     'finance': {
-        'climate': '"{co} cut the greenhouse-gas emissions of its own offices and branches by 31% between 2019 and 2025, calculated with the GHG Protocol. Emissions from the loans and investments we finance are reported separately and were 4.2 million tonnes CO2e in 2025. Details: {dom}/climate."',
+        'future_climate': '"We aim to cut the emissions of our loan portfolio by 40% by 2030, compared with 2022, covering our corporate loans. Interim target: 20% by 2026. Offsets do not count towards this target. The plan, with its steps and the budget set aside, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
+        'neutral': '"{co} cut the greenhouse-gas emissions of its own offices and branches by 31% between 2019 and 2025, calculated with the GHG Protocol. Emissions from the loans and investments we finance are reported separately. We also fund the Delta Forest Restoration project; this is a contribution and is not deducted from our emissions. Details: {dom}/climate."',
         'emissions': '"{co} cut the greenhouse-gas emissions of its own offices and branches by 31% between 2019 and 2025, calculated with the GHG Protocol. Emissions from the loans and investments we finance are reported separately. Target: a 40% cut in financed emissions by 2030. Details: {dom}/climate."',
-        'label': '"The {co} Green Fund carries the Green Finance Label, awarded by Certico Audit under certificate number 12345 and valid until 31 March 2027. It covers this fund only. Check it at certico.example/register."',
+        'label': '"The {co} Renewables Fund carries the Green Finance Label, awarded by Certico Audit under certificate number 12345 and valid until 31 March 2027. It covers this fund only. Check it at certico.example/register."',
         'legal': '"Our funds meet the disclosure rules of the EU Sustainable Finance Disclosure Regulation, as the law requires. This is a legal minimum, not a sign of extra sustainability performance."',
-        'absolute': '"At least 90% of the assets of the {co} Green Fund are invested in companies that meet the fund\'s published exclusion and selection rules. The remaining 10% is cash and hedging. Details: {dom}/green-fund."',
-        'comparative': '"The {co} Green Fund has a 35% lower carbon intensity (tonnes CO2e per million euro of revenue) than its reference index, measured on 31 December 2025 with data from a named data provider. Full data: {dom}/green-fund."',
-        'future': '"We aim to cut the emissions of our loan portfolio by 40% by 2030, compared with 2022. The main steps are: no new financing for coal by 2026 and a transition plan for each of our 20 largest corporate customers by 2027. The plan is published at {dom}/plan and checked every year by an external auditor."',
+        'absolute': '"At least 90% of the assets of the {co} Renewables Fund are invested in companies that meet the fund\'s published exclusion and selection rules. The remaining 10% is cash and hedging. Details: {dom}/renewables-fund."',
+        'comparative': '"The {co} Renewables Fund has a 35% lower carbon intensity (tonnes CO2e per million euro of revenue) than its reference index, measured on 31 December 2025 with data from a named data provider. Full data: {dom}/renewables-fund."',
+        'future': '"We aim to cut the emissions of our loan portfolio by 40% by 2030, compared with 2022. The main steps are: no new financing for coal by 2026 and a transition plan for each of our 20 largest corporate customers by 2027. The plan is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
         'visual': '"The Green Leaf badge on our funds means the fund is certified under the Green Finance Label, awarded by Certico Audit. The criteria are explained at certico.example/criteria."',
         'energy': '"In 2025, 100% of the electricity used in our offices and branches came from wind power bought through guarantees of origin. Our total energy use was 6.8 GWh, 11% lower than in 2022. Details: {dom}/energy."',
         'water': '"In 2025 our offices used 9 litres of water per employee per day, 15% less than in 2022, measured from the building meters. Details: {dom}/water."',
@@ -151,8 +158,8 @@ OVERRIDES = {
         'transport': '"In 2025, 60% of our company cars were electric, and business travel emissions were 1,100 tonnes CO2e, 18% lower than in 2022, measured from travel bookings and fuel cards. Details: {dom}/travel."',
         'biodiversity': '"The {co} Nature Fund invested 12 million euro in the restoration of 800 hectares of wetland between 2022 and 2025. The effect is measured by yearly species counts, checked by an independent ecology institute. Details: {dom}/nature-fund."',
         'biodegradable': '"Our bank cards are made from recycled plastic and can be returned at any branch for recycling. Details: {dom}/cards."',
-        'materials': '"The {co} Green Fund does not invest in companies that earn more than 5% of their revenue from coal, tar sands or controversial weapons. The exclusion list is published at {dom}/exclusions."',
-        'sourcing': '"The {co} Green Fund only invests in companies that publish how they source their key raw materials, and we engaged with 15 of them on this in 2025. The engagement results are published at {dom}/engagement."',
+        'materials': '"The {co} Renewables Fund does not invest in companies that earn more than 5% of their revenue from coal, tar sands or controversial weapons. The exclusion list is published at {dom}/exclusions."',
+        'sourcing': '"The {co} Renewables Fund only invests in companies that publish how they source their key raw materials, and we engaged with 15 of them on this in 2025. The engagement results are published at {dom}/engagement."',
         'durability': '"Our branch buildings are built to last at least 40 years and we renovate them instead of replacing them. In 2025 we renovated 12 branches, which avoided an estimated 3,400 tonnes of CO2e compared with new construction. Details: {dom}/buildings."',
         'supplier': '"We work with our largest suppliers to cut the emissions of the services we buy through dialogue and pilot projects. In 2025, 30% of our purchasing spend went to suppliers with their own climate targets, up from 18% in 2023. Target: 70% by 2030. Progress: {dom}/suppliers."',
         'forced': '"To prevent forced labour in the companies we finance, we screen new corporate loans against a list of high-risk sectors, assess the risks with the OECD due-diligence method and have a written process for escalating a case to the customer. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
@@ -163,6 +170,7 @@ OVERRIDES = {
         'default': '"{generic}"',
     },
     'energy': {
+        'future_energy': '"We aim to generate 80% of the electricity we sell from wind and solar by 2030, up from 46% in 2025. Interim target: 60% by 2027. The plan, with the wind and solar parks we will build and the budget set aside, is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
         'label': '"The {co} Wind tariff holds Green Choice certificate number 12345, issued by Certico Audit and valid until 31 March 2027. It covers this tariff only. Check it at certico.example/register."',
         'legal': '"Our power plants stay within the emission limits in their environmental permits, as the law requires. This is a legal minimum, not an extra sustainability benefit."',
         'absolute': '"100% of the electricity sold under the {co} Wind tariff in 2025 was matched hour by hour with wind power generated in Belgium, checked by an independent auditor. This applies to this tariff only. Details: {dom}/wind-tariff."',
@@ -176,10 +184,10 @@ OVERRIDES = {
         'sourcing': '"In 2025, 100% of the biomass we burned came from forests certified under a recognised scheme and traced back to the forest, checked by independent audits. Details: {dom}/biomass."',
         'durability': '"Our wind turbines are designed to run for at least 25 years and we refurbish their key parts when they wear out. 85% of the material of a turbine can be reused or recycled. Details: {dom}/turbines."',
         'buildings': '"Our new office has energy label A, issued by an accredited assessor in 2025. Its measured energy use is 58 kWh per m² per year, 40% below the average for comparable offices in Belgium. Details: {dom}/office."',
-        'finance': '"In 2025 we issued a green bond of 500 million euro. 100% of the proceeds finance new wind and solar parks, and we publish a yearly report on how the money was used, checked by an external auditor. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 500 million euro under the EU Green Bond Standard. 100% of the proceeds finance new wind and solar parks, and we publish a yearly report on how the money was used, checked by an external auditor. Details: {dom}/bond."',
         'materials': '"The cables we install contain no PFAS or lead, confirmed by an independent laboratory test in April 2026. This applies to cables sold under the {co} brand. Details: {dom}/materials."',
         'biodegradable': '"The hydraulic oil in our wind turbines is a biodegradable oil that breaks down by at least 60% within 28 days, tested to the OECD 301B test. Used oil is collected for recycling. Details: {dom}/oil."',
-        'climate': '"{co} cut the greenhouse-gas emissions of its own power plants and offices by 28% between 2019 and 2025, calculated with the GHG Protocol. The emissions we have not cut are handled through the Delta Forest Restoration programme; details at {dom}/climate."',
+        'neutral': '"{co} cut the greenhouse-gas emissions of its own power plants and offices by 28% between 2019 and 2025, calculated with the GHG Protocol. Separately, we fund the Delta Forest Restoration project; this is a contribution and is not deducted from our emissions. Details: {dom}/climate."',
         'emissions': '"{co} cut the greenhouse-gas emissions of its own power plants and offices by 28% between 2019 and 2025, calculated with the GHG Protocol. Target: 50% by 2030. Details: {dom}/climate."',
         'recycl': '"40% of the steel in our new turbine towers is recycled steel, checked against the Global Recycled Standard. Towers can be recycled at the end of their life. Details: {dom}/recycling."',
         'forced': '"To prevent forced labour in our solar-panel supply chain, we trace the panels back to the factory and the polysilicon to its origin, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
@@ -202,7 +210,7 @@ OVERRIDES = {
         'buildings': '"Our newest data centre has the BREEAM rating Excellent, assessed by an independent assessor in 2025. Its measured power usage effectiveness (PUE) is 1.2. Details: {dom}/datacentre."',
         'materials': '"The hardware we sell contains no lead, mercury or cadmium above legal limits, confirmed by an independent laboratory test in April 2026. This applies to the {co} branded range. Details: {dom}/materials."',
         'biodegradable': '"Our customer card kits are made of cardboard and can be composted. Details: {dom}/cards."',
-        'finance': '"In 2025 we issued a green bond of 100 million euro. 100% of the proceeds finance renewable-energy purchase contracts for our data centres, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 100 million euro under the EU Green Bond Standard. 100% of the proceeds finance renewable-energy purchase contracts for our data centres, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'forced': '"To prevent forced labour in our hardware supply chain, we trace key components back to the factory, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
         'childlabour': '"To prevent child labour in our hardware supply chain, we verify workers\' ages at supplier factories, carry out 12 audits a year at our largest suppliers, and have a written process to remove any child from work and support them. Last reviewed: 15 May 2026. Details: {dom}/child-labour."',
         'supply': '"86% of our hardware suppliers, together supplying 92% of our purchases, were audited against the Responsible Business Alliance code in 2025. 41 of the 47 problems found were fixed by year-end. Full data: {dom}/suppliers."',
@@ -242,7 +250,7 @@ OVERRIDES = {
         'sourcing': '"In 2025, 62% of the food and drink we bought was local (from within 100 km) or certified organic, measured from our purchase invoices. Details: {dom}/food."',
         'durability': '"Our bed linen and towels are designed to last 200 washes and we repair and re-use them. In 2025 we kept 18,000 items in use instead of replacing them. Details: {dom}/linen."',
         'buildings': '"The Zonneduin Seaside hotel has the BREEAM rating Very Good, assessed by an independent assessor in 2025. Its measured energy use is 150 kWh per m² per year. Details: {dom}/hotel."',
-        'finance': '"In 2025 we issued a green bond of 25 million euro. 100% of the proceeds finance energy-saving renovations of our hotels, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 25 million euro under the EU Green Bond Standard. 100% of the proceeds finance energy-saving renovations of our hotels, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'biodegradable': '"The cups and cutlery in our hotel restaurants are made of compostable material tested to EN 13432 and are collected in the food-waste bin. They are not suitable for home composting. Details: {dom}/compost."',
         'materials': '"The soap, shampoo and cleaning products in our hotels contain no microplastics or phosphates, confirmed by the supplier\'s ingredient lists and an independent laboratory test in April 2026. Details: {dom}/products."',
         'recycl': '"40% of the plastic in our single-use items is recycled material from household waste, checked against the Global Recycled Standard. They can be recycled through household collection in Belgium and the Netherlands."',
@@ -255,7 +263,7 @@ OVERRIDES = {
         'legal': '"{Prod} meet the energy-performance requirement of the Flemish building code, as the law requires. This is a legal minimum, not an extra sustainability benefit."',
         'absolute': '"At least 90% of the construction waste from our building sites (by weight) is recycled or reused in Belgium, based on weigh-bridge tickets. This does not apply to contaminated soil. Details: {dom}/waste."',
         'comparative': '"The Bouwhof Park apartments use 40% less energy per m² than apartments built to the legal minimum in 2020, based on the energy-performance calculation checked by an accredited assessor (May 2026). Full data: {dom}/study."',
-        'future': '"We aim to cut the emissions of the materials we build with by 40% by 2030, compared with 2022. The main steps are: low-carbon cement in all our concrete by 2027 and electric site machinery by 2029. The plan is published at {dom}/plan and checked every year by an external auditor."',
+        'future': '"We aim to cut the emissions of the materials we build with by 40% by 2030, compared with 2022. The main steps are: low-carbon cement in all our concrete by 2027 and electric site machinery by 2029. The plan is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
         'water': '"In 2025 our building sites used 4 m³ of water per 100 m² built, 22% less than in 2022, measured from site meters. We collect and re-use rainwater on 80% of our sites. Details: {dom}/water."',
         'packaging': '"85% of the packaging that arrives on our building sites is returned to the supplier for re-use, counted from delivery notes. Details: {dom}/packaging."',
         'transport': '"In 2025, 40% of the kilometres driven by our site vehicles were electric, measured from vehicle logs. Materials are delivered in consolidated loads, which cut delivery trips by 18%. Details: {dom}/transport."',
@@ -266,7 +274,7 @@ OVERRIDES = {
         'recycl': '"30% of the aggregate in our concrete is recycled material from demolition waste, checked against the Belgian standard for recycled aggregate. Details: {dom}/recycling."',
         'materials': '"{Prod} contain no asbestos, PFAS or lead, confirmed by an independent laboratory test in April 2026. This applies to the Bouwhof Park apartments. Details: {dom}/materials."',
         'biodegradable': '"The protective sheets on our building sites are made of compostable material tested to EN 13432 and are collected for industrial composting. Details: {dom}/compost."',
-        'finance': '"In 2025 we issued a green bond of 80 million euro. 100% of the proceeds finance buildings with energy label A, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 80 million euro under the EU Green Bond Standard. 100% of the proceeds finance buildings with energy label A, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'safety': '"On our building sites we recorded 12 accidents per 1,000,000 hours worked in 2025, measured with the ISO 45001 safety system and checked by an external auditor. This includes subcontractors."',
         'forced': '"To prevent forced labour on our building sites, we check that every subcontractor and its workers are registered and paid according to Belgian rules, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
         'childlabour': '"To prevent child labour in our material supply chain, we verify workers\' ages at the riskiest quarries and factories, carry out 12 audits a year, and have a written process to remove any child from work and support them. Last reviewed: 15 May 2026. Details: {dom}/child-labour."',
@@ -283,10 +291,10 @@ OVERRIDES = {
         'sourcing': '"In 2025, 100% of the diesel replacement fuel we bought was made from waste cooking oil, certified under a recognised scheme and traced to its origin, checked by independent audits. Details: {dom}/fuel."',
         'durability': '"Our delivery vans are designed to run for at least 12 years and we refurbish their engines and batteries instead of replacing them. In 2025 we kept 140 vans on the road that would otherwise have been scrapped. Details: {dom}/fleet."',
         'buildings': '"Our newest depot has the BREEAM rating Excellent, assessed by an independent assessor in 2025. Its measured energy use is 55 kWh per m² per year. Details: {dom}/depot."',
-        'finance': '"In 2025 we issued a green bond of 60 million euro. 100% of the proceeds finance electric vans and charging points, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 60 million euro under the EU Green Bond Standard. 100% of the proceeds finance electric vans and charging points, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'materials': '"The tyres we buy contain no restricted oils or heavy metals above legal limits, confirmed by the tyre supplier\'s laboratory test report in April 2026. Details: {dom}/tyres."',
         'biodegradable': '"Our void-fill and parcel tape are made from paper, without plastic, and can be recycled with household paper. Details: {dom}/packaging."',
-        'future': '"We aim to cut our greenhouse-gas emissions by 50% by 2030, compared with 2019. The main steps are: renewable electricity for our depots and offices by 2027 and a switch to electric vehicles for {fleet} by 2029. The plan is published at {dom}/plan and checked every year by an external auditor."',
+        'future': '"We aim to cut our greenhouse-gas emissions by 50% by 2030, compared with 2019. The main steps are: renewable electricity for our depots and offices by 2027 and a switch to electric vehicles for {fleet} by 2029. The plan is published at {dom}/plan, and an independent third-party expert checks our progress every year and publishes the findings."',
         'recycl': '"40% of the plastic in our parcel bags is recycled material from household waste, checked against the Global Recycled Standard. The bags can be recycled through household collection in Belgium and the Netherlands."',
         'forced': '"To prevent forced labour among our subcontracted carriers, we check that every carrier and its drivers are registered and paid according to the rules of the country where they work, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
         'childlabour': '"To prevent child labour in our purchases of vehicles, tyres and parts, we verify workers\' ages at the riskiest suppliers, carry out 12 audits a year, and have a written process to remove any child from work and support them. Last reviewed: 15 May 2026. Details: {dom}/child-labour."',
@@ -306,7 +314,7 @@ OVERRIDES = {
         'sourcing': '"In 2025, 100% of our own-brand coffee was certified under the Responsible Sourcing Standard and traced back to the cooperative, checked by independent audits. Details: {dom}/coffee."',
         'durability': '"Our own-brand kitchen appliances are designed to last at least 8 years, come with a 5-year guarantee, and we sell spare parts for 10 years. Details: {dom}/appliances."',
         'buildings': '"Our newest store has the BREEAM rating Excellent, assessed by an independent assessor in 2025. Its measured energy use is 160 kWh per m² per year, 30% below our 2020 stores. Details: {dom}/store."',
-        'finance': '"In 2025 we issued a green bond of 120 million euro. 100% of the proceeds finance energy savings and solar panels in our stores, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 120 million euro under the EU Green Bond Standard. 100% of the proceeds finance energy savings and solar panels in our stores, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'materials': '"Our own-brand cleaning products contain no phosphates or microplastics, confirmed by an independent laboratory test in April 2026. This applies to the {co} cleaning range. Details: {dom}/cleaning."',
         'biodegradable': '"Our own-brand fruit and vegetable bags are made of compostable material tested to EN 13432 and can go in the food-waste bin. They are not suitable for home composting. Details: {dom}/bags."',
         'recycl': '"40% of the plastic in our own-brand bottles is recycled material from household waste, checked against the Global Recycled Standard. The bottles can be recycled through household collection in Belgium and the Netherlands."',
@@ -322,7 +330,7 @@ OVERRIDES = {
         'sourcing': '"In 2025, 92% of our oats came from farms certified under the Responsible Sourcing Standard and traced back to the farm, checked by independent audits. The other 8% is covered by a supplier improvement plan. Details: {dom}/oats."',
         'durability': '"Our returnable glass bottles are re-used on average 20 times before they are recycled, counted from our deposit-system records in 2025. Details: {dom}/bottles."',
         'buildings': '"Our Ghent plant has the BREEAM rating Excellent, assessed by an independent assessor in 2025. Its measured energy use is 210 kWh per m² per year. Details: {dom}/plant."',
-        'finance': '"In 2025 we issued a green bond of 70 million euro. 100% of the proceeds finance energy savings and renewable heat at our Ghent plant, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 70 million euro under the EU Green Bond Standard. 100% of the proceeds finance energy savings and renewable heat at our Ghent plant, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'biodegradable': '"Our compostable trays for ready meals break down fully within 12 weeks in industrial composting, tested to EN 13432. They are not suitable for home composting; dispose of them in the food-waste bin. Details: {dom}/trays."',
         'safety': '"At our Ghent plant we recorded 6.4 accidents per 1,000,000 hours worked in 2025, measured with the ISO 45001 safety system and checked by an external auditor. This does not include temporary contractors."',
         'forced': '"To prevent forced labour in our cocoa supply chain, we trace the cocoa back to the cooperative, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
@@ -340,7 +348,7 @@ OVERRIDES = {
         'biodegradable': '"Our feed bags are made of paper and can be recycled with household paper. Details: {dom}/bags."',
         'durability': '"Our barns are built to last at least 50 years, and we re-use the roof structure and floors when we renovate. Details: {dom}/barns."',
         'buildings': '"Our newest barn has solar panels covering 100% of its electricity use, measured over the whole of 2025, and a ventilation system with a measured energy use of 35 kWh per cow per year. Details: {dom}/barns."',
-        'finance': '"In 2025 we issued a green bond of 15 million euro. 100% of the proceeds finance solar panels and manure-processing systems on our farms, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 15 million euro under the EU Green Bond Standard. 100% of the proceeds finance solar panels and manure-processing systems on our farms, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'safety': '"On our farms we recorded 9.8 accidents per 1,000,000 hours worked in 2025, measured with a farm safety register and checked by an external auditor. This does not include seasonal workers from agencies."',
         'forced': '"To prevent forced labour among the seasonal workers on our farms, we check that every worker is registered, housed to a set standard and paid according to Belgian rules, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
     },
@@ -356,7 +364,7 @@ OVERRIDES = {
         'durability': '"The Lindhout 501 jeans are designed to last at least 100 washes, tested in the {co} wear test. We repair them for free for 5 years at {dom}/repair."',
         'recycl': '"40% of the cotton in the Lindhout 501 jeans is recycled cotton from old garments, checked against the Global Recycled Standard. The jeans can be returned to our stores for recycling."',
         'biodegradable': '"Our organic cotton T-shirts are made without elastane or polyester and break down fully under industrial composting, tested to EN 13432 (fabric only, not labels and threads). Details: {dom}/compost."',
-        'finance': '"In 2025 we issued a green bond of 30 million euro. 100% of the proceeds finance energy savings and solar panels at our Porto factory, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 30 million euro under the EU Green Bond Standard. 100% of the proceeds finance energy savings and solar panels at our Porto factory, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'buildings': '"Our Porto factory has the BREEAM rating Very Good, assessed by an independent assessor in 2025. Its measured energy use is 140 kWh per m² per year. Details: {dom}/factory."',
         'forced': '"To prevent forced labour in our cotton supply chain, we trace the cotton back to the farm, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
         'supply': '"86% of our garment factories, together making 92% of our jeans, were audited against the amfori BSCI standard in 2025. 41 of the 47 problems found were fixed by year-end. Full data: {dom}/factories."',
@@ -366,7 +374,7 @@ OVERRIDES = {
         'label': '"{co} holds Green Choice certificate number 12345, issued by Certico Audit and valid until 31 March 2027. It covers the products made at our Genk plant. Check it at certico.example/register."',
         'comparative': '"The Ferrum X200 component causes 18% less CO2 per tonne than the 2022 version, based on an independent life-cycle study by GreenLab (May 2026). The comparison covers production and transport, not use. Full data: {dom}/study."',
         'buildings': '"Our Genk plant has the BREEAM rating Very Good, assessed by an independent assessor in 2025. Its measured energy use is 190 kWh per m² per year. Details: {dom}/plant."',
-        'finance': '"In 2025 we issued a green bond of 50 million euro. 100% of the proceeds finance energy savings and electric furnaces at our Genk plant, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 50 million euro under the EU Green Bond Standard. 100% of the proceeds finance energy savings and electric furnaces at our Genk plant, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'sourcing': '"In 2025, 70% of the metal ore we bought came from mines certified under a recognised responsible-mining standard and traced back to the mine, checked by independent audits. Details: {dom}/ore."',
         'durability': '"The Ferrum X200 component is designed to last at least 20 years and is tested in the {co} lifetime test. We guarantee spare parts for 15 years and offer repairs at {dom}/repair."',
         'forced': '"To prevent forced labour in our metal supply chain, we trace the ore back to the mine, assess the risks with the OECD due-diligence method and have a written process to put things right if a problem is found. Last reviewed on 15 May 2026. Full policy: {dom}/forced-labour."',
@@ -386,7 +394,7 @@ OVERRIDES = {
         'durability': '"Our recycled plastic granulate is used in products that are designed to last at least 20 years, such as drainage pipes, and it can be recycled again at the end of their life. Details: {dom}/granulate."',
         'biodegradable': '"Our compost from garden and food waste is sold in paper bags and meets the quality standard for compost in Flanders, checked by independent sampling every quarter. Details: {dom}/compost."',
         'materials': '"Our recycled plastic granulate contains no lead or cadmium above legal limits, confirmed by an independent laboratory test in April 2026. This applies to granulate sold under the {co} brand. Details: {dom}/granulate."',
-        'finance': '"In 2025 we issued a green bond of 40 million euro. 100% of the proceeds finance new sorting lines that raise the share of waste recycled, and we publish a yearly report on how the money was used. Details: {dom}/green-bond."',
+        'finance': '"In 2025 we issued a bond of 40 million euro under the EU Green Bond Standard. 100% of the proceeds finance new sorting lines that raise the share of waste recycled, and we publish a yearly report on how the money was used. Details: {dom}/bond."',
         'buildings': '"Our newest sorting plant has the BREEAM rating Excellent, assessed by an independent assessor in 2025. Its measured energy use is 120 kWh per m² per year. Details: {dom}/plant."',
     },
 }
@@ -419,9 +427,13 @@ def profile_for_sector(sector_label):
     return 'general'
 
 
-def example(key, sector_label=''):
-    """The fictional example for `key` (see EXAMPLES), adapted to the sector profile of `sector_label`."""
+def example(key, sector_label='', subject=''):
+    """The fictional example for `key` (see EXAMPLES), adapted to the sector profile of `sector_label`. A broad claim
+    (key generic / default) about a PRODUCT, range or collection (`subject` == 'product') gets a product-level fact
+    instead of a company-level one."""
     profile = profile_for_sector(sector_label)
+    if subject == 'product' and key in ('generic', 'default'):
+        key = 'product'
     text = OVERRIDES.get(profile, {}).get(key) or EXAMPLES.get(key)
     if not text:
         return ''
@@ -430,3 +442,85 @@ def example(key, sector_label=''):
     tokens['Thing'] = tokens['thing'][:1].upper() + tokens['thing'][1:]
     # a few examples need a generic fact per sector
     return text.format(**tokens)
+
+
+# Product-level generic fact per sector: shown when the claim is about a product, range or collection (not the company or a site).
+_PRODUCT_GENERIC = {
+    'general': '"The Nordwind Aqua bottle is made from 60% recycled plastic (by weight), verified by the supplier\'s Global Recycled Standard certificate valid until March 2027. This applies to the 0.5-litre bottle only, not to the cap and label. Details: nordwind.example/aqua."',
+    'food': '"The Linde Oat Drink carton is made of 82% paper from certified forests (by weight) and can be recycled with household paper in Belgium and the Netherlands, tested by an independent laboratory in April 2026. This applies to the 1-litre carton only, not to the cap. Details: linde.example/carton."',
+    'agri': '"The Groenhof farm milk comes from cows that graze outdoors for at least 180 days a year, confirmed by the yearly inspection of an independent certifier in 2025. This applies to the milk sold under the Groenhof label only. Details: groenhof.example/grazing."',
+    'textile': '"The Lindhout 501 jeans contain 40% recycled cotton (by weight), verified by the Global Recycled Standard certificate of our fabric mill, valid until March 2027. This applies to this model only, not to the rest of the range. Details: lindhout.example/501."',
+    'retail': '"Our own-brand coffee carries Responsible Sourcing Standard certificate number 12345, issued by Certico Audit and valid until 31 March 2027. It covers the 500 g own-brand coffee only. Check it at certico.example/register."',
+    'hospitality': '"The Zonneduin Seaside hotel has the BREEAM rating Very Good, assessed by an independent assessor in 2025, and bought 100% of its electricity in 2025 as wind power with guarantees of origin. This applies to this hotel only. Details: zonneduin.example/hotel."',
+    'finance': '"The Noorder Renewables Fund is classified as an SFDR Article 8 fund and had 62% of its assets invested in renewable-energy and energy-saving projects at the end of 2025. This applies to this fund only. The selection rules and the full holdings are published at noorderbank.example/renewables-fund."',
+    'energy': '"The Brightgrid Wind tariff was matched hour by hour with wind power generated in Belgium in 2025, checked by an independent auditor. This applies to this tariff only, not to our other tariffs. Details: brightgrid.example/wind-tariff."',
+    'construction': '"The Bouwhof Park apartments have energy label A, issued by an accredited assessor in 2025. Their calculated energy use is 45 kWh per m² per year. This applies to this development only. Details: bouwhof.example/energy-label."',
+    'transport': '"The Roadline Express service delivered 40% of its city-centre parcels with electric vans in 2025, measured from vehicle logs. This applies to the Express service in Belgium only. Details: roadline.example/express."',
+    'manufacturing': '"The Ferrum X200 component is made with 45% recycled steel (by weight), confirmed by the steel supplier\'s certificate in 2025. This applies to the X200 only, not to other Ferrum products. Details: ferrum.example/x200."',
+    'digital': '"The Cloudhaven Storage service ran on 100% wind and solar electricity in 2025, bought through guarantees of origin. This applies to this service in our Belgian data centres only. Details: cloudhaven.example/storage."',
+    'services': '"The Alder advisory service holds 70% of its client meetings online, which cut our business-travel emissions per employee by 23% between 2022 and 2025, measured from travel bookings. This applies to the advisory service only. Details: alder.example/travel."',
+    'waste': '"The Renova recycled plastic granulate is made from 100% post-consumer plastic waste (by weight), confirmed by our plant\'s mass-balance records in 2025. This applies to this granulate only. Details: renova.example/granulate."',
+}
+for _name, _text in _PRODUCT_GENERIC.items():
+    PROFILES[_name]["product_generic"] = _text.strip('"')
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A short note under every ready-to-use rewrite: WHY the wording follows the rules (EmpCo = Directive (EU) 2024/825,
+# which amended the Unfair Commercial Practices Directive, UCPD) and WHEN it may be used. Plain language; the numbers
+# of Annex I are those of the UCPD blacklist as amended by EmpCo (2a label, 4a generic claim, 4b whole-product or
+# whole-business claim, 4c offsetting claim, 10a legal requirement presented as a feature).
+# ---------------------------------------------------------------------------------------------------------------
+_MEASURED = "Use it only with the underlying records (%s) on file."
+NOTES = {
+    'generic': "Generic wording such as {trigger} is banned by EmpCo (Annex I point 4a) unless recognised excellent environmental performance can be shown. Replace it by one specific fact, placed in the same sentence or the same medium, not only behind a link. Use only a fact you can prove, and keep the evidence on file.",
+    'default': "Replace the wording by a specific statement that can be checked, in the same sentence or medium (EmpCo Annex I points 4a and 4b; UCPD Article 6). Say what it covers and for which period, and keep the evidence on file.",
+    'product': "A claim about a product, range or collection must say which product it is true for (EmpCo Annex I point 4b bans presenting one aspect as if the whole product were green). Use only a fact that you can prove for exactly those products.",
+    'neutral': "EmpCo Annex I point 4c bans claiming, on the basis of offsetting, that a product is climate neutral or has a reduced or positive climate impact. A company-wide neutrality claim is still an overbroad claim (points 4a and 4b). This wording drops 'neutral', claims only real reductions and shows funding of projects as a separate contribution. Keep the emission calculation on file.",
+    'emissions': "A measured reduction with its period, coverage and method is not an unspecific claim (EmpCo Annex I points 4a and 4b). Use it only if the percentage can be reproduced from your own emission calculation, and keep that calculation on file.",
+    'label': "Annex I point 2a bans a sustainability label that is not based on a certification scheme or set by a public authority. Use this only for a scheme with an independent certifier; the certificate number and the public register make it checkable. Do not show it for products or sites the certificate does not cover.",
+    'visual': "An icon or badge is a sustainability label under Annex I point 2a: it must be backed by a certification scheme or a public authority, and the sentence must name who awards it and what it covers. A self-made leaf or globe icon is not allowed.",
+    'recycl': "A recycled-content claim must say how much, of what, checked against which standard, and where the product can really be recycled (EmpCo Annex I points 4a and 4b; UCPD Article 6). Use it only if you hold the supplier's proof of recycled content.",
+    'legal': "Annex I point 10a bans presenting a legal requirement as a distinctive feature of your offer. Either remove the claim, or state it neutrally as a compliance fact, as here, and never as a benefit.",
+    'absolute': "Absolute wording (100%, zero, fully) must be literally true for everything it refers to, or the exceptions must stand next to it (Annex I point 4b; UCPD Article 6). Use it only if the share is measured and the exceptions are listed.",
+    'comparative': "A comparison must be between products with the same purpose, say what is compared and how, and be kept up to date (UCPD Articles 6 and 7). Use it only if the study or data are public and still current, and name the product you compare with.",
+    'future': "A future environmental claim needs a detailed, realistic plan with measurable, time-bound targets, verified regularly by an independent third-party expert whose findings are public (UCPD Article 6(2)(d), added by EmpCo). Do not publish the goal until the plan and the expert exist.",
+    'future_climate': "A net-zero or emission target is a future environmental claim: UCPD Article 6(2)(d), added by EmpCo, requires a detailed, realistic plan with measurable, time-bound targets, verified regularly by an independent third-party expert whose findings are public. Say whether offsets count. Do not publish the target until the plan and the expert exist.",
+    'supplier': "Say what you actually do with suppliers and how much of your purchasing it reaches, with a target; do not suggest that the whole supply chain is sustainable (EmpCo Annex I point 4b). Use only figures you can reproduce from your purchasing data.",
+    'energy': "'Green' or 'renewable' energy is a generic claim unless it says how much, from which source, for which sites and which year (EmpCo Annex I point 4a). " + _MEASURED % "meter data and certificates of origin",
+    'water': "'Water-saving' is a generic claim unless it gives the amount, the unit, the comparison year and the sites (EmpCo Annex I point 4a). " + _MEASURED % "meter readings",
+    'waste': "'Zero waste' or 'waste-free' is an absolute claim unless it is literally true. Give the share, the weight, the year and what is counted (EmpCo Annex I points 4a and 4b). " + _MEASURED % "waste-collector receipts",
+    'packaging': "'Eco-friendly packaging' is a generic claim; name the packaging, the property and the part it does not cover (EmpCo Annex I points 4a and 4b). " + _MEASURED % "the packaging supplier's certificates or test reports",
+    'transport': "'Green' or 'clean' transport is a generic claim unless it gives the share, the unit and the year (EmpCo Annex I point 4a). " + _MEASURED % "vehicle logs and fuel or charging data",
+    'biodiversity': "'Nature-positive' or 'biodiversity-friendly' is a generic claim unless it names the site, the action and how the effect is measured (EmpCo Annex I points 4a and 4b). " + _MEASURED % "survey reports of the independent party",
+    'biodegradable': "Biodegradable or compostable claims need the conditions (industrial or home composting), the time and the test standard, otherwise they are generic or misleading (Annex I points 4a and 4b). Do not say 'home compostable' unless that is certified. Keep the test report on file.",
+    'materials': "'Natural', 'chemical-free' or 'pure' are absolute or generic claims. Name what is absent or present, the test and the products it covers (EmpCo Annex I points 4a and 4b). " + _MEASURED % "the laboratory report",
+    'sourcing': "'Responsibly sourced' is a generic claim unless it names the raw material, the scheme, the share and how traceability is checked (EmpCo Annex I points 4a and 4b). " + _MEASURED % "audit reports and certificates",
+    'durability': "A durability claim needs a tested lifetime and a real repair or spare-parts commitment, stated in the same medium (EmpCo Annex I point 4a; UCPD Article 6). " + _MEASURED % "the lifetime test and the spare-parts commitment",
+    'buildings': "'Sustainable building' is a generic claim; name the rating, the assessor, the year and the measured use (EmpCo Annex I points 4a and 4b). " + _MEASURED % "the assessor's certificate",
+    'finance': "Do not call a fund, bond or loan 'green' or 'sustainable' without saying what it finances and under which rules (EmpCo Annex I point 4a; the EU rules on fund disclosure apply as well). Use it only with the published selection rules and holdings.",
+    # social claims: not an EmpCo environmental claim, general UCPD rules apply
+    'default_social': "Not an EmpCo environmental claim: the general UCPD rules on misleading claims apply. State who is covered, how it is measured and when, and say what is not covered. Use only figures you can reproduce from your own records.",
+    'human': "Not an EmpCo environmental claim: the general UCPD rules on misleading claims apply. Describe what you actually do (risk assessment, reporting line, remedy) and when it was last reviewed; do not promise that no harm occurs.",
+    'forced': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Do not guarantee 'no forced labour' in your supply chain; describe the checks you really carry out. The EU Forced Labour Regulation (2024/3015) applies from 14 December 2027.",
+    'childlabour': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Do not guarantee 'no child labour'; describe the checks, the number of audits and the process when a child is found. Use only what your audit records show.",
+    'supply': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Say how many suppliers (or what share of purchases) were audited, against which standard, and how many findings were fixed. Use only figures from your audit records.",
+    'safety': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Give the accident rate, the period, who is included and who is not. Use only figures from your safety register.",
+    'diversity': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Give the share, the date and exactly which group of people it counts. Use only figures from your HR records.",
+    'aspirational': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. A goal is only credible next to what has been achieved so far and a date; report progress every year.",
+    'community': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Say what was done, for how many people, where and in which year. Use only figures you can reproduce from your records.",
+    'wage': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Name the benchmark for 'living wage', the share of people who earn it and what you do for the others. Use only payroll data.",
+    'unions': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Give the share covered by a collective agreement and the date, and say who confirms it. Use only figures you can document.",
+    'training': "Not an EmpCo claim: the general UCPD rules on misleading claims apply. Give the share of people trained, the average hours and the programme. Use only figures from your training records.",
+}
+NOTE_ALIASES = {'future_energy': 'future', 'future_waste': 'future', 'future_packaging': 'future', 'future_transport': 'future'}
+
+
+def note(key, trigger='', claim_type=''):
+    """One or two plain sentences: why the rewrite follows EmpCo (or, for social claims, the general rules) and when it
+    may be used. For a generic claim the wording that triggered the finding is named."""
+    text = NOTES.get(NOTE_ALIASES.get(key, key)) or NOTES['default']
+    if '{trigger}' in text:
+        trig = ' '.join(str(trigger or '').split())
+        text = text.replace('{trigger}', '\u201c%s\u201d' % trig if 2 < len(trig) <= 40 else 'the wording used')
+    return text

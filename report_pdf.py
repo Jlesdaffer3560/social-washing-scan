@@ -573,13 +573,19 @@ def ready_to_use_rewrite_text(claim, max_chars=220):
     return bounded_text(raw, max_chars) if raw else ""
 
 
+def rewrite_note_text(claim, max_chars=420):
+    """Why the ready-to-use wording follows EmpCo (or the general rules for a social claim), and when it may be used."""
+    raw = clean_text(claim.get("rewrite_note") or "")
+    return bounded_text(raw, max_chars) if raw else ""
+
+
 def rewrite_example_text(claim, max_chars=420):
     """The short FICTIONAL example (an invented company) that illustrates the fill-in template."""
     raw = clean_text(claim.get("rewrite_example") or "")
     return bounded_text(raw, max_chars) if raw else ""
 
 
-def other_rewrites(cluster, limit=2, max_chars=400):
+def other_rewrites(cluster, limit=2, max_chars=470):
     """Occurrences in one group (one claim TYPE) can be about different things -- packaging, suppliers, a
     biodegradable bag -- and each gets the rewrite that fits ITS wording. The card shows the representative's
     rewrite in full; this returns [(wording label, template)] for up to `limit` other occurrences whose rewrite
@@ -1347,7 +1353,7 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
     # stronger, unproven claim.
     uncertain = Paragraph(f'<b>WHAT REMAINS UNCERTAIN</b><br/><font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
-    ready_rewrite = ready_to_use_rewrite_text(claim, 420 if material else 400)
+    ready_rewrite = ready_to_use_rewrite_text(claim, 480 if material else 470)
     example_rewrite = rewrite_example_text(claim, 420)
     if ready_rewrite:
         # v93.62: a monospaced Courier treatment for the example wording read as code/technical
@@ -1359,6 +1365,9 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
         action_html += f'<br/><font color="#6B7398">Reusable wording — fill in the [brackets], then verify:</font> <i>{esc(ready_rewrite)}</i>'
         if example_rewrite and show_example:
             action_html += f'<br/><font color="#6B7398">Fictional example, for illustration only (not about this company):</font> <i>{esc(example_rewrite)}</i>'
+        note = rewrite_note_text(claim)
+        if note:
+            action_html += f'<br/><font color="#6B7398">Why this wording, and when to use it:</font> {esc(note)}'
         for label, template in other_rewrites(cluster, 2 if material else 1):
             action_html += f'<br/><font color="#6B7398">Different wording, “{esc(label)}” — reusable version:</font> <i>{esc(template)}</i>'
     action = Paragraph(action_html, ST["small_dark"])
