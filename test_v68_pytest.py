@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_2_dutch_french_rewrites'
+    assert app.APP_VERSION == 'hostable_v97_3_social_rewrites_checked'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8430,7 +8430,7 @@ def test_every_rewrite_has_an_empco_note_that_names_the_rule_and_the_condition_f
     assert 'zoals “duurzaam”' in _rx.note('generic', 'duurzaam', lang='nl') and 'comme «' not in _rx.note('generic', '', lang='fr')
     assert 'point 4c' in _rx.note('neutral') and 'point 2a' in _rx.note('label') and 'point 10a' in _rx.note('legal')
     assert 'Article 6(2)(d)' in _rx.note('future_climate') and _rx.note('future_energy') == _rx.note('future')
-    assert _rx.note('forced').startswith('Not an EmpCo claim')
+    assert _rx.note('forced').startswith('Not on the EmpCo blacklist') and 'Articles 6 and 7' in _rx.note('forced')
     # the findings carry it, and so does the inventory used by the screen and the PDF
     r = app.analyse_uploaded_document('t.txt', 'Our eco-friendly packaging is good for the planet. We are climate neutral thanks to offsetting.', 'TestCo', '', document_coverage=None)
     seen = 0
@@ -8614,3 +8614,71 @@ def test_dutch_and_french_broad_comparisons_get_the_comparison_rewrite():
     assert app.green_rewrite_key(g, 'We cut waste by less than 2 tonnes') != 'comparative'
     assert 'même usage' in app.green_ready_to_use_rewrite(g, 'Nos produits sont meilleurs pour la planète que ceux de la concurrence')
     assert 'hetzelfde doel' in app.green_ready_to_use_rewrite(g, 'Onze producten zijn beter voor de planeet dan die van de concurrentie')
+
+
+_SOCIAL_FRAMES = {'en': 'This is stated on our sustainability page: {p}. We report on it in 2025.',
+                  'nl': 'Dit staat op onze duurzaamheidspagina: {p}. Wij rapporteren hierover in 2025.',
+                  'fr': 'Cela figure sur notre page de durabilité : {p}. Nous en rendons compte en 2025.'}
+_SOCIAL_ALLOWED_KEYS = {
+    'Forced-labour product or supply-chain claim': {'forced', 'childlabour'},
+    'Supply-chain or supplier-responsibility claim': {'supply'},
+    'Human-rights or labour-rights claim': {'human', 'wage', 'childlabour', 'unions', 'training'},
+    'Health, safety or worker-welfare claim': {'safety'},
+    'Diversity, equality and inclusion claim': {'diversity'},
+    'Aspirational or future social-performance claim': {'aspirational', 'community'},
+}
+
+
+def test_every_detectable_social_trigger_gets_a_rewrite_in_its_own_language_with_a_fitting_key():
+    """v97.3: every trigger phrase of the social claim list (English, Dutch and French, forced labour, supply chain,
+    human rights, safety, diversity, ...) that the scan detects must come back with a rewrite in the language of the
+    phrase and with a template that fits the claim type (a safety claim is never answered with a wage sentence)."""
+    nl_marks = ('dwangarbeid', 'kinderarbeid', 'leveranciers', 'mensenrechten', 'toeleveringsketen', 'waardeketen', 'werkplek', 'ongevallen',
+                'loonkloof', 'ethische', 'verantwoorde', 'inkoop', 'discriminatie', 'leefbaar', 'eerlijke', 'gelijke')
+    fr_marks = ('travail forcé', 'travail des enfants', 'fournisseurs', 'droits humains', 'chaîne', 'accident', 'blessure', 'discrimination',
+                'salaire', 'approvisionnement', 'esclavage', 'écart', 'égalité', 'sûr', 'zéro')
+    checked = 0
+    for phrases, typ, *_rest in app.CLAIMS:
+        for ph in phrases:
+            low = ph.lower()
+            lang = 'nl' if any(m in low for m in nl_marks) else 'fr' if any(m in low for m in fr_marks) else 'en'
+            fs = [f for f in app.detect_claims(_SOCIAL_FRAMES[lang].format(p=ph)) if f.get('type') == typ]
+            if not fs:
+                continue                                    # not every phrase is picked up in every context: detection is not under test here
+            f = fs[0]
+            checked += 1
+            assert f['rewrite_lang'] == lang, (typ, ph, f['rewrite_lang'])
+            assert f['rewrite_key'] in _SOCIAL_ALLOWED_KEYS.get(typ, {f['rewrite_key']}), (typ, ph, f['rewrite_key'])
+            tpl = f['ready_to_use_rewrite']
+            expected = _rx.template(f['rewrite_key'], lang) if lang != 'en' else tpl
+            assert tpl == expected and tpl.startswith('"') and '[' in tpl, (typ, ph)
+            assert f['rewrite_example'].startswith('"') and '[' not in f['rewrite_example'], (typ, ph)
+            assert f['rewrite_note'].startswith(('Not on the EmpCo blacklist', 'Niet op de EmpCo-zwarte lijst', 'Pas sur la liste noire')), (typ, ph)
+    assert checked >= 60
+
+
+def test_child_labour_wording_in_the_forced_labour_type_gets_the_child_labour_rewrite():
+    f = 'Forced-labour product or supply-chain claim'
+    for text, trig, lang in (('Our cotton is child labour free', 'child labour free', 'en'), ('Onze katoen is vrij van kinderarbeid', 'vrij van kinderarbeid', 'nl'),
+                             ('Notre coton est sans travail des enfants', 'sans travail des enfants', 'fr')):
+        assert app.social_rewrite_key(f, text, trig) == 'childlabour', lang
+        tpl = app.social_ready_to_use_rewrite(f, text, trig)
+        assert tpl == (_rx.template('childlabour', lang) if lang != 'en' else tpl) and ('child labour' in tpl or 'kinderarbeid' in tpl or 'travail des enfants' in tpl)
+    # forced labour stays forced labour, also when child labour is mentioned elsewhere in the text
+    assert app.social_rewrite_key(f, 'Free from forced labour and child labour', 'free from forced labour') == 'forced'
+    assert app.social_rewrite_key(f, 'Vrij van dwangarbeid en kinderarbeid', 'vrij van dwangarbeid') == 'forced'
+
+
+def test_social_rewrites_never_promise_an_outcome_and_always_ask_for_evidence_in_three_languages():
+    """A social/forced-labour/supply-chain rewrite describes checks and figures; it must not itself guarantee 'no forced
+    labour', 'no child labour', 'all suppliers' ... as a result."""
+    promise = {'en': re.compile(r'\b(guarantee[sd]?|free from|no forced|no child|all suppliers)\b', re.I),
+               'nl': re.compile(r'\b(garanderen|vrij van|geen dwangarbeid|geen kinderarbeid|alle leveranciers)\b', re.I),
+               'fr': re.compile(r'\b(garantissons|exempt|sans travail|aucun travail|tous les fournisseurs)\b', re.I)}
+    for key in ('forced', 'childlabour', 'supply', 'human', 'safety', 'diversity', 'aspirational', 'community', 'default_social', 'wage', 'unions', 'training'):
+        for lang in ('en', 'nl', 'fr'):
+            tpl = _template_keys()[key] if lang == 'en' else _rx.template(key, lang)
+            assert not promise[lang].search(tpl), (key, lang, tpl)
+            for label in _SECTOR_SAMPLE_LABELS.values():
+                ex = _rx.example(key, label, lang=lang)
+                assert not promise[lang].search(ex), (key, lang, label, ex)

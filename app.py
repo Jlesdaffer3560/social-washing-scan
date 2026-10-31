@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_2_dutch_french_rewrites"
-APP_RELEASE_LABEL="v97.2"
+APP_VERSION="hostable_v97_3_social_rewrites_checked"
+APP_RELEASE_LABEL="v97.3"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -9852,15 +9852,30 @@ _SOCIAL_REWRITE_DEFAULT=(
     'date]. It covers [exactly what: which group, site or period]. Evidence: [link]."',
     'default_social')
 
+_CHILD_TRIGGER_RE=re.compile(r"child labou?r|child work|kinderarbeid|travail des enfants|kinderarbeit")
+_FORCED_TRIGGER_RE=re.compile(r"forced labou?r|modern slavery|dwangarbeid|moderne slavernij|travail forc[eé]|esclavage moderne|zwangsarbeit")
+
+def _social_pick(claim_type, claim_text='', trigger=''):
+    """(template, key) for a social claim. The forced-labour claim type also holds wording about CHILD labour ("child
+    labour free", "geen kinderarbeid", "sans travail des enfants"): when the trigger names child labour and not forced
+    labour, the child-labour rewrite is used instead of the forced-labour one."""
+    picked=_pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)
+    if picked[1]=='forced':
+        trig=str(trigger or '').lower()
+        if _CHILD_TRIGGER_RE.search(trig) and not _FORCED_TRIGGER_RE.search(trig):
+            for entry in _SOCIAL_TOPICS:
+                if entry[0]=='childlabour':
+                    return (entry[2],entry[3])
+    return picked
+
 def social_rewrite_key(claim_type, claim_text='', trigger=''):
-    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)[1]
+    return _social_pick(claim_type,claim_text,trigger)[1]
 
 def social_ready_to_use_rewrite(claim_type, claim_text='', trigger=''):
     """Literal, fill-in-the-blank rewrite for social/forced-labour claim types in plain language -- see
     _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply. Written in
     the language of the claim (English, Dutch or French)."""
-    picked=_pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)
-    return _localize_rewrite(picked,_rewrite_lang(claim_text))[0]
+    return _localize_rewrite(_social_pick(claim_type,claim_text,trigger),_rewrite_lang(claim_text))[0]
 
 def social_rewrite_example(claim_type, claim_text='', trigger='', sector=''):
     """The same sentence completed for an invented company in the sector of the scanned company."""
