@@ -427,18 +427,28 @@ def profile_for_sector(sector_label):
     return 'general'
 
 
-def example(key, sector_label='', subject=''):
+def _pack(lang):
+    """(PROFILES, EXAMPLES, OVERRIDES) of a language; English unless the language module is available."""
+    mod = LANGUAGES.get(lang)
+    if mod is None:
+        return PROFILES, EXAMPLES, OVERRIDES
+    return mod.PROFILES, mod.EXAMPLES, mod.OVERRIDES
+
+
+def example(key, sector_label='', subject='', lang='en'):
     """The fictional example for `key` (see EXAMPLES), adapted to the sector profile of `sector_label`. A broad claim
     (key generic / default) about a PRODUCT, range or collection (`subject` == 'product') gets a product-level fact
-    instead of a company-level one."""
+    instead of a company-level one. `lang` is the language of the claim ('en', 'nl' or 'fr'): the example is written
+    in that language."""
     profile = profile_for_sector(sector_label)
     if subject == 'product' and key in ('generic', 'default'):
         key = 'product'
-    text = OVERRIDES.get(profile, {}).get(key) or EXAMPLES.get(key)
+    profiles, examples, overrides = _pack(lang)
+    text = overrides.get(profile, {}).get(key) or examples.get(key)
     if not text:
         return ''
-    tokens = dict(PROFILES['general'])
-    tokens.update(PROFILES.get(profile, {}))
+    tokens = dict(profiles['general'])
+    tokens.update(profiles.get(profile, {}))
     tokens['Thing'] = tokens['thing'][:1].upper() + tokens['thing'][1:]
     # a few examples need a generic fact per sector
     return text.format(**tokens)
@@ -473,7 +483,7 @@ for _name, _text in _PRODUCT_GENERIC.items():
 # ---------------------------------------------------------------------------------------------------------------
 _MEASURED = "Use it only with the underlying records (%s) on file."
 NOTES = {
-    'generic': "Generic wording such as {trigger} is banned by EmpCo (Annex I point 4a) unless recognised excellent environmental performance can be shown. Replace it by one specific fact, placed in the same sentence or the same medium, not only behind a link. Use only a fact you can prove, and keep the evidence on file.",
+    'generic': "Generic wording{such} is banned by EmpCo (Annex I point 4a) unless recognised excellent environmental performance can be shown. Replace it by one specific fact, placed in the same sentence or the same medium, not only behind a link. Use only a fact you can prove, and keep the evidence on file.",
     'default': "Replace the wording by a specific statement that can be checked, in the same sentence or medium (EmpCo Annex I points 4a and 4b; UCPD Article 6). Say what it covers and for which period, and keep the evidence on file.",
     'product': "A claim about a product, range or collection must say which product it is true for (EmpCo Annex I point 4b bans presenting one aspect as if the whole product were green). Use only a fact that you can prove for exactly those products.",
     'neutral': "EmpCo Annex I point 4c bans claiming, on the basis of offsetting, that a product is climate neutral or has a reduced or positive climate impact. A company-wide neutrality claim is still an overbroad claim (points 4a and 4b). This wording drops 'neutral', claims only real reductions and shows funding of projects as a separate contribution. Keep the emission calculation on file.",
@@ -516,11 +526,48 @@ NOTES = {
 NOTE_ALIASES = {'future_energy': 'future', 'future_waste': 'future', 'future_packaging': 'future', 'future_transport': 'future'}
 
 
-def note(key, trigger='', claim_type=''):
+def note(key, trigger='', claim_type='', lang='en'):
     """One or two plain sentences: why the rewrite follows EmpCo (or, for social claims, the general rules) and when it
     may be used. For a generic claim the wording that triggered the finding is named."""
-    text = NOTES.get(NOTE_ALIASES.get(key, key)) or NOTES['default']
-    if '{trigger}' in text:
+    mod = LANGUAGES.get(lang)
+    notes = mod.NOTES if mod is not None else NOTES
+    such = mod.SUCH if mod is not None else ' such as %s'
+    text = notes.get(NOTE_ALIASES.get(key, key)) or notes['default']
+    if '{such}' in text:
         trig = ' '.join(str(trigger or '').split())
-        text = text.replace('{trigger}', '\u201c%s\u201d' % trig if 2 < len(trig) <= 40 else 'the wording used')
+        text = text.replace('{such}', such % ('\u201c%s\u201d' % trig) if 2 < len(trig) <= 40 else '')
     return text
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Dutch and French versions (v97.2): a claim in Dutch or French gets its rewrite, example and note in that language.
+# Same keys and tokens as above; see rewrite_examples_nl.py / rewrite_examples_fr.py.
+# ---------------------------------------------------------------------------------------------------------------
+import rewrite_examples_nl as _nl
+import rewrite_examples_nl_sectors as _nl_sectors
+import rewrite_examples_fr as _fr
+import rewrite_examples_fr_sectors as _fr_sectors
+
+_nl.OVERRIDES = _nl_sectors.OVERRIDES
+_fr.OVERRIDES = _fr_sectors.OVERRIDES
+LANGUAGES = {'nl': _nl, 'fr': _fr}
+
+
+def template(key, lang='en'):
+    """The fill-in sentence for `key` in `lang`, or '' for English / an unknown key (the caller keeps the English one)."""
+    mod = LANGUAGES.get(lang)
+    return mod.TEMPLATES.get(key, '') if mod is not None else ''
+
+
+def generic_subject_template(category, lang='en'):
+    """The template for a broad claim about a product / the company, in `lang` ('{S}' marks the subject)."""
+    mod = LANGUAGES.get(lang)
+    return mod.GENERIC_SUBJECT.get(category, '') if mod is not None else ''
+
+
+def link_placeholder(lang='en'):
+    """(placeholder, replacement prefix) for the link, e.g. ('[link]', 'link on') in English."""
+    mod = LANGUAGES.get(lang)
+    word = mod.LINK_WORD if mod is not None else 'link'
+    on = mod.LINK_ON if mod is not None else 'link on'
+    return '[' + word + ']', on

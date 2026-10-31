@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_1_empco_rewrites"
-APP_RELEASE_LABEL="v97.1"
+APP_VERSION="hostable_v97_2_dutch_french_rewrites"
+APP_RELEASE_LABEL="v97.2"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -2760,7 +2760,7 @@ def build_claim_inventory(findings):
     # 'legal_basis_category' and 'legal_basis_label' yet dropped 'legal_basis_short' entirely,
     # so every claim card's "Legal basis" detail box (and the legal-basis badge's own hover
     # tooltip, which reads the same field) rendered empty. Reported live on Delhaize.
-    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite",""),"rewrite_example":f.get("rewrite_example",""),"rewrite_key":f.get("rewrite_key",""),"rewrite_subject":f.get("rewrite_subject",""),"rewrite_note":f.get("rewrite_note","")} for f in findings]
+    return [{"claim_text":f.get("claim",""),"full_claim_text":f.get("full_claim_text") or f.get("claim",""),"claim_type":f.get("type",""),"risk_level":f.get("risk",""),"claim_score":f.get("claim_score",0),"risk_reason":f.get("issue",""),"matched_phrase":f.get("matched_phrase",""),"why_flagged":f.get("why_flagged",""),"regulatory_signal":f.get("regulatory_signal",""),"specification_check":f.get("specification_check",{}),"pre_publication_decision":f.get("pre_publication_decision","Review before publication."),"evidence_needed":evidence_checklist(f),"suggested_rewrite":f.get("rewrite",""),"standards":f.get("standards",[]),"problematic_terms":f.get("problematic_terms",[]),"blacklisted_practice_indicator":f.get("blacklisted_practice_indicator",False),"legal_basis_category":f.get("legal_basis_category","problematic"),"legal_basis_label":f.get("legal_basis_label",""),"legal_basis_short":f.get("legal_basis_short",""),"ready_to_use_rewrite":f.get("ready_to_use_rewrite",""),"rewrite_example":f.get("rewrite_example",""),"rewrite_key":f.get("rewrite_key",""),"rewrite_subject":f.get("rewrite_subject",""),"rewrite_note":f.get("rewrite_note",""),"rewrite_lang":f.get("rewrite_lang","en")} for f in findings]
 
 def build_red_flags(findings,ext,sector,context):
     flags=[]
@@ -4185,7 +4185,7 @@ _GREEN_TOPICS=[
      'carbon[- ]neutral|climate[- ]neutral|co2[- ]neutral|co₂[- ]neutral|net[- ]zero|klimaatneutraal|co2-neutraal|koolstofneutraal|neutre en carbone|neutralit[eé] carbone|klimaneutral|co2-neutral|netto-?nul|z[eé]ro [eé]mission nette',
      _NEUTRAL_TEMPLATE, 'neutral'),
     ('comparison',
-     'better than|greener than|cleaner than|more sustainable than|more eco[- ]?friendly than|more environmentally[- ]friendly than|than (?:the |our )?(?:competition|competitors?|others|other brands|average|alternatives|conventional|market)|beter dan|groener dan|duurzamer dan|milieuvriendelijker dan|meilleur que|plus (?:vert|durable|[eé]cologique) que|besser als|umweltfreundlicher als',
+     'better than|greener than|cleaner than|more sustainable than|more eco[- ]?friendly than|more environmentally[- ]friendly than|than (?:the |our )?(?:competition|competitors?|others|other brands|average|alternatives|conventional|market)|beter dan|groener dan|duurzamer dan|milieuvriendelijker dan|meilleur que|plus (?:vert|durable|[eé]cologique) que|besser als|umweltfreundlicher als|meilleurs? (?:pour [^.,;]{3,30} )?que|moins polluants? que|que (?:ceux |celles )?(?:de )?(?:la |les )?(?:concurrence|concurrents|autres)|beter (?:voor [^.,;]{3,30} )?dan|dan (?:die |dat )?(?:van )?(?:de |het )?(?:concurrentie|concurrenten|anderen|andere merken|markt)',
      _COMPARATIVE_TEMPLATE, 'comparative'),
     ('supplier',
      'supplier|supply[- ]chain|value[- ]chain|procure|scope 3|leverancier|toeleverancier|waardeketen|ketenpartner|inkoop|fournisseur|cha[iî]ne d|achats responsables|lieferant|lieferkette|beschaffung',
@@ -4361,11 +4361,38 @@ _GENERIC_SUBJECT_TEMPLATES={
                'and dates from [month and year]. Full details: [link]."'),
 }
 
+# Words that only occur in Dutch / French sustainability wording: a short claim ("Tegen 2030 gebruiken we 100% hernieuwbare
+# energie") has too few common function words for _v96_guess_language(), so one such word is enough when the other
+# languages have none.
+_REWRITE_NL_WORDS=frozenset("""tegen gebruiken hernieuwbare duurzaam duurzame verminderen uitstoot bedrijf verpakking verpakkingen leveranciers
+    medewerkers producten milieu milieuvriendelijke milieuvriendelijk groene werken onze wij heeft hebben worden wordt niet
+    naar jaar door klimaatneutraal koolstofneutraal afval""".split())
+_REWRITE_FR_WORDS=frozenset("""nous notre nos énergie durable durables produits entreprise émissions réduire fournisseurs sont avons
+    vert verte respectueux respectueuse emballage emballages dans avec sans pour déchets neutre carbone""".split())
+
+def _rewrite_lang(text):
+    """'nl' or 'fr' when the claim is clearly Dutch or French, else 'en': the rewrite follows the language of the claim."""
+    t=re.sub(r'\s+',' ',str(text or ''))
+    lang=_v96_guess_language(t)
+    if lang in ('nl','fr'):
+        return lang
+    if lang=='en':
+        return 'en'
+    words=re.findall(r"[a-zà-ÿ]+",t.lower())
+    nl=sum(1 for w in words if w in _REWRITE_NL_WORDS)
+    fr=sum(1 for w in words if w in _REWRITE_FR_WORDS)
+    en=sum(1 for w in words if w in _LANG_WORDS['en'])
+    if nl>fr and nl>en:
+        return 'nl'
+    if fr>nl and fr>en:
+        return 'fr'
+    return 'en'
+
 def _claim_subject(text):
     """(category, phrase): ('product'|'company'|'', e.g. 'Our new collection'). The phrase is only given for English
     wording, without green adjectives (the rewrite replaces them by a fact)."""
     t=re.sub(r'\s+',' ',str(text or ''))
-    english=_v96_guess_language(t)=='en'
+    english=_v96_guess_language(t) in ('en','nl','fr')
     m=_SUBJ_RE.search(t)
     if m:
         phrase=''
@@ -4381,26 +4408,36 @@ def _claim_subject(text):
         return 'company',((m.group(1)+' '+m.group(2)).capitalize() if english else '')
     return '',''
 
-def _green_pick(claim_type, claim_text='', trigger=''):
+def _localize_rewrite(picked, lang):
+    """(template, key) with the template in the language of the claim (Dutch / French); English stays as picked."""
+    tpl,key=picked
+    if lang in ('nl','fr') and key:
+        loc=rewrite_examples.template(key,lang)
+        if loc:
+            return (loc,key)
+    return picked
+
+def _green_pick(claim_type, claim_text='', trigger='', lang=None):
     """(template, key) for a green claim. Future claims keep a FUTURE template (goal, interim target, plan, independent
     verifier) whatever they are about; the topic only chooses the goal. Broad claims about a product or the company
     keep that subject."""
     t=(claim_type or '').lower()
     if is_placeholder_finding(t):
         return ('','')
+    lang=lang or _rewrite_lang(claim_text)
     if 'future' in t:
         entry=_topic_for_text(_GREEN_TOPICS,trigger,1) or _topic_for_text(_GREEN_TOPICS,claim_text,1)
         name=entry[0] if entry else ''
         if name=='supplier':
-            return (entry[2],entry[3])
-        return _GREEN_FUTURE[_GREEN_FUTURE_ROUTE.get(name,'future')]
+            return _localize_rewrite((entry[2],entry[3]),lang)
+        return _localize_rewrite(_GREEN_FUTURE[_GREEN_FUTURE_ROUTE.get(name,'future')],lang)
     picked=_pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)
     if picked[1]=='generic':
         cat,phrase=_claim_subject(claim_text)
-        tpl=_GENERIC_SUBJECT_TEMPLATES.get(cat)
+        tpl=_GENERIC_SUBJECT_TEMPLATES.get(cat) if lang=='en' else rewrite_examples.generic_subject_template(cat,lang)
         if tpl and phrase:
             return (tpl.replace('{S}',phrase),'generic')
-    return picked
+    return _localize_rewrite(picked,lang)
 
 def green_rewrite_key(claim_type, claim_text='', trigger=''):
     return _green_pick(claim_type,claim_text,trigger)[1]
@@ -4415,7 +4452,7 @@ def green_rewrite_example(claim_type, claim_text='', trigger='', sector=''):
     """The same sentence completed for an invented company in the sector of the scanned company (always labelled
     fictional where it is shown)."""
     key=green_rewrite_key(claim_type,claim_text,trigger)
-    return rewrite_examples.example(key,sector,_claim_subject(claim_text)[0] if key in ('generic','default') else '')
+    return rewrite_examples.example(key,sector,_claim_subject(claim_text)[0] if key in ('generic','default') else '',_rewrite_lang(claim_text))
 
 _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our organization','as a business',
     'group-wide','company-wide','across our business','our direct operations','our value chain','corporate level',
@@ -4547,8 +4584,9 @@ def enrich_green_finding(f, trigger=''):
     f['ready_to_use_rewrite']=green_ready_to_use_rewrite(f.get('type',''),analysis_text,_rw_trigger)
     f['rewrite_key']=green_rewrite_key(f.get('type',''),analysis_text,_rw_trigger)
     f['rewrite_subject']=_claim_subject(analysis_text)[0] if f['rewrite_key'] in ('generic','default') else ''
-    f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'',f['rewrite_subject'])
-    f['rewrite_note']=rewrite_examples.note(f['rewrite_key'],_rw_trigger,f.get('type',''))
+    f['rewrite_lang']=_rewrite_lang(analysis_text)
+    f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'',f['rewrite_subject'],f['rewrite_lang'])
+    f['rewrite_note']=rewrite_examples.note(f['rewrite_key'],_rw_trigger,f.get('type',''),f['rewrite_lang'])
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -4805,7 +4843,7 @@ def build_green_claim_inventory(findings):
         # this builder dropped it when assembling the frontend-facing claim, so every green
         # claim card's "Legal basis" box (and the badge's hover tooltip) rendered empty.
         # Reported live on Delhaize.
-        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'rewrite_example':f.get('rewrite_example',''),'rewrite_key':f.get('rewrite_key',''),'rewrite_subject':f.get('rewrite_subject',''),'rewrite_note':f.get('rewrite_note',''),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
+        out.append({'dimension':'Green','claim_text':f.get('claim',''),'full_claim_text':f.get('full_claim_text') or f.get('claim',''),'claim_type':f.get('type',''),'washing_type':f.get('type',''),'risk_level':f.get('risk',''),'claim_score':f.get('claim_score',0),'module':f.get('module',green_claim_module(f.get('type',''))),'risk_reason':f.get('issue',''),'analysis':f.get('issue',''),'matched_phrase':f.get('matched_phrase',''),'why_flagged':f.get('why_flagged',''),'regulatory_signal':f.get('regulatory_signal',''),'blacklisted_practice_indicator':f.get('blacklisted_practice_indicator',False),'legal_basis_category':f.get('legal_basis_category','problematic'),'legal_basis_label':f.get('legal_basis_label',''),'legal_basis_short':f.get('legal_basis_short',''),'specification_check':f.get('specification_check',{}),'evidence_questions':f.get('evidence_questions',[]),'pre_publication_decision':f.get('pre_publication_decision','Review before publication.'),'evidence_needed':green_evidence_checklist(f),'suggested_rewrite':f.get('rewrite',''),'ready_to_use_rewrite':f.get('ready_to_use_rewrite',''),'rewrite_example':f.get('rewrite_example',''),'rewrite_key':f.get('rewrite_key',''),'rewrite_subject':f.get('rewrite_subject',''),'rewrite_note':f.get('rewrite_note',''),'rewrite_lang':f.get('rewrite_lang','en'),'standards':f.get('standards',[]),'problematic_terms':f.get('problematic_terms',[])})
     return out
 
 def green_evidence_checklist(f):
@@ -9819,12 +9857,14 @@ def social_rewrite_key(claim_type, claim_text='', trigger=''):
 
 def social_ready_to_use_rewrite(claim_type, claim_text='', trigger=''):
     """Literal, fill-in-the-blank rewrite for social/forced-labour claim types in plain language -- see
-    _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply."""
-    return _pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)[0]
+    _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply. Written in
+    the language of the claim (English, Dutch or French)."""
+    picked=_pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)
+    return _localize_rewrite(picked,_rewrite_lang(claim_text))[0]
 
 def social_rewrite_example(claim_type, claim_text='', trigger='', sector=''):
     """The same sentence completed for an invented company in the sector of the scanned company."""
-    return rewrite_examples.example(social_rewrite_key(claim_type,claim_text,trigger),sector)
+    return rewrite_examples.example(social_rewrite_key(claim_type,claim_text,trigger),sector,'',_rewrite_lang(claim_text))
 
 def enrich_social_finding(f, trigger=''):
     analysis_text=_v93_analysis_text(f)
@@ -9852,8 +9892,9 @@ def enrich_social_finding(f, trigger=''):
     _rw_trigger=str(f.get('matched_phrase') or trigger or '')
     f['ready_to_use_rewrite']=social_ready_to_use_rewrite(f.get('type',''),analysis_text,_rw_trigger)
     f['rewrite_key']=social_rewrite_key(f.get('type',''),analysis_text,_rw_trigger)
-    f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'')
-    f['rewrite_note']=rewrite_examples.note(f['rewrite_key'],_rw_trigger,f.get('type',''))
+    f['rewrite_lang']=_rewrite_lang(analysis_text)
+    f['rewrite_example']=rewrite_examples.example(f['rewrite_key'],'','',f['rewrite_lang'])
+    f['rewrite_note']=rewrite_examples.note(f['rewrite_key'],_rw_trigger,f.get('type',''),f['rewrite_lang'])
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
@@ -12948,9 +12989,11 @@ def _apply_sector_to_rewrite_examples(result):
         if isinstance(o,dict):
             seen.add(id(o))
             if o.get('rewrite_key') and 'rewrite_example' in o:
-                o['rewrite_example']=rewrite_examples.example(o['rewrite_key'],label,o.get('rewrite_subject',''))
-            if dom and isinstance(o.get('ready_to_use_rewrite'),str) and '[link]' in o['ready_to_use_rewrite']:
-                o['ready_to_use_rewrite']=o['ready_to_use_rewrite'].replace('[link]','[link on '+dom+']')
+                o['rewrite_example']=rewrite_examples.example(o['rewrite_key'],label,o.get('rewrite_subject',''),o.get('rewrite_lang','en'))
+            if dom and isinstance(o.get('ready_to_use_rewrite'),str):
+                placeholder,on=rewrite_examples.link_placeholder(o.get('rewrite_lang','en'))
+                if placeholder in o['ready_to_use_rewrite']:
+                    o['ready_to_use_rewrite']=o['ready_to_use_rewrite'].replace(placeholder,'['+on+' '+dom+']')
             for v in o.values():
                 if isinstance(v,(list,dict)): walk(v,depth+1)
         elif isinstance(o,list):

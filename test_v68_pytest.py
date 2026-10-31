@@ -1,10 +1,10 @@
 from pathlib import Path
-import time, hmac, hashlib, json
+import time, hmac, hashlib, json, re
 import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_1_empco_rewrites'
+    assert app.APP_VERSION == 'hostable_v97_2_dutch_french_rewrites'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -7335,14 +7335,14 @@ def test_user_reported_supplier_scope3_claim_gets_a_supplier_rewrite_not_a_produ
     for ty in ('Generic environmental claim', 'Future environmental-performance claim'):
         template = app.green_ready_to_use_rewrite(ty, cleaned)
         example = app.green_rewrite_example(ty, cleaned)
-        assert 'suppliers' in template.lower() and 'suppliers' in example.lower(), ty
+        assert 'leveranciers' in template.lower() and 'leveranciers' in example.lower(), ty   # Dutch claim -> Dutch rewrite
         assert 'water' not in template.lower() and 'product line' not in template.lower(), ty
 
 
 _RELEVANCE_CASES = [
     # (claim type, claim wording, a phrase the matching rewrite must contain)
     ('Generic environmental claim', 'We are committed to sustainable packaging solutions', 'packaging type'),
-    ('Generic environmental claim', 'Nous utilisons de l’énergie verte et renouvelable', 'electricity'),
+    ('Generic environmental claim', 'Nous utilisons de l’énergie verte et renouvelable', 'électricité'),
     ('Generic environmental claim', 'Wir sparen Wasser und schützen Ressourcen', 'water per'),
     ('Generic environmental claim', 'Eco-friendly bags that are biodegradable', 'breaks down'),
     ('Generic environmental claim', 'We protect nature and biodiversity', 'habitat'),
@@ -7350,11 +7350,11 @@ _RELEVANCE_CASES = [
     ('Generic environmental claim', 'We reduce waste', 'waste from'),
     ('Generic environmental claim', 'Climate-friendly production, lower CO2 emissions', 'greenhouse-gas'),
     ('Generic environmental claim', 'We protect natural resources', 'What the claim is about'),
-    ('Generic environmental claim', 'Onze producten zijn duurzaam', 'What the claim is about'),
+    ('Generic environmental claim', 'Onze producten zijn duurzaam', 'Onze producten ['),
     ('Absolute or purity environmental wording', '100% natural, chemical-free ingredients', 'contains no'),
     ('Absolute or purity environmental wording', 'zero waste to landfill', 'waste from'),
     ('Absolute or purity environmental wording', 'fully recyclable', 'can be'),
-    ('Future environmental-performance claim', 'Tegen 2030 gebruiken we 100% hernieuwbare energie', 'electricity'),
+    ('Future environmental-performance claim', 'Tegen 2030 gebruiken we 100% hernieuwbare energie', 'elektriciteit'),
     ('Future environmental-performance claim', 'We aim to be more sustainable in the future', 'We aim to'),
     ('Comparative environmental claim', "greener than competitors' packaging", 'less'),
     ('Climate-neutrality or offsetting claim', 'carbon neutral supply chain', 'greenhouse-gas'),
@@ -7371,7 +7371,7 @@ def test_green_rewrite_follows_claim_type_and_topic():
 def test_social_rewrite_follows_claim_type_and_topic_but_keeps_broad_policies_broad():
     h = 'Human-rights / labour-rights claim'
     assert 'living wage' in app.social_ready_to_use_rewrite(h, 'We pay a living wage to all employees')
-    assert 'living wage' in app.social_ready_to_use_rewrite(h, 'Wij betalen een leefbaar loon')
+    assert 'leefbaar loon' in app.social_ready_to_use_rewrite(h, 'Wij betalen een leefbaar loon')
     assert 'child labour' in app.social_ready_to_use_rewrite(h, 'Child labour is banned; we audit child labour risk')
     assert 'training' in app.social_ready_to_use_rewrite(h, 'We offer training and skills development')
     # a broad policy that mentions a topic once, or "European Union", keeps the human-rights template
@@ -8372,7 +8372,7 @@ def test_climate_neutrality_rewrite_drops_the_neutrality_claim_and_shows_funding
 def test_future_claims_get_a_future_rewrite_with_interim_target_and_an_independent_expert():
     f = 'Future environmental-performance claim'
     cases = [('We aim to be net zero by 2040', 'net zero', 'future_climate', 'Offsets do not count'),
-             ('Tegen 2030 gebruiken we 100% hernieuwbare energie', '', 'future_energy', 'electricity'),
+             ('By 2030 we will use only renewable energy', '', 'future_energy', 'electricity'),
              ('By 2028 we will recycle all of our waste', '', 'future_waste', 'recycle'),
              ('We will make all packaging recyclable by 2030', '', 'future_packaging', 'packaging'),
              ('Our fleet will be fully electric by 2030', '', 'future_transport', 'emission-free'),
@@ -8407,7 +8407,7 @@ def test_rewrite_for_a_product_claim_keeps_the_subject_and_gets_a_product_exampl
     assert app._claim_subject('We care about the world')[0] == ''
     # other languages keep the category (so the example fits) but no English phrase in the template
     assert app._claim_subject('Onze nieuwe collectie is duurzaam gemaakt voor het milieu')[0] == 'product'
-    assert 'What the claim is about' in app.green_ready_to_use_rewrite(g, 'Onze producten zijn duurzaam')
+    assert app.green_ready_to_use_rewrite(g, 'Onze producten zijn duurzaam').startswith('"Onze producten [een concreet feit')
     # the example is a product in the sector, not a company-wide figure
     ex = app.green_rewrite_example(g, text, 'sustainable', 'Fast fashion and apparel retail (NACE G)')
     assert 'Lindhout 501 jeans contain 40% recycled cotton' in ex
@@ -8426,7 +8426,8 @@ def test_every_rewrite_has_an_empco_note_that_names_the_rule_and_the_condition_f
         assert len(n) <= 420 and '{' not in n and 'attribute' not in n.lower(), (key, n)
         assert 'EmpCo' in n or 'UCPD' in n or 'Annex I' in n, key
     assert '“eco-friendly”' in _rx.note('generic', 'eco-friendly') and 'point 4a' in _rx.note('generic', 'eco-friendly')
-    assert 'the wording used' in _rx.note('generic', '')
+    assert 'such as' not in _rx.note('generic', '') and _rx.note('generic', '').startswith('Generic wording is banned')
+    assert 'zoals “duurzaam”' in _rx.note('generic', 'duurzaam', lang='nl') and 'comme «' not in _rx.note('generic', '', lang='fr')
     assert 'point 4c' in _rx.note('neutral') and 'point 2a' in _rx.note('label') and 'point 10a' in _rx.note('legal')
     assert 'Article 6(2)(d)' in _rx.note('future_climate') and _rx.note('future_energy') == _rx.note('future')
     assert _rx.note('forced').startswith('Not an EmpCo claim')
@@ -8467,3 +8468,149 @@ def test_pdf_and_screen_show_the_note_under_the_rewrite():
     html = Path('frontend.html').read_text(encoding='utf-8')
     assert 'Why this wording, and when to use it:' in html and 'r.rewrite_note' in html
     assert 'Why this wording, and when to use it:' in Path('report_pdf.py').read_text(encoding='utf-8')
+
+
+# ---- v97.2: Dutch and French rewrites ------------------------------------------------------------------------------
+
+def test_dutch_and_french_modules_mirror_every_english_key_token_and_note():
+    base_tokens = set(_rx.PROFILES['general'])
+    for lang, mod in _rx.LANGUAGES.items():
+        assert set(mod.PROFILES) == set(_rx.PROFILES), lang
+        for name, tokens in mod.PROFILES.items():
+            assert set(tokens) == base_tokens, (lang, name)
+        assert set(mod.EXAMPLES) == set(_rx.EXAMPLES), (lang, set(_rx.EXAMPLES) ^ set(mod.EXAMPLES))
+        assert set(mod.OVERRIDES) == set(_rx.OVERRIDES), lang
+        for prof, ov in _rx.OVERRIDES.items():
+            assert set(mod.OVERRIDES[prof]) == set(ov), (lang, prof, set(ov) ^ set(mod.OVERRIDES[prof]))
+        assert set(mod.NOTES) == set(_rx.NOTES), (lang, set(_rx.NOTES) ^ set(mod.NOTES))
+        assert set(mod.GENERIC_SUBJECT) == {'product', 'company'}
+        # every English template key has a template in this language (and no more)
+        assert set(mod.TEMPLATES) == set(_template_keys()), (lang, set(_template_keys()) ^ set(mod.TEMPLATES))
+
+
+_ENGLISH_LEFTOVERS = re.compile(r'\b(the|and|our|with|for|that|this|from|between|which|were|are)\b')
+
+
+def test_dutch_and_french_texts_are_complete_sentences_without_english_leftovers():
+    for lang, mod in _rx.LANGUAGES.items():
+        for key, tpl in mod.TEMPLATES.items():
+            assert tpl.startswith('"') and tpl.endswith('"') and '[' in tpl and ']' in tpl, (lang, key)
+            assert 60 <= len(tpl) <= 560 and '{' not in tpl, (lang, key, len(tpl))
+            assert not _ENGLISH_LEFTOVERS.search(tpl.lower()), (lang, key, tpl)
+        for category, tpl in mod.GENERIC_SUBJECT.items():
+            assert '{S}' in tpl and '[' in tpl and not _ENGLISH_LEFTOVERS.search(tpl.lower()), (lang, category)
+        for key, note in mod.NOTES.items():
+            assert len(note) <= 480 and not _ENGLISH_LEFTOVERS.search(note.lower().replace('{trigger}', '')), (lang, key)
+            assert any(w in note.lower() for w in ('empco', 'ucpd', 'pcd', 'annexe', 'bijlage')), (lang, key)
+        for label in _SECTOR_SAMPLE_LABELS.values():
+            for key in _rx.EXAMPLES:
+                ex = _rx.example(key, label, lang=lang)
+                assert ex.startswith('"') and ex.endswith('"') and '{' not in ex and '}' not in ex and '[' not in ex, (lang, label, key)
+                assert 60 <= len(ex) <= 520, (lang, label, key, len(ex))
+                assert not _ENGLISH_LEFTOVERS.search(ex.lower()), (lang, label, key, ex)
+            product = _rx.example('generic', label, 'product', lang)
+            assert product != _rx.example('generic', label, '', lang) and len(product) <= 520
+
+
+def test_dutch_and_french_examples_never_use_the_wording_empco_bans():
+    banned = {'nl': re.compile(r'klimaatneutraal|koolstofneutraal|net[- ]zero|milieuvriendelijk|planeet|groen fonds|groene obligatie', re.I),
+              'fr': re.compile(r'neutre en carbone|neutralit[eé] carbone|z[eé]ro [eé]mission nette|[eé]cologique|plan[eè]te|fonds vert|obligation verte|respectueux de l.environnement', re.I)}
+    for lang, rx in banned.items():
+        for label in _SECTOR_SAMPLE_LABELS.values():
+            for key in _rx.EXAMPLES:
+                ex = _rx.example(key, label, lang=lang)
+                assert not rx.search(ex), (lang, label, key, ex)
+        for key, tpl in _rx.LANGUAGES[lang].TEMPLATES.items():
+            assert not rx.search(tpl), (lang, key)
+
+
+def test_every_future_example_in_dutch_and_french_has_an_independent_expert_and_published_findings():
+    marker = {'nl': ('onafhankelijke externe deskundige', 'publiceert de bevindingen'), 'fr': ('expert indépendant externe', 'publie ses conclusions')}
+    for lang, (expert, publishes) in marker.items():
+        for key in ('future', 'future_climate', 'future_energy', 'future_waste', 'future_packaging', 'future_transport'):
+            tpl = _rx.template(key, lang)
+            assert expert in tpl and publishes in tpl, (lang, key)
+            for label in _SECTOR_SAMPLE_LABELS.values():
+                ex = _rx.example(key, label, lang=lang)
+                assert expert in ex and publishes in ex, (lang, key, label)
+        assert ('Compensatie telt niet mee' if lang == 'nl' else 'compensation ne compte pas') in _rx.template('future_climate', lang)
+        neutral = _rx.template('neutral', lang)
+        assert ('niet van onze uitstoot afgetrokken' if lang == 'nl' else 'pas déduite de nos émissions') in neutral
+
+
+def test_claim_language_decides_the_language_of_the_rewrite():
+    g, f, s = 'Generic environmental claim', 'Future environmental-performance claim', 'Human-rights / labour-rights claim'
+    assert app._rewrite_lang('Tegen 2030 gebruiken we 100% hernieuwbare energie') == 'nl'
+    assert app._rewrite_lang('Nous utilisons de l’énergie verte et renouvelable') == 'fr'
+    assert app._rewrite_lang('We aim to be net zero by 2040') == 'en'
+    assert app._rewrite_lang('Wir sparen Wasser und schützen Ressourcen') == 'en'      # German: English rewrite
+    assert app._rewrite_lang('') == 'en'
+    nl = app.green_ready_to_use_rewrite(f, 'Tegen 2030 gebruiken we 100% hernieuwbare energie')
+    assert app.green_rewrite_key(f, 'Tegen 2030 gebruiken we 100% hernieuwbare energie') == 'future_energy' and nl == _rx.template('future_energy', 'nl')
+    fr = app.green_ready_to_use_rewrite(f, 'Nous visons la neutralité carbone d’ici 2040 pour toute l’entreprise', 'neutralité carbone')
+    assert fr == _rx.template('future_climate', 'fr')
+    # a subject phrase in the claim's own language
+    assert app._claim_subject('Onze nieuwe duurzame collectie is met zorg voor het milieu gemaakt.') == ('product', 'Onze nieuwe collectie')
+    assert app._claim_subject('Notre nouvelle collection durable est conçue avec soin pour l’environnement.') == ('product', 'Notre nouvelle collection')
+    nl_generic = app.green_ready_to_use_rewrite(g, 'Onze nieuwe duurzame collectie is met zorg voor het milieu gemaakt.', 'duurzame')
+    assert nl_generic.startswith('"Onze nieuwe collectie [een concreet feit')
+    fr_generic = app.green_ready_to_use_rewrite(g, 'Notre nouvelle collection durable est conçue avec soin pour l’environnement.', 'durable')
+    assert fr_generic.startswith('"Notre nouvelle collection [un fait concret')
+    # social claims too
+    assert app.social_ready_to_use_rewrite(s, 'Wij betalen een leefbaar loon') == _rx.template('wage', 'nl')
+    assert app.social_ready_to_use_rewrite(s, 'Nous payons un salaire vital à tous nos employés') == _rx.template('wage', 'fr')
+    assert app.social_ready_to_use_rewrite(s, 'We pay a living wage to all employees').startswith('"In [year]')
+    assert 'leveranciers' in app.green_rewrite_example('Generic environmental claim', 'Samenwerken met leveranciers om Scope 3-emissies te verminderen').lower()
+
+
+def test_scan_of_a_dutch_text_gives_dutch_rewrites_example_and_note_with_the_companys_own_site():
+    text = ('Onze verpakking is milieuvriendelijk en goed voor de planeet. Wij zijn klimaatneutraal dankzij compensatie. '
+            'Tegen 2030 gebruiken we 100% hernieuwbare energie.')
+    r = app.analyse_uploaded_document('t.txt', text, 'TestCo', '', document_coverage=None)
+    r['original_url'] = 'https://www.dandoy.be/nl'
+    r = app._apply_sector_to_rewrite_examples(r)
+    seen = 0
+    for lst in ('green_findings', 'claim_inventory'):
+        for x in r.get(lst) or []:
+            if not x.get('rewrite_key'):
+                continue
+            seen += 1
+            assert x['rewrite_lang'] == 'nl', (lst, x['rewrite_key'])
+            assert x['ready_to_use_rewrite'].count('[link op dandoy.be]') + x['ready_to_use_rewrite'].count('[link]') <= 1
+            assert not _ENGLISH_LEFTOVERS.search(x['ready_to_use_rewrite'].lower()), x['rewrite_key']
+            assert not _ENGLISH_LEFTOVERS.search(x['rewrite_example'].lower()), x['rewrite_key']
+            assert x['rewrite_note'] == _rx.note(x['rewrite_key'], x.get('matched_phrase', ''), '', 'nl') or x['rewrite_note'].startswith(('Een ', 'EmpCo', 'Geen', 'Vervang', 'Absolute', "'", 'Bijlage', 'Claims', 'Zeg', 'Noem'))
+    assert seen
+    # French and idempotent link step
+    fr = {'original_url': 'https://www.lidl.be/fr', 'sector': {'name': ''}, 'findings': [{'rewrite_key': 'generic', 'rewrite_lang': 'fr', 'rewrite_example': 'x',
+          'ready_to_use_rewrite': '"Un fait. Détails complets : [lien]."'}]}
+    once = app._apply_sector_to_rewrite_examples(fr)
+    assert once['findings'][0]['ready_to_use_rewrite'] == '"Un fait. Détails complets : [lien sur lidl.be]."'
+    assert app._apply_sector_to_rewrite_examples(once)['findings'][0]['ready_to_use_rewrite'] == '"Un fait. Détails complets : [lien sur lidl.be]."'
+
+
+def test_company_pdf_with_dutch_and_french_rewrites_is_built_and_keeps_the_whole_sentence():
+    import io as _io
+    import pypdf
+    import report_pdf as rp
+    text = ('Onze verpakking is milieuvriendelijk en goed voor de planeet. Wij zijn klimaatneutraal dankzij compensatie. '
+            'Notre collection est écologique et respectueuse de l’environnement. Nous sommes neutres en carbone grâce à la compensation.')
+    r = app.analyse_uploaded_document('t.txt', text, 'TestCo', '', document_coverage=None)
+    payload = app._unsigned_report_payload(app.decode_report_token(app.create_report_token(r)))
+    pdf = rp.build_company_report_pdf(payload)
+    out = ' '.join(' '.join(p.extract_text().split()) for p in pypdf.PdfReader(_io.BytesIO(pdf)).pages)
+    assert 'Reusable wording' in out
+    assert 'niet van onze uitstoot afgetrokken' in out or 'pas déduite de nos émissions' in out
+    for lang in ('nl', 'fr'):
+        for key, tpl in _rx.LANGUAGES[lang].TEMPLATES.items():
+            assert rp.ready_to_use_rewrite_text({'ready_to_use_rewrite': tpl}, 560) == rp.clean_text(tpl), (lang, key)
+
+
+def test_dutch_and_french_broad_comparisons_get_the_comparison_rewrite():
+    g = 'Generic environmental claim'
+    for text in ('Nos produits sont meilleurs pour la planète que ceux de la concurrence', 'Notre emballage est plus durable que les autres',
+                 'Onze producten zijn beter voor de planeet dan die van de concurrentie', 'Onze verpakking is groener dan die van anderen'):
+        assert app.green_rewrite_key(g, text) == 'comparative', text
+    assert app.green_rewrite_key(g, 'We cut waste by less than 2 tonnes') != 'comparative'
+    assert 'même usage' in app.green_ready_to_use_rewrite(g, 'Nos produits sont meilleurs pour la planète que ceux de la concurrence')
+    assert 'hetzelfde doel' in app.green_ready_to_use_rewrite(g, 'Onze producten zijn beter voor de planeet dan die van de concurrentie')
