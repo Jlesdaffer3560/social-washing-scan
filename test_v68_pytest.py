@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_5_page_level_evidence'
+    assert app.APP_VERSION == 'hostable_v97_6_double_check_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8852,3 +8852,56 @@ def test_specification_on_the_page_helper_covers_labels_and_social_schemes_and_i
     social = '\n\nPAGE: https://example.be/s\nAll our suppliers are audited.\n\nOur factories are audited under the amfori BSCI standard.'
     assert 'amfori' in app._v97_page_specification(social, 'All our suppliers are audited.', 'suppliers are audited', 'Supply-chain or supplier-responsibility claim', 'social')
     assert app._v97_page_specification(social, 'All our suppliers are audited.', 'suppliers are audited', 'Diversity, equality and inclusion claim', 'social') == ''
+
+
+# ---- v97.6: bugs found in the double check of v97.0 - v97.5 -----------------------------------------------------------
+
+def test_a_report_title_or_everyday_words_next_to_a_claim_are_not_treated_as_evidence():
+    """A document titled "Jaarverslag"/"Annual report", a privacy sentence about "data", a ".be" e-mail address, the French word
+    "assurance" (insurance) or "independent family company" are not substantiation of a claim next to them."""
+    claim = 'Wij tolereren geen kinderarbeid in onze toeleveringsketen en wij zijn er trots op.'
+    for around in ('Jaarverslag van Examplo Transport. Dit eerste blad beschrijft het bedrijf.',
+                   'Annual report 2024. This page describes the company and its history.',
+                   'Wij verwerken uw persoonlijke gegevens volgens ons privacybeleid.',
+                   'Contact: info@example.be of bel ons.',
+                   'Nous sommes une entreprise familiale indépendante avec une assurance complète.'):
+        text = around + ' ' + claim
+        assert [f for f in app.detect_claims(text) if f.get('rewrite_key') == 'childlabour'], around
+
+
+def test_short_social_slogans_are_detected_but_menu_items_are_not():
+    for text in ('Veiligheid is onze topprioriteit.', 'Safety is our top priority.', 'La sécurité est notre priorité absolue.'):
+        assert [f for f in app.detect_claims('Over ons. ' + text + ' Contacteer ons.') if f['type'].startswith('Health')], text
+    for text in ('Safety first', 'Diversity', 'Veiligheid'):
+        assert not [f for f in app.detect_claims(text) if not app.is_placeholder_finding(f['type'])], text
+
+
+def test_pointers_to_a_report_or_policy_in_compound_words_count_as_references_and_are_not_claims_themselves():
+    claim = 'Wij tolereren geen kinderarbeid in onze toeleveringsketen.'
+    for pointer in ('Lees meer in ons duurzaamheidsverslag.', 'Details are in our sustainability report.', 'Pour plus de détails, consultez notre politique.',
+                    'Voir notre rapport annuel.'):
+        assert not [f for f in app.detect_claims(claim + ' ' + pointer) if f.get('rewrite_key') == 'childlabour'], pointer
+        assert not [f for f in app.detect_claims(pointer) if not app.is_placeholder_finding(f['type'])], pointer
+        assert not [f for f in app.detect_green_claims(pointer) if not app.is_placeholder_finding(f['type'])], pointer
+
+
+def test_second_person_filter_skips_vacancy_wording_but_not_u_dot_s_dot():
+    us = 'We do not tolerate child labour anywhere in our supply chain, including our U.S. suppliers.'
+    assert [f for f in app.detect_claims(us) if f.get('rewrite_key') == 'childlabour']
+    assert not [f for f in app.detect_claims('Wij investeren in uw opleiding en ontwikkeling als medewerker bij ons.') if f.get('rewrite_key') == 'training']
+
+
+def test_duplicate_sentences_are_skipped_before_the_checks_and_the_page_index_is_thread_safe():
+    text = ('We do not tolerate child labour anywhere in our supply chain. ' * 40)
+    assert len([f for f in app.detect_claims(text) if f.get('rewrite_key') == 'childlabour']) == 1
+    import threading as _t
+    errors = []
+    def work(n):
+        try:
+            for i in range(200):
+                app._v97_register_pages('https://example.com/doc%d_%d.pdf' % (n, i), [(1, 'some text on the first page of the document')])
+        except Exception as exc:                                                   # pragma: no cover
+            errors.append(exc)
+    threads = [_t.Thread(target=work, args=(n,)) for n in range(6)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    assert not errors and len(app._V97_PAGE_INDEX) <= app._V97_PAGE_INDEX_MAX

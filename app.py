@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_5_page_level_evidence"
-APP_RELEASE_LABEL="v97.5"
+APP_VERSION="hostable_v97_6_double_check_fixes"
+APP_RELEASE_LABEL="v97.6"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -5135,6 +5135,7 @@ def _strip_pdf_glyph_artifacts(txt):
 # report can say "p. 12". Web pages have no page numbers and are not affected.
 _V97_PAGE_INDEX={}
 _V97_PAGE_INDEX_MAX=60
+_V97_PAGE_INDEX_LOCK=threading.Lock()
 _V97_PAGE_MARKER_RE=re.compile(r'\n?\[\[\[PAGE (\d{1,5})\]\]\]\n?')
 
 def _v97_norm(text):
@@ -5154,13 +5155,14 @@ def _v97_register_pages(sources,pages):
         rows=[(int(n),_v97_norm(t)) for n,t in pages or [] if t]
         rows=[r for r in rows if r[1]]
         if not rows: return
-        for src in sources if isinstance(sources,(list,tuple)) else [sources]:
-            key=_v97_key(src)
-            if not key: continue
-            _V97_PAGE_INDEX.pop(key,None)
-            _V97_PAGE_INDEX[key]=rows
-        while len(_V97_PAGE_INDEX)>_V97_PAGE_INDEX_MAX:
-            _V97_PAGE_INDEX.pop(next(iter(_V97_PAGE_INDEX)),None)
+        with _V97_PAGE_INDEX_LOCK:                       # scans run in parallel threads
+            for src in sources if isinstance(sources,(list,tuple)) else [sources]:
+                key=_v97_key(src)
+                if not key: continue
+                _V97_PAGE_INDEX.pop(key,None)
+                _V97_PAGE_INDEX[key]=rows
+            while len(_V97_PAGE_INDEX)>_V97_PAGE_INDEX_MAX:
+                _V97_PAGE_INDEX.pop(next(iter(_V97_PAGE_INDEX)),None)
     except Exception:
         pass
 
@@ -9190,25 +9192,26 @@ V97_SOCIAL_FREEFORM_PATTERNS = [
 # Evidence that a claim is backed up: figures, audits, verification, certificates, named standards, reports, links, grievance or
 # agreement mechanisms. Matched on lower-case text; one hit in the sentence or right next to it means "evidence is provided".
 _V97_EVIDENCE_RE = re.compile("|".join([
+    # v97.6: only words that really indicate substantiation. Everyday words that merely often sit next to a claim (data, published,
+    # according to, assurance = insurance in French, a ".be" in an e-mail address, a report TITLE, "independent family company")
+    # were taken out: they hid genuine claims.
     r"\d+(?:[.,]\d+)?\s?%",
     r"\b\d[\d.,]*\s+(?:audits?|accidents?|incidents?|suppliers?|factories|sites|employees|workers|hours|inspections|trainings?|leveranciers|fabrieken|werknemers|medewerkers|uren|ongevallen|inspecties|opleidingen|fournisseurs|usines|employ[eé]s|travailleurs|heures|formations)\b",
     r"\bper\s+1[., ]?000[., ]?000\b|\bltifr\b|\btrir\b",
     r"\baudit\w*|\bgeaudit\w*|\bauditeur\w*",
-    r"\bthird[- ]party\b|\bderde partij\b|\bindependent(?:ly)?\b|\bonafhankelijk\w*|\bind[eé]pendant\w*",
+    r"\bthird[- ]party\b|\bderde partij\b|\bindependent(?:ly)?\s+(?:audit|verif|assur|review|assess|monitor|certif)\w*|\bonafhankelijk\w*\s+(?:audit|gecontroleerd|geverifieerd|beoordeeld|gecertificeerd|toezicht)\w*|\bind[eé]pendant\w*\s+(?:audit|v[eé]rifi|certifi|[eé]valu)\w*|\bpar un tiers\b",
     r"\bverif\w+|\bgeverifieerd\b|\bv[eé]rifi\w+",
-    r"\bcertifi\w+|\bgecertificeerd\b|\bcertificat\w*",
-    r"\bassurance\b|\bassured\b",
-    r"\biso\s?\d{4,5}\b|\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfairtrade\b|\bfair trade\b|\bb corp\b|\bgots\b|\becovadis\b|\banker\b|\bfair wear\b|\bilo\b|\boecd\b|\boeso\b|\bocde\b|\bungp\b|\bun guiding\b|\bcsrd\b|\besrs\b|\bgri\b",
-    r"https?://|www\.|\.com\b|\.be\b|\.eu\b|\.org\b",
-    r"\b(?:annual|sustainability|esg|impact|csr)\s+report\b|\bjaarverslag\b|\bduurzaamheidsverslag\b|\brapport\s+(?:annuel|de durabilit[eé]|rse)\b|\bsee (?:our|the|page)\b|\bzie (?:ons|onze|pagina)\b|\bvoir (?:notre|nos|page)\b",
-    r"\bpublished\b|\bgepubliceerd\b|\bpubli[eé]\w*|\baccording to\b|\bvolgens\b|\bselon\b|\bas reported\b",
-    r"\bkpis?\b|\bmeasured\b|\bgemeten\b|\bmesur[eé]\w*|\bdata\b|\bgegevens\b|\bdonn[eé]es\b|\bstatistics\b|\bstatistiek\w*|\bstatistiques\b",
-    r"\bgrievance\b|\bwhistle-?blow\w*|\bhotline\b|\bspeak[- ]up\b|\bklachten\w*|\bklokkenluid\w*|\bmeldpunt\b|\bmeldlijn\b|\bsignalement\b|\blanceur d'alerte\b|\bplainte\w*",
+    r"\bcertifi\w+|\bgecertificeerd\b|\bcertificat\w*|\bcertificaat\b",
+    r"\biso\s?\d{4,5}\b|\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfairtrade\b|\bfair trade\b|\bb corp\b|\bgots\b|\becovadis\b|\banker[- ](?:method|methode|methodologie|benchmark|research)\b|\bfair wear\b|\bilo\b|\boecd\b|\boeso\b|\bocde\b|\bungp\b|\bun guiding\b|\bcsrd\b|\besrs\b|\bgri\b",
+    r"https?://|www\.",
+    r"\bsee (?:our|the|page)\b|\bzie (?:ons|onze|pagina)\b|\bvoir (?:notre|nos|page)\b",           # a bare report NAME ("Annual report 2024", "Jaarverslag") is a title, not evidence
+    r"\bkpis?\b|\bmeasured\b|\bgemeten\b|\bmesur[eé]\w*",
+    r"\bgrievance\b|\bwhistle-?blow\w*|\bhotline\b|\bspeak[- ]up\b|\bklachtenprocedure\b|\bklachtenmechanisme\b|\bklachtenkanaal\b|\bklachtenregeling\b|\bklokkenluid\w*|\bmeldpunt\b|\bmeldlijn\b|\bsignalement\b|\blanceur d'alerte\b|\bproc[eé]dure de plainte\b|\bm[eé]canisme de plainte\b",
     r"\bcollective (?:labou?r )?agreement\b|\bcollectieve arbeidsovereenkomst\b|\bcao\b|\bconvention collective\b",
-    r"\brisk assessment\b|\brisicoanalyse\b|\banalyse des risques\b|\bevaluation des risques\b|\bdue diligence\b|\bzorgvuldigheidsplicht\b|\bdevoir de vigilance\b|\bremediation\b|\bremedy\b|\bherstel\w*|\br[eé]paration\b|\bcorrective action\b",
+    r"\brisk assessment\b|\brisicoanalyse\b|\banalyse des risques\b|\bevaluation des risques\b|\bdue diligence\b|\bzorgvuldigheidsplicht\b|\bdevoir de vigilance\b|\bremediation\b|\bherstelplan\b|\bplan de rem[eé]diation\b|\bcorrective action\b|\bmesures correctives\b",
 ]), re.I)
 _V97_JOB_AD_RE = re.compile(r"\b(apply|vacanc\w*|job openings?|careers?|join our team|we are hiring|we're hiring|recruit\w*|sollicit\w*|vacature\w*|werken bij|word onderdeel van ons team|postul\w*|carri[eè]re|offres? d'emploi|nous recrutons|rejoignez)\b", re.I)
-_V97_SECOND_PERSON_RE = re.compile(r"\b(your|you|you're|jouw|jij|je|uw|u|votre|vos|vous|tu|ton|ta)\b", re.I)
+_V97_SECOND_PERSON_RE = re.compile(r"\b(your|you|you're|jouw|jij|je|uw|votre|vos|vous|tu)\b|(?<![A-Za-z.])u(?![A-Za-z.])", re.I)
 
 def _v97_evidence_nearby(excerpt_low, full_text):
     """True when the claim sentence itself, or the text right around it (the sentence before and up to ~450 characters after,
@@ -9287,7 +9290,7 @@ def _v97_page_text(full_text, excerpt):
 _V97_SOCIAL_TOPIC_EVIDENCE_RE = re.compile("|".join([
     r"\b(?:supplier|social|factory|human[- ]rights|labou?r|safety|site)\s+audit\w*|\b(?:leverancier\w*|sociale|fabrieks\w*|veiligheids)\s?audit\w*|\baudits?\s+(?:at|of|bij|chez)\s+(?:our\s+|onze\s+|nos\s+)?(?:suppliers|factories|sites|leveranciers|fabrieken|fournisseurs|usines)\b|\baudits? sociaux\b",
     r"\b\d[\d.,]*\s+audits?\b",
-    r"\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfair wear\b|\bfairtrade\b|\biso\s?45001\b|\bilo\b|\bungp\b|\bun guiding\b|\boecd (?:guidelines|due diligence)\b|\boeso\b|\bocde\b|\bbetter work\b|\bwrap\b|\banker\b|\bfair wage network\b|\becovadis\b|\bb corp\b",
+    r"\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfair wear\b|\bfairtrade\b|\biso\s?45001\b|\bilo\b|\bungp\b|\bun guiding\b|\boecd (?:guidelines|due diligence)\b|\boeso\b|\bocde\b|\bbetter work\b|\banker[- ](?:method|methode|methodologie|benchmark|research)\b|\bfair wage network\b|\becovadis\b|\bb corp\b",
     r"\bgrievance (?:mechanism|channel|procedure)s?\b|\bwhistle-?blow\w*|\bspeak[- ]up\b|\bhotline\b|\bklachtenmechanisme\b|\bklachtenprocedure\b|\bklachtenkanaal\b|\bmeldpunt\b|\bmeldlijn\b|\bklokkenluid\w*|\bm[eé]canisme de plainte\b|\bproc[eé]dure de plainte\b|\blanceur d'alerte\b|\bligne d'alerte\b",
     r"\bcollective (?:labou?r )?agreement\b|\bcollectieve arbeidsovereenkomst\b|\bconvention collective\b",
     r"\b(?:human[- ]rights|supply[- ]chain|supplier)\s+due diligence\b|\bzorgvuldigheidsplicht\b|\bdevoir de vigilance\b|\b(?:human[- ]rights|labou?r|forced[- ]labou?r|child[- ]labou?r)\s+risk assessment\b|\brisicoanalyse\b|\banalyse des risques\b",
@@ -9297,9 +9300,12 @@ _V97_SOCIAL_TOPIC_EVIDENCE_RE = re.compile("|".join([
 ]), re.I)
 # A pointer to more explanation elsewhere: "see our report", "lees meer in ons beleid", "pour plus de détails, consultez notre politique".
 _V97_REFERRAL_RE = re.compile("|".join([
-    r"\b(?:see|read|learn|find out|check|visit|consult|refer to|details? (?:in|on|at)|more (?:information|details|about)|further information|full (?:policy|details|report))\b[^.]{0,80}\b(?:report|policy|policies|page|website|code of conduct|statement|document|here)\b",
-    r"\b(?:zie|lees|raadpleeg|bekijk|meer (?:informatie|details|weten)|verdere informatie|volledig (?:beleid|verslag))\b[^.]{0,80}\b(?:verslag|rapport|beleid|pagina|website|gedragscode|document|hier)\b",
-    r"\b(?:voir|lire|consultez|en savoir plus|plus d'informations|pour plus de d[eé]tails|informations compl[eé]mentaires)\b[^.]{0,80}\b(?:rapport|politique|page|site|code de conduite|document|ici)\b",
+    r"\b(?:see|read|learn|find out|check|visit|consult|refer to|details? (?:are |is )?(?:in|on|at)|more (?:information|details|about)|further information|full (?:policy|details|report))\b[^.]{0,80}\b(?:\w*report|polic(?:y|ies)|page|website|code of conduct|statement|document|here)\b",
+    r"\b(?:in|on|via)\s+(?:our|the)\s+(?:[\w-]+\s+){0,2}(?:report|polic(?:y|ies)|code of conduct|website|page)\b",
+    r"\b(?:zie|lees|raadpleeg|bekijk|meer (?:informatie|details|weten)|verdere informatie|volledig (?:beleid|verslag))\b[^.]{0,80}\b(?:\w*verslag|\w*rapport|\w*beleid|pagina|website|\w*gedragscode|document|hier)\b",
+    r"\b(?:in|op|via)\s+(?:ons|onze|het)\s+(?:[\w-]+\s+){0,2}(?:\w*verslag|\w*rapport|\w*beleid|\w*gedragscode|website|pagina)\b",
+    r"\b(?:voir|lire|consultez|en savoir plus|plus d'informations|pour plus de d[eé]tails|informations compl[eé]mentaires)\b[^.]{0,80}\b(?:\w*rapport|politique|page|site|code de conduite|document|ici)\b",
+    r"\b(?:dans|sur)\s+(?:notre|nos|le)\s+(?:[\w-]+\s+){0,2}(?:rapport|politique|code de conduite|site|page)\b",
 ]), re.I)
 
 def _v97_social_page_evidence(full_text, excerpt):
@@ -9359,7 +9365,7 @@ def _v97_freeform_social_ok(excerpt, found, full_text):
     """Extra qualifier for the free-form social patterns: no evidence nearby, not a vacancy text or a question, no second-person
     address, and not already reported under another social type."""
     c=_v97_strip_markers(_normalize_apostrophes((excerpt or '').lower())).strip()
-    if len(c)<45 or '?' in c:
+    if len(c)<24 or len(c.split())<4 or '?' in c:           # a short slogan ("Veiligheid is onze topprioriteit.") is a claim; a menu item or heading is not
         return False
     if _V97_JOB_AD_RE.search(c) or _V97_SECOND_PERSON_RE.search(c):
         return False
@@ -10196,6 +10202,8 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         if 'VISUAL CLAIM CUE: ' in cleaned:
             cleaned=re.sub(r'\s*VISUAL CLAIM CUE:\s*', ' ', cleaned).strip()
             cleaned=re.sub(r'\s+', ' ', cleaned)
+        if (typ, cleaned.lower()) in seen:
+            continue                              # v97.6: the same sentence again is skipped before the (costly) checks, not after
         if extra_check is not None and not extra_check(cleaned):
             continue
         if not _v55_claim_context_ok(cleaned, trig, dimension):
