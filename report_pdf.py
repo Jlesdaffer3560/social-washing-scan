@@ -414,6 +414,20 @@ def claim_source(claim, max_name=None):
     return source
 
 
+def sources_line(occurrences, max_chars):
+    """Up to two distinct sources joined by "; ", each with its PDF page, within max_chars: the source NAME is shortened to make room, so
+    the page number ("p. 12") is never the part that gets cut off."""
+    items = []
+    for name_chars in (80, 60, 45, 35, 28, 22, 16):
+        items = list(dict.fromkeys(claim_source(x, name_chars) for x in occurrences))[:2]
+        line = "; ".join(items)
+        if len(line) <= max_chars:
+            return line
+        if len(items) == 2 and len(items[0]) <= max_chars:
+            return items[0]
+    return bounded_text(items[0], max_chars) if items else ""
+
+
 def trigger_phrase(claim):
     phrase = clean_text(claim.get("matched_phrase") or "")
     if phrase:
@@ -568,9 +582,13 @@ def rewrite_text(claim, max_chars=180):
     return bounded_text("Use precise wording and disclose scope, method, evidence, reporting period and limitations.", max_chars)
 
 
-def ready_to_use_rewrite_text(claim, max_chars=220):
+def ready_to_use_rewrite_text(claim, max_chars=None):
+    """The reusable sentence is shown IN FULL: cutting it would drop conditions (plan, independent verifier, publication of the
+    findings) that the wording needs to be usable. `max_chars` is only a safety bound for abnormal input."""
     raw = clean_text(claim.get("ready_to_use_rewrite") or "")
-    return bounded_text(raw, max_chars) if raw else ""
+    if not raw:
+        return ""
+    return bounded_text(raw, max_chars) if max_chars and len(raw) > max_chars else raw
 
 
 def rewrite_note_text(claim, max_chars=480):
@@ -601,7 +619,7 @@ def other_rewrites(cluster, limit=2, max_chars=560):
             continue
         seen.add(template)
         label = trigger_phrase(occ) or bounded_text(clean_text(claim_excerpt(occ, 200)), 40)
-        out.append((bounded_text(label, 40), bounded_text(template, max_chars)))
+        out.append((bounded_text(label, 40), template if len(template) <= 1600 else bounded_text(template, 1600)))
         if len(out) >= limit:
             break
     return out
@@ -1131,7 +1149,7 @@ def risk_driver_table(selected):
     for idx, c in enumerate(selected[:3], 1):
         claim = c["representative"]
         title = claim_title(claim) + occurrence_count_label(c, compact=True)
-        sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in c["occurrences"]))[:2])
+        sources = sources_line(c["occurrences"], 58)
         # v93.36/v93.38/v93.39: was trigger_phrase(claim) -- the REPRESENTATIVE occurrence's
         # own matched phrase only, not the cluster's actual wording distribution, which can
         # have two or more wordings tied for most common (see wording_distribution_text()).
@@ -1141,7 +1159,7 @@ def risk_driver_table(selected):
         # leaving a dangling, meaningless "+." or "+ 1." (reported live). The full distribution
         # is always shown in full on the detail card below.
         flagged_wording = wording_distribution_text(c, compact=True) or trigger_phrase(claim) or "Review retained wording"
-        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#6B7398">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(bounded_text(sources, 58)), ST["table"])])
+        rows.append([Paragraph(str(idx), ST["table"]), Paragraph(f'<b>{esc(bounded_text(title, 62))}</b><br/><font color="#6B7398">{esc(claim_risk(claim))}</font>', ST["table_dark"]), Paragraph(esc(bounded_text(flagged_wording, 42)), ST["table"]), Paragraph(esc(sources), ST["table"])])
     if len(rows) == 1:
         rows.append([Paragraph("—", ST["table"]), Paragraph("No material signal", ST["table"]), Paragraph("—", ST["table"]), Paragraph("Reviewed material", ST["table"])])
     t = Table(rows, colWidths=[9*mm, 67*mm, 47*mm, CONTENT_W-123*mm], repeatRows=1)
@@ -1268,7 +1286,7 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
             ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
         return card
     title = claim_title(claim) + occurrence_count_label(cluster)
-    sources = "; ".join(list(dict.fromkeys(claim_source(x) for x in cluster["occurrences"]))[:2])
+    sources = sources_line(cluster["occurrences"], 105)
     # The risk level is deliberately rendered as a fixed-width badge on the LEFT
     # of the title. Earlier versions placed a right-aligned risk label at the outer
     # edge of a nested table. ReportLab can expand that nested table when a long
@@ -1311,7 +1329,7 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
     # frequency, then a fixed tiebreak).
     dist_text = wording_distribution_text(cluster)
     dist_row = [Paragraph(f'<font color="#6B7398">Wording detected:</font> {esc(dist_text)}', ST["source"])] if dist_text else None
-    source = Paragraph(f'<font color="#6B7398">Source:</font> {esc(bounded_text(sources, 105))}', ST["source"])
+    source = Paragraph(f'<font color="#6B7398">Source:</font> {esc(sources)}', ST["source"])
     quote = Paragraph(highlighted_excerpt(claim, excerpt_chars), ST["quote"])
     reason = claim.get("_selection_reason")
     reason_row = [Paragraph(f'<font color="#6B7398">Why this example:</font> {esc(reason)}', ST["source"])] if reason and len(cluster["occurrences"]) > 1 else None
@@ -1353,7 +1371,7 @@ def claim_card(cluster, excerpt_chars=220, material=False, ref=None, show_exampl
     # stronger, unproven claim.
     uncertain = Paragraph(f'<b>WHAT REMAINS UNCERTAIN</b><br/><font color="#6B7398">Evidence to verify:</font> {esc(gap_body)}', ST["small_dark"])
     action_html = f'<b>WHAT TO DO</b> {esc(rewrite_text(claim, 190 if material else 155))}'
-    ready_rewrite = ready_to_use_rewrite_text(claim, 570 if material else 560)
+    ready_rewrite = ready_to_use_rewrite_text(claim, 1600)
     example_rewrite = rewrite_example_text(claim, 520)
     if ready_rewrite:
         # v93.62: a monospaced Courier treatment for the example wording read as code/technical

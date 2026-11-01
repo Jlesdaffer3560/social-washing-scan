@@ -296,6 +296,14 @@ def build_methodology_pdf():
                    'on the same page is therefore taken into account for green and social claims alike, and the report says so. A pointer to '
                    '<b>another page</b> is not accepted as the specification of a generic environmental claim, but it is accepted for the plan '
                    'and the expert findings behind a future-performance claim and for social claims, which fall under the general UCPD rules.', STY['td'])),
+        (Paragraph('Evidence must belong to this claim', STY['td_b']),
+         Paragraph('Evidence on the same page only counts when it can back up <b>this</b> claim. The scan ignores a figure, audit or '
+                   'certificate that is <b>negated</b> (<i>audits are not available</i>), that is a <b>discount</b> (<i>save 20%</i>), that '
+                   'belongs to <b>another company, brand or product</b>, or that concerns <b>another subject</b> (accident rates do not support '
+                   'a child-labour claim; a statement about the vehicle fleet does not specify a claim about packaging). Where a page has no '
+                   'real page structure (a long uploaded document) only the surroundings of the claim count as &ldquo;the same page&rdquo;. '
+                   'A pointer to a report or policy only counts when it is a sustainability document, not a returns or privacy policy. The scan '
+                   'cannot judge whether a linked plan or report really meets the legal requirements; a person has to check that.', STY['td'])),
         (Paragraph('No claim kept = no inflated score', STY['td_b']),
          Paragraph('If nothing passes these checks, the social score says &ldquo;No material problematic social claim retained&rdquo; '
                    'instead of assuming a risk level.', STY['td'])),

@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 from html.parser import HTMLParser
 from html import escape as html_escape, unescape as html_unescape
 from pathlib import Path
-import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv, difflib
+import json, os, ssl, socket, ipaddress, datetime, base64, zipfile, re, io, time, gzip, zlib, hmac, hashlib, secrets, threading, unicodedata, csv, difflib, uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FuturesTimeoutError
 import rewrite_examples
 
@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_6_double_check_fixes"
-APP_RELEASE_LABEL="v97.6"
-APP_RELEASE_DATE="2026-10-27"
+APP_VERSION="hostable_v97_7_evidence_linking"
+APP_RELEASE_LABEL="v97.7"
+APP_RELEASE_DATE="2026-11-01"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -3683,6 +3683,9 @@ def assign_sources_to_findings(findings, page_segments, documents):
     for f, c in zip(findings or [], proxy):
         for k in ['source_url','source_label','source_page','audience_group','audience_lens','source_interpretation']:
             if c.get(k): f[k]=c[k]
+        for k in ('source_url','source_page'):
+            if k in c and not c.get(k):
+                f.pop(k,None)                    # v97.7: a failed match does not keep an older source or page number
     return findings
 
 def split_red_flags_by_dimension(green_findings, social_findings, green_ext=None, social_ext=None, sector=None, audience=None):
@@ -4052,12 +4055,25 @@ def classify_legal_basis(f):
                                'is not determined by this scan.'),
     }
 
+def _spec_terms_present(terms, text):
+    """v97.7: True when one of the specification terms is really in the text. The old plain-substring test found "iso" in "decision",
+    "norm" in "normal" and "audit" in "supplier audits are not available"; a term must start at a word boundary (short terms must end at
+    one too), and negated evidence and discount percentages are ignored."""
+    t=_V97_NEGATED_EVIDENCE_RE.sub(' ',_V97_DISCOUNT_RE.sub(' ',str(text or '').lower()))
+    for x in terms:
+        if not x or not x[0].isalnum():
+            continue
+        if re.search(r'(?<![a-z0-9\u00e0-\u00ff])'+re.escape(x)+(r'(?![a-z0-9\u00e0-\u00ff])' if len(x)<=4 else ''),t):
+            return True
+    return False
+
 def green_specification_check(claim_type, claim_text):
     c=(claim_text or '').lower(); t=(claim_type or '').lower()
-    specificity_terms=['%', 'scope', 'baseline', 'compared with', 'compared to', 'made from', 'verified', 'certified', 'according to', 'methodology', 'life cycle', 'lca', 'for this product', 'packaging', 'valid until', 'standard', 'iso',
-        'reikwijdte', 'nulmeting', 'referentiejaar', 'vergeleken met', 'gemaakt van', 'geverifieerd', 'gecertificeerd', 'volgens', 'methodologie', 'levenscyclus', 'voor dit product', 'verpakking', 'geldig tot', 'norm',
-        'périmètre', 'année de référence', 'par rapport à', 'fabriqué à partir de', 'vérifié', 'certifié', 'selon', 'méthodologie', 'cycle de vie', 'pour ce produit', 'emballage', "valable jusqu'au", 'norme']
-    has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,4}(?:[.,]\d+)?\s?%\b', c))
+    specificity_terms=['%', 'scope', 'baseline', 'compared with', 'compared to', 'made from', 'verified', 'certified', 'according to', 'methodology', 'life cycle', 'lca', 'for this product', 'valid until', 'standard', 'iso',
+        'reikwijdte', 'nulmeting', 'referentiejaar', 'vergeleken met', 'gemaakt van', 'geverifieerd', 'gecertificeerd', 'volgens', 'methodologie', 'levenscyclus', 'voor dit product', 'geldig tot', 'norm',
+        'périmètre', 'année de référence', 'par rapport à', 'fabriqué à partir de', 'vérifié', 'certifié', 'selon', 'méthodologie', 'cycle de vie', 'pour ce produit', "valable jusqu'au", 'norme']
+    c=_V97_OWN_OPINION_RE.sub(' ',c)         # v97.7: "according to our own opinion" names no source; a topic word such as "packaging" is no specification
+    has_specific=_spec_terms_present(specificity_terms,c) or bool(re.search(r'\b\d{1,4}(?:[.,]\d+)?\s?%',_V97_DISCOUNT_RE.sub(' ',c)))
     if is_placeholder_finding(t):
         return {'status':'Not applicable','comment':'No material green claim was detected.'}
     if has_specific:
@@ -4126,6 +4142,10 @@ _GREEN_FUTURE={
                '[X%] by [year]. The plan, with its steps and the budget set aside, is published at [link], and [an '
                'independent third-party expert] checks our progress every [period] and publishes the findings."',
                'future_packaging'),
+    'future_supplier': ('"We aim to [supplier goal, e.g. cut the emissions from the goods and services we buy (scope 3: say which '
+               'categories) by X%] by [year], compared with [base year], covering [which suppliers]. Interim target: [X%] by [year]. The '
+               'plan, with its steps and budget, is published at [link], and [an independent third-party expert] checks our progress '
+               'every [period] and publishes the findings."','future_supplier'),
     'future_transport': ('"We aim for [X%] of [our vehicles / our deliveries / the kilometres we drive] to be '
                'emission-free by [year], up from [X%] in [latest year], measured by [how you count]. Interim target: '
                '[X%] by [year]. The plan, with the vehicles and charging points we will buy, is published at [link], '
@@ -4366,8 +4386,8 @@ _GENERIC_SUBJECT_TEMPLATES={
 # languages have none.
 _REWRITE_NL_WORDS=frozenset("""tegen gebruiken hernieuwbare duurzaam duurzame verminderen uitstoot bedrijf verpakking verpakkingen leveranciers
     medewerkers producten milieu milieuvriendelijke milieuvriendelijk groene werken onze wij heeft hebben worden wordt niet
-    naar jaar door klimaatneutraal koolstofneutraal afval""".split())
-_REWRITE_FR_WORDS=frozenset("""nous notre nos énergie durable durables produits entreprise émissions réduire fournisseurs sont avons
+    naar jaar klimaatneutraal koolstofneutraal afval""".split())
+_REWRITE_FR_WORDS=frozenset("""nous notre nos énergie durables produits entreprise émissions réduire fournisseurs sont avons
     vert verte respectueux respectueuse emballage emballages dans avec sans pour déchets neutre carbone""".split())
 
 def _rewrite_lang(text):
@@ -4392,7 +4412,7 @@ def _claim_subject(text):
     """(category, phrase): ('product'|'company'|'', e.g. 'Our new collection'). The phrase is only given for English
     wording, without green adjectives (the rewrite replaces them by a fact)."""
     t=re.sub(r'\s+',' ',str(text or ''))
-    english=_v96_guess_language(t) in ('en','nl','fr')
+    english=True            # v97.7: the determiners that _SUBJ_RE accepts are English, Dutch or French; a short claim has too few words to tell which
     m=_SUBJ_RE.search(t)
     if m:
         phrase=''
@@ -4417,6 +4437,26 @@ def _localize_rewrite(picked, lang):
             return (loc,key)
     return picked
 
+# v97.7: the product templates say what the subject "contains" / "is certified" -- "Our products contains" is wrong
+_PLURAL_VERB_FORMS={
+    'en':(('\u201ccontains ','\u201ccontain '),('\u201cis certified','\u201care certified')),
+    'nl':(('\u201ebevat ','\u201ebevatten '),('\u201eis gecertificeerd','\u201ezijn gecertificeerd')),
+    'fr':(('\u00ab\u00a0contient ','\u00ab\u00a0contiennent '),('\u00ab\u00a0est certifi\u00e9','\u00ab\u00a0sont certifi\u00e9s')),
+}
+_PLURAL_SINGULAR_ENDINGS_EN=('ss','us','is')
+def _subject_is_plural(phrase, lang):
+    words=re.findall(r"[a-z\u00e0-\u00ff]+",str(phrase or '').lower())
+    if not words:
+        return False
+    head=words[-1]
+    if head in ('series','clothing','apparel','assortiment','aanbod','menu'):
+        return False
+    if lang=='nl':
+        return head.endswith(('en','s'))
+    if lang=='fr':
+        return head.endswith(('s','x')) and head not in ('s\u00e9ries',)
+    return head.endswith('s') and not head.endswith(_PLURAL_SINGULAR_ENDINGS_EN)
+
 def _green_pick(claim_type, claim_text='', trigger='', lang=None):
     """(template, key) for a green claim. Future claims keep a FUTURE template (goal, interim target, plan, independent
     verifier) whatever they are about; the topic only chooses the goal. Broad claims about a product or the company
@@ -4429,13 +4469,18 @@ def _green_pick(claim_type, claim_text='', trigger='', lang=None):
         entry=_topic_for_text(_GREEN_TOPICS,trigger,1) or _topic_for_text(_GREEN_TOPICS,claim_text,1)
         name=entry[0] if entry else ''
         if name=='supplier':
-            return _localize_rewrite((entry[2],entry[3]),lang)
+            # v97.7: a TARGET about suppliers (or about scope 3, the suppliers' emissions) is still a future claim: plan, interim target,
+            # independent verification -- and it keeps the supplier subject, with the categories and the scope covered
+            return _localize_rewrite(_GREEN_FUTURE['future_supplier'],lang)
         return _localize_rewrite(_GREEN_FUTURE[_GREEN_FUTURE_ROUTE.get(name,'future')],lang)
     picked=_pick_rewrite(_GREEN_REWRITES,_GREEN_REWRITE_DEFAULT,claim_type,claim_text,_GREEN_TOPICS,_GREEN_TOPIC_TYPES,None,trigger)
     if picked[1]=='generic':
         cat,phrase=_claim_subject(claim_text)
         tpl=_GENERIC_SUBJECT_TEMPLATES.get(cat) if lang=='en' else rewrite_examples.generic_subject_template(cat,lang)
         if tpl and phrase:
+            if _subject_is_plural(phrase,lang):
+                for sing,plur in _PLURAL_VERB_FORMS.get(lang,()):
+                    tpl=tpl.replace(sing,plur)
             return (tpl.replace('{S}',phrase),'generic')
     return _localize_rewrite(picked,lang)
 
@@ -4475,9 +4520,13 @@ _CORPORATE_LEVEL_MARKERS=['our operations','our company','our organisation','our
 # generic environmental claim under Annex I point 4a (Commission ECGT FAQ Q6/Q10) -- only a
 # marker that actually names a scope (operations, sites, scope 1 and 2, ...) counts as scoping.
 _BARE_NEUTRALITY_STEMS=('neutral','neutre','neutraal')
+# v97.7: "Our company is climate neutral" names the SUBJECT, not a scope. Point 4c (offset-based neutrality) is about a product, but an
+# unspecified company-level neutrality claim is still a generic claim under point 4a, so a bare subject does not scope the claim.
+_SUBJECT_ONLY_MARKERS=frozenset(['our company','our organisation','our organization','the company','our business','as a business','as an organisation','as an organization',
+    'ons bedrijf','onze organisatie','als bedrijf','als organisatie','notre entreprise','notre organisation',"en tant qu'entreprise","en tant qu'organisation"])
 def _is_scoped_corporate_claim(claim_text):
     c=(claim_text or '').lower()
-    return any(m in c for m in _CORPORATE_LEVEL_MARKERS if not any(w in m for w in _BARE_NEUTRALITY_STEMS))
+    return any(m in c for m in _CORPORATE_LEVEL_MARKERS if not any(w in m for w in _BARE_NEUTRALITY_STEMS) and m not in _SUBJECT_ONLY_MARKERS)
 
 # Deliberately a narrower, stronger list than green_specification_check()'s general
 # specificity_terms (which also counts a bare '%' or 'made from' -- fine for the informational
@@ -4504,6 +4553,8 @@ _WEAK_VERIFICATION_TERMS=['verified','certified','third-party','independently ve
     'geverifieerd','gecertificeerd','onafhankelijk geverifieerd','door derden geverifieerd',
     'vérifié','certifié','vérifié par un tiers','vérifié de manière indépendante']
 
+_V97_OWN_OPINION_RE = re.compile(r"\b(?:according to|volgens|selon|d'apr[eè]s)\s+(?:(?:us|me)\b|(?:our|ons|onze|notre|nos|my|mijn|ma|mon)\s+(?:own\s+|eigen\s+|propre\s+)?(?:opinions?|views?|beliefs?|judg(?:e)?ments?|feelings?|experience|insights?|mening(?:en)?|visie|overtuiging|oordeel|gevoel|ervaring|avis|conviction|jugement|sentiment|exp[eé]rience)\b)", re.I)
+
 def _has_strong_same_medium_specification(claim_text):
     """v93.53: was a bare substring check, sharing the exact same bug class already fixed for
     green_evidence_signal_score()/evidence_signal_score() (see _evidence_term_hit()) -- 'lca'
@@ -4527,6 +4578,9 @@ def _has_strong_same_medium_specification(claim_text):
     provision -- see _names_recognized_certification_scheme()'s other, broader-list callers,
     which are unaffected by this)."""
     text=(claim_text or '').lower()
+    # v97.7: "according to our own opinion" names no method or source, and "20% off" is a price, not a specification of the claim
+    text=_V97_OWN_OPINION_RE.sub(' ',text)
+    text=_V97_DISCOUNT_RE.sub(' ',text)
     if any(_evidence_term_hit(term.strip(), text) for term in _STRONG_SAME_MEDIUM_SPECIFICATION_TERMS):
         return True
     if any(_evidence_term_hit(term.strip(), text) for term in _WEAK_VERIFICATION_TERMS):
@@ -5136,6 +5190,7 @@ def _strip_pdf_glyph_artifacts(txt):
 _V97_PAGE_INDEX={}
 _V97_PAGE_INDEX_MAX=60
 _V97_PAGE_INDEX_LOCK=threading.Lock()
+_V97_SCOPE=threading.local()          # v97.7: the index of an UPLOADED document belongs to one analysis, not to every scan of a file with the same name
 _V97_PAGE_MARKER_RE=re.compile(r'\n?\[\[\[PAGE (\d{1,5})\]\]\]\n?')
 
 def _v97_norm(text):
@@ -5149,22 +5204,32 @@ def _v97_key(source):
         except Exception: return src
     return src
 
+def _v97_index_key(src, scope=None):
+    scope=getattr(_V97_SCOPE,'id','') if scope is None else scope
+    return (scope,_v97_key(src))
+
 def _v97_register_pages(sources,pages):
-    """pages: [(page_number, text)]. Stored under every given source (the requested and the final address of a PDF)."""
+    """pages: [(page_number, text)]. Stored under every given source (the requested and the final address of a PDF). During an upload
+    analysis the entries belong to that analysis (see analyse_uploaded_document()). No page rows = no page numbers (an old entry is removed)."""
     try:
         rows=[(int(n),_v97_norm(t)) for n,t in pages or [] if t]
         rows=[r for r in rows if r[1]]
-        if not rows: return
         with _V97_PAGE_INDEX_LOCK:                       # scans run in parallel threads
             for src in sources if isinstance(sources,(list,tuple)) else [sources]:
-                key=_v97_key(src)
-                if not key: continue
+                key=_v97_index_key(src)
+                if not key[1]: continue
                 _V97_PAGE_INDEX.pop(key,None)
-                _V97_PAGE_INDEX[key]=rows
+                if rows:
+                    _V97_PAGE_INDEX[key]=rows
             while len(_V97_PAGE_INDEX)>_V97_PAGE_INDEX_MAX:
                 _V97_PAGE_INDEX.pop(next(iter(_V97_PAGE_INDEX)),None)
     except Exception:
         pass
+
+def _v97_drop_scope(scope):
+    with _V97_PAGE_INDEX_LOCK:
+        for key in [k for k in _V97_PAGE_INDEX if k[0]==scope]:
+            _V97_PAGE_INDEX.pop(key,None)
 
 def _v97_page_label(pages):
     pages=sorted(set(pages or []))
@@ -5172,25 +5237,36 @@ def _v97_page_label(pages):
     return ('p. ' if len(pages)==1 else 'pp. ')+', '.join(str(n) for n in pages)
 
 def _v97_find_pages(source,claim_text):
-    """'p. 12' / 'pp. 12, 40' for the page(s) of the source document that contain the claim wording, else ''. Tries the longest piece of
-    the claim first, then shorter pieces and a piece from the middle (the stored excerpt may carry a prepended context sentence); a piece
-    that occurs on more than three pages is not specific enough to name a page."""
+    """'p. 12' / 'pp. 12, 40' for the page(s) of the source document that contain the claim wording, else ''. Tries the whole claim first,
+    then shorter pieces and a piece from the middle and the end (the stored excerpt may carry a prepended context sentence). A piece that
+    occurs on exactly one page names it; a piece on two or three pages is kept as a fallback; a piece that occurs on more than three
+    pages is not specific enough to name a page."""
     try:
-        rows=_V97_PAGE_INDEX.get(_v97_key(source))
+        with _V97_PAGE_INDEX_LOCK:
+            rows=_V97_PAGE_INDEX.get(_v97_index_key(source)) or _V97_PAGE_INDEX.get(('',_v97_key(source)))
         if not rows: return ''
-        words=re.sub(r'\s+',' ',str(claim_text or '')).strip().lower().split()
-        if len(words)<3: return ''
+        claim=_v97_norm(claim_text)
+        words=claim.split()
+        if not words: return ''
+        if len(words)<3:
+            if len(claim)<8: return ''
+            hit=[n for n,t in rows if re.search(r'(?<!\w)'+re.escape(claim)+r'(?!\w)',t)]
+            return _v97_page_label(hit) if len(hit)==1 else ''
         probes=[]
-        for n in sorted({min(len(words),40)}|{n for n in (30,20,14,10,7,5) if len(words)>=n},reverse=True):
+        for n in sorted({min(len(words),120)}|{n for n in (60,40,30,20,14,10,7,5) if len(words)>=n},reverse=True):
             probes.append(' '.join(words[:n]))
         if len(words)>=14:
             mid=len(words)//3
             probes.append(' '.join(words[mid:mid+8]))
+            probes.append(' '.join(words[-10:]))
+        fallback=[]
         for probe in probes:
             hit=[n for n,t in rows if probe in t]
-            if 1<=len(hit)<=3:
+            if len(hit)==1:
                 return _v97_page_label(hit)
-        return ''
+            if 2<=len(hit)<=3 and not fallback:
+                fallback=hit
+        return _v97_page_label(fallback) if fallback else ''
     except Exception:
         return ''
 
@@ -5302,7 +5378,8 @@ def decode_extracted_text(filename, text, total_pages=None, pages_read=None):
         bits=_V97_PAGE_MARKER_RE.split(txt)
         for k in range(1,len(bits)-1,2):
             if bits[k+1].strip(): page_rows.append((int(bits[k]),bits[k+1]))
-        txt='\n'.join(b for _,b in page_rows) if page_rows else _V97_PAGE_MARKER_RE.sub('\n',txt)
+        # v97.7: text in front of the first marker (no page number known) stays part of the analysed text
+        txt='\n'.join(([bits[0]] if bits[0].strip() else [])+[b for _,b in page_rows]) if page_rows else _V97_PAGE_MARKER_RE.sub('\n',txt)
     txt=_strip_pdf_glyph_artifacts(txt)
     txt=re.sub(r'[ \t]+',' ',txt)
     txt=re.sub(r'[ \t]*\n[ \t]*','\n',txt)
@@ -5531,6 +5608,17 @@ def federation_pilot_output(green_findings, social_findings, overall, green_scor
     }
 
 def analyse_uploaded_document(filename, text, company_name_hint='', company_number='', document_coverage=None):
+    """Runs _analyse_uploaded_document_impl() with its own page-index scope: two analyses of different files (or versions) that happen to
+    share a file name never read each other's page numbers."""
+    scope=uuid.uuid4().hex
+    _V97_SCOPE.id=scope
+    try:
+        return _analyse_uploaded_document_impl(filename, text, company_name_hint, company_number, document_coverage)
+    finally:
+        _V97_SCOPE.id=''
+        _v97_drop_scope(scope)
+
+def _analyse_uploaded_document_impl(filename, text, company_name_hint='', company_number='', document_coverage=None):
     # v93.55: decode_uploaded_document() silently truncated to 90,000 characters with no
     # indication anything was cut -- a document of 99,105 characters lost its final ~9,000
     # characters (and any claim in them) with nothing in the response to say so. Reported by a
@@ -6312,7 +6400,7 @@ def _social_claim_context(excerpt, typ, trigger, full_text=None):
         if not _looks_like_aspirational_social_claim(wider):
             return False
         # v97.5: process evidence elsewhere on the same page, or a pointer to the full policy, backs the commitment up
-        if _V97_REFERRAL_RE.search(wider) or _v97_social_page_evidence(full_text,excerpt):
+        if _v97_referral(wider) or _v97_social_page_evidence(full_text,excerpt):
             return False
         return True
     if 'forced' in t:
@@ -9210,38 +9298,102 @@ _V97_EVIDENCE_RE = re.compile("|".join([
     r"\bcollective (?:labou?r )?agreement\b|\bcollectieve arbeidsovereenkomst\b|\bcao\b|\bconvention collective\b",
     r"\brisk assessment\b|\brisicoanalyse\b|\banalyse des risques\b|\bevaluation des risques\b|\bdue diligence\b|\bzorgvuldigheidsplicht\b|\bdevoir de vigilance\b|\bremediation\b|\bherstelplan\b|\bplan de rem[eé]diation\b|\bcorrective action\b|\bmesures correctives\b",
 ]), re.I)
-_V97_JOB_AD_RE = re.compile(r"\b(apply|vacanc\w*|job openings?|careers?|join our team|we are hiring|we're hiring|recruit\w*|sollicit\w*|vacature\w*|werken bij|word onderdeel van ons team|postul\w*|carri[eè]re|offres? d'emploi|nous recrutons|rejoignez)\b", re.I)
-_V97_SECOND_PERSON_RE = re.compile(r"\b(your|you|you're|jouw|jij|je|uw|votre|vos|vous|tu)\b|(?<![A-Za-z.])u(?![A-Za-z.])", re.I)
+# v97.7: a vacancy text is recognised by vacancy wording ("apply now", "join our team", "vacature"), not by the bare verb "apply"
+# ("we apply the same principles"); a second-person address by a second-person SUBJECT or an address to a jobseeker ("you will",
+# "your career"), not by every "your" ("to improve your neighbourhood").
+_V97_JOB_AD_RE = re.compile(r"\b(apply (?:now|today|here|online)|apply for (?:this|a|the) (?:job|position|role|vacancy)|how to apply|vacanc\w*|job openings?|careers? (?:page|site|opportunit\w+)|join our team|we are hiring|we're hiring|now hiring|we are recruiting|we're recruiting|sollicit\w*|vacature\w*|werken bij|word onderdeel van ons team|postul\w*|carri[eè]res?|offres? d'emploi|nous recrutons|rejoignez)\b", re.I)
+_V97_SECOND_PERSON_RE = re.compile(r"\byou(?:'ll|'re|'ve| will| can| are| could| would| may| must| should| have)\b|\byour (?:career|skills|role|team|colleagues|future|talent|application|development|training|growth|job|profile|cv|opportunit\w+)\b|\bjouw (?:loopbaan|carri[eè]re|talent|team|collega\w*|ontwikkeling|opleiding|functie|baan)\b|\buw (?:loopbaan|carri[eè]re|talent|team|collega\w*|ontwikkeling|opleiding|functie|baan)\b|\bje (?:kunt|kan|bent|wordt|krijgt|werkt|groeit)\b|(?<![A-Za-z.])u (?:kunt|bent|krijgt|werkt|wordt|groeit)\b|\bvous (?:pouvez|[êe]tes|serez|aurez|travaillez|rejoignez)\b|\bvotre (?:carri[eè]re|talent|poste|[ée]quipe|d[ée]veloppement|formation)\b|\btu (?:peux|es|seras)\b", re.I)
+
+# v97.7: evidence has to be evidence FOR THIS CLAIM. A word such as "audit" or a figure only counts when it is
+#   - not negated ("supplier audits are not available", "no third-party audit"),
+#   - not a discount ("Save 20% on all products"),
+#   - not about another company or product ("a different company is Fairtrade certified"),
+#   - about the same topic as the claim (accident rates and training hours do not back up a child-labour claim),
+#   - not a pointer to an unrelated document ("read our returns policy").
+_V97_DISCOUNT_RE = re.compile(r"\b(?:save|saving|savings|sale|discount|promo\w*|korting|bespaar\w*|r[eé]duction|remise|rabais|soldes?|cashback)\b[^.]{0,30}?\d+(?:[.,]\d+)?\s?%|\d+(?:[.,]\d+)?\s?%\s*(?:off|korting|discount|reductie|de r[eé]duction|de remise|d'escompte|cashback|extra)\b", re.I)
+_V97_EV_WORDS = r"(?:audit\w*|certif\w+|verif\w+|v[eé]rifi\w+|reports?|rapport\w*|verslag\w*|evidence|proof|bewijs\w*|preuves?|controle\w*|contr[oô]le\w*|third[- ]party|derde partij|data|gegevens|figures|cijfers|chiffres|assessments?|inspections?|inspecties|monitoring|kpis?)"
+_V97_NEGATED_EVIDENCE_RE = re.compile(
+    r"\b(?:no|not|without|never|nor|geen|niet|zonder|nooit|sans|pas de|aucun\w*)\s+(?:\w+\s+){0,2}?" + _V97_EV_WORDS + r"\b(?:[\s-]+" + _V97_EV_WORDS + r"\b)*"
+    r"|\b" + _V97_EV_WORDS + r"\b(?:\s+\w+){0,3}?\s+(?:is |are |was |were |zijn |est |sont )?(?:not|niet|pas|n't|not yet|nog niet)\s+(?:\w+\s+)?(?:available|published|provided|disclosed|shared|public|accessible|beschikbaar|gepubliceerd|openbaar|toegankelijk|disponibles?|publi\w+)"
+    r"|\b" + _V97_EV_WORDS + r"\b(?:\s+\w+){0,3}?\s+(?:unavailable|onbeschikbaar|indisponibles?)\b", re.I)
+_V97_SAFETY_STATS_RE = re.compile(r"\bltifr\b|\btrir\b|\bper\s+1[., ]?000[., ]?000(?:\s+\w+){0,2}|\b(?:accident|incident|injury)\s+(?:rate|frequency)\b|\b\d[\d.,]*\s+(?:accidents?|incidents?|injur\w+|ongevallen)\b|\bongevallencijfer\b|\btaux de fr[eé]quence\b", re.I)
+_V97_TRAINING_STATS_RE = re.compile(r"\b\d[\d.,]*\s+(?:trainings?|opleidingen|formations|hours|uren|heures)\b", re.I)
+_V97_SUPPLIER_SCHEME_RE = re.compile(r"\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfair wear\b|\bfairtrade\b|\bfair trade\b|\bgots\b|\banker[- ](?:method|methode|methodologie|benchmark|research)\b|\bfair wage network\b|\bb corp\b", re.I)
+_V97_TOPIC_SAFETY_RE = re.compile(r"\b(?:safe\w*|safety|accident\w*|injur\w*|health|hse|ohs|veilig\w*|ongeval\w*|letsel|gezond\w*|s[eé]curit[eé]|blessure\w*|sant[eé])\b", re.I)
+_V97_TOPIC_TRAINING_RE = re.compile(r"\b(?:training\w*|upskill\w*|opleiding\w*|vorming|formation\w*|schulung\w*|skills|development programme)\b", re.I)
+_V97_TOPIC_OTHER_SOCIAL_RE = re.compile(r"\b(?:child\w*|kinder\w*|enfants?|forced|dwang\w*|forc[eé]|supplier\w*|supply|leverancier\w*|fournisseur\w*|human|mensen\w*|droits|wage\w*|loon|lonen|salaire\w*|union\w*|vakbond\w*|syndicat\w*|divers\w*|discriminat\w*|communit\w*|gemeenschap\w*|communaut\w*)\b", re.I)
+_V97_REFERRAL_NOISE_RE = re.compile(r"\b(?:returns?|refunds?|retour\w*|terugbetal\w*|privacy|cookies?|terms|conditions|voorwaarden|shipping|delivery|verzend\w*|levering|payment|betaling|warranty|garantie|cancell\w+|annul\w+|accessibility|toegankelijkheid|imprint|colofon|legal notice|mentions l[ée]gales|pricing|prijs|prijzen|offers?|aanbieding\w*|promotion\w*|loyalty)\b", re.I)
+_V97_OTHER_ENTITY_RE = re.compile(r"\b(?:another|other|different|competitors?'?s?)\s+(?:[\w-]+\s+)?(?:compan(?:y|ies)|brands?|products?|suppliers?|businesses|business|firms?|organi[sz]ations?|manufacturers?|retailers?)\b|\b(?:een |de |het )?(?:andere|ander|concurrerende|concurrent\w*)\s+(?:[\w-]+\s+)?(?:bedrijf|bedrijven|merk|merken|product|producten|leverancier\w*|fabrikant\w*|onderneming\w*)\b|\bune? autre\s+(?:[\w-]+\s+)?(?:entreprise|soci[eé]t[eé]|marque|produit|fournisseur)\b|\bd'autres\s+(?:[\w-]+\s+)?(?:entreprises|marques|produits|fournisseurs|soci[eé]t[eé]s)\b|\bautres (?:entreprises|marques|produits|fournisseurs)\b", re.I)
+_V97_NEGATION_ANY_RE = re.compile(r"\b(?:not|no longer|never|without|isn't|aren't|doesn't|don't|geen|niet|nooit|zonder|pas de|ne\s+\w+\s+pas|n'est pas|ne sont pas)\b", re.I)
+_V97_PAGE_MAX_CHARS = 12000      # a "page" longer than this has no real page structure (an uploaded document): only the surroundings count
+_V97_PAGE_HALF = 4000
+
+def _v97_claim_topic(text):
+    """'safety', 'training', 'mixed' or 'other': what a social claim is about, so evidence for another topic is not taken as evidence."""
+    c = str(text or '')
+    safety = bool(_V97_TOPIC_SAFETY_RE.search(c))
+    if safety and _V97_TOPIC_OTHER_SOCIAL_RE.search(c):
+        return 'mixed'
+    if safety:
+        return 'safety'
+    if _V97_TOPIC_TRAINING_RE.search(c):
+        return 'training'
+    return 'other'
+
+def _v97_clean_for_topic(text, topic):
+    """Lower-case text with the parts that are NOT evidence for this claim removed: discounts, negated evidence, and (by topic)
+    accident statistics, training statistics or supplier-scheme names."""
+    t = _V97_DISCOUNT_RE.sub(' ', _normalize_apostrophes(str(text or '')).lower())
+    t = _V97_NEGATED_EVIDENCE_RE.sub(' ', t)
+    if topic in ('other', 'training'):
+        t = _V97_SAFETY_STATS_RE.sub(' ', t)
+    if topic in ('other', 'safety'):
+        t = _V97_TRAINING_STATS_RE.sub(' ', t)
+    if topic == 'safety':
+        t = _V97_SUPPLIER_SCHEME_RE.sub(' ', t)
+    return t
+
+def _v97_drop_other_entity(text):
+    """The text without the sentences that are about ANOTHER company, brand or product."""
+    parts = re.split(r'(?<=[.!?])\s+|\n+', str(text or ''))
+    return ' '.join(x for x in parts if not _V97_OTHER_ENTITY_RE.search(x))
+
+def _v97_referral(text):
+    """A pointer to more explanation ("see our sustainability report") -- not a pointer to an unrelated document ("read our returns policy")."""
+    return any(not _V97_REFERRAL_NOISE_RE.search(m.group(0)) for m in _V97_REFERRAL_RE.finditer(str(text or '')))
+
+def _v97_evidence_hit(text, topic):
+    t = _v97_clean_for_topic(_v97_strip_markers(text), topic)
+    return bool(_V97_EVIDENCE_RE.search(t)) or _v97_referral(t)
 
 def _v97_evidence_nearby(excerpt_low, full_text):
     """True when the claim sentence itself, or the text right around it (the sentence before and up to ~450 characters after,
-    never across a blank line or a page marker), contains evidence: a figure, an audit, a certificate, a named standard, a
-    report, a link or a grievance/agreement mechanism."""
-    excerpt_low=_v97_strip_markers(excerpt_low).lower()
-    if _V97_EVIDENCE_RE.search(excerpt_low) or _V97_REFERRAL_RE.search(excerpt_low):
+    never across a blank line or a page marker), contains evidence FOR THIS CLAIM: a figure, an audit, a certificate, a named
+    standard, a report, a link or a grievance/agreement mechanism -- not negated, not a discount, not about another company, and
+    about the same topic (see the v97.7 note above)."""
+    excerpt_low = _v97_strip_markers(excerpt_low).lower()
+    topic = _v97_claim_topic(excerpt_low)
+    if _v97_evidence_hit(excerpt_low, topic):
         return True
-    text=_normalize_apostrophes(str(full_text or '')).replace('\r','')
-    low=text.lower()
-    words=[w for w in re.split(r'\s+',excerpt_low.strip()) if w][:8]
-    if not words:
+    text = _normalize_apostrophes(str(full_text or '')).replace('\r', '')
+    m = _v97_locate(text, excerpt_low)
+    if m is None:
         return False
-    m=re.search(r'\s+'.join(re.escape(w) for w in words),low)
-    if not m:
-        return False
-    start=m.start()
-    end=low.find('\n\n',m.end())
-    end=len(low) if end==-1 else end
-    left=low.rfind('\n\n',0,start)
-    window=low[max(left+2 if left!=-1 else 0,start-300):min(end,m.end()+450)]
-    for marker in ('\n\npage:','\n\nreport (pdf):'):
-        cut=window.find(marker)
-        if cut!=-1:
-            window=window[:cut]
-    window=_v97_strip_markers(window)
-    if _V97_EVIDENCE_RE.search(window) or _V97_REFERRAL_RE.search(window):
+    low = text.lower()
+    start = m.start()
+    end = low.find('\n\n', m.end())
+    end = len(low) if end == -1 else end
+    left = low.rfind('\n\n', 0, start)
+    window = low[max(left + 2 if left != -1 else 0, start - 300):min(end, m.end() + 450)]
+    for marker in ('\n\npage:', '\n\nreport (pdf):', '\n\nrelated official company site:'):
+        cut = window.find(marker)
+        if cut != -1:
+            window = window[:cut]
+    window = _v97_drop_other_entity(_v97_strip_markers(window))
+    if _v97_evidence_hit(window, topic):
         return True
     # v97.5: and anywhere else on the same page, as far as it is social-topic evidence
-    return _v97_social_page_evidence(full_text,excerpt_low)
+    return _v97_social_page_evidence(text, excerpt_low, topic)
 
 # v97.5: the evidence boundary is the PAGE (the medium), not the paragraph. EmpCo's test for a generic environmental claim is whether the
 # specification is given "in clear and prominent terms on the same medium" (Directive (EU) 2024/825, Article 2(p) UCPD and recital 9: the
@@ -9259,14 +9411,21 @@ def _v97_strip_markers(text):
     return _V97_MARKER_TEXT_RE.sub(' ',str(text or ''))
 
 def _v97_locate(full_text, excerpt):
-    """Regex match of the excerpt in the crawled text (first, then last eight words: an excerpt may start with a pulled-in context
-    sentence), or None."""
-    text=_normalize_apostrophes(str(full_text or ''))
-    words=[w for w in re.split(r'\s+',_normalize_apostrophes(str(excerpt or '')).strip()) if w]
+    """Regex match of the excerpt in the crawled text, or None. The whole excerpt (up to 60 words) is tried first, then ever shorter
+    beginnings, then the ending (an excerpt may start with a pulled-in context sentence): a long probe is more distinctive, so two
+    pages that begin with the same words are told apart by what follows."""
+    text = _normalize_apostrophes(str(full_text or ''))
+    words = [w for w in re.split(r'\s+', _normalize_apostrophes(str(excerpt or '')).strip()) if w]
     if not text or not words:
         return None
-    for chunk in (words[:8],words[-8:]):
-        m=re.search(r'\s+'.join(re.escape(w) for w in chunk),text,re.I)
+    attempts = [words[:60]] + [words[:n] for n in (24, 16, 12, 8) if len(words) > n] + [words[-n:] for n in (24, 16, 12, 8) if len(words) > n]
+    tried = set()
+    for chunk in attempts:
+        key = tuple(chunk)
+        if key in tried:
+            continue
+        tried.add(key)
+        m = re.search(r'\s+'.join(re.escape(w) for w in chunk), text, re.I)
         if m:
             return m
     return None
@@ -9281,6 +9440,8 @@ def _v97_page_and_pos(full_text, excerpt):
     starts=[x.start() for x in _V97_CRAWL_MARKER_RE.finditer(text)]
     lo=max([x for x in starts if x<=m.start()] or [0])
     hi=min([x for x in starts if x>m.start()] or [len(text)])
+    if hi-lo>_V97_PAGE_MAX_CHARS:                      # v97.7: no real page structure (an uploaded document): "the same page" means the surroundings
+        lo,hi=max(lo,m.start()-_V97_PAGE_HALF),min(hi,m.start()+_V97_PAGE_HALF)
     return text[lo:hi],m.start()-lo
 
 def _v97_page_text(full_text, excerpt):
@@ -9308,11 +9469,16 @@ _V97_REFERRAL_RE = re.compile("|".join([
     r"\b(?:dans|sur)\s+(?:notre|nos|le)\s+(?:[\w-]+\s+){0,2}(?:rapport|politique|code de conduite|site|page)\b",
 ]), re.I)
 
-def _v97_social_page_evidence(full_text, excerpt):
-    """True when the page that holds the claim shows social-topic evidence (audits, a named standard, a grievance channel, a collective
-    agreement, human-rights due diligence, safety rates, independent verification)."""
-    page=_v97_strip_markers(_v97_page_text(full_text,excerpt))
-    return bool(page.strip()) and _V97_SOCIAL_TOPIC_EVIDENCE_RE.search(_normalize_apostrophes(page).lower()) is not None
+def _v97_social_page_evidence(full_text, excerpt, topic=None):
+    """True when the page that holds the claim shows social-topic evidence for THIS claim (audits, a named standard, a grievance channel,
+    a collective agreement, human-rights due diligence, safety rates, independent verification): not about another company or product,
+    not negated, and for another topic (accident rates under a child-labour claim) it does not count."""
+    page = _v97_strip_markers(_v97_page_text(full_text, excerpt))
+    if not page.strip():
+        return False
+    topic = topic or _v97_claim_topic(excerpt)
+    page = _v97_drop_other_entity(_normalize_apostrophes(page))
+    return _V97_SOCIAL_TOPIC_EVIDENCE_RE.search(_v97_clean_for_topic(page, topic)) is not None
 
 def _v97_page_specification(full_text, excerpt, trig, typ, dimension):
     """A sentence ELSEWHERE on the claim's page that specifies or backs the claim, else ''.
@@ -9332,11 +9498,11 @@ def _v97_page_specification(full_text, excerpt, trig, typ, dimension):
     if not page:
         return ''
     own=re.sub(r'\W+',' ',_normalize_apostrophes(str(excerpt or '')).lower()).strip()
-    topic_rx=None
+    topic_rx=None; claim_entry=None
     if mode=='generic':
         entry=_topic_for_text(_GREEN_TOPICS,trig,1) or _topic_for_text(_GREEN_TOPICS,excerpt,1)
         if entry and entry[0] not in ('neutral','comparison'):
-            topic_rx=entry[1]
+            topic_rx=entry[1]; claim_entry=entry
     page=_normalize_apostrophes(page)
     for mm in re.finditer(r'[^\n]*?[.!?](?=\s|$)|[^\n]+',page):
         sent=_v97_strip_markers(mm.group(0)).strip()
@@ -9347,13 +9513,19 @@ def _v97_page_specification(full_text, excerpt, trig, typ, dimension):
         key=re.sub(r'\W+',' ',low).strip()
         if key in own or own in key or any(n in low for n in ('cookie','privacy','newsletter','subscribe','sign in','login')):
             continue
+        if _V97_OTHER_ENTITY_RE.search(low) or _V97_NEGATION_ANY_RE.search(low):
+            continue                            # v97.7: about another company/product, or denying the very thing that would specify the claim
         if mode=='generic':
             if not _has_strong_same_medium_specification(low):
                 continue
-            if not (re.search(r'\d',low) or _names_recognized_certification_scheme(low)):
+            if not (re.search(r'\d',_V97_DISCOUNT_RE.sub(' ',low)) or _names_recognized_certification_scheme(low)):
                 continue
-            if topic_rx and not near and not re.search(topic_rx,low):
-                continue                        # close to the claim any specification counts; further away it has to be about the same topic
+            if claim_entry:
+                other=_topic_for_text(_GREEN_TOPICS,sent,1)
+                if other and other[0] not in ('neutral','comparison') and other[0]!=claim_entry[0]:
+                    continue                    # v97.7: a specification about ANOTHER topic (the vehicle fleet) does not specify this claim (the packaging)
+                if topic_rx and not near and not re.search(topic_rx,low):
+                    continue                    # close to the claim a specification of the same or no particular topic counts; further away it has to be about the same topic
             return sent[:300]
         if mode=='label' and _names_recognized_certification_scheme(low):
             return sent[:300]
@@ -9361,9 +9533,19 @@ def _v97_page_specification(full_text, excerpt, trig, typ, dimension):
             return sent[:300]
     return ''
 
-def _v97_freeform_social_ok(excerpt, found, full_text):
+_V97_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:[,;:]|\b(?:and|but|while|en|maar|et|mais|und)\b)\s*", re.I)
+
+def _v97_same_clause(text, a, b):
+    """True when the phrases a and b sit in the same clause of text ("We champion diversity AND we support local communities" has two)."""
+    a = a.lower(); b = b.lower()
+    for clause in _V97_CLAUSE_SPLIT_RE.split(text.lower()):
+        if a in clause and b in clause:
+            return True
+    return False
+
+def _v97_freeform_social_ok(excerpt, found, full_text, typ='', trig=''):
     """Extra qualifier for the free-form social patterns: no evidence nearby, not a vacancy text or a question, no second-person
-    address, and not already reported under another social type."""
+    address, and not already reported (the same claim type for the same sentence, or another type for the same clause)."""
     c=_v97_strip_markers(_normalize_apostrophes((excerpt or '').lower())).strip()
     if len(c)<24 or len(c.split())<4 or '?' in c:           # a short slogan ("Veiligheid is onze topprioriteit.") is a claim; a menu item or heading is not
         return False
@@ -9372,7 +9554,12 @@ def _v97_freeform_social_ok(excerpt, found, full_text):
     key=re.sub(r'\W+',' ',c).strip()
     for f in found:
         other=re.sub(r'\W+',' ',_normalize_apostrophes(str(f.get('full_claim_text') or f.get('claim') or '').lower())).strip()
-        if other and (key in other or other in key):
+        if not other or not (key in other or other in key):
+            continue
+        if not typ or f.get('type')==typ:
+            return False
+        phrase=_normalize_apostrophes(str(f.get('matched_phrase') or '')).lower()
+        if not trig or not phrase or _v97_same_clause(c,phrase,_normalize_apostrophes(trig)):
             return False
     return not _v97_evidence_nearby(c,full_text)
 
@@ -10043,7 +10230,8 @@ def social_specification_check(claim_type, claim_text):
                         'audité','certifié','certification','périmètre','devoir de vigilance',
                         'mécanisme de plainte','mesure corrective','traçable','méthodologie','évaluation','évalué',
                         'selon','norme','indépendant','année de référence','politique']
-    has_specific=any(x in c for x in specificity_terms) or bool(re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%\b', c))
+    c=_V97_OWN_OPINION_RE.sub(' ',c)
+    has_specific=_spec_terms_present(specificity_terms,c) or bool(re.search(r'\b\d{1,3}(?:[.,]\d+)?\s?%',_V97_DISCOUNT_RE.sub(' ',c)))
     if is_placeholder_finding(t):
         return {'status':'Not applicable','comment':'No material social claim was detected.'}
     if has_specific:
@@ -10108,18 +10296,36 @@ _SOCIAL_REWRITE_DEFAULT=(
 _CHILD_TRIGGER_RE=re.compile(r"child labou?r|child work|kinderarbeid|travail des enfants|kinderarbeit")
 _FORCED_TRIGGER_RE=re.compile(r"forced labou?r|modern slavery|dwangarbeid|moderne slavernij|travail forc[eé]|esclavage moderne|zwangsarbeit")
 
+def _child_forced_flags(claim_text, trigger):
+    """(child, forced): which of the two the wording names. The trigger decides first; the text decides when the trigger names neither."""
+    trig=str(trigger or '').lower(); text=str(claim_text or '').lower()
+    child=bool(_CHILD_TRIGGER_RE.search(trig)); forced=bool(_FORCED_TRIGGER_RE.search(trig))
+    if not child and not forced:
+        child=bool(_CHILD_TRIGGER_RE.search(text)); forced=bool(_FORCED_TRIGGER_RE.search(text))
+    return child,forced
+
 def _social_pick(claim_type, claim_text='', trigger=''):
     """(template, key) for a social claim. The forced-labour claim type also holds wording about CHILD labour ("child
-    labour free", "geen kinderarbeid", "sans travail des enfants"): when the trigger names child labour and not forced
+    labour free", "geen kinderarbeid", "sans travail des enfants"): when the wording names child labour and not forced
     labour, the child-labour rewrite is used instead of the forced-labour one."""
     picked=_pick_rewrite(_SOCIAL_REWRITES,_SOCIAL_REWRITE_DEFAULT,claim_type,claim_text,_SOCIAL_TOPICS,_SOCIAL_TOPIC_TYPES,_SOCIAL_BROAD_RE,trigger)
     if picked[1]=='forced':
-        trig=str(trigger or '').lower()
-        if _CHILD_TRIGGER_RE.search(trig) and not _FORCED_TRIGGER_RE.search(trig):
+        child,forced=_child_forced_flags(claim_text,trigger)
+        if child and not forced:
             for entry in _SOCIAL_TOPICS:
                 if entry[0]=='childlabour':
                     return (entry[2],entry[3])
     return picked
+
+def _social_second_key(claim_type, claim_text='', trigger=''):
+    """'forced' or 'childlabour' when the wording names BOTH child and forced labour (the rewrite then carries both), else ''."""
+    picked=_social_pick(claim_type,claim_text,trigger)
+    if picked[1] not in ('forced','childlabour'):
+        return ''
+    text=str(claim_text or '').lower()
+    if _CHILD_TRIGGER_RE.search(text) and _FORCED_TRIGGER_RE.search(text):
+        return 'childlabour' if picked[1]=='forced' else 'forced'
+    return ''
 
 def social_rewrite_key(claim_type, claim_text='', trigger=''):
     return _social_pick(claim_type,claim_text,trigger)[1]
@@ -10128,7 +10334,17 @@ def social_ready_to_use_rewrite(claim_type, claim_text='', trigger=''):
     """Literal, fill-in-the-blank rewrite for social/forced-labour claim types in plain language -- see
     _GREEN_REWRITES for the rationale. Bracketed placeholders mark facts only the company can supply. Written in
     the language of the claim (English, Dutch or French)."""
-    return _localize_rewrite(_social_pick(claim_type,claim_text,trigger),_rewrite_lang(claim_text))[0]
+    lang=_rewrite_lang(claim_text)
+    tpl=_localize_rewrite(_social_pick(claim_type,claim_text,trigger),lang)[0]
+    second=_social_second_key(claim_type,claim_text,trigger)
+    if second:
+        # v97.7: wording about child AND forced labour keeps both: the second rewrite follows the first
+        other=next(((e[2],e[3]) for e in _SOCIAL_TOPICS if e[3]==second),None) if second=='childlabour' else next(((t,k) for keys,t,k in _SOCIAL_REWRITES if k=='forced'),None)
+        if other:
+            tpl2=_localize_rewrite(other,lang)[0]
+            if tpl.startswith('"') and tpl.endswith('"') and tpl2.startswith('"') and tpl2.endswith('"'):
+                tpl=tpl[:-1].rstrip()+' '+tpl2[1:]
+    return tpl
 
 def social_rewrite_example(claim_type, claim_text='', trigger='', sector=''):
     """The same sentence completed for an invented company in the sector of the scanned company."""
@@ -10380,7 +10596,7 @@ def detect_claims(text):
         hits=0
         for trig in triggers:
             if _trigger_present(_normalize_apostrophes(trig), low):
-                extra_check=lambda c,_trig=trig: _v97_freeform_social_ok(c,fs,text)
+                extra_check=lambda c,_trig=trig,_typ=typ: _v97_freeform_social_ok(c,fs,text,_typ,_trig)
                 if _v55_add_finding(fs, seen, text, _normalize_apostrophes(trig), typ, risk, issue, rewrite, 'social', 38, extra_check=extra_check):
                     hits += 1
                     if hits >= 2: break

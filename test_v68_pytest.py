@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_6_double_check_fixes'
+    assert app.APP_VERSION == 'hostable_v97_7_evidence_linking'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8354,7 +8354,7 @@ def test_page_is_shown_next_to_the_source_in_report_screen_and_exports():
     assert report_pdf.claim_source({'source_label': 'a very long document name ' * 5, 'source_page': 'pp. 3, 9'}, 40).endswith(', pp. 3, 9')
     assert report_pdf.claim_source({'source_label': 'homepage'}) == 'homepage'
     html = Path('frontend.html').read_text(encoding='utf-8')
-    assert "r.source_page?', '+r.source_page" in html and "'#page='+pg[1]" in html and "'[[[PAGE '+i+']]]" in html
+    assert "r.source_page?', '+r.source_page" in html and "'#page=':'&page='" in html and "'[[[PAGE '+i+']]]" in html
 
 
 # ---- v97.1: ready-to-use rewrites and fictional examples follow EmpCo and the claim itself -------------------------
@@ -8430,7 +8430,7 @@ def test_every_rewrite_has_an_empco_note_that_names_the_rule_and_the_condition_f
     assert 'zoals “duurzaam”' in _rx.note('generic', 'duurzaam', lang='nl') and 'comme «' not in _rx.note('generic', '', lang='fr')
     assert 'point 4c' in _rx.note('neutral') and 'point 2a' in _rx.note('label') and 'point 10a' in _rx.note('legal')
     assert 'Article 6(2)(d)' in _rx.note('future_climate') and _rx.note('future_energy') == _rx.note('future')
-    assert _rx.note('forced').startswith('Not on the EmpCo blacklist') and 'Articles 6 and 7' in _rx.note('forced')
+    assert _rx.note('forced').startswith('No EmpCo blacklist item targets social claims') and 'Articles 6 and 7' in _rx.note('forced')
     # the findings carry it, and so does the inventory used by the screen and the PDF
     r = app.analyse_uploaded_document('t.txt', 'Our eco-friendly packaging is good for the planet. We are climate neutral thanks to offsetting.', 'TestCo', '', document_coverage=None)
     seen = 0
@@ -8653,7 +8653,7 @@ def test_every_detectable_social_trigger_gets_a_rewrite_in_its_own_language_with
             expected = _rx.template(f['rewrite_key'], lang) if lang != 'en' else tpl
             assert tpl == expected and tpl.startswith('"') and '[' in tpl, (typ, ph)
             assert f['rewrite_example'].startswith('"') and '[' not in f['rewrite_example'], (typ, ph)
-            assert f['rewrite_note'].startswith(('Not on the EmpCo blacklist', 'Niet op de EmpCo-zwarte lijst', 'Pas sur la liste noire')), (typ, ph)
+            assert f['rewrite_note'].startswith(('No EmpCo blacklist item targets social claims', 'Geen punt van de EmpCo-zwarte lijst', 'La liste noire d’EmpCo ne vise pas')), (typ, ph)
     assert checked >= 60
 
 
@@ -8766,9 +8766,10 @@ def test_free_form_social_detection_adds_no_second_finding_for_wording_the_fixed
     text = 'We pay a living wage to all employees of our company in every country.'
     fs = _social_findings(text)
     assert len(fs) == 1 and fs[0]['rewrite_key'] == 'wage'
-    # one sentence is reported once, under the type that matched first; two sentences give two findings
+    # v97.7: de-duplication is per claim type and clause, not per sentence: two different claims in one sentence are two findings
     one = 'We respect human rights and we champion diversity and inclusion at every level of the company.'
-    assert len(_social_findings(one)) == 1
+    types = [f['type'] for f in _social_findings(one)]
+    assert len(types) == 2 and len(set(types)) == 2 and 'Diversity, equality and inclusion claim' in types
     two = 'We respect human rights across the whole company. We champion diversity and inclusion at every level of the company.'
     assert {f['type'] for f in _social_findings(two)} >= {'Diversity, equality and inclusion claim'} and len(_social_findings(two)) == 2
 
@@ -8905,3 +8906,224 @@ def test_duplicate_sentences_are_skipped_before_the_checks_and_the_page_index_is
     threads = [_t.Thread(target=work, args=(n,)) for n in range(6)]
     [t.start() for t in threads]; [t.join() for t in threads]
     assert not errors and len(app._V97_PAGE_INDEX) <= app._V97_PAGE_INDEX_MAX
+
+
+# ---- v97.7: evidence linking and the other findings of the external review of v97.0 - v97.6 ---------------------------------
+
+def _child_findings(text):
+    return [f for f in app.detect_claims(text) if f.get('rewrite_key') == 'childlabour']
+
+
+def test_v977_negated_evidence_is_not_evidence():
+    for text in ('We do not tolerate child labour, but supplier audits are not available.',
+                 'We do not tolerate child labour in our supply chain. There is no third-party audit.',
+                 'Wij tolereren geen kinderarbeid in onze keten, maar er zijn geen audits beschikbaar.'):
+        assert _child_findings(text), text
+    # real evidence still hides the claim
+    assert not _child_findings('We do not tolerate child labour in our supply chain, confirmed by 38 independent audits in 2024.')
+
+
+def test_v977_a_discount_percentage_is_not_evidence_or_specification():
+    assert [f for f in app.detect_claims('Safety is our top priority. Save 20% on all products today.') if f['type'].startswith('Health')]
+    for text in ('Our product is eco-friendly and independently verified, with 20% off this week.',
+                 'Our product is eco-friendly and verified. Save 20% today.'):
+        f = [x for x in app.detect_green_claims(text) if x['type'] == 'Generic environmental claim'][0]
+        assert f['blacklisted_practice_indicator'] is True, text
+    # a real figure still specifies the claim
+    f = app.enrich_green_finding({'type': 'Generic environmental claim', 'claim': 'Our product is eco-friendly, verified to contain 40% recycled content.'}, trigger='eco-friendly')
+    assert f['blacklisted_practice_indicator'] is False
+
+
+def test_v977_evidence_has_to_be_about_the_same_topic_as_the_claim():
+    claim = 'We do not tolerate child labour in our supply chain.'
+    stats = 'Our LTIFR was 1.2 per 1,000,000 hours in 2024 with 3 accidents.'
+    assert _child_findings(claim + ' ' + stats)
+    assert _child_findings('\n\nPAGE: https://example.com/csr\n' + claim + '\n\n' + stats + ' We trained 120 employees for 800 hours.')
+    # the same figures DO back up a safety claim
+    assert not [f for f in app.detect_claims('Safety is our top priority. ' + stats) if f['type'].startswith('Health')]
+    # and an audit programme backs up the child-labour claim
+    assert not _child_findings(claim + ' Our suppliers are audited against SA8000 every year.')
+
+
+def test_v977_evidence_far_away_in_a_long_document_is_not_on_the_same_page():
+    claim = 'We do not tolerate child labour anywhere in our supply chain.'
+    far = claim + ' ' + ('Filler sentence about the company and its products. ' * 600) + 'Our suppliers are audited under SA8000 every year.'
+    assert _child_findings(far)
+    assert not _child_findings(claim + ' Our suppliers are audited under SA8000 every year.')
+
+
+def test_v977_certification_of_another_company_or_product_is_not_evidence():
+    f = [x for x in app.detect_claims('All our products are free from forced labour. A different company is Fairtrade certified.') if x.get('rewrite_key') == 'forced']
+    assert f and f[0]['risk'] == 'High'
+    own = [x for x in app.detect_claims('All our products are free from forced labour. Our cotton is Fairtrade certified.') if x.get('rewrite_key') == 'forced']
+    assert own and own[0]['risk'] == 'Medium'
+    text = 'Our Green Leaf label proves we are sustainable. The EU Ecolabel certificate 2024 covers another product.'
+    args = ('Our Green Leaf label proves we are sustainable.', 'label', 'Sustainability label / certification claim', 'green')
+    assert app._v97_page_specification(text, *args) == ''
+    assert app._v97_page_specification(text.replace('another product', 'this product'), *args) != ''
+
+
+def test_v977_a_specification_about_another_topic_does_not_specify_the_claim():
+    other = 'Our packaging is eco-friendly. Our vehicle fleet runs on 100% renewable electricity according to ISO 14064.'
+    f = [x for x in app.detect_green_claims(other) if x['type'] == 'Generic environmental claim'][0]
+    assert not f.get('page_specification') and f['blacklisted_practice_indicator'] is True
+    assert f['specification_check']['status'] == 'Likely insufficient'          # "packaging" is a topic word, not a specification
+    same = 'Our packaging is eco-friendly. It is made of 80% recycled cardboard according to ISO 14021.'
+    g = [x for x in app.detect_green_claims(same) if x['type'] == 'Generic environmental claim'][0]
+    assert g.get('page_specification') and g['blacklisted_practice_indicator'] is False
+
+
+def test_v977_legal_exceptions_are_not_applied_too_widely():
+    def bl(text, typ, trig):
+        return app.enrich_green_finding({'type': typ, 'claim': text}, trigger=trig)['blacklisted_practice_indicator']
+    generic, neutral = 'Generic environmental claim', 'Climate-neutrality or offsetting claim'
+    assert bl('Our product is eco-friendly according to our own opinion.', generic, 'eco-friendly') is True
+    assert bl('Our product is eco-friendly and independently verified, with 20% off this week.', generic, 'eco-friendly') is True
+    assert bl('Our company is climate neutral.', neutral, 'climate neutral') is True        # a subject is not a scope
+    assert bl('Our direct operations are climate neutral.', neutral, 'climate neutral') is False
+    assert bl('Our product is eco-friendly, according to our internal methodology.', generic, 'eco-friendly') is False
+
+
+def test_v977_specification_check_uses_whole_words_and_ignores_negated_terms():
+    assert app.green_specification_check('Generic environmental claim', 'We made this decision normally.')['status'] != 'Partly specified'
+    s = 'Forced-labour product or supply-chain claim'
+    assert app.social_specification_check(s, 'We do not tolerate child labour, but supplier audits are not available.')['status'] == 'Likely insufficient'
+    assert app.social_specification_check(s, 'All suppliers are audited under SA8000.')['status'] == 'Partly specified'
+
+
+def test_v977_future_supplier_and_scope3_claims_keep_the_future_conditions():
+    f = 'Future environmental-performance claim'
+    cases = ('We will reduce emissions from our suppliers by 50% by 2030.', 'We will reduce our scope 3 emissions by 50% by 2030.',
+             'Tegen 2030 halveren we de uitstoot bij onze leveranciers.', "D'ici 2030 nous réduirons de moitié les émissions de nos fournisseurs.")
+    for text in cases:
+        tpl, key = app._green_pick(f, text, '')
+        low = tpl.lower()
+        assert key == 'future_supplier', text
+        assert 'plan' in low and ('independent' in low or 'onafhankelijk' in low or 'indépendant' in low), text
+        assert 'scope 3' in low, text
+        assert 'scope 3' in app.green_rewrite_example(f, text).lower(), text
+    assert _rx.note('future_supplier') == _rx.note('future')
+
+
+def test_v977_reusable_wording_is_shown_in_full_in_the_report():
+    import report_pdf
+    dom = 'a-very-long-company-domain-name-for-an-international-group.example.com'
+    longest = 0
+    for lang, link in (('en', '[link]'), ('nl', '[link]'), ('fr', '[lien]')):
+        for key in ('future', 'future_climate', 'future_energy', 'future_supplier', 'neutral', 'generic', 'label', 'default'):
+            tpl = _rx.template(key, lang) if lang != 'en' else (app._GREEN_FUTURE.get(key) or (None,))[0]
+            if not tpl:
+                continue
+            text = tpl.replace(link, '[' + ('link on ' if lang == 'en' else 'link op ' if lang == 'nl' else 'lien sur ') + dom + ']')
+            longest = max(longest, len(text))
+            assert report_pdf.ready_to_use_rewrite_text({'ready_to_use_rewrite': text}) == report_pdf.clean_text(text), (lang, key)
+    assert longest > 570                      # the old card budget would have cut these
+    occ = [{'source_label': 'a very long document name that goes on and on and on forever.pdf', 'source_page': 'p. 12'}]
+    line = report_pdf.sources_line(occ, 58)
+    assert line.endswith('p. 12') and len(line) <= 58
+
+
+def test_v977_filters_do_not_drop_valid_candidates():
+    def types(text):
+        return {f['type'] for f in app.detect_claims(text) if not app.is_placeholder_finding(f['type'])}
+    assert 'Aspirational or future social-performance claim' in types('We are committed to respecting human rights. Read our returns policy.')
+    assert not types('We are committed to respecting human rights. Read our sustainability report.')
+    assert 'Diversity, equality and inclusion claim' in types('We champion diversity and apply the same principles across our business.')
+    assert 'Broad social-impact claim' in types('We support local communities to improve your neighbourhood.')
+    both = types('We champion diversity and we support local communities.')
+    assert {'Diversity, equality and inclusion claim', 'Broad social-impact claim'} <= both
+    # vacancy texts and addresses to a jobseeker are still skipped
+    assert not types('Join our team! We champion diversity and you can apply now.')
+    assert not types('We champion diversity, so your career here matters to us.')
+
+
+def test_v977_same_beginning_on_two_pages_is_told_apart():
+    a = '\n\nPAGE: https://example.com/a\nWe do not tolerate child labour anywhere in our supply chain and we audited every supplier in 2024 with 38 audits.'
+    b = '\n\nPAGE: https://example.com/b\nWe do not tolerate child labour anywhere in our supply chain but have no audits.'
+    text = a + b
+    page = app._v97_page_text(text, 'We do not tolerate child labour anywhere in our supply chain but have no audits.')
+    assert 'but have no audits' in page and 'audited every supplier' not in page
+    assert [f for f in app.detect_claims(text) if 'but have no audits' in (f.get('full_claim_text') or '')]
+    common = ' '.join('w%d' % i for i in range(45))
+    app._v97_register_pages('doc-same-start.pdf', [(1, 'Intro. ' + common + ' The audits confirm full compliance in 2024.'), (2, common + ' The audits show serious problems in 2024.')])
+    assert app._v97_find_pages('doc-same-start.pdf', common + ' The audits show serious problems in 2024.') == 'p. 2'
+    app._v97_register_pages('doc-short.pdf', [(1, 'intro text here'), (2, 'Our range is eco-friendly and more.'), (3, 'other')])
+    assert app._v97_find_pages('doc-short.pdf', 'Eco-friendly') == 'p. 2'
+
+
+def test_v977_page_index_is_scoped_per_analysis_and_never_serves_stale_pages():
+    claim = 'We do not tolerate child labour anywhere in our supply chain.'
+    source = 'Uploaded internal document: report.pdf'
+    try:
+        for scope, page in (('A', 2), ('B', 19)):
+            app._V97_SCOPE.id = scope
+            app._v97_register_pages(source, [(page, claim + ' More text about the code.')])
+        app._V97_SCOPE.id = 'A'
+        assert app._v97_find_pages(source, claim) == 'p. 2'
+        app._V97_SCOPE.id = 'B'
+        assert app._v97_find_pages(source, claim) == 'p. 19'
+        app._V97_SCOPE.id = 'A'
+        app._v97_register_pages(source, [])                         # no page data this time: unknown, not the old page
+        assert app._v97_find_pages(source, claim) == ''
+    finally:
+        app._V97_SCOPE.id = ''
+        app._v97_drop_scope('A'); app._v97_drop_scope('B')
+    # two analyses of files with the same name each get their own page, and leave nothing behind
+    for page in (2, 19):
+        raw = ''.join('[[[PAGE %d]]]\n%s\n' % (n, claim + ' Extra words on this page.' if n == page else 'Filler text about the company and its products on page %d. ' % n * 3) for n in range(1, 21))
+        text, cov = app.decode_extracted_text('report.pdf', raw)
+        r = app.analyse_uploaded_document('report.pdf', text, 'TestCo', '', document_coverage=cov)
+        pages = [c.get('source_page') for c in r['claim_inventory'] if 'child labour' in (c.get('claim_text') or '').lower()]
+        assert pages == ['p. %d' % page], pages
+    assert not [k for k in app._V97_PAGE_INDEX if k[0]]
+    # the lock-protected registration really stores the rows (a no-op registration must fail this)
+    import threading as _t
+    def work(n):
+        for i in range(30):
+            app._v97_register_pages('https://example.com/doc%d_%d.pdf' % (n, i), [(7, 'some text on page seven of document %d_%d' % (n, i))])
+    threads = [_t.Thread(target=work, args=(n,)) for n in range(4)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    assert app._v97_find_pages('https://example.com/doc3_29.pdf', 'some text on page seven of document 3_29') == 'p. 7'
+
+
+def test_v977_text_in_front_of_the_first_page_marker_is_kept_and_stale_sources_are_cleared():
+    text, cov = app.decode_extracted_text('d.pdf', 'Cover text with a claim that must stay in the analysed text. ' * 3 + '\n[[[PAGE 1]]]\n' + 'Body text of page one.\n' * 20)
+    assert 'Cover text with a claim' in text
+    f = [{'full_claim_text': 'zzz unique claim wording that is nowhere in the page', 'source_url': 'https://old.example/x', 'source_page': 'p. 3'}]
+    r = app.assign_sources_to_findings(f, [{'url': 'https://x.example', 'text': 'completely different content'}], [])
+    assert not r[0].get('source_url') and not r[0].get('source_page')
+
+
+def test_v977_language_subject_and_grammatical_number_of_the_rewrites():
+    assert app._rewrite_lang('Durable products') == 'en'
+    assert app._claim_subject('Our durable products.') == ('product', 'Our products')
+    generic = 'Generic environmental claim'
+    one = app._green_pick(generic, 'Our product is eco-friendly.', 'eco-friendly')[0]
+    many = app._green_pick(generic, 'Our durable products.', 'durable')[0]
+    assert '“contains 40%' in one and '“is certified' in one
+    assert '“contain 40%' in many and '“are certified' in many
+    assert '„bevatten' in app._green_pick(generic, 'Onze producten zijn duurzaam.', 'duurzaam')[0]
+    assert 'contiennent' in app._green_pick(generic, 'Nos produits sont durables.', 'durables')[0]
+    forced = 'Forced-labour product or supply-chain claim'
+    assert app.social_rewrite_key(forced, 'No child labour in our supply chain.', '') == 'childlabour'
+    assert app.social_rewrite_key(forced, 'No forced labour in our supply chain.', '') == 'forced'
+    both = app.social_ready_to_use_rewrite(forced, 'We prohibit child labour and forced labour in our supply chain.', 'child labour')
+    assert 'child labour' in both.lower() and 'forced labour' in both.lower() and both.startswith('"') and both.endswith('"')
+
+
+def test_v977_legal_notes_are_not_absolute():
+    for lang, start, two_a in (('en', 'No EmpCo blacklist item targets social claims', 'point 2a'),
+                               ('nl', 'Geen punt van de EmpCo-zwarte lijst', 'punt 2a'),
+                               ('fr', 'La liste noire d’EmpCo ne vise pas', 'point 2a')):
+        for key in ('forced', 'childlabour', 'human', 'safety', 'diversity', 'community', 'training'):
+            n = _rx.note(key, '', '', lang)
+            assert n.startswith(start) and two_a in n, (lang, key)
+    assert 'decorative' in _rx.note('visual') and 'decoratief' in _rx.note('visual', '', '', 'nl') and 'décorative' in _rx.note('visual', '', '', 'fr')
+    assert 'only helps if' in _rx.note('future') or 'A link only helps' in _rx.note('future')
+
+
+def test_v977_job_ad_and_second_person_filters_are_narrow():
+    assert not app._V97_JOB_AD_RE.search('we apply the same principles across our business')
+    assert app._V97_JOB_AD_RE.search('apply now and join our team')
+    assert not app._V97_SECOND_PERSON_RE.search('we support local communities to improve your neighbourhood')
+    assert app._V97_SECOND_PERSON_RE.search('your career grows with us') and app._V97_SECOND_PERSON_RE.search('you will work in a diverse team')
