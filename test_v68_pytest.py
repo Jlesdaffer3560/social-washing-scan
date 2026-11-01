@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_3_social_rewrites_checked'
+    assert app.APP_VERSION == 'hostable_v97_4_freeform_social_claims'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8682,3 +8682,104 @@ def test_social_rewrites_never_promise_an_outcome_and_always_ask_for_evidence_in
             for label in _SECTOR_SAMPLE_LABELS.values():
                 ex = _rx.example(key, label, lang=lang)
                 assert not promise[lang].search(ex), (key, lang, label, ex)
+
+
+# ---- v97.4: free-form social claims, reported only when no evidence is provided next to them ---------------------------
+
+_FREEFORM_CLAIMS = [
+    # (text, expected claim type, expected rewrite key, expected rewrite language)
+    ('We do not tolerate child labour anywhere in our supply chain.', 'Forced-labour product or supply-chain claim', 'childlabour', 'en'),
+    ('Wij tolereren geen kinderarbeid in onze toeleveringsketen.', 'Forced-labour product or supply-chain claim', 'childlabour', 'nl'),
+    ('Nous ne tolérons aucun travail des enfants dans notre chaîne d’approvisionnement.', 'Forced-labour product or supply-chain claim', 'childlabour', 'fr'),
+    ('Wij garanderen dat onze producten vrij zijn van dwangarbeid.', 'Forced-labour product or supply-chain claim', 'forced', 'nl'),
+    ('Nous garantissons que nos produits sont exempts de travail forcé.', 'Forced-labour product or supply-chain claim', 'forced', 'fr'),
+    ('Health and safety of our workers is our top priority.', 'Health, safety or worker-welfare claim', 'safety', 'en'),
+    ('De veiligheid en gezondheid van onze medewerkers is onze topprioriteit.', 'Health, safety or worker-welfare claim', 'safety', 'nl'),
+    ('La santé et la sécurité de nos employés sont notre priorité absolue.', 'Health, safety or worker-welfare claim', 'safety', 'fr'),
+    ('We champion diversity and inclusion at every level.', 'Diversity, equality and inclusion claim', 'diversity', 'en'),
+    ('Wij bevorderen diversiteit en inclusie op alle niveaus.', 'Diversity, equality and inclusion claim', 'diversity', 'nl'),
+    ('Nous promouvons la diversité et l’inclusion à tous les niveaux.', 'Diversity, equality and inclusion claim', 'diversity', 'fr'),
+    ('All our workers are free to join a trade union.', 'Human-rights or labour-rights claim', 'unions', 'en'),
+    ('Al onze werknemers kunnen vrij lid worden van een vakbond.', 'Human-rights or labour-rights claim', 'unions', 'nl'),
+    ('Tous nos employés peuvent librement adhérer à un syndicat.', 'Human-rights or labour-rights claim', 'unions', 'fr'),
+    ('We invest in training and development of our employees.', 'Human-rights or labour-rights claim', 'training', 'en'),
+    ('Wij investeren in opleiding en ontwikkeling van onze medewerkers.', 'Human-rights or labour-rights claim', 'training', 'nl'),
+    ('Nous investissons dans la formation et le développement de nos employés.', 'Human-rights or labour-rights claim', 'training', 'fr'),
+    ('We support the local communities where we operate.', 'Broad social-impact claim', 'community', 'en'),
+    ('Wij steunen de lokale gemeenschappen waar wij actief zijn.', 'Broad social-impact claim', 'community', 'nl'),
+    ('Nous soutenons les communautés locales où nous sommes présents.', 'Broad social-impact claim', 'community', 'fr'),
+]
+
+
+def _social_findings(text):
+    return [f for f in app.detect_claims(text) if not app.is_placeholder_finding(f.get('type', ''))]
+
+
+def _freeform_findings(text):
+    """Only the findings that come from the free-form lists (v97.4), not from the older fixed phrase lists."""
+    triggers = {app._normalize_apostrophes(t).lower() for _typ, _risk, trigs, _i, _r in app.V97_SOCIAL_FREEFORM_PATTERNS for t in trigs}
+    return [f for f in _social_findings(text) if app._normalize_apostrophes(str(f.get('matched_phrase') or '')).lower() in triggers]
+
+
+def test_free_form_social_assurances_are_detected_in_three_languages_with_the_fitting_rewrite():
+    for text, typ, key, lang in _FREEFORM_CLAIMS:
+        fs = _social_findings(text)
+        assert [f for f in fs if f['type'] == typ], (text, [f['type'] for f in fs])
+        f = [f for f in fs if f['type'] == typ][0]
+        assert f['rewrite_key'] == key and f['rewrite_lang'] == lang, (text, f['rewrite_key'], f['rewrite_lang'])
+        assert f['risk'] == 'Medium' and f['claim_score'] <= 40            # softer wording: never scored like a hard assurance
+        assert f['rewrite_note'] and f['ready_to_use_rewrite'].startswith('"')
+
+
+def test_free_form_social_assurances_are_not_reported_when_evidence_is_provided_next_to_them():
+    evidence = {
+        'en': ['In 2024 we carried out 38 audits at supplier sites.', 'This is verified by independent auditors.', 'Details are in our sustainability report.',
+               'See https://example.com/policy for the evidence.', 'It is certified under SA8000.', '94% of our staff is covered by a collective agreement.',
+               'Our grievance channel is open to everyone.'],
+        'nl': ['In 2024 voerden we 38 audits uit bij leveranciers.', 'Dit wordt onafhankelijk gecontroleerd en gecertificeerd.', 'Zie ons duurzaamheidsverslag.', '82% van onze medewerkers volgde een opleiding.'],
+        'fr': ['En 2024, nous avons réalisé 38 audits chez nos fournisseurs.', 'Cela est vérifié par un auditeur indépendant.', 'Voir notre rapport annuel sur www.example.be.', '94 % de nos employés sont couverts par une convention collective.'],
+    }
+    for text, typ, key, lang in _FREEFORM_CLAIMS:
+        if 'garantis' in text or 'garanderen' in text:
+            continue                                                      # these two are matched by the existing fixed phrases, which never had this condition
+        assert [f for f in _social_findings(text) if f['type'] == typ], text
+        for ev in evidence[lang]:
+            same_sentence = text[:-1] + ', ' + ev[0].lower() + ev[1:]
+            assert not _freeform_findings(same_sentence + ' '), same_sentence
+            next_sentence = text + ' ' + ev
+            assert not _freeform_findings(next_sentence), next_sentence
+    # evidence in an unrelated paragraph does not hide the claim
+    separate = 'We do not tolerate child labour anywhere in our supply chain and we say so on every page of our website.\n\nOur turnover grew by 12% in 2024 thanks to new products in the bakery range.'
+    assert [f for f in _social_findings(separate) if f['rewrite_key'] == 'childlabour']
+
+
+def test_free_form_social_detection_skips_vacancies_questions_and_second_person_address():
+    for text in ('Join our team! We invest in your training and development and offer a safe working environment. Apply today.',
+                 'Do we support the local communities where we operate? Read on.',
+                 'Wij investeren in uw opleiding en ontwikkeling. Bekijk onze vacatures en sollicteer vandaag nog.',
+                 'Rejoignez-nous : nous investissons dans votre formation et le développement de vos compétences. Postulez dès maintenant.',
+                 'Safety first', 'Diversity'):
+        assert not _social_findings(text), text
+
+
+def test_free_form_social_detection_adds_no_second_finding_for_wording_the_fixed_lists_already_cover():
+    text = 'We pay a living wage to all employees of our company in every country.'
+    fs = _social_findings(text)
+    assert len(fs) == 1 and fs[0]['rewrite_key'] == 'wage'
+    # one sentence is reported once, under the type that matched first; two sentences give two findings
+    one = 'We respect human rights and we champion diversity and inclusion at every level of the company.'
+    assert len(_social_findings(one)) == 1
+    two = 'We respect human rights across the whole company. We champion diversity and inclusion at every level of the company.'
+    assert {f['type'] for f in _social_findings(two)} >= {'Diversity, equality and inclusion claim'} and len(_social_findings(two)) == 2
+
+
+def test_free_form_social_claims_stay_medium_and_do_not_inflate_the_score():
+    text = ('We do not tolerate child labour anywhere in our supply chain. Safety is our top priority for everyone who works with us. We champion diversity and inclusion at every level. '
+            'All our workers are free to join a trade union. We invest in training and development of our employees. We support the local communities where we operate.')
+    r = app.analyse_uploaded_document('t.txt', text, 'TestCo', '', document_coverage=None)
+    social = [x for x in r['claim_inventory'] if x.get('dimension') == 'Social']
+    assert len(social) == 6 and {x['risk_level'] for x in social} == {'Medium'}
+    assert r['social_score'] < 60 and r['social_risk'] in ('Low', 'Medium')
+    evidenced = text.replace('trade union.', 'trade union, and 94% are covered by a collective agreement.').replace('supply chain.', 'supply chain; we carried out 38 audits in 2024.')
+    r2 = app.analyse_uploaded_document('t.txt', evidenced, 'TestCo', '', document_coverage=None)
+    assert len([x for x in r2['claim_inventory'] if x.get('dimension') == 'Social']) < 6

@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_3_social_rewrites_checked"
-APP_RELEASE_LABEL="v97.3"
+APP_VERSION="hostable_v97_4_freeform_social_claims"
+APP_RELEASE_LABEL="v97.4"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -9123,6 +9123,119 @@ V55_SOCIAL_EXTRA_PATTERNS = [
      'Specify stakeholder group, geography, objective, indicators, period, evidence and limitations.'),
 ]
 
+# v97.4: free-form social claims. The phrase lists above only fire on fixed wording ("free from forced labour"). Ordinary
+# assurance sentences -- "We do not tolerate child labour anywhere in our supply chain", "Safety is our top priority",
+# "We champion diversity and inclusion", "All our workers are free to join a trade union", "We invest in training and
+# development of our employees", "We support the local communities where we operate" (and the Dutch and French
+# equivalents) -- were missed. They are reported ONLY when nothing in the text suggests the claim is backed up: no figure,
+# audit, certificate, named standard, report or link in the sentence or right next to it (see _v97_evidence_nearby()).
+# That condition keeps the extra detection from flagging claims that are already substantiated, and it is the main guard
+# against false positives. Vacancy texts ("we invest in YOUR development"), questions and sentences already reported under
+# another social type are skipped as well.
+V97_SOCIAL_FREEFORM_PATTERNS = [
+    ('Forced-labour product or supply-chain claim', 'Medium',
+     ['do not tolerate child labour','do not tolerate child labor','do not tolerate forced labour','do not tolerate forced labor','will not tolerate child labour','will not tolerate forced labour',
+      'zero tolerance for child labour','zero tolerance for forced labour','zero tolerance of child labour','zero tolerance of forced labour','we prohibit child labour','we prohibit forced labour',
+      'we never use child labour','we never use forced labour','child labour is prohibited','forced labour is prohibited','child labour has no place','forced labour has no place',
+      'tolereren geen kinderarbeid','tolereren geen dwangarbeid','nultolerantie voor kinderarbeid','nultolerantie voor dwangarbeid','verbieden kinderarbeid','verbieden dwangarbeid','kinderarbeid is verboden','dwangarbeid is verboden',
+      'gebruiken nooit kinderarbeid','gebruiken nooit dwangarbeid','kinderarbeid heeft geen plaats','dwangarbeid heeft geen plaats','vrij zijn van dwangarbeid','vrij zijn van kinderarbeid','exempts de travail forcé','exemptes de travail forcé','exempts de travail des enfants','exemptes de travail des enfants',
+      'ne tolérons aucun travail des enfants','ne tolérons aucun travail forcé','tolérance zéro pour le travail des enfants','tolérance zéro pour le travail forcé','interdisons le travail des enfants','interdisons le travail forcé',
+      "le travail des enfants est interdit","le travail forcé est interdit","n'avons jamais recours au travail des enfants","n'avons jamais recours au travail forcé"],
+     'A statement that forced or child labour is not tolerated or does not occur is an assurance about conduct, not a measured result. No check, audit, figure or report was found next to it.',
+     'Describe the checks behind the statement (risk assessment, audits, traceability, remediation) and link to the evidence.'),
+    ('Health, safety or worker-welfare claim', 'Medium',
+     ['safety is our top priority','safety is our first priority','health and safety is our top priority','health and safety is our first priority','safety of our employees is our top priority','safety of our workers is our top priority',
+      'safety of our people is our top priority','we put safety first','safety comes first','safe working environment','safe and healthy working environment','safe and healthy workplace','safe working conditions','safe place to work',
+      'veiligheid is onze topprioriteit','veiligheid is onze eerste prioriteit','veiligheid staat bij ons voorop','veiligheid komt op de eerste plaats','veilige werkomgeving','veilige en gezonde werkomgeving','veilige en gezonde werkplek','veilige arbeidsomstandigheden','veilige werkplek','veiligheid en gezondheid van onze medewerkers is onze topprioriteit','gezondheid en veiligheid van onze medewerkers is onze topprioriteit','veiligheid en gezondheid van onze werknemers is onze topprioriteit','gezondheid en veiligheid van onze werknemers is onze topprioriteit',
+      'la sécurité est notre priorité absolue','la sécurité est notre priorité','la sécurité passe avant tout','la sécurité d\'abord','environnement de travail sûr','environnement de travail sûr et sain','lieu de travail sûr et sain','conditions de travail sûres','milieu de travail sécuritaire','la santé et la sécurité de nos employés sont notre priorité','la sécurité et la santé de nos employés sont notre priorité','la santé et la sécurité de nos collaborateurs sont notre priorité','la sécurité et la santé de nos collaborateurs sont notre priorité'],
+     'Safety wording that is not tied to incident data, controls or coverage is an assurance about outcomes rather than a verifiable statement. No figure, audit or report was found next to it.',
+     'Back it with incident rates, the safety system used, the coverage (employees, contractors, sites) and corrective actions.'),
+    ('Diversity, equality and inclusion claim', 'Medium',
+     ['we champion diversity','we promote diversity','we embrace diversity','we value diversity','we celebrate diversity','committed to diversity and inclusion','we foster an inclusive','inclusive workplace for all','inclusive culture','equal opportunities for all','equal opportunity for all','zero tolerance for discrimination','we do not tolerate discrimination','we do not discriminate',
+      'bevorderen diversiteit','promoten diversiteit','waarderen diversiteit','omarmen diversiteit','zetten ons in voor diversiteit en inclusie','inclusieve werkplek voor iedereen','inclusieve cultuur','gelijke kansen voor iedereen','nultolerantie voor discriminatie','tolereren geen discriminatie','discrimineren niet',
+      'nous promouvons la diversité','nous valorisons la diversité','nous favorisons la diversité','engagés en faveur de la diversité et de l\'inclusion','lieu de travail inclusif pour tous','culture inclusive','égalité des chances pour tous','tolérance zéro pour la discrimination','ne tolérons aucune discrimination','ne discriminons pas'],
+     'Diversity and inclusion wording without data, scope or progress indicators is an assurance about culture rather than a verifiable statement. No figure, report or method was found next to it.',
+     'Add workforce data, the scope (which group, which roles), the baseline and the progress made.'),
+    ('Human-rights or labour-rights claim', 'Medium',
+     ['free to join a trade union','free to join a union','free to join trade unions','freedom of association is respected','we respect freedom of association','we pay fair wages','we pay a fair wage','we pay our employees fairly','we pay all our employees fairly',
+      'we invest in training','we invest in the training','invest in training and development','training and development of our employees','training and development of our people','develop the skills of our employees','we invest in our employees','we invest in our people','we invest in the development of our',
+      'vrij lid worden van een vakbond','vrij om lid te worden van een vakbond','vrij om zich aan te sluiten bij een vakbond','vrijheid van vereniging wordt gerespecteerd','respecteren de vrijheid van vereniging','betalen eerlijke lonen','betalen een eerlijk loon','betalen onze werknemers eerlijk',
+      'investeren in opleiding','investeren in de opleiding','opleiding en ontwikkeling van onze medewerkers','opleiding en ontwikkeling van onze werknemers','ontwikkelen de vaardigheden van onze medewerkers','investeren in onze medewerkers','investeren in onze mensen','investeren in de ontwikkeling van onze',
+      'peuvent librement adhérer à un syndicat','libres d\'adhérer à un syndicat','libres de rejoindre un syndicat','la liberté d\'association est respectée','respectons la liberté d\'association','payons des salaires équitables','payons un salaire équitable','rémunérons équitablement nos employés',
+      'investissons dans la formation','formation et développement de nos employés','formation et développement de nos collaborateurs','développons les compétences de nos employés','investissons dans nos employés','investissons dans nos collaborateurs','investissons dans le développement de nos'],
+     'Statements about wages, trade-union freedom or training and development are assurances about working conditions. No figure, agreement, audit or report was found next to them.',
+     'Say who is covered, how it is measured and when (share of staff, hours of training, agreement or benchmark used) and link to the evidence.'),
+    ('Broad social-impact claim', 'Medium',
+     ['we support the local communities','we support local communities','we support the communities where we operate','we support the communities in which we operate','we give back to the community','we give back to our communities','we invest in the local community','we invest in local communities','committed to the communities where we operate','we contribute to the local community',
+      'steunen de lokale gemeenschappen','steunen lokale gemeenschappen','steunen de gemeenschappen waar wij actief zijn','geven iets terug aan de gemeenschap','investeren in de lokale gemeenschap','investeren in lokale gemeenschappen','dragen bij aan de lokale gemeenschap',
+      'soutenons les communautés locales','soutenons les communautés où nous sommes présents','redonnons à la communauté','investissons dans la communauté locale','investissons dans les communautés locales','contribuons à la communauté locale'],
+     'Community-support wording without a programme, stakeholder group, place or result is a broad impact claim. No figure, programme name or report was found next to it.',
+     'Name the programme, the group and place reached, the period and the result, and link to the evidence.'),
+]
+
+# Evidence that a claim is backed up: figures, audits, verification, certificates, named standards, reports, links, grievance or
+# agreement mechanisms. Matched on lower-case text; one hit in the sentence or right next to it means "evidence is provided".
+_V97_EVIDENCE_RE = re.compile("|".join([
+    r"\d+(?:[.,]\d+)?\s?%",
+    r"\b\d[\d.,]*\s+(?:audits?|accidents?|incidents?|suppliers?|factories|sites|employees|workers|hours|inspections|trainings?|leveranciers|fabrieken|werknemers|medewerkers|uren|ongevallen|inspecties|opleidingen|fournisseurs|usines|employ[eé]s|travailleurs|heures|formations)\b",
+    r"\bper\s+1[., ]?000[., ]?000\b|\bltifr\b|\btrir\b",
+    r"\baudit\w*|\bgeaudit\w*|\bauditeur\w*",
+    r"\bthird[- ]party\b|\bderde partij\b|\bindependent(?:ly)?\b|\bonafhankelijk\w*|\bind[eé]pendant\w*",
+    r"\bverif\w+|\bgeverifieerd\b|\bv[eé]rifi\w+",
+    r"\bcertifi\w+|\bgecertificeerd\b|\bcertificat\w*",
+    r"\bassurance\b|\bassured\b",
+    r"\biso\s?\d{4,5}\b|\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfairtrade\b|\bfair trade\b|\bb corp\b|\bgots\b|\becovadis\b|\banker\b|\bfair wear\b|\bilo\b|\boecd\b|\boeso\b|\bocde\b|\bungp\b|\bun guiding\b|\bcsrd\b|\besrs\b|\bgri\b",
+    r"https?://|www\.|\.com\b|\.be\b|\.eu\b|\.org\b",
+    r"\b(?:annual|sustainability|esg|impact|csr)\s+report\b|\bjaarverslag\b|\bduurzaamheidsverslag\b|\brapport\s+(?:annuel|de durabilit[eé]|rse)\b|\bsee (?:our|the|page)\b|\bzie (?:ons|onze|pagina)\b|\bvoir (?:notre|nos|page)\b",
+    r"\bpublished\b|\bgepubliceerd\b|\bpubli[eé]\w*|\baccording to\b|\bvolgens\b|\bselon\b|\bas reported\b",
+    r"\bkpis?\b|\bmeasured\b|\bgemeten\b|\bmesur[eé]\w*|\bdata\b|\bgegevens\b|\bdonn[eé]es\b|\bstatistics\b|\bstatistiek\w*|\bstatistiques\b",
+    r"\bgrievance\b|\bwhistle-?blow\w*|\bhotline\b|\bspeak[- ]up\b|\bklachten\w*|\bklokkenluid\w*|\bmeldpunt\b|\bmeldlijn\b|\bsignalement\b|\blanceur d'alerte\b|\bplainte\w*",
+    r"\bcollective (?:labou?r )?agreement\b|\bcollectieve arbeidsovereenkomst\b|\bcao\b|\bconvention collective\b",
+    r"\brisk assessment\b|\brisicoanalyse\b|\banalyse des risques\b|\bevaluation des risques\b|\bdue diligence\b|\bzorgvuldigheidsplicht\b|\bdevoir de vigilance\b|\bremediation\b|\bremedy\b|\bherstel\w*|\br[eé]paration\b|\bcorrective action\b",
+]), re.I)
+_V97_JOB_AD_RE = re.compile(r"\b(apply|vacanc\w*|job openings?|careers?|join our team|we are hiring|we're hiring|recruit\w*|sollicit\w*|vacature\w*|werken bij|word onderdeel van ons team|postul\w*|carri[eè]re|offres? d'emploi|nous recrutons|rejoignez)\b", re.I)
+_V97_SECOND_PERSON_RE = re.compile(r"\b(your|you|you're|jouw|jij|je|uw|u|votre|vos|vous|tu|ton|ta)\b", re.I)
+
+def _v97_evidence_nearby(excerpt_low, full_text):
+    """True when the claim sentence itself, or the text right around it (the sentence before and up to ~450 characters after,
+    never across a blank line or a page marker), contains evidence: a figure, an audit, a certificate, a named standard, a
+    report, a link or a grievance/agreement mechanism."""
+    if _V97_EVIDENCE_RE.search(excerpt_low):
+        return True
+    text=_normalize_apostrophes(str(full_text or '')).replace('\r','')
+    low=text.lower()
+    words=[w for w in re.split(r'\s+',excerpt_low.strip()) if w][:8]
+    if not words:
+        return False
+    m=re.search(r'\s+'.join(re.escape(w) for w in words),low)
+    if not m:
+        return False
+    start=m.start()
+    end=low.find('\n\n',m.end())
+    end=len(low) if end==-1 else end
+    left=low.rfind('\n\n',0,start)
+    window=low[max(left+2 if left!=-1 else 0,start-300):min(end,m.end()+450)]
+    for marker in ('\n\npage:','\n\nreport (pdf):'):
+        cut=window.find(marker)
+        if cut!=-1:
+            window=window[:cut]
+    return _V97_EVIDENCE_RE.search(window) is not None
+
+def _v97_freeform_social_ok(excerpt, found, full_text):
+    """Extra qualifier for the free-form social patterns: no evidence nearby, not a vacancy text or a question, no second-person
+    address, and not already reported under another social type."""
+    c=_normalize_apostrophes((excerpt or '').lower()).strip()
+    if len(c)<45 or '?' in c:
+        return False
+    if _V97_JOB_AD_RE.search(c) or _V97_SECOND_PERSON_RE.search(c):
+        return False
+    key=re.sub(r'\W+',' ',c).strip()
+    for f in found:
+        other=re.sub(r'\W+',' ',_normalize_apostrophes(str(f.get('full_claim_text') or f.get('claim') or '').lower())).strip()
+        if other and (key in other or other in key):
+            return False
+    return not _v97_evidence_nearby(c,full_text)
+
 V55_NAV_CONTEXT_EXCLUSIONS = [
     'cookie', 'privacy', 'terms', 'login', 'sign in', 'menu', 'navigation', 'subscribe', 'newsletter',
     'download report', 'annual report', 'sustainability report', 'press release archive',
@@ -10114,6 +10227,15 @@ def detect_claims(text):
                 if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'social', score):
                     hits += 1
                     if hits >= 3: break
+    # v97.4: free-form assurance sentences, only where no evidence is provided next to them (see V97_SOCIAL_FREEFORM_PATTERNS).
+    for typ,risk,triggers,issue,rewrite in V97_SOCIAL_FREEFORM_PATTERNS:
+        hits=0
+        for trig in triggers:
+            if _trigger_present(_normalize_apostrophes(trig), low):
+                extra_check=lambda c,_trig=trig: _v97_freeform_social_ok(c,fs,text)
+                if _v55_add_finding(fs, seen, text, _normalize_apostrophes(trig), typ, risk, issue, rewrite, 'social', 38, extra_check=extra_check):
+                    hits += 1
+                    if hits >= 2: break
     # v93.31: see the matching note in detect_green_claims() -- this cap moved out of the
     # analysis layer. The 200 ceiling here is a pathological-input safety bound, not a
     # display limit; the report's display-only top-12 selection happens separately.

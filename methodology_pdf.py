@@ -276,6 +276,14 @@ def build_methodology_pdf():
          Paragraph('Wording on forced labour, human rights, workplace safety and diversity/inclusion each needs an extra strong phrase '
                    'in the same passage (for example <i>traceability</i> next to a forced-labour reference, or <i>living wage</i> or '
                    '<i>worker rights</i> next to a human-rights reference). The trigger word alone is never enough.', STY['td'])),
+        (Paragraph('Everyday assurance sentences', STY['td_b']),
+         Paragraph('Besides the fixed phrases, the scan also picks up ordinary assurance sentences in English, Dutch and French, such as '
+                   '<i>we do not tolerate child labour</i>, <i>safety is our top priority</i>, <i>we champion diversity and inclusion</i>, '
+                   '<i>all our workers are free to join a trade union</i>, <i>we invest in training and development</i> or <i>we support the '
+                   'local communities</i>. Such a sentence is reported <b>only if no evidence is given in or right next to it</b>: no figure, '
+                   'audit, verification, certificate, named standard, report, link, grievance channel or collective agreement. Vacancy texts, '
+                   'questions and sentences addressed to &ldquo;you&rdquo; are skipped. These findings are rated Medium and weigh less than '
+                   'the fixed phrases.', STY['td'])),
         (Paragraph('No claim kept = no inflated score', STY['td_b']),
          Paragraph('If nothing passes these checks, the social score says &ldquo;No material problematic social claim retained&rdquo; '
                    'instead of assuming a risk level.', STY['td'])),
