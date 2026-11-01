@@ -160,7 +160,7 @@ def build_methodology_pdf():
          Paragraph('The scan only recognises the <i>wording pattern</i>. '
                    'It cannot confirm the legal conditions, such as whether the claim is addressed to consumers (a business-to-consumer, or B2C, '
                    'practice), whether it is about a product, brand or company, whether the specification is clear and prominent in the same place '
-                   'as the claim, and whether the company can show recognised excellent environmental performance. A claim such as &ldquo;carbon '
+                   'as the claim (on a website the scan looks for it on the same page, but cannot judge how prominent it is), and whether the company can show recognised excellent environmental performance. A claim such as &ldquo;carbon '
                    'neutral&rdquo; without a stated scope is treated as a generic claim (point 4a), even when it concerns the whole company. Only '
                    'wording that names its scope or basis, or is clearly specified in the same place, falls outside this list and is assessed '
                    'case by case.', STY['td'])),
@@ -268,10 +268,12 @@ def build_methodology_pdf():
                    'suppliers&rdquo; alone is not treated as a claim of assurance.', STY['td'])),
         (Paragraph('Future commitments checked for real evidence', STY['td_b']),
          Paragraph('A forward-looking statement about wages, human rights or working conditions (<i>we are working towards&hellip;</i>, '
-                   '<i>our ambition is&hellip;</i>) is flagged only when the same or the next sentence gives <b>no</b> concrete evidence '
-                   'of a process, such as due diligence, a complaints mechanism or tracking. A commitment backed by real process detail '
-                   'is treated as a supported policy statement, not as empty ambition. Text that sounds like evidence but is about an '
-                   'unrelated topic (for example a sentence on a financial audit after a human-rights commitment) does not count.', STY['td'])),
+                   '<i>our ambition is&hellip;</i>) is flagged only when the same or the next sentence, or the rest of the <b>same page</b>, gives '
+                   '<b>no</b> concrete evidence of a process, such as due diligence, a complaints mechanism, a social audit programme or '
+                   'tracking, and does not point to a full policy or report. A commitment backed by real process detail is treated as a '
+                   'supported policy statement, not as empty ambition. Text that sounds like evidence but is about an unrelated topic (for '
+                   'example a sentence on a financial audit after a human-rights commitment) does not count, and neither does evidence '
+                   'that only appears on a different page.', STY['td'])),
         (Paragraph('Extra support per topic', STY['td_b']),
          Paragraph('Wording on forced labour, human rights, workplace safety and diversity/inclusion each needs an extra strong phrase '
                    'in the same passage (for example <i>traceability</i> next to a forced-labour reference, or <i>living wage</i> or '
