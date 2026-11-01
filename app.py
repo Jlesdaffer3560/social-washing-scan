@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_4_freeform_social_claims"
-APP_RELEASE_LABEL="v97.4"
+APP_VERSION="hostable_v97_5_page_level_evidence"
+APP_RELEASE_LABEL="v97.5"
 APP_RELEASE_DATE="2026-10-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -4551,16 +4551,21 @@ def _v93_analysis_text(f):
 
 def enrich_green_finding(f, trigger=''):
     analysis_text=_v93_analysis_text(f)
+    page_spec=str(f.get('page_specification') or '')
+    legal_text=(analysis_text+'. '+page_spec) if page_spec else analysis_text
     f['module']=green_claim_module(f.get('type',''))
     f['specification_check']=green_specification_check(f.get('type',''), analysis_text)
-    f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, analysis_text)
+    if page_spec and f['specification_check'].get('status') in ('Likely insufficient','Needs review'):
+        f['specification_check']={'status':'Partly specified','location':'same page',
+            'comment':'The claim itself is broad, but a specification or certification scheme appears elsewhere on the same page ("'+page_spec[:160]+'"). Check that it is clear and prominent, next to or as part of the claim, and really about this claim. A link to another page does not count as the specification of a generic claim.'}
+    f['regulatory_signal']=green_blacklisted_indicator(f.get('type',''), trigger, legal_text)
     sig=f['regulatory_signal'].lower(); f['blacklisted_practice_indicator']=(('blacklisted-practice indicator' in sig) and not sig.startswith('no direct'))
     t_low=f.get('type','').lower()
     # EmpCo Annex I point 4a only blacklists a GENERIC claim that lacks same-medium
     # specification; once genuine specification is present the claim is no longer "generic" in
     # the Annex I sense and moves to the general, case-by-case UCPD test instead (still
     # potentially misleading, but not an automatic Annex I match).
-    if f['blacklisted_practice_indicator'] and 'generic' in t_low and _has_strong_same_medium_specification(analysis_text):
+    if f['blacklisted_practice_indicator'] and 'generic' in t_low and _has_strong_same_medium_specification(legal_text):
         f['blacklisted_practice_indicator']=False
     # EmpCo Annex I point 4c specifically targets claiming that a PRODUCT has a neutral,
     # reduced or positive climate impact based on offsetting -- a company- or operations-wide
@@ -6286,6 +6291,10 @@ def _social_claim_context(excerpt, typ, trigger, full_text=None):
                 # original target case), and skip it altogether when that next sentence opens
                 # with a topic-shift discourse marker.
                 after=low_full[pos+len(trig):pos+len(trig)+250]
+                # v97.5: the "next sentence" never belongs to the NEXT PAGE of the crawl (evidence on another page is not on the same medium)
+                page_break=re.search(r'\n\n(?:page|report \(pdf\)|related official company site): ',after)
+                if page_break:
+                    after=after[:page_break.start()]
                 # after[0] is usually still the tail of the TRIGGER's own sentence (e.g. trig=
                 # "committed to" matches early, leaving "...respecting human rights..." before
                 # the first period) -- split into sentences so the topic-shift check looks at
@@ -6298,7 +6307,12 @@ def _social_claim_context(excerpt, typ, trigger, full_text=None):
                     if not any(next_sentence.startswith(m) for m in topic_shift):
                         include.append(sentence_parts[1])
                 wider=c+' '+' '.join(include)
-        return _looks_like_aspirational_social_claim(wider)
+        if not _looks_like_aspirational_social_claim(wider):
+            return False
+        # v97.5: process evidence elsewhere on the same page, or a pointer to the full policy, backs the commitment up
+        if _V97_REFERRAL_RE.search(wider) or _v97_social_page_evidence(full_text,excerpt):
+            return False
+        return True
     if 'forced' in t:
         return any(s in c for s in ['forced labour','forced labor','modern slavery','child labour','child labor','traceability','import controls','product traceability','supplier traceability',
             'dwangarbeid','moderne slavernij','kinderarbeid','traceerbaarheid','importcontroles','producttraceerbaarheid','traceerbaarheid van leveranciers',
@@ -9200,7 +9214,8 @@ def _v97_evidence_nearby(excerpt_low, full_text):
     """True when the claim sentence itself, or the text right around it (the sentence before and up to ~450 characters after,
     never across a blank line or a page marker), contains evidence: a figure, an audit, a certificate, a named standard, a
     report, a link or a grievance/agreement mechanism."""
-    if _V97_EVIDENCE_RE.search(excerpt_low):
+    excerpt_low=_v97_strip_markers(excerpt_low).lower()
+    if _V97_EVIDENCE_RE.search(excerpt_low) or _V97_REFERRAL_RE.search(excerpt_low):
         return True
     text=_normalize_apostrophes(str(full_text or '')).replace('\r','')
     low=text.lower()
@@ -9219,12 +9234,131 @@ def _v97_evidence_nearby(excerpt_low, full_text):
         cut=window.find(marker)
         if cut!=-1:
             window=window[:cut]
-    return _V97_EVIDENCE_RE.search(window) is not None
+    window=_v97_strip_markers(window)
+    if _V97_EVIDENCE_RE.search(window) or _V97_REFERRAL_RE.search(window):
+        return True
+    # v97.5: and anywhere else on the same page, as far as it is social-topic evidence
+    return _v97_social_page_evidence(full_text,excerpt_low)
+
+# v97.5: the evidence boundary is the PAGE (the medium), not the paragraph. EmpCo's test for a generic environmental claim is whether the
+# specification is given "in clear and prominent terms on the same medium" (Directive (EU) 2024/825, Article 2(p) UCPD and recital 9: the
+# same advertising spot, the packaging or the online selling interface; the Commission Q&A adds "next to, or as part of, the claim").
+# For a website that medium is the page. So a specification (or a certification scheme) that sits elsewhere on the same page counts,
+# for green and for social claims alike. A pointer to ANOTHER page counts as evidence for social claims and for specific claims
+# (general UCPD rules), and for the plan and the expert findings behind a future claim (Commission Q&A: a reference or QR code is
+# enough there) -- but NOT as the specification of a generic environmental claim, which must be on the same medium.
+_V97_CRAWL_MARKER_RE = re.compile(r'\n\n(?:PAGE|REPORT \(PDF\)|RELATED OFFICIAL COMPANY SITE): ')
+
+_V97_MARKER_TEXT_RE = re.compile(r'(?:PAGE|REPORT \(PDF\)|RELATED OFFICIAL COMPANY SITE):\s*\S+', re.I)
+
+def _v97_strip_markers(text):
+    """Crawl markers such as 'PAGE: https://example.com/csr' sit in front of every page's text; the address in them is not evidence."""
+    return _V97_MARKER_TEXT_RE.sub(' ',str(text or ''))
+
+def _v97_locate(full_text, excerpt):
+    """Regex match of the excerpt in the crawled text (first, then last eight words: an excerpt may start with a pulled-in context
+    sentence), or None."""
+    text=_normalize_apostrophes(str(full_text or ''))
+    words=[w for w in re.split(r'\s+',_normalize_apostrophes(str(excerpt or '')).strip()) if w]
+    if not text or not words:
+        return None
+    for chunk in (words[:8],words[-8:]):
+        m=re.search(r'\s+'.join(re.escape(w) for w in chunk),text,re.I)
+        if m:
+            return m
+    return None
+
+def _v97_page_and_pos(full_text, excerpt):
+    """(page text, position of the excerpt in it): the page (crawl segment: 'PAGE:', 'REPORT (PDF):') that contains the excerpt; the
+    whole text when it has no page markers (an uploaded document is one medium). ('', 0) when the excerpt cannot be located."""
+    m=_v97_locate(full_text,excerpt)
+    if m is None:
+        return '',0
+    text=str(full_text or '')
+    starts=[x.start() for x in _V97_CRAWL_MARKER_RE.finditer(text)]
+    lo=max([x for x in starts if x<=m.start()] or [0])
+    hi=min([x for x in starts if x>m.start()] or [len(text)])
+    return text[lo:hi],m.start()-lo
+
+def _v97_page_text(full_text, excerpt):
+    return _v97_page_and_pos(full_text,excerpt)[0]
+
+# Evidence that belongs to the SOCIAL topic (so an unrelated "statutory audit" or "12% turnover growth" elsewhere on the page does not count).
+_V97_SOCIAL_TOPIC_EVIDENCE_RE = re.compile("|".join([
+    r"\b(?:supplier|social|factory|human[- ]rights|labou?r|safety|site)\s+audit\w*|\b(?:leverancier\w*|sociale|fabrieks\w*|veiligheids)\s?audit\w*|\baudits?\s+(?:at|of|bij|chez)\s+(?:our\s+|onze\s+|nos\s+)?(?:suppliers|factories|sites|leveranciers|fabrieken|fournisseurs|usines)\b|\baudits? sociaux\b",
+    r"\b\d[\d.,]*\s+audits?\b",
+    r"\bsa\s?8000\b|\bamfori\b|\bbsci\b|\bsmeta\b|\bsedex\b|\bfair wear\b|\bfairtrade\b|\biso\s?45001\b|\bilo\b|\bungp\b|\bun guiding\b|\boecd (?:guidelines|due diligence)\b|\boeso\b|\bocde\b|\bbetter work\b|\bwrap\b|\banker\b|\bfair wage network\b|\becovadis\b|\bb corp\b",
+    r"\bgrievance (?:mechanism|channel|procedure)s?\b|\bwhistle-?blow\w*|\bspeak[- ]up\b|\bhotline\b|\bklachtenmechanisme\b|\bklachtenprocedure\b|\bklachtenkanaal\b|\bmeldpunt\b|\bmeldlijn\b|\bklokkenluid\w*|\bm[eé]canisme de plainte\b|\bproc[eé]dure de plainte\b|\blanceur d'alerte\b|\bligne d'alerte\b",
+    r"\bcollective (?:labou?r )?agreement\b|\bcollectieve arbeidsovereenkomst\b|\bconvention collective\b",
+    r"\b(?:human[- ]rights|supply[- ]chain|supplier)\s+due diligence\b|\bzorgvuldigheidsplicht\b|\bdevoir de vigilance\b|\b(?:human[- ]rights|labou?r|forced[- ]labou?r|child[- ]labou?r)\s+risk assessment\b|\brisicoanalyse\b|\banalyse des risques\b",
+    r"\bltifr\b|\btrir\b|\bper\s+1[., ]?000[., ]?000\b|\baccident rate\b|\bongevallencijfer\b|\btaux de fr[eé]quence\b",
+    r"\bindependent(?:ly)?\s+(?:audit|verif|assur|review|assess|monitor)\w*|\bthird[- ]party\s+(?:audit|verif|assur|certif|assess)\w*|\bonafhankelijk\w*\s+(?:audit|gecontroleerd|geverifieerd|beoordeeld|gecertificeerd)\w*|\bexternally verified\b|\bextern geverifieerd\b|\b(?:audit[eé]|v[eé]rifi[eé]|certifi[eé])\w*\s+(?:par un tiers|de mani[eè]re ind[eé]pendante)",
+    r"\bremediation plan\b|\bcorrective action plan\b|\bherstelplan\b|\bplan d'action correctif\b",
+]), re.I)
+# A pointer to more explanation elsewhere: "see our report", "lees meer in ons beleid", "pour plus de détails, consultez notre politique".
+_V97_REFERRAL_RE = re.compile("|".join([
+    r"\b(?:see|read|learn|find out|check|visit|consult|refer to|details? (?:in|on|at)|more (?:information|details|about)|further information|full (?:policy|details|report))\b[^.]{0,80}\b(?:report|policy|policies|page|website|code of conduct|statement|document|here)\b",
+    r"\b(?:zie|lees|raadpleeg|bekijk|meer (?:informatie|details|weten)|verdere informatie|volledig (?:beleid|verslag))\b[^.]{0,80}\b(?:verslag|rapport|beleid|pagina|website|gedragscode|document|hier)\b",
+    r"\b(?:voir|lire|consultez|en savoir plus|plus d'informations|pour plus de d[eé]tails|informations compl[eé]mentaires)\b[^.]{0,80}\b(?:rapport|politique|page|site|code de conduite|document|ici)\b",
+]), re.I)
+
+def _v97_social_page_evidence(full_text, excerpt):
+    """True when the page that holds the claim shows social-topic evidence (audits, a named standard, a grievance channel, a collective
+    agreement, human-rights due diligence, safety rates, independent verification)."""
+    page=_v97_strip_markers(_v97_page_text(full_text,excerpt))
+    return bool(page.strip()) and _V97_SOCIAL_TOPIC_EVIDENCE_RE.search(_normalize_apostrophes(page).lower()) is not None
+
+def _v97_page_specification(full_text, excerpt, trig, typ, dimension):
+    """A sentence ELSEWHERE on the claim's page that specifies or backs the claim, else ''.
+      generic green claim  -> a sentence with a strong specification and a figure or named scheme, about the same topic (EmpCo Annex I 4a);
+      label / certification -> a sentence naming a recognised certification scheme (Annex I 2a);
+      supplier / human-rights / forced-labour claim -> a sentence naming a recognised social certification scheme."""
+    t=(typ or '').lower()
+    if dimension=='green' and 'generic' in t:
+        mode='generic'
+    elif dimension=='green' and ('label' in t or 'certification' in t):
+        mode='label'
+    elif dimension=='social' and any(k in t for k in ('supply','supplier','human','labour','labor','forced')):
+        mode='social'
+    else:
+        return ''
+    page,pos=_v97_page_and_pos(full_text,excerpt)
+    if not page:
+        return ''
+    own=re.sub(r'\W+',' ',_normalize_apostrophes(str(excerpt or '')).lower()).strip()
+    topic_rx=None
+    if mode=='generic':
+        entry=_topic_for_text(_GREEN_TOPICS,trig,1) or _topic_for_text(_GREEN_TOPICS,excerpt,1)
+        if entry and entry[0] not in ('neutral','comparison'):
+            topic_rx=entry[1]
+    page=_normalize_apostrophes(page)
+    for mm in re.finditer(r'[^\n]*?[.!?](?=\s|$)|[^\n]+',page):
+        sent=_v97_strip_markers(mm.group(0)).strip()
+        near=abs(mm.start()-pos)<=600
+        if not 25<=len(sent)<=400:
+            continue
+        low=sent.lower()
+        key=re.sub(r'\W+',' ',low).strip()
+        if key in own or own in key or any(n in low for n in ('cookie','privacy','newsletter','subscribe','sign in','login')):
+            continue
+        if mode=='generic':
+            if not _has_strong_same_medium_specification(low):
+                continue
+            if not (re.search(r'\d',low) or _names_recognized_certification_scheme(low)):
+                continue
+            if topic_rx and not near and not re.search(topic_rx,low):
+                continue                        # close to the claim any specification counts; further away it has to be about the same topic
+            return sent[:300]
+        if mode=='label' and _names_recognized_certification_scheme(low):
+            return sent[:300]
+        if mode=='social' and _names_recognized_certification_scheme(low,_RECOGNIZED_SOCIAL_CERTIFICATION_SCHEMES):
+            return sent[:300]
+    return ''
 
 def _v97_freeform_social_ok(excerpt, found, full_text):
     """Extra qualifier for the free-form social patterns: no evidence nearby, not a vacancy text or a question, no second-person
     address, and not already reported under another social type."""
-    c=_normalize_apostrophes((excerpt or '').lower()).strip()
+    c=_v97_strip_markers(_normalize_apostrophes((excerpt or '').lower())).strip()
     if len(c)<45 or '?' in c:
         return False
     if _V97_JOB_AD_RE.search(c) or _V97_SECOND_PERSON_RE.search(c):
@@ -10013,7 +10147,7 @@ def enrich_social_finding(f, trigger=''):
     # The claim still needs scope/KPI/verification evidence either way -- this only reflects
     # that a named, independently-audited scheme is a materially different starting point than
     # zero named evidence.
-    if f.get('risk')=='High' and _names_recognized_certification_scheme(analysis_text,_RECOGNIZED_SOCIAL_CERTIFICATION_SCHEMES):
+    if f.get('risk')=='High' and _names_recognized_certification_scheme(analysis_text+' '+str(f.get('page_specification') or ''),_RECOGNIZED_SOCIAL_CERTIFICATION_SCHEMES):
         f['risk']='Medium'
     f.update(classify_legal_basis(f))
     f['specification_check']=social_specification_check(f.get('type',''), analysis_text)
@@ -10119,6 +10253,9 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
                'standards':['EmpCo / Directive (EU) 2024/825','UCPD misleading commercial practices'],
                'action':'Substantiate the green claim with scope, objective evidence, method, limits, same-medium specification and verification.',
                'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
+            page_spec=_v97_page_specification(text,excerpt,trig,typ,'green')
+            if page_spec:
+                f['page_specification']=page_spec
             fs.append(enrich_green_finding(f,trig))
         else:
             f={'dimension':'social','type':typ,'risk':risk,'claim':_v93_trigger_centered_truncate(excerpt,trig,620),
@@ -10126,6 +10263,9 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
                'matched_phrase':trig,'why_flagged':why_flagged,
                'standards':standards_for_claim(typ),'action':'Substantiate the social claim with scope, evidence, reporting period, limitations and remediation/traceability where relevant.',
                'problematic_terms':problematic_terms_for_finding(excerpt,typ)}
+            page_spec=_v97_page_specification(text,excerpt,trig,typ,'social')
+            if page_spec:
+                f['page_specification']=page_spec
             fs.append(enrich_social_finding(f,trig))
         added+=1
     return added

@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_4_freeform_social_claims'
+    assert app.APP_VERSION == 'hostable_v97_5_page_level_evidence'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8783,3 +8783,72 @@ def test_free_form_social_claims_stay_medium_and_do_not_inflate_the_score():
     evidenced = text.replace('trade union.', 'trade union, and 94% are covered by a collective agreement.').replace('supply chain.', 'supply chain; we carried out 38 audits in 2024.')
     r2 = app.analyse_uploaded_document('t.txt', evidenced, 'TestCo', '', document_coverage=None)
     assert len([x for x in r2['claim_inventory'] if x.get('dimension') == 'Social']) < 6
+
+
+# ---- v97.5: the evidence boundary is the page, not the paragraph ------------------------------------------------------
+
+_PM = '\n\nPAGE: https://example.be/csr\n'
+_CHILD = 'We do not tolerate child labour anywhere in our supply chain and we are proud of it.'
+_SA_EVIDENCE = 'All supplier sites are covered by our SA8000 certified social audit programme.'
+
+
+def _childlabour(text):
+    return [f for f in app.detect_claims(text) if f.get('rewrite_key') == 'childlabour' and f['type'].startswith('Forced')]
+
+
+def test_social_claim_is_not_reported_when_evidence_is_anywhere_on_the_same_page():
+    assert _childlabour(_PM + _CHILD)                                              # crawl marker "PAGE: https://..." is not evidence
+    assert not _childlabour(_PM + _CHILD + '\n\nOur turnover grew by 12% in 2024.\n\n' + _SA_EVIDENCE)     # other paragraph, same page
+    assert _childlabour(_PM + _CHILD + '\n\nOur turnover grew by 12% in 2024.')    # an unrelated figure is not evidence for this claim
+    assert _childlabour(_PM + _CHILD + '\n\nPAGE: https://example.be/audits\n' + _SA_EVIDENCE)              # evidence on ANOTHER page does not hide it
+    # a single uploaded document (no page markers) is one medium
+    assert not _childlabour(_CHILD + '\n\nChapter 4\n\n' + _SA_EVIDENCE)
+
+
+def test_social_claim_that_points_to_another_page_for_more_explanation_is_not_reported():
+    for pointer in ('Read more about our approach in our supplier code of conduct.', 'See our sustainability report for the details.',
+                    'Lees meer in ons duurzaamheidsverslag.', 'Pour plus de détails, consultez notre politique.'):
+        assert not _childlabour(_PM + _CHILD + ' ' + pointer + '\n\nPAGE: https://example.be/x\nContact.'), pointer
+
+
+def test_aspirational_social_wording_is_backed_up_by_a_grievance_channel_or_audit_programme_on_the_same_page():
+    claim = 'We are committed to respecting human rights across our operations and aim to be a fair employer.'
+    def aspirational(text):
+        return [f for f in app.detect_claims(text) if f['type'].startswith('Aspirational')]
+    assert aspirational(_PM + claim)
+    assert not aspirational(_PM + claim + '\n\nEmployees can use our grievance mechanism at any time.')
+    assert not aspirational(_PM + claim + ' See our human rights policy for the full commitment.')
+    assert aspirational(_PM + claim + '\n\nOur annual financial statements were subject to statutory audit.')    # not social-topic evidence
+    assert aspirational(_PM + claim + '\n\nPAGE: https://example.be/g\nEmployees can use our grievance mechanism at any time.')
+
+
+def test_generic_green_claim_is_specified_by_the_same_page_but_not_by_another_page_or_a_link():
+    def generic(text):
+        return [f for f in app.detect_green_claims(text) if f['type'].startswith('Generic')]
+    base = '\n\nPAGE: https://example.be/p\nOur packaging is eco-friendly.'
+    spec = 'The boxes contain 85% recycled cardboard (by weight), according to the Global Recycled Standard certificate.'
+    assert generic(base)[0]['blacklisted_practice_indicator'] is True
+    near = generic(base + '\n\n' + spec)[0]                                          # next to the claim, any topic wording
+    assert near['blacklisted_practice_indicator'] is False and near['page_specification'].startswith('The boxes contain 85%')
+    filler = 'Filler sentence about the bakery. ' * 40
+    far_same_topic = generic(base + '\n\n' + filler + '\n\nThe packaging contains 85% recycled cardboard according to the Global Recycled Standard.')[0]
+    assert far_same_topic['blacklisted_practice_indicator'] is False
+    far_other_topic = generic(base + '\n\n' + filler + '\n\nOur trucks use 20% less fuel according to the Euro VI standard.')[0]
+    assert far_other_topic['blacklisted_practice_indicator'] is True                 # far away AND about something else
+    other_page = generic(base + '\n\nPAGE: https://example.be/q\n' + spec)[0]
+    assert other_page['blacklisted_practice_indicator'] is True and 'page_specification' not in other_page
+    link_only = generic(base + ' Learn more in our sustainability report.\n\nPAGE: https://example.be/q\nContact.')[0]
+    assert link_only['blacklisted_practice_indicator'] is True                       # a link is not the specification of a generic claim (Commission Q&A)
+    # the report says where the specification was found and what still has to be checked
+    sc = near['specification_check']
+    assert sc['status'] == 'Partly specified' and sc.get('location') in (None, 'same page')
+
+
+def test_specification_on_the_page_helper_covers_labels_and_social_schemes_and_ignores_the_claim_itself():
+    page = '\n\nPAGE: https://example.be/l\nOur products carry the eco label.\n\nThe label is awarded under the EU Ecolabel scheme, certificate no. 123.'
+    spec = app._v97_page_specification(page, 'Our products carry the eco label.', 'eco label', 'Sustainability label / certification claim', 'green')
+    assert 'EU Ecolabel' in spec
+    assert app._v97_page_specification(page, 'Our products carry the eco label.', 'eco label', 'Generic environmental claim', 'green') == ''
+    social = '\n\nPAGE: https://example.be/s\nAll our suppliers are audited.\n\nOur factories are audited under the amfori BSCI standard.'
+    assert 'amfori' in app._v97_page_specification(social, 'All our suppliers are audited.', 'suppliers are audited', 'Supply-chain or supplier-responsibility claim', 'social')
+    assert app._v97_page_specification(social, 'All our suppliers are audited.', 'suppliers are audited', 'Diversity, equality and inclusion claim', 'social') == ''
