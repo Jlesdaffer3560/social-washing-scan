@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_7_evidence_linking"
-APP_RELEASE_LABEL="v97.7"
-APP_RELEASE_DATE="2026-11-01"
+APP_VERSION="hostable_v97_8_access_code_sofie"
+APP_RELEASE_LABEL="v97.8"
+APP_RELEASE_DATE="2026-11-02"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -6666,6 +6666,7 @@ def _access_code_ok(data):
 # "label=CODE,label2=CODE2@2026-12-31" (the part after @ is the optional last valid day).
 _EXTRA_ACCESS_CODES={
     'Gaasch Packaging':{'hash':'b4dc6c04c73ffa02993e42c16cdc2d2d99262d15a3b9c90ff9aef4896d6bf934','valid_until':'2026-11-30'},
+    'Sofie':{'hash':'c10e2758596849eea2dfe1e203041add873a3e00f1424ce27bb2a9bccb1a7957','valid_until':'2026-11-30'},
 }
 
 def _access_code_digest(value):
