@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_8_access_code_sofie"
-APP_RELEASE_LABEL="v97.8"
+APP_VERSION="hostable_v97_9_sitemap_before_guesses"
+APP_RELEASE_LABEL="v97.9"
 APP_RELEASE_DATE="2026-11-02"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -1694,10 +1694,11 @@ def _candidate_score(item):
     # as their English equivalents.
     # An actual link to an About/values/ambition page must outrank a guessed path that probably does not exist
     # (dandoy.be: /about/ held the labels and ambition but fell below the 14-attempt cut-off behind 14 guessed 404 paths).
-    if source=='linked' and _RELEVANT_ABOUT_SEGMENT_RE.search(urlparse(low).path): score+=25
+    # v97.8: also for a page the SITEMAP lists (aldi.be: /over-ons/compliance.html is a real page, yet it ranked behind 12 guessed paths)
+    if source in ('linked','sitemap') and _RELEVANT_ABOUT_SEGMENT_RE.search(urlparse(low).path): score+=25
     for word,weight in [('sustainab',55),('esg',50),('responsib',45),('human-right',45),('modern-slavery',45),('climate',38),('environment',35),('supplier',32),('annual',25),('report',24),('people',18),('planet',18),('impact',16),('governance',15),
         ('duurzaam',55),('verantwoord',45),('mensenrecht',45),('moderne-slavernij',45),('klimaat',38),('milieu',35),('leverancier',32),('jaarverslag',25),('mensen',18),('planeet',18),('bestuur',15),
-        ('durabilite',55),('durable',55),('responsab',45),('droits-humain',45),('esclavage-moderne',45),('climat',38),('environnement',35),('fournisseur',32),('annuel',25),('rapport',24),('personnes',18),('planete',18),('gouvernance',15)]:
+        ('compliance',30),('durabilite',55),('durable',55),('responsab',45),('droits-humain',45),('esclavage-moderne',45),('climat',38),('environnement',35),('fournisseur',32),('annuel',25),('rapport',24),('personnes',18),('planete',18),('gouvernance',15)]:
         if word in low: score+=weight
     return -score,len(url)
 
@@ -1863,6 +1864,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     for alt in _v96_alternate_language_urls(homepage_html,homepage_link_base,links):
         add_candidate(alt,'language_alternate')
     linked_count=len(candidates)
+    sitemap_count=0
 
     if time.time()<deadline-2 and not (slow_site and linked_count>=3):
         try:
@@ -1877,14 +1879,19 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             # loop always keeps a guaranteed share of the budget.
             sitemap_deadline=min(deadline,time.time()+max(4,min(10,remaining()*0.5)))
             for u in discover_sitemap_urls(homepage_trusted_host_base,deadline=sitemap_deadline):
-                add_candidate(u,'sitemap')
+                add_candidate(u,'sitemap'); sitemap_count+=1
         except Exception:
             pass
 
     scheme=urlparse(homepage_trusted_host_base).scheme or urlparse(url).scheme or 'https'
     if not (slow_site and linked_count>=3):
-        for path in COMMON_PUBLIC_PATHS:
-            add_candidate(f'{scheme}://{host}{path}','common_path')
+        guesses=[f'{scheme}://{host}{path}' for path in COMMON_PUBLIC_PATHS]
+        if sitemap_count>=10:
+            # v97.8: a site whose sitemap lists its pages does not need a dozen GUESSED paths. On aldi.be they all returned 404, outranked
+            # the sitemap's real pages (their keywords score highly) and used up the whole 14-attempt budget: the scan read 3 pages.
+            guesses=sorted(guesses,key=lambda g:_candidate_score((g,'common_path')))[:3]
+        for g in guesses:
+            add_candidate(g,'common_path')
 
     candidates.sort(key=_candidate_score)
     candidates=candidates[:CRAWL_MAX_PAGE_ATTEMPTS]

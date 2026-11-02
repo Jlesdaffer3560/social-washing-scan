@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_8_access_code_sofie'
+    assert app.APP_VERSION == 'hostable_v97_9_sitemap_before_guesses'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -9127,3 +9127,36 @@ def test_v977_job_ad_and_second_person_filters_are_narrow():
     assert app._V97_JOB_AD_RE.search('apply now and join our team')
     assert not app._V97_SECOND_PERSON_RE.search('we support local communities to improve your neighbourhood')
     assert app._V97_SECOND_PERSON_RE.search('your career grows with us') and app._V97_SECOND_PERSON_RE.search('you will work in a diverse team')
+
+
+def test_v979_pages_listed_in_the_sitemap_are_crawled_before_guessed_paths():
+    """aldi.be: the sitemap listed real pages (/over-ons/compliance.html), but twelve GUESSED paths with sustainability keywords all
+    returned 404, ranked higher and used up the whole attempt budget: the scan read 3 pages. With a usable sitemap only three guesses
+    are kept, and a sitemap page under an about-segment gets the same bonus as a linked one."""
+    real = app._candidate_score(('https://example.com/over-ons/compliance.html', 'sitemap'))
+    guess = app._candidate_score(('https://example.com/duurzaamheid', 'common_path'))
+    assert real < guess                                      # lower sorts first
+    html = '<html><body><a href="/fr">fr</a></body></html>'
+    sitemap = ['https://example.com/over-ons/page%d.html' % i for i in range(12)]
+    fetched = []
+
+    def fake_fetch_html(url, timeout=7):
+        return html, url
+
+    def fake_page(url, timeout=8, *a, **k):
+        fetched.append(url)
+        if '/over-ons/' in url:
+            return ('Text of ' + url + ' ' + 'word ' * 120, 'html', 'direct', [], url, url)
+        raise ValueError('HTTP Error 404: Not Found')
+
+    import pytest
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(app, 'fetch_html', fake_fetch_html)
+        mp.setattr(app, 'discover_sitemap_urls', lambda base, limit=160, deadline=None: list(sitemap))
+        mp.setattr(app, 'fetch_page_content', fake_page)
+        app.crawl('https://example.com', max_extra_pages=8, deadline=time.time() + 30, log=[])
+    finally:
+        mp.undo()
+    guessed = [u for u in fetched if '/over-ons/' not in u and not u.endswith('/fr')]      # /fr is a language alternate, not a guess
+    assert len(guessed) <= 3 and len([u for u in fetched if '/over-ons/' in u]) >= 8
