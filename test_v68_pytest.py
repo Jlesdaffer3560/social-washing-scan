@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_11_access_code_cristina_named'
+    assert app.APP_VERSION == 'hostable_v97_12_usage_log_only_given_codes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8176,7 +8176,7 @@ def test_access_code_use_is_recorded_per_code_without_storing_the_code(monkeypat
     assert done.wait(3) and seen == [('Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.4')]
     done.clear(); seen.clear()
     app._v96_note_access({'access_code': 'letmein'}, 'lookup', 'Gaasch Packaging', '1.2.3.4')
-    assert done.wait(3) and seen[0][:2] == ('shared', 'lookup')
+    assert done.wait(3) and seen[0][:2] == ('Gaasch Packaging', 'lookup')      # v97.12: the shared code is Gaasch Packaging's login code
     seen.clear()
     app._v96_note_access({'access_code': 'wrong'}, 'scan', 'x', 'ip'); app._v96_note_access({}, 'scan', 'x', 'ip')
     done.wait(0.3)
@@ -8195,7 +8195,7 @@ def test_history_page_shows_access_code_usage_and_escapes_it():
                'shared': {'first_used': '2026-10-01 08:00', 'last_used': '2026-11-05 15:00', 'scans': 30, 'lookups': 50, 'expired_attempts': 0}}
     events = [{'at': '2026-11-05 14:40', 'label': 'Gaasch Packaging', 'action': 'scan', 'target': 'https://gaaschpack.eu<script>', 'ip': '1.2.3.4'}]
     html = app._v96_access_usage_html(summary, events)
-    assert 'Gaasch Packaging' in html and '2026-11-05 14:40' in html and 'Shared code' in html and '<script>' not in html and '&lt;script&gt;' in html
+    assert 'Gaasch Packaging' in html and '2026-11-05 14:40' in html and 'Shared code' not in html and '<script>' not in html and '&lt;script&gt;' in html
     assert 'No use of an access code has been recorded yet' in app._v96_access_usage_html({}, [])
     page = app._v92_render_history_page([], 0, 1, 25, '', access_usage=(summary, events))
     assert 'Access code usage' in page and 'Gaasch Packaging' in page
@@ -9160,3 +9160,49 @@ def test_v979_pages_listed_in_the_sitemap_are_crawled_before_guessed_paths():
         mp.undo()
     guessed = [u for u in fetched if '/over-ons/' not in u and not u.endswith('/fr')]      # /fr is a language alternate, not a guess
     assert len(guessed) <= 3 and len([u for u in fetched if '/over-ons/' in u]) >= 8
+
+
+def test_v9712_cleanup_renames_shared_rows_and_removes_only_the_developers_live_checks():
+    statements = []
+    class Cur:
+        rowcount = 2
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params=None): statements.append((' '.join(sql.split()), params))
+    class Conn:
+        def cursor(self): return Cur()
+        def commit(self): pass
+        def close(self): pass
+    import pytest
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(app, 'DATABASE_URL', 'postgresql://example/db')
+        mp.setattr(app, '_v92_db_connect', lambda: Conn())
+        mp.setattr(app, '_V96_USAGE_READY', True)
+        assert app._v97_cleanup_owner_and_test_usage() == 8
+    finally:
+        mp.undo()
+    assert statements[0][0].startswith('DELETE FROM access_code_usage WHERE code_label IN') and '2026-11-02 19:45:00' in statements[0][0]
+    assert statements[1][0].startswith('UPDATE access_code_usage SET code_label=%s') and statements[1][1] == ('Gaasch Packaging', 'shared')
+    labels = [p[0] for _, p in statements[2:]]
+    assert labels == ['Sofie', 'Sofie', 'Cristina']
+    assert not any(sql.startswith('DELETE') and params == ('shared',) for sql, params in statements)
+    for sql, params in statements[2:]:
+        assert "action='lookup'" in sql and "target='Durably'" in sql and params[1].startswith('2026-11-0')
+
+
+def test_v9712_internal_code_works_but_is_never_recorded(monkeypatch):
+    import threading as _th, time as _t, datetime as dt
+    monkeypatch.setattr(app, 'ACCESS_CODE', 'letmein')
+    monkeypatch.setattr(app, 'DATABASE_URL', 'postgresql://example/db')
+    monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
+    monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2030, 1, 1))
+    seen = []
+    monkeypatch.setattr(app, '_v96_record_access_usage', lambda *a: seen.append(a))
+    internal = {'access_code': 'INTERN-48S9-2DWF-HEW8'}
+    assert app._access_code_label(internal) == 'Durably intern' and app._access_code_ok(internal)    # no end date: still valid
+    app._v96_note_access(internal, 'scan', 'https://example.com', '1.2.3.4'); _t.sleep(0.3)
+    assert seen == []
+    # the people who were given a code ARE recorded
+    app._v96_note_access({'access_code': 'letmein'}, 'scan', 'https://example.com', '1.2.3.4'); _t.sleep(0.3)
+    assert seen and seen[0][0] == 'Gaasch Packaging'

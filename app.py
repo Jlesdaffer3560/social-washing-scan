@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_11_access_code_cristina_named"
-APP_RELEASE_LABEL="v97.11"
+APP_VERSION="hostable_v97_12_usage_log_only_given_codes"
+APP_RELEASE_LABEL="v97.12"
 APP_RELEASE_DATE="2026-11-03"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -6674,6 +6674,7 @@ def _access_code_ok(data):
 _EXTRA_ACCESS_CODES={
     'Gaasch Packaging':{'hash':'b4dc6c04c73ffa02993e42c16cdc2d2d99262d15a3b9c90ff9aef4896d6bf934','valid_until':'2026-11-30'},
     'Sofie':{'hash':'c10e2758596849eea2dfe1e203041add873a3e00f1424ce27bb2a9bccb1a7957','valid_until':'2026-11-30'},
+    'Durably intern':{'hash':'95c7c285c36aaf9b65f4952a89d37da06041e7101e02acfc3c8a034d724048a6','valid_until':''},
     'Cristina':{'hash':'4e767095b30ef81c46cfef6619ef3b366b20f6071a739ac3da49bf2c7d599bf8','valid_until':'2026-11-30'},
 }
 
@@ -7140,6 +7141,9 @@ def _v93_fetch_visit_stats():
 # v96.25: which access code was used, when and for what -- shown on /history. The browser's access gate checks nothing by itself, so
 # "using a code" means a look-up or a scan reaching the server with that code in it. Only the code's NAME is stored, never the code.
 _V96_USAGE_READY=False
+SHARED_CODE_USAGE_LABEL='Gaasch Packaging'
+# v97.12: the usage overview on /history is for the people who were GIVEN a code. Durably's own scans and tests use this internal code, which is never recorded.
+UNLOGGED_CODE_LABELS=frozenset({'Durably intern'})
 
 def _v96_usage_ensure(conn):
     global _V96_USAGE_READY
@@ -7175,6 +7179,8 @@ def _v96_note_access(data,action,target,client_ip):
     try:
         if not ACCESS_CODE or not DATABASE_URL: return
         label,expired=_access_code_match(data)
+        if label in UNLOGGED_CODE_LABELS: return
+        if label=='shared': label=SHARED_CODE_USAGE_LABEL      # v97.12: the shared ACCESS_CODE is Gaasch Packaging's login code
         if not label or not str(target or '').strip(): return   # a request with nothing to look up or scan is not use of the tool
         threading.Thread(target=_v96_record_access_usage,args=(label,'expired attempt' if expired else action,target,client_ip),daemon=True).start()
     except Exception:
@@ -7196,6 +7202,35 @@ def _v96_cleanup_test_usage():
             n=cur.rowcount
         conn.commit()
         return n
+    except Exception:
+        return 0
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+def _v97_cleanup_owner_and_test_usage():
+    """One-off clean-up (v97.12): the owner's own scans of 2 November 2026 (aldi.be, Lidl, between 19:45 and 20:15 Brussels time) that were
+    recorded under the shared code are removed; the other rows of the old label 'shared' are renamed to Gaasch Packaging (that was their
+    login code); and the developer's own live checks of the codes of Sofie (2 and 3 November 2026) and Cristina (3 November 2026) are
+    removed: look-ups of "Durably" inside those short windows. Narrow on purpose, idempotent, best-effort, runs at start-up."""
+    if not DATABASE_URL: return 0
+    conn=_v92_db_connect()
+    if conn is None: return 0
+    try:
+        _v96_usage_ensure(conn)
+        total=0
+        with conn.cursor() as cur:
+            cur.execute("""DELETE FROM access_code_usage WHERE code_label IN (%s,'shared')
+                           AND used_at >= ('2026-11-02 19:45:00'::timestamp AT TIME ZONE 'Europe/Brussels') AND used_at < ('2026-11-02 20:15:00'::timestamp AT TIME ZONE 'Europe/Brussels')""",(SHARED_CODE_USAGE_LABEL,))
+            total+=cur.rowcount or 0
+            cur.execute("UPDATE access_code_usage SET code_label=%s WHERE code_label=%s",(SHARED_CODE_USAGE_LABEL,'shared'))
+            for label,start,end in (('Sofie','2026-11-02 15:20:00','2026-11-02 15:35:00'),('Sofie','2026-11-03 18:30:00','2026-11-03 18:55:00'),
+                                    ('Cristina','2026-11-03 18:30:00','2026-11-03 18:55:00')):
+                cur.execute("""DELETE FROM access_code_usage WHERE code_label=%s AND action='lookup' AND target='Durably'
+                               AND used_at >= (%s::timestamp AT TIME ZONE 'Europe/Brussels') AND used_at < (%s::timestamp AT TIME ZONE 'Europe/Brussels')""",(label,start,end))
+                total+=cur.rowcount or 0
+        conn.commit()
+        return total
     except Exception:
         return 0
     finally:
@@ -7232,7 +7267,7 @@ def _v96_access_usage_html(summary,events):
         return ('<div class="card"><h2 style="margin:0 0 4px;font-size:18px">Access code usage</h2>'
                 '<p class="small" style="margin:0">No use of an access code has been recorded yet. Use is recorded from the moment this feature went live: '
                 'a company look-up or a scan with the code counts as use.</p></div>')
-    names=lambda l:'Shared code' if l=='shared' else l
+    names=lambda l:SHARED_CODE_USAGE_LABEL if l=='shared' else l
     rows=''.join(f'<tr><td><strong>{html_escape(names(l))}</strong></td><td>{html_escape(v["first_used"])}</td><td>{html_escape(v["last_used"])}</td>'
                  f'<td>{v["scans"]}</td><td>{v["lookups"]}</td><td>{v["expired_attempts"] or "&mdash;"}</td></tr>' for l,v in summary.items())
     ev=''.join(f'<tr><td>{html_escape(e["at"])}</td><td>{html_escape(names(e["label"]))}</td><td>{html_escape(e["action"])}</td>'
@@ -13524,5 +13559,6 @@ analyse_url_v27=_with_sector_rewrites(analyse_url_v27)
 
 def main():
     threading.Thread(target=_v96_cleanup_test_usage,daemon=True).start()
+    threading.Thread(target=_v97_cleanup_owner_and_test_usage,daemon=True).start()
     print(f"Sustainability Claims Risk Scan {APP_VERSION}"); print(f"Serving on http://{HOST}:{PORT}"); print("Tavily configured:",bool(TAVILY_API_KEY)); print("Serper configured:",bool(SERPER_API_KEY)); print("Google Search configured:",bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX)); print("External search configured:",external_search_configured()); ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 if __name__=="__main__": main()
