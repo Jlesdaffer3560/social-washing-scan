@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_12_usage_log_only_given_codes"
-APP_RELEASE_LABEL="v97.12"
-APP_RELEASE_DATE="2026-11-03"
+APP_VERSION="hostable_v97_13_history_lists_given_codes"
+APP_RELEASE_LABEL="v97.13"
+APP_RELEASE_DATE="2026-11-04"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -7256,22 +7256,43 @@ def _v96_fetch_access_usage(recent=15):
         except Exception: pass
 
 def _v96_access_usage_html(summary,events):
-    """The /history panel. Every value comes from the database (a target is user input), so everything is escaped."""
-    summary=summary or {}
-    if not summary and not events:
+    """The /history panel. Every value comes from the database (a target is user input), so everything is escaped.
+    v97.12: EVERY code that was given to a person is listed (also one that was not used yet, with its end date and a status), so
+    "has Sofie used it?" can be read off the panel: Used / Not used yet / Expired."""
+    summary=dict(summary or {})
+    events=events or []
+    given=[]
+    try:
+        for label,entry in _extra_access_codes().items():
+            if label in UNLOGGED_CODE_LABELS: continue
+            given.append((label,str((entry or {}).get('valid_until') or '').strip(),_access_code_expired(entry)))
+    except Exception:
+        given=[]
+    names=lambda l:'Shared code' if l=='shared' else l
+    rows=[]
+    for label,until,expired in given:
+        v=summary.pop(label,None)
+        status=('Used' if v and (v['scans'] or v['lookups']) else 'Not used yet')+(' &middot; expired' if expired else ' &middot; active')
+        rows.append((label,v,until,status))
+    for label,v in summary.items():            # codes that were used but are no longer in the list (e.g. withdrawn)
+        rows.append((label,v,'','Used &middot; withdrawn' if label!='shared' else 'Used'))
+    if not rows and not events:
         return ('<div class="card"><h2 style="margin:0 0 4px;font-size:18px">Access code usage</h2>'
                 '<p class="small" style="margin:0">No use of an access code has been recorded yet. Use is recorded from the moment this feature went live: '
                 'a company look-up or a scan with the code counts as use.</p></div>')
-    names=lambda l:'Shared code' if l=='shared' else l
-    rows=''.join(f'<tr><td><strong>{html_escape(names(l))}</strong></td><td>{html_escape(v["first_used"])}</td><td>{html_escape(v["last_used"])}</td>'
-                 f'<td>{v["scans"]}</td><td>{v["lookups"]}</td><td>{v["expired_attempts"] or "&mdash;"}</td></tr>' for l,v in summary.items())
+    dash='&mdash;'
+    body=''.join(f'<tr><td><strong>{html_escape(names(l))}</strong></td><td>{status}</td><td>{html_escape(until) or dash}</td>'
+                 f'<td>{html_escape(v["first_used"]) if v else dash}</td><td>{html_escape(v["last_used"]) if v else dash}</td>'
+                 f'<td>{v["scans"] if v else 0}</td><td>{v["lookups"] if v else 0}</td><td>{(v["expired_attempts"] if v else 0) or dash}</td></tr>' for l,v,until,status in rows)
     ev=''.join(f'<tr><td>{html_escape(e["at"])}</td><td>{html_escape(names(e["label"]))}</td><td>{html_escape(e["action"])}</td>'
                f'<td>{html_escape(e["target"])}</td><td>{html_escape(e["ip"])}</td></tr>' for e in events)
+    recent=(f'<table><thead><tr><th>When</th><th>Code</th><th>Action</th><th>Company / address</th><th>IP</th></tr></thead><tbody>{ev}</tbody></table>'
+            if ev else '<p class="small" style="margin:0">No use recorded yet.</p>')
     return (f'<div class="card"><h2 style="margin:0 0 4px;font-size:18px">Access code usage</h2>'
-            '<p class="small" style="margin:0 0 10px">Per access code: when it was first and last used, and how many scans and company look-ups were made with it (Brussels time).</p>'
-            f'<table><thead><tr><th>Code</th><th>First used</th><th>Last used</th><th>Scans</th><th>Look-ups</th><th>After expiry</th></tr></thead><tbody>{rows}</tbody></table>'
-            f'<p class="small" style="margin:14px 0 6px">Most recent use</p>'
-            f'<table><thead><tr><th>When</th><th>Code</th><th>Action</th><th>Company / address</th><th>IP</th></tr></thead><tbody>{ev}</tbody></table></div>')
+            '<p class="small" style="margin:0 0 10px">Per access code that was given to a person: its status, end date, when it was first and last used, and how many scans and '
+            'company look-ups were made with it (Brussels time). Durably&rsquo;s own scans and tests are not recorded.</p>'
+            f'<table><thead><tr><th>Code</th><th>Status</th><th>Valid until</th><th>First used</th><th>Last used</th><th>Scans</th><th>Look-ups</th><th>After expiry</th></tr></thead><tbody>{body}</tbody></table>'
+            f'<p class="small" style="margin:14px 0 6px">Most recent use</p>{recent}</div>')
 
 def _v92_history_score_fields(result):
     """(global, green, social) as (score, risk) pairs for the history table. An inconclusive scan (too little of the site

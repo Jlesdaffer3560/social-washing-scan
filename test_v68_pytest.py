@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_12_usage_log_only_given_codes'
+    assert app.APP_VERSION == 'hostable_v97_13_history_lists_given_codes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8197,7 +8197,7 @@ def test_history_page_shows_access_code_usage_and_escapes_it():
     events = [{'at': '2026-11-05 14:40', 'label': 'Gaasch Packaging', 'action': 'scan', 'target': 'https://gaaschpack.eu<script>', 'ip': '1.2.3.4'}]
     html = app._v96_access_usage_html(summary, events)
     assert 'Gaasch Packaging' in html and '2026-11-05 14:40' in html and 'Shared code' in html and '<script>' not in html and '&lt;script&gt;' in html
-    assert 'No use of an access code has been recorded yet' in app._v96_access_usage_html({}, [])
+    assert 'No use recorded yet' in app._v96_access_usage_html({}, []) and 'Not used yet' in app._v96_access_usage_html({}, [])      # v97.12: given codes stay listed
     page = app._v92_render_history_page([], 0, 1, 25, '', access_usage=(summary, events))
     assert 'Access code usage' in page and 'Gaasch Packaging' in page
 
@@ -9204,3 +9204,22 @@ def test_v9712_shared_code_is_never_recorded_but_given_codes_are(monkeypatch):
     assert seen == []
     app._v96_note_access({'access_code': 'CRISTINA-VNH6-X7KQ'}, 'scan', 'https://example.com', '1.2.3.4'); _t.sleep(0.3)
     assert seen and seen[0][0] == 'Cristina'
+
+
+def test_v9712_history_panel_lists_every_given_code_with_its_status(monkeypatch):
+    import datetime as dt
+    monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
+    monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 11, 4))
+    summary = {'Gaasch Packaging': {'first_used': '2026-11-03 09:12', 'last_used': '2026-11-04 14:40', 'scans': 2, 'lookups': 4, 'expired_attempts': 0}}
+    html = app._v96_access_usage_html(summary, [{'at': '2026-11-04 14:40', 'label': 'Gaasch Packaging', 'action': 'scan', 'target': 'https://gaaschpack.eu', 'ip': '1.2.3.4'}])
+    rows = {name: row for name, row in ((n, html.split('<strong>' + n + '</strong>')[1].split('</tr>')[0]) for n in ('Gaasch Packaging', 'Sofie', 'Cristina'))}
+    assert 'Used' in rows['Gaasch Packaging'] and '2026-11-04 14:40' in rows['Gaasch Packaging'] and '2026-11-30' in rows['Gaasch Packaging']
+    for name in ('Sofie', 'Cristina'):                       # not used yet: still visible, with the end date
+        assert 'Not used yet' in rows[name] and '2026-11-30' in rows[name] and 'active' in rows[name]
+    # with no use at all the three codes are still listed
+    empty = app._v96_access_usage_html({}, [])
+    assert 'Sofie' in empty and 'Cristina' in empty and 'Gaasch Packaging' in empty and 'No use recorded yet' in empty
+    # after the end date the status says so
+    monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 12, 2))
+    assert 'expired' in app._v96_access_usage_html({}, []).split('<strong>Sofie</strong>')[1].split('</tr>')[0]
+    assert 'Shared code' not in empty and 'Durably' in empty
