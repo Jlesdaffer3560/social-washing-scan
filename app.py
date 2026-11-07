@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_0_social_assurances_in_everyday_wording"
-APP_RELEASE_LABEL="v98.0"
+APP_VERSION="hostable_v98_1_environmental_claims_in_everyday_wording"
+APP_RELEASE_LABEL="v98.1"
 APP_RELEASE_DATE="2026-11-07"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -6251,7 +6251,9 @@ def _looks_like_future_environmental_claim(excerpt):
     if any(x in c for x in ['net zero by','carbon neutral by','climate neutral by','climate positive by','we will be net zero','we aim to be net zero','committed to net zero','towards net zero']):
         return True
     # Avoid generic sustainability ambition unless it is actually climate/environmental and time-bound.
-    return bool(re.search(r'\b(20[3-5]0)\b', c) and any(x in c for x in ['net zero','carbon neutral','climate neutral','emissions','decarbon']))
+    if re.search(r'\b(20[3-5]0)\b', c) and any(x in c for x in ['net zero','carbon neutral','climate neutral','emissions','decarbon']):
+        return True
+    return _v981_future_goal(excerpt) is not None          # v98.1: any year + goal + first-person sentence
 
 # v56: social-claim analogue of _looks_like_future_environmental_claim / 'Future
 # environmental-performance claim'. Prompted by KU Leuven/HIVA research (2026, fashion
@@ -9731,6 +9733,146 @@ def _v98_social_assurances(text, fs, seen):
                 hits+=1
                 if hits>=6: break
 
+# v98.1: environmental claims in everyday wording. Three gaps found with the held-out set testset_claims_v3.py:
+#   - FUTURE GOALS: "We will cut our carbon footprint in half by 2032", "Tegen 2028 is elke verpakking plasticvrij", "D'ici 2030, nous ..."
+#     name a year and a goal, not one of the fixed phrases ("net zero by"). A sentence is a future-performance claim when it holds a
+#     year (2027 or later, or 2026 with a future verb), an environmental topic and a first-person subject, and is no statement about
+#     the law, no hedge and no achieved result. The same test also stops these sentences from being reported as present-tense claims
+#     ("plasticvrij" is not an achieved absolute, it is a target).
+#   - "100 %" WITH A SPACE (or non-breaking space) and the feminine/plural/Dutch forms: "100 % biodegradable", "100% recycleerbaar",
+#     "100 % naturelle", "100 % compostables" -- the fixed list had "100% natural", "100% naturel" and a few more.
+#   - COMPARATIVES in every gender, number and language ("plus durables que", "duurzamer dan", "better for the planet than") and SELF-MADE
+#     LABELS ("our Eco Promise logo", "Ons Groen Garantie-keurmerk", "Notre sceau Planete Verte"). A recognised public scheme named in
+#     the sentence (EU Ecolabel, FSC ...) keeps the label out, as before.
+_V981_YEAR_RE = re.compile(r"\b20(?:2[6-9]|[3-5]\d)\b")
+_V981_HORIZON_RE = re.compile(r"(?:\b(?:by|before|towards|tegen|voor|d.ici|en|in|bis|vers|pour)\s+)?\b20(?:2[6-9]|[3-5]\d)\b", re.I)
+_V981_ENV_TOPIC_RE = re.compile(r"[e\u00e9]mission\w*|uitstoot|carbon|koolstof|carbone|\bco2\b|co\u2082|climate|klimaat|climat|net[- ]zero|netto[- ]nul|z[e\u00e9]ro net|neutral\w*|neutre\w*|\bwaste\b|afval|d[e\u00e9]chets?|plastic\w*|plastique\w*|\benergy\b|energie|[e\u00e9]nergie|renewable|hernieuwbaar\w*|hernieuwbare|renouvelable\w*|recycl\w+|footprint|voetafdruk|empreinte|packag\w+|verpakking\w*|emballages?|deforestation|ontbossing|d[e\u00e9]forestation|biodivers\w+|fossi\w+|sustainab\w+|duurzaam\w*|\bdurables?\b|\bwater\b|electri\w*|elektri\w*|[e\u00e9]lectri\w*|\bsolar\b|zonne\w*|solaire\w*|\bwind\w*|hydrogen|waterstof|hydrog[e\u00e8]ne|zero-?emission|emissievrij|z[e\u00e9]ro[- ][e\u00e9]mission", re.I)
+_V981_FUTURE_VERB_RE = re.compile(r"\b(?:will|shall|going to|aim\w*|target\w*|goal|ambition\w*|commit\w*|plan(?:s|ned|ning)?|intend\w*|want to|strive\w*|zullen|zal|gaan|streven\w*|doel\w*|ambiti\w*|willen|plannen|engag\w+|visons|vis\w+|objectif\w*|voulons|souhaitons|sera|serons|seront|aurons|auront|\w+(?:erons|eront|irons|iront))\b", re.I)
+_V981_ACHIEVED_RE = re.compile(r"\b(?:have|has|had|reduced|achieved|reached|hebben|heeft|verminderd|bereikt|avons|ont|a r[e\u00e9]duit|r[e\u00e9]duit|atteint)\b", re.I)
+
+_V981_OWN_OPERATIONS_RE = re.compile(r"\b(?:every|each|all|alle|elke|al|chaque|tous|toutes|tout)\s+(?:our |onze |nos |notre |ons )?(?:[\w-]+\s+)?(?:sites?|stores?|shops?|vestigingen?|vestiging|winkels?|magasins?|products?|producten|produits?|packag\w+|verpakking\w*|emballages?|plants?|factor(?:y|ies)|fabrieken|fabriek|usines?|buildings?|gebouwen|b[a\u00e2]timents?|vans|vehicles|vloot|fleet|flotte)\b", re.I)
+
+# a legal obligation about packaging, energy ... in general is no claim of the company: "De EU verplicht dat alle verpakkingen tegen 2030 recycleerbaar zijn"
+_V981_LEGAL_RE = re.compile(r"\b(?:must|obliged|obliges?|mandatory|compulsory|required?|requirements?|verplicht\w*|vereist\w*|vereisten|moet|moeten|verplichting\w*|exige\w*|oblig\w+|impose\w*|doivent|doit|exigences?|eu|ue|union|europeese|europ\w+)\b", re.I)
+
+def _v981_future_goal(sentence):
+    """The year phrase (str) when the sentence reads as a future environmental-performance claim, else None."""
+    c = _normalize_apostrophes(str(sentence or '')).lower()
+    years = [int(y) for y in _V981_YEAR_RE.findall(c)]
+    if not years or not _V981_ENV_TOPIC_RE.search(c) or not (_V98_FIRST_PERSON_RE.search(c) or _V981_OWN_OPERATIONS_RE.search(c)):
+        return None
+    if _V98_WORLD_RE.search(c) or _V98_HEDGE_RE.search(c) or _V981_LEGAL_RE.search(c):
+        return None
+    if max(years) < 2027 and (not _V981_FUTURE_VERB_RE.search(c) or _V981_ACHIEVED_RE.search(c)):
+        return None
+    m = _V981_HORIZON_RE.search(_normalize_apostrophes(str(sentence or '')))
+    return m.group(0).strip() if m else None
+
+_V981_ADJ_RECYCLABLE = r"recyclable|recycleerbaar|recyclebaar|recyclables?|compostables?|composteerbaar|reusable|herbruikbaar|r[e\u00e9]utilisables?"
+_V981_ADJ_OTHER = r"biodegradable|biologisch afbreekbaar|biod[e\u00e9]gradables?|natural|natuurlijke?|naturel(?:le)?s?|sustainable|duurzame?|durables?|eco-?friendly|ecological|[e\u00e9]cologiques?|ecologische?|milieuvriendelijk\w*|green|groene?|verte?s?|renewable|hernieuwbare?|renouvelables?|non-?toxic|toxic-?free|plastic-?free|plasticvrij|chemical-?free|clean|pure|pur"
+_V981_ABS_RE = re.compile(r"(?<![\w.,])100(?:[.,]0+)?\s*%\s*(?P<adj>" + _V981_ADJ_RECYCLABLE + "|" + _V981_ADJ_OTHER + r")\b|\b(?P<adj2>" + _V981_ADJ_RECYCLABLE + "|" + _V981_ADJ_OTHER + r")\s+[\u00e0a]\s+100\s*%", re.I)
+_V981_RECYCLABLE_RE = re.compile(r"^(?:" + _V981_ADJ_RECYCLABLE + r")$", re.I)
+
+_V981_COMPARATIVE_RE = re.compile(
+    r"\b(?:greener|more (?:sustainable|eco-?friendly|environmentally[- ]friendly|ecological|planet-?friendly)|environmentally friendlier|friendlier (?:to|for) (?:the )?(?:planet|environment|climate)|kinder to (?:the )?(?:planet|environment)|better for (?:the )?(?:planet|environment|climate)|less harmful (?:to|for) (?:the )?(?:planet|environment)"
+    r"|groener|duurzamer|milieuvriendelijker|vriendelijker voor (?:de planeet|het milieu|het klimaat|de aarde)|ecologischer|klimaatvriendelijker|beter voor (?:de planeet|het milieu|het klimaat|de aarde)"
+    r"|plus (?:vert|verte|verts|vertes|durables?|[e\u00e9]cologiques?|[e\u00e9]colo|respectueu(?:x|se|ses) (?:de l.environnement|de la plan[e\u00e8]te))|meilleur(?:e|s|es)? pour (?:la plan[e\u00e8]te|l.environnement|le climat))\s+(?:than|dan|que\b|qu.)", re.I)
+
+_V981_LABEL_KIND = r"seal|badge|logo|label|mark|keurmerk|zegel|sceau|stempel"
+_V981_LABEL_A_RE = re.compile(r"((?:[\w\u00c0-\u017f]+[\s-]+){1,5})(" + _V981_LABEL_KIND + r")\b", re.I)
+_V981_LABEL_B_RE = re.compile(r"\b(?:notre|nos)\s+(logo|label|sceau|badge|marque)\s+((?:[\w\u00c0-\u017f]+[\s-]?){1,3})", re.I)
+_V981_LABEL_STOP = frozenset('our onze ons notre nos the het de een a an le la les l look for zoek herken spot cherchez rep\u00e9rez reperez recherchez trouvez ontdek find see check with met avec on op sur this dit deze ce cette ces these those all alle tous'.split())
+_V981_LABEL_CUE_RE = re.compile(r"\b(?:our|onze|ons|notre|nos|look for|zoek|herken|spot|cherchez|rep\u00e9rez|reperez|recherchez|trouvez|ontdek)\b", re.I)
+_V981_ENV_PREFIXES = ('eco', '\u00e9co', 'green', 'groen', 'vert', 'planet', 'planeet', 'plan\u00e8te', 'sustain', 'duurzaam', 'climat', 'klimaat', 'earth', 'aarde', 'nature', 'natuur', 'milieu', 'environ', 'clean', 'bio', 'friendly', 'vriendelijk', 'respect', 'leaf', 'blad', 'feuille', 'terre')
+
+def _v981_label_phrase(sentence):
+    """The phrase of a self-made sustainability label named in the sentence ("our Eco Promise logo"), else None. Needs a brand-like name
+    (capitalised) with an environmental word in it; a recognised public scheme named in the sentence keeps it out."""
+    sent = str(sentence or '')
+    low = _normalize_apostrophes(sent.lower())
+    if _names_recognized_certification_scheme(low):
+        return None
+    if not _V981_LABEL_CUE_RE.search(low):
+        return None
+    for m in _V981_LABEL_A_RE.finditer(sent):
+        toks = [(t.group(0), t.start()) for t in re.finditer(r"[\w\u00c0-\u017f]+", m.group(1))]
+        last_stop = max([i for i, (w, _p) in enumerate(toks) if w.lower() in _V981_LABEL_STOP] or [-1])
+        mid = toks[last_stop + 1:]
+        compound = m.group(1).rstrip().endswith('-') or m.group(1).endswith('-')
+        if len(mid) < 2 and not (compound and len(mid) >= 1):
+            continue
+        if not any(w[:1].isupper() for w, _p in mid):
+            continue
+        if not any(w.lower().startswith(_V981_ENV_PREFIXES) for w, _p in mid):
+            continue
+        return sent[m.start(1) + mid[0][1]:m.end(2)].strip()
+    for m in _V981_LABEL_B_RE.finditer(sent):
+        toks = [(t.group(0), t.start()) for t in re.finditer(r"[\w\u00c0-\u017f]+", m.group(2))]
+        if len(toks) < 2 or not toks[0][0][:1].isupper():
+            continue
+        if not any(w.lower().startswith(_V981_ENV_PREFIXES) for w, _p in toks[:3]):
+            continue
+        return sent[m.start(1):m.start(2) + toks[1][1] + len(toks[1][0])].strip()
+    return None
+
+def _v981_reported(excerpt, found, types):
+    return any(_v98_family_reported(excerpt, found, t) for t in types)
+
+def _v981_green_extras(text, fs, seen):
+    """Adds the findings of the v98.1 environmental pass (see the note above). One finding per claim family per sentence."""
+    rows = {}
+    for _triggers, typ, risk, issue, rewrite in GREEN_CLAIMS:
+        rows.setdefault(typ, (risk, issue, rewrite))
+    recycled_row = ('Medium', 'Recycled, recyclable or circular-material wording can be a sustainability claim where conditions, percentage, certification, local recyclability or material scope are unclear.',
+                    'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.')
+    TF, TA, TC, TL, TR = ('Future environmental-performance claim', 'Absolute or purity environmental wording', 'Comparative environmental claim',
+                          'Sustainability label / certification claim', 'Recycled / recyclable material claim')
+    sentences = [x.strip() for x in re.split(r'(?<=[.!?])\s+|\n+', str(text or '')) if x and x.strip()]
+    budget = {TF: 0, TA: 0, TC: 0, TL: 0}
+    for sent in sentences[:4000]:
+        if len(sent) > 600:
+            continue
+        # future goals
+        if budget[TF] < 6 and _V981_YEAR_RE.search(sent):
+            trig = _v981_future_goal(sent)
+            if trig and TF in rows:
+                risk, issue, rewrite = rows[TF]
+                if _v55_add_finding(fs, seen, text, trig, TF, risk, issue, rewrite, 'green', 68,
+                                    extra_check=lambda c: _v981_future_goal(c) is not None and not _v981_reported(c, fs, [TF])):
+                    budget[TF] += 1
+        # 100 % + environmental adjective
+        if budget[TA] < 6 and '%' in sent:
+            for m in _V981_ABS_RE.finditer(sent):
+                adj = (m.group('adj') or m.group('adj2') or '').strip()
+                recyclable = bool(_V981_RECYCLABLE_RE.match(adj))
+                typ = TR if recyclable else TA
+                risk, issue, rewrite = recycled_row if recyclable else rows.get(TA, recycled_row)
+                trig = m.group(0).strip()
+                if _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, 'green', 62 if recyclable else 68,
+                                    extra_check=lambda c: not _v981_reported(c, fs, [TA, TR]) and not any(
+                                        re.search(r'100\s*%', str(f.get('matched_phrase') or '')) and f.get('dimension') == 'green'
+                                        and (lambda a, b: a and b and (a in b or b in a))(re.sub(r'\W+', ' ', c.lower()).strip(), re.sub(r'\W+', ' ', str(f.get('full_claim_text') or f.get('claim') or '').lower()).strip())
+                                        for f in fs)):
+                    budget[TA] += 1
+                    break
+        # comparatives
+        if budget[TC] < 6:
+            m = _V981_COMPARATIVE_RE.search(_normalize_apostrophes(sent))
+            if m and TC in rows:
+                risk, issue, rewrite = rows[TC]
+                trig = sent[m.start():m.end()].strip()
+                if _v55_add_finding(fs, seen, text, trig, TC, risk, issue, rewrite, 'green', 68,
+                                    extra_check=lambda c: not _v981_reported(c, fs, [TC]) and not _V98_WORLD_RE.search(c.lower())):
+                    budget[TC] += 1
+        # self-made labels
+        if budget[TL] < 4:
+            trig = _v981_label_phrase(sent)
+            if trig and TL in rows:
+                risk, issue, rewrite = rows[TL]
+                if _v55_add_finding(fs, seen, text, trig, TL, risk, issue, rewrite, 'green', 74,
+                                    extra_check=lambda c: not _v981_reported(c, fs, [TL])):
+                    budget[TL] += 1
+
 V55_NAV_CONTEXT_EXCLUSIONS = [
     'cookie', 'privacy', 'terms', 'login', 'sign in', 'menu', 'navigation', 'subscribe', 'newsletter',
     'download report', 'annual report', 'sustainability report', 'press release archive',
@@ -10013,6 +10155,9 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # took it for a heading. A social sentence of four words or more with a first-person pronoun is a statement, not a heading.
     if dimension=='social' and len(c.split())>=4 and re.search(r'\b(we|our|us|wij|ons|onze|nous|notre|nos)\b',c):
         _short_excerpt_has_first_person_claim=True
+    if dimension=='green' and (_V981_COMPARATIVE_RE.search(_normalize_apostrophes(str(trig))) or _V981_ABS_RE.search(str(trig))
+                               or (str(trig).lower() not in GREEN_CLAIMS[3][0] and re.search(r'(?:'+_V981_LABEL_KIND+r')\b',str(trig),re.I))):
+        _short_excerpt_has_first_person_claim=True           # v98.1
     if len(c.split()) <= 5 and not (_short_excerpt_has_first_person_claim or any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon',
         'product','verpakking','materiaal','leverancier','rechten','loon','gemeenschap','gerecycleerd','recycleerbaar','koolstof',
         'produit','emballage','matériau','fournisseur','droits','salaire','communauté','recyclé','recyclable','carbone'])):
@@ -10216,7 +10361,7 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # "Our own green badge appears on every pack ALONGSIDE the FSC certified recycling logo" made
     # a genuine self-declared-badge claim vanish entirely, since "alongside" introduces a
     # separate, second attribute (the FSC logo) just as much as "and"/"with" does.
-    recognised_schemes=['eu ecolabel','ecolabel logo','emas','regulation (ec) no 66/2010','regulation (ec) no 1221/2009',
+    recognised_schemes=['eu ecolabel','ecolabel logo','emas','\u00e9colabel europ\u00e9en','ecolabel europ\u00e9en','ecolabel europeen','europees milieukeurmerk','eu-milieukeurmerk','regulation (ec) no 66/2010','regulation (ec) no 1221/2009',
         'nordic swan','blue angel','fairtrade certified','fair trade certified','gots certified','oeko-tex',
         'cradle to cradle','forest stewardship council','fsc certified','iso 14024','certified b corporation',
         'b corp certified','rainforest alliance certified']
@@ -10731,6 +10876,8 @@ def detect_green_claims(text):
                               'State the recycled content percentage, material scope, certification or chain-of-custody basis, and practical recyclability conditions.',
                               'green', 62):
                 hits += 1
+    # v98.1: future goals, "100 %" wording, comparatives and self-made labels in everyday wording
+    _v981_green_extras(text, fs, seen)
     # v93.31: this used to cap at 12 here, inside the analysis function itself -- so every
     # downstream consumer (scoring, source/page attribution, red flags, the action plan,
     # regulatory summary) only ever saw the top 12 findings, not just the report's displayed

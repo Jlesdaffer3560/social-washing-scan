@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v98_0_social_assurances_in_everyday_wording'
+    assert app.APP_VERSION == 'hostable_v98_1_environmental_claims_in_everyday_wording'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -9267,7 +9267,7 @@ def test_held_out_claim_testset_never_gets_worse():
     stats, _ = eval_testset.run()
     flagged = sum(b['ok'] for (lang, label), b in stats.items() if label == 'flag')
     left_alone = sum(b['ok'] for (lang, label), b in stats.items() if label == 'no_flag')
-    assert flagged >= 65, flagged         # v98.0: 37 -> 67 of 79 (social 10 -> 40 of 43); never below the level reached
+    assert flagged >= 76, flagged         # v98.0/98.1: 37 -> 76 of 79; never below the level reached
     assert left_alone >= 48, left_alone
 
 
@@ -9325,3 +9325,67 @@ def test_v98_one_finding_per_claim_family_per_sentence():
     a sentence with a living-wage claim and 'human rights' gets one finding, with the living-wage rewrite."""
     fs = [f for f in app.detect_claims('We pay a living wage to all employees and human rights matter to us.') if f.get('matched_phrase')]
     assert len(fs) == 1, [f.get('matched_phrase') for f in fs]
+
+
+def test_v981_environmental_testsets_never_get_worse():
+    """testset_claims_v3.py (45 to flag, 54 to leave alone; written before v98.1, baseline 16/45 and 53/54) and testset_claims_v4.py (written after
+    v98.1 without looking at its patterns: first result 17/21, 48/48; 21/21 after closing two general gaps). May only go up; add NEW items instead."""
+    import eval_testset
+    import testset_claims_v3
+    import testset_claims_v4
+    for module, min_flag, min_alone in ((testset_claims_v3, 45, 54), (testset_claims_v4, 21, 48)):
+        stats, _ = eval_testset.run(module)
+        flagged = sum(b['ok'] for (lang, label), b in stats.items() if label == 'flag')
+        left_alone = sum(b['ok'] for (lang, label), b in stats.items() if label == 'no_flag')
+        assert flagged >= min_flag, (module.__name__, flagged)
+        assert left_alone >= min_alone, (module.__name__, left_alone)
+
+
+def _v981_findings(text):
+    return [(f['type'], f.get('matched_phrase')) for f in app.detect_green_claims(text) if f.get('matched_phrase')]
+
+
+def test_v981_future_goals_without_a_fixed_phrase_are_found_as_future_claims():
+    for text in ['We will cut our carbon footprint in half by 2032.', 'By 2028 every package we sell will be plastic-free.',
+                 'Tegen 2028 is elke verpakking die we verkopen plasticvrij.', 'D\u2019ici 2032, nous diviserons notre empreinte carbone par deux.',
+                 'Vanaf 2029 rijden al onze bestelwagens elektrisch.', 'Chaque site sera neutre en carbone d\u2019ici 2030.']:
+        types = [t for t, _ in _v981_findings(text)]
+        assert 'Future environmental-performance claim' in types, (text, types)
+    # a target is not an achieved absolute: "plasticvrij" must not be reported as a present-tense claim next to it
+    types = [t for t, _ in _v981_findings('Tegen 2028 is elke verpakking die we verkopen plasticvrij.')]
+    assert 'Absolute or purity environmental wording' not in types, types
+
+
+def test_v981_a_year_alone_a_law_or_an_achieved_result_is_no_future_claim():
+    for text in ['Our new warehouse opens in 2027.', 'We will open a new shop in Antwerp by 2026.', 'Our annual conference takes place in March 2027.',
+                 'The EU requires all packaging to be recyclable by 2030.', 'De EU verplicht dat alle verpakkingen tegen 2030 recycleerbaar zijn.',
+                 'L\u2019UE exige que tous les emballages soient recyclables d\u2019ici 2030.',
+                 'Since 2020 we have reduced our CO2 emissions by 31% per tonne produced, as reported in our 2023 sustainability report.',
+                 'Our colleagues celebrate 25 years in 2029.']:
+        assert not _v981_findings(text), (text, _v981_findings(text))
+
+
+def test_v981_one_hundred_percent_with_a_space_and_in_every_gender_and_language():
+    for text in ['Our detergent is 100 % biodegradable.', 'These cups are 100% compostable.', 'Onze verpakkingen zijn 100% recycleerbaar.',
+                 'Ce savon est 100 % biod\u00e9gradable.', 'Nos emballages sont 100\u00a0% recyclables.', 'Nos camions roulent au diesel 100 % renouvelable.']:
+        assert _v981_findings(text), text
+    for text in ['These T-shirts are made of 100% cotton.', 'Our service is 100% online.', 'Get 100% of your money back within 30 days.',
+                 'This jacket is 100% waterproof.', 'Our jeans are made of 100% denim.']:
+        assert not _v981_findings(text), (text, _v981_findings(text))
+
+
+def test_v981_comparatives_in_every_gender_number_and_language():
+    for text in ['Our cleaner is greener than the leading brand.', 'Duurzamer dan elk ander merk.', 'Plus durables que les sacs classiques.',
+                 'Ons waspoeder is vriendelijker voor het milieu dan gewone merken.', 'Better for the planet than ordinary detergents.']:
+        assert 'Comparative environmental claim' in [t for t, _ in _v981_findings(text)], text
+    for text in ['This vacuum is quieter than the old one.', 'Our tea is fresher than supermarket tea.']:
+        assert not _v981_findings(text), text
+
+
+def test_v981_self_made_labels_are_found_but_public_schemes_and_plain_logos_are_not():
+    for text in ['Our Eco Promise logo guarantees a better choice.', 'Ons Groen Garantie-keurmerk staat op alle producten.',
+                 'Notre sceau Plan\u00e8te Verte garantit un meilleur choix.', 'Look for the Planet Friendly badge on our packs.']:
+        assert 'Sustainability label / certification claim' in [t for t, _ in _v981_findings(text)], text
+    for text in ['Look for the EU Ecolabel on every box.', 'Cherchez l\u2019\u00c9colabel europ\u00e9en sur chaque bo\u00eete.', 'Look for the Fairtrade mark on our coffee.',
+                 'Our logo was designed in 1998.', 'Our new green logo has a different colour.']:
+        assert not _v981_findings(text), (text, _v981_findings(text))

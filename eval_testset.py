@@ -3,6 +3,8 @@
     python eval_testset.py            # summary
     python eval_testset.py --misses   # also list every miss and false alarm
     python eval_testset.py --v2       # the social-detection set (testset_claims_v2.py)
+    python eval_testset.py --v3       # the environmental-detection set (testset_claims_v3.py)
+    python eval_testset.py --v4       # the environmental set written without looking at the v98.1 patterns (testset_claims_v4.py)
 
 Recall = flagged sentences that were reported; false alarms = no_flag sentences that were reported; category agreement = a reported sentence got
 a type that matches one of the acceptable categories. Detection is judged per sentence, inside the whole paragraph (so neighbouring claims
@@ -12,7 +14,7 @@ import re
 import sys
 import app
 import importlib
-ts = importlib.import_module('testset_claims_v2' if '--v2' in sys.argv else 'testset_claims_v1')
+ts = importlib.import_module('testset_claims_v4' if '--v4' in sys.argv else 'testset_claims_v3' if '--v3' in sys.argv else 'testset_claims_v2' if '--v2' in sys.argv else 'testset_claims_v1')
 
 TYPE_TO_CAT = [
     ('forced-labour', 'forced'), ('supply-chain', 'supplier'), ('supplier', 'supplier'), ('human-rights or labour', 'humanrights'),
