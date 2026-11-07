@@ -9257,3 +9257,15 @@ def test_v978_real_evidence_still_hides_a_social_claim():
 def test_v978_supplier_audit_assurance_is_a_claim_in_three_languages():
     for text in ('All our suppliers are fully audited.', 'Al onze leveranciers zijn geauditeerd.', 'Tous nos fournisseurs sont audit\u00e9s.'):
         assert [f for f in app.detect_claims('Over ons. ' + text + ' Contacteer ons.') if f['type'].startswith('Supply-chain or supplier')], text
+
+
+def test_held_out_claim_testset_never_gets_worse():
+    """testset_claims_v1.py is the untouched yardstick for detection quality (79 sentences to flag, 48 to leave alone, NL/FR/EN). Baseline on
+    7 November 2026, before any tuning: 37 of 79 flagged (environmental 27 of 36, social only 10 of 43), 48 of 48 correctly left alone. The
+    result may only go up; improve the detector, then add NEW items instead of editing this set."""
+    import eval_testset
+    stats, _ = eval_testset.run()
+    flagged = sum(b['ok'] for (lang, label), b in stats.items() if label == 'flag')
+    left_alone = sum(b['ok'] for (lang, label), b in stats.items() if label == 'no_flag')
+    assert flagged >= 37, flagged
+    assert left_alone >= 48, left_alone
