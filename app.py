@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_14_access_code_alex"
-APP_RELEASE_LABEL="v97.14"
-APP_RELEASE_DATE="2026-11-04"
+APP_VERSION="hostable_v97_15_evidence_not_from_neighbour_claims"
+APP_RELEASE_LABEL="v97.15"
+APP_RELEASE_DATE="2026-11-07"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -6492,7 +6492,7 @@ CLAIMS=[
  (['forced labour free','forced labor free','free from forced labour','free from forced labor','no forced labour','no forced labor','modern slavery free','child labour free','child labor free','no child labour','no child labor','forced labour due diligence','forced labor due diligence','product traceability','supplier traceability','import controls',
    'vrij van dwangarbeid','geen dwangarbeid','vrij van moderne slavernij','vrij van kinderarbeid','geen kinderarbeid','zorgvuldigheidsplicht dwangarbeid','producttraceerbaarheid','traceerbaarheid van leveranciers','importcontroles',
    'sans travail forcé',"exempt de travail forcé",'aucun travail forcé','sans esclavage moderne','sans travail des enfants',"aucun travail des enfants",'devoir de vigilance travail forcé','traçabilité des produits','traçabilité des fournisseurs',"contrôles à l'importation"],'Forced-labour product or supply-chain claim','High','Forced Labour Regulation risk: the wording may imply product, supplier or supply-chain assurance against forced labour. Such claims require strong traceability, risk assessment, mitigation, remediation and withdrawal/customs response readiness.','Scope the wording and disclose a risk-based due-diligence process, product/supplier traceability, escalation and remediation steps.'),
- (['all suppliers audited','all suppliers are audited','all suppliers certified','all suppliers are certified','all suppliers comply','all suppliers are compliant','all suppliers meet','100% of suppliers','fully traceable supply chain','fully audited supply chain','ethical sourcing','responsible sourcing','responsibly sourced','responsibly-sourced','ethically sourced','certified suppliers','audited suppliers','traceable suppliers','supplier code compliance','certified against our supplier code','comply with our supplier code',
+ (['all suppliers audited','all suppliers are audited','all our suppliers are audited','all our suppliers are fully audited','all of our suppliers are audited','every supplier is audited','al onze leveranciers zijn geauditeerd','al onze leveranciers worden geauditeerd','tous nos fournisseurs sont audit\u00e9s','all suppliers certified','all suppliers are certified','all suppliers comply','all suppliers are compliant','all suppliers meet','100% of suppliers','fully traceable supply chain','fully audited supply chain','ethical sourcing','responsible sourcing','responsibly sourced','responsibly-sourced','ethically sourced','certified suppliers','audited suppliers','traceable suppliers','supplier code compliance','certified against our supplier code','comply with our supplier code',
    'alle leveranciers geauditeerd','alle leveranciers zijn geauditeerd','alle leveranciers gecertificeerd','alle leveranciers zijn gecertificeerd','alle leveranciers voldoen','100% van de leveranciers','volledig traceerbare toeleveringsketen','volledig geauditeerde toeleveringsketen','ethische inkoop','verantwoorde inkoop','verantwoord ingekocht','ethisch ingekocht','gecertificeerde leveranciers','geauditeerde leveranciers','traceerbare leveranciers','naleving leverancierscode',
    'leveranciers worden geauditeerd','leveranciers worden gecontroleerd','leveranciers worden gecertificeerd','onze leveranciers worden jaarlijks geauditeerd','onze leveranciers worden regelmatig geauditeerd',
    'tous les fournisseurs audités','tous nos fournisseurs sont audités','tous les fournisseurs certifiés','tous nos fournisseurs sont certifiés','tous les fournisseurs sont conformes','100% des fournisseurs','chaîne d\'approvisionnement entièrement traçable','chaîne d\'approvisionnement entièrement auditée','approvisionnement éthique','approvisionnement responsable','sourcing responsable','fournisseurs certifiés','fournisseurs audités','fournisseurs traçables','conformité au code fournisseur',
@@ -9386,6 +9386,26 @@ _V97_TOPIC_OTHER_SOCIAL_RE = re.compile(r"\b(?:child\w*|kinder\w*|enfants?|force
 _V97_REFERRAL_NOISE_RE = re.compile(r"\b(?:returns?|refunds?|retour\w*|terugbetal\w*|privacy|cookies?|terms|conditions|voorwaarden|shipping|delivery|verzend\w*|levering|payment|betaling|warranty|garantie|cancell\w+|annul\w+|accessibility|toegankelijkheid|imprint|colofon|legal notice|mentions l[ée]gales|pricing|prijs|prijzen|offers?|aanbieding\w*|promotion\w*|loyalty)\b", re.I)
 _V97_OTHER_ENTITY_RE = re.compile(r"\b(?:another|other|different|competitors?'?s?)\s+(?:[\w-]+\s+)?(?:compan(?:y|ies)|brands?|products?|suppliers?|businesses|business|firms?|organi[sz]ations?|manufacturers?|retailers?)\b|\b(?:een |de |het )?(?:andere|ander|concurrerende|concurrent\w*)\s+(?:[\w-]+\s+)?(?:bedrijf|bedrijven|merk|merken|product|producten|leverancier\w*|fabrikant\w*|onderneming\w*)\b|\bune? autre\s+(?:[\w-]+\s+)?(?:entreprise|soci[eé]t[eé]|marque|produit|fournisseur)\b|\bd'autres\s+(?:[\w-]+\s+)?(?:entreprises|marques|produits|fournisseurs|soci[eé]t[eé]s)\b|\bautres (?:entreprises|marques|produits|fournisseurs)\b", re.I)
 _V97_NEGATION_ANY_RE = re.compile(r"\b(?:not|no longer|never|without|isn't|aren't|doesn't|don't|geen|niet|nooit|zonder|pas de|ne\s+\w+\s+pas|n'est pas|ne sont pas)\b", re.I)
+# v97.8: two things in the neighbourhood of a claim were counted as evidence for it although they are not:
+#   - a bare assertion of verification: "all our suppliers are fully audited", "our products are certified". That is a CLAIM, not proof of
+#     one; proof names who audited, against what, how many, or when ("38 audits in 2024", "audited against SA8000", "certified by X").
+#   - a percentage that is not about people or sites: "100% sustainable" is itself an environmental claim and says nothing about child
+#     labour two sentences further on. A percentage counts only in a sentence that names who or what it is about (workers, suppliers,
+#     employees, audits, training, accidents, ...).
+# Found in a test where six social sentences stood next to each other: the percentage and the audit sentence each hid four of them.
+_V97_VERIFICATION_PARTICIPLE = r"(?:audited|certified|verified|checked|inspected|geauditeerd|gecertificeerd|geverifieerd|gecontroleerd|gecontroleerd|audit[e\u00e9]s?|certifi[e\u00e9]s?|v[e\u00e9]rifi[e\u00e9]s?|contr[o\u00f4]l[e\u00e9]s?)"
+_V97_ASSERTED_VERIFICATION_RE = re.compile(
+    r"\b(?:are|is|were|been|zijn|worden|wordt|sont|est|ont [e\u00e9]t[e\u00e9])\s+(?:(?:all|fully|regularly|annually|completely|independently|volledig|regelmatig|jaarlijks|onafhankelijk|enti[e\u00e8]rement|r[e\u00e9]guli[e\u00e8]rement|ind[e\u00e9]pendamment)\s+)*"
+    + _V97_VERIFICATION_PARTICIPLE + r"\b(?!\s+(?:by|door|par|against|volgens|selon|according|under|onder|sous|in\s+(?:19|20)\d\d|op\s+basis|sur\s+la\s+base|using|met|avec|with|to\s+the\s+standard|conform))"
+    r"|\b(?:fully|volledig|enti[e\u00e8]rement)\s+" + _V97_VERIFICATION_PARTICIPLE + r"\b(?!\s+(?:by|door|par|against|volgens|selon|according|under|onder|sous))", re.I)
+_V97_PERCENT_RE = re.compile(r"\d+(?:[.,]\d+)?\s?%")
+_V97_PERCENT_ABOUT_RE = re.compile(r"\b(?:workers?|employees?|staff|people|women|men|suppliers?|factor(?:y|ies)|sites?|facilit(?:y|ies)|supply chain|contractors?|audit\w*|trained|training|covered|collective|union\w*|accident\w*|injur\w*|werknemers?|medewerkers?|personeel|vrouwen|mannen|leveranciers?|fabrieken|fabriek|vestigingen|opleiding\w*|gedekt|vakbond\w*|ongeval\w*|travailleurs?|employ[e\u00e9]s?|salari[e\u00e9]s?|femmes|hommes|fournisseurs?|usines?|formation\w*|couverts?|syndicat\w*|accident\w*)\b", re.I)
+
+def _v97_drop_loose_percentages(text):
+    """Percentages in sentences that do not say who or what they are about are no evidence for a social claim."""
+    parts = re.split(r'(?<=[.!?])\s+|\n+', str(text or ''))
+    return ' '.join(x if _V97_PERCENT_ABOUT_RE.search(x) else _V97_PERCENT_RE.sub(' ', x) for x in parts)
+
 _V97_PAGE_MAX_CHARS = 12000      # a "page" longer than this has no real page structure (an uploaded document): only the surroundings count
 _V97_PAGE_HALF = 4000
 
@@ -9406,6 +9426,7 @@ def _v97_clean_for_topic(text, topic):
     accident statistics, training statistics or supplier-scheme names."""
     t = _V97_DISCOUNT_RE.sub(' ', _normalize_apostrophes(str(text or '')).lower())
     t = _V97_NEGATED_EVIDENCE_RE.sub(' ', t)
+    t = _V97_ASSERTED_VERIFICATION_RE.sub(' ', t)       # v97.8: "all our suppliers are fully audited" is a claim, not evidence
     if topic in ('other', 'training'):
         t = _V97_SAFETY_STATS_RE.sub(' ', t)
     if topic in ('other', 'safety'):
@@ -9424,7 +9445,7 @@ def _v97_referral(text):
     return any(not _V97_REFERRAL_NOISE_RE.search(m.group(0)) for m in _V97_REFERRAL_RE.finditer(str(text or '')))
 
 def _v97_evidence_hit(text, topic):
-    t = _v97_clean_for_topic(_v97_strip_markers(text), topic)
+    t = _v97_clean_for_topic(_v97_drop_loose_percentages(_v97_strip_markers(text)), topic)
     return bool(_V97_EVIDENCE_RE.search(t)) or _v97_referral(t)
 
 def _v97_evidence_nearby(excerpt_low, full_text):

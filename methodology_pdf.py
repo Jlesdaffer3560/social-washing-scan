@@ -299,7 +299,7 @@ def build_methodology_pdf():
         (Paragraph('Evidence must belong to this claim', STY['td_b']),
          Paragraph('Evidence on the same page only counts when it can back up <b>this</b> claim. The scan ignores a figure, audit or '
                    'certificate that is <b>negated</b> (<i>audits are not available</i>), that is a <b>discount</b> (<i>save 20%</i>), that '
-                   'belongs to <b>another company, brand or product</b>, or that concerns <b>another subject</b> (accident rates do not support '
+                   'belongs to <b>another company, brand or product</b>, or that concerns <b>another subject</b>, a <b>bare assertion</b> such as <i>all our suppliers are fully audited</i> (that is itself a claim, not proof), or a <b>percentage that says nothing about people or sites</b> (<i>100% sustainable</i>) (accident rates do not support '
                    'a child-labour claim; a statement about the vehicle fleet does not specify a claim about packaging). Where a page has no '
                    'real page structure (a long uploaded document) only the surroundings of the claim count as &ldquo;the same page&rdquo;. '
                    'A pointer to a report or policy only counts when it is a sustainability document, not a returns or privacy policy. The scan '

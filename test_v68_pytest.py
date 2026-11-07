@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_14_access_code_alex'
+    assert app.APP_VERSION == 'hostable_v97_15_evidence_not_from_neighbour_claims'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -9223,3 +9223,37 @@ def test_v9712_history_panel_lists_every_given_code_with_its_status(monkeypatch)
     monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 12, 2))
     assert 'expired' in app._v96_access_usage_html({}, []).split('<strong>Sofie</strong>')[1].split('</tr>')[0]
     assert 'Shared code' not in empty and 'Durably' in empty
+
+
+_V978_TEXT = ('Our eco-friendly packaging is 100% sustainable. Our product is climate neutral thanks to carbon offsetting. All our products are free from forced labour. '
+              'All our suppliers are fully audited. We pay a living wage to every worker. We do not tolerate child labour anywhere in our supply chain. '
+              'Our workers are free to join a trade union. Safety is our top priority. We will be net zero by 2040.')
+
+
+def test_v978_neighbouring_claims_are_not_evidence_for_each_other():
+    """Found in a test with six social sentences side by side: the percentage in "100% sustainable" and the assertion "all our suppliers are
+    fully audited" each counted as evidence and hid four of the six."""
+    found = ' '.join(f['claim'] for f in app.detect_claims(_V978_TEXT))
+    for part in ('forced labour', 'suppliers are fully audited', 'living wage', 'child labour', 'trade union', 'Safety is our top priority'):
+        assert part in found, part
+    # each of the two causes alone used to hide them: neither does now
+    assert 'child labour' in ' '.join(f['claim'] for f in app.detect_claims(_V978_TEXT.replace('All our suppliers are fully audited. ', '')))
+    assert 'child labour' in ' '.join(f['claim'] for f in app.detect_claims(_V978_TEXT.replace('100% sustainable', 'sustainable')))
+
+
+def test_v978_real_evidence_still_hides_a_social_claim():
+    claim = 'We do not tolerate child labour anywhere in our supply chain.'
+    for evidence in ('We carried out 38 audits at our suppliers in 2024.',
+                     'Our suppliers are audited against SA8000 every year.',
+                     'Our suppliers are audited by an independent firm.',
+                     '94% of our workers are covered by a collective agreement.',
+                     'Details are in our sustainability report.'):
+        assert not _child_findings(claim + ' ' + evidence), evidence
+    # a percentage that says nothing about people or sites, and a bare "fully audited", are not evidence
+    for noise in ('Our packaging is 100% sustainable.', 'All our suppliers are fully audited.', 'Everything is certified.'):
+        assert _child_findings(noise + ' ' + claim), noise
+
+
+def test_v978_supplier_audit_assurance_is_a_claim_in_three_languages():
+    for text in ('All our suppliers are fully audited.', 'Al onze leveranciers zijn geauditeerd.', 'Tous nos fournisseurs sont audit\u00e9s.'):
+        assert [f for f in app.detect_claims('Over ons. ' + text + ' Contacteer ons.') if f['type'].startswith('Supply-chain or supplier')], text
