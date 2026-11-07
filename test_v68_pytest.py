@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v97_15_evidence_not_from_neighbour_claims'
+    assert app.APP_VERSION == 'hostable_v98_0_social_assurances_in_everyday_wording'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -9267,5 +9267,61 @@ def test_held_out_claim_testset_never_gets_worse():
     stats, _ = eval_testset.run()
     flagged = sum(b['ok'] for (lang, label), b in stats.items() if label == 'flag')
     left_alone = sum(b['ok'] for (lang, label), b in stats.items() if label == 'no_flag')
-    assert flagged >= 37, flagged
+    assert flagged >= 65, flagged         # v98.0: 37 -> 67 of 79 (social 10 -> 40 of 43); never below the level reached
     assert left_alone >= 48, left_alone
+
+
+def test_v98_social_testset_v2_never_gets_worse():
+    """testset_claims_v2.py (30 paragraphs, social claims in everyday wording, written BEFORE the v98 detector). Baseline before v98.0: 0 of 60
+    flagged, 33 of 33 left alone. After: 59 of 60, 33 of 33. The result may only go up; add NEW items (v3) instead of editing this set."""
+    import eval_testset
+    import testset_claims_v2
+    stats, _ = eval_testset.run(testset_claims_v2)
+    flagged = sum(b['ok'] for (lang, label), b in stats.items() if label == 'flag')
+    left_alone = sum(b['ok'] for (lang, label), b in stats.items() if label == 'no_flag')
+    assert flagged >= 59, flagged
+    assert left_alone >= 33, left_alone
+
+
+def _v98_phrases(text):
+    return [f.get('matched_phrase') for f in app.detect_claims(text) if f.get('matched_phrase')]
+
+
+def test_v98_social_assurances_in_everyday_wording_are_found():
+    """A short first-person assurance about people has no product noun and no copula: the old rules took it for a heading, and the fixed phrase
+    lists did not know the wording. 'We never use forced labour' is the assurance itself, not a negated claim."""
+    for text in ['We never use forced labour.', 'Nobody in our supply chain is forced to work.', 'We pay our staff a fair salary.',
+                 'Every garment worker earns enough to live on.', 'Our partners are carefully selected.', 'Safety is not negotiable at our plants.',
+                 'Wij gebruiken nooit dwangarbeid.', 'Wij betalen ons personeel een eerlijk loon.', 'Onze partners worden zorgvuldig gekozen.',
+                 'Nous n\u2019utilisons jamais le travail forc\u00e9.', 'Nous versons \u00e0 notre personnel un salaire \u00e9quitable.',
+                 'Nos usines sont des lieux de travail s\u00fbrs.']:
+        assert _v98_phrases(text), text
+
+
+def test_v98_social_assurances_do_not_fire_on_look_alikes():
+    """Same topic words, no assurance: a known risk, a hedge, a description of a document, a job ad, a portal, a payment partner."""
+    for text in ['Child labour is a known risk in cocoa farming.', 'We are not aware of any forced labour among our sub suppliers.',
+                 'Our human rights policy covers child labour and wages.', 'We are looking for a safety officer to join our team.',
+                 'Wij zijn op zoek naar een veiligheidsadviseur voor ons team.', 'The supplier portal is open on weekdays.',
+                 'Our partners include Visa and Mastercard for payment.', 'Safety instructions: keep this product away from children.',
+                 'Kinderarbeid is een bekend risico in de cacaoteelt.', 'Le portail fournisseurs est ouvert en semaine.']:
+        assert not _v98_phrases(text), text
+
+
+def test_v98_social_assurance_with_own_evidence_is_left_alone():
+    """Evidence next to the claim still takes it out (same rule as the free-form pass): a figure about people, an audit by name."""
+    assert not _v98_phrases('94% of our employees are covered by a collective agreement.')
+    assert not _v98_phrases('In 2025 we recorded 0.6 accidents per million hours worked, and safety remains our top priority.')
+
+
+def test_v98_a_frequency_word_does_not_make_an_audit_assertion_evidence():
+    """'audited every year' is as bare an assertion as 'audited'; proof names who audited, against what, how many."""
+    assert _v98_phrases('All our suppliers are audited every year.') or _v98_phrases('Al onze leveranciers worden elk jaar geauditeerd.')
+    assert _v98_phrases('Al onze leveranciers worden elk jaar geauditeerd.')
+
+
+def test_v98_one_finding_per_claim_family_per_sentence():
+    """The fixed lists name the family 'Human-rights / labour-rights claim', the free-form and v98 passes 'Human-rights or labour-rights claim':
+    a sentence with a living-wage claim and 'human rights' gets one finding, with the living-wage rewrite."""
+    fs = [f for f in app.detect_claims('We pay a living wage to all employees and human rights matter to us.') if f.get('matched_phrase')]
+    assert len(fs) == 1, [f.get('matched_phrase') for f in fs]

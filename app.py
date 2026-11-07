@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v97_15_evidence_not_from_neighbour_claims"
-APP_RELEASE_LABEL="v97.15"
+APP_VERSION="hostable_v98_0_social_assurances_in_everyday_wording"
+APP_RELEASE_LABEL="v98.0"
 APP_RELEASE_DATE="2026-11-07"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -9362,7 +9362,7 @@ _V97_EVIDENCE_RE = re.compile("|".join([
 # v97.7: a vacancy text is recognised by vacancy wording ("apply now", "join our team", "vacature"), not by the bare verb "apply"
 # ("we apply the same principles"); a second-person address by a second-person SUBJECT or an address to a jobseeker ("you will",
 # "your career"), not by every "your" ("to improve your neighbourhood").
-_V97_JOB_AD_RE = re.compile(r"\b(apply (?:now|today|here|online)|apply for (?:this|a|the) (?:job|position|role|vacancy)|how to apply|vacanc\w*|job openings?|careers? (?:page|site|opportunit\w+)|join our team|we are hiring|we're hiring|now hiring|we are recruiting|we're recruiting|sollicit\w*|vacature\w*|werken bij|word onderdeel van ons team|postul\w*|carri[eè]res?|offres? d'emploi|nous recrutons|rejoignez)\b", re.I)
+_V97_JOB_AD_RE = re.compile(r"\b(apply (?:now|today|here|online)|apply for (?:this|a|the) (?:job|position|role|vacancy)|how to apply|vacanc\w*|job openings?|careers? (?:page|site|opportunit\w+)|join our team|we are hiring|we're hiring|now hiring|we are recruiting|we're recruiting|sollicit\w*|vacature\w*|werken bij|word onderdeel van ons team|postul\w*|carri[eè]res?|offres? d'emploi|nous recrutons|rejoignez|looking for (?:a|an|someone|talent)|op zoek naar|wij zoeken|we zoeken|nous recherchons|nous cherchons)\b", re.I)
 _V97_SECOND_PERSON_RE = re.compile(r"\byou(?:'ll|'re|'ve| will| can| are| could| would| may| must| should| have)\b|\byour (?:career|skills|role|team|colleagues|future|talent|application|development|training|growth|job|profile|cv|opportunit\w+)\b|\bjouw (?:loopbaan|carri[eè]re|talent|team|collega\w*|ontwikkeling|opleiding|functie|baan)\b|\buw (?:loopbaan|carri[eè]re|talent|team|collega\w*|ontwikkeling|opleiding|functie|baan)\b|\bje (?:kunt|kan|bent|wordt|krijgt|werkt|groeit)\b|(?<![A-Za-z.])u (?:kunt|bent|krijgt|werkt|wordt|groeit)\b|\bvous (?:pouvez|[êe]tes|serez|aurez|travaillez|rejoignez)\b|\bvotre (?:carri[eè]re|talent|poste|[ée]quipe|d[ée]veloppement|formation)\b|\btu (?:peux|es|seras)\b", re.I)
 
 # v97.7: evidence has to be evidence FOR THIS CLAIM. A word such as "audit" or a figure only counts when it is
@@ -9395,7 +9395,7 @@ _V97_NEGATION_ANY_RE = re.compile(r"\b(?:not|no longer|never|without|isn't|aren'
 # Found in a test where six social sentences stood next to each other: the percentage and the audit sentence each hid four of them.
 _V97_VERIFICATION_PARTICIPLE = r"(?:audited|certified|verified|checked|inspected|geauditeerd|gecertificeerd|geverifieerd|gecontroleerd|gecontroleerd|audit[e\u00e9]s?|certifi[e\u00e9]s?|v[e\u00e9]rifi[e\u00e9]s?|contr[o\u00f4]l[e\u00e9]s?)"
 _V97_ASSERTED_VERIFICATION_RE = re.compile(
-    r"\b(?:are|is|were|been|zijn|worden|wordt|sont|est|ont [e\u00e9]t[e\u00e9])\s+(?:(?:all|fully|regularly|annually|completely|independently|volledig|regelmatig|jaarlijks|onafhankelijk|enti[e\u00e8]rement|r[e\u00e9]guli[e\u00e8]rement|ind[e\u00e9]pendamment)\s+)*"
+    r"\b(?:are|is|were|been|zijn|worden|wordt|sont|est|ont [e\u00e9]t[e\u00e9])\s+(?:(?:all|fully|regularly|annually|completely|independently|volledig|regelmatig|jaarlijks|onafhankelijk|enti[e\u00e8]rement|r[e\u00e9]guli[e\u00e8]rement|ind[e\u00e9]pendamment|(?:every|each|elk|elke|chaque)\s+(?:year|jaar|ann[e\u00e9]e|month|maand|mois))\s+)*"
     + _V97_VERIFICATION_PARTICIPLE + r"\b(?!\s+(?:by|door|par|against|volgens|selon|according|under|onder|sous|in\s+(?:19|20)\d\d|op\s+basis|sur\s+la\s+base|using|met|avec|with|to\s+the\s+standard|conform))"
     r"|\b(?:fully|volledig|enti[e\u00e8]rement)\s+" + _V97_VERIFICATION_PARTICIPLE + r"\b(?!\s+(?:by|door|par|against|volgens|selon|according|under|onder|sous))", re.I)
 _V97_PERCENT_RE = re.compile(r"\d+(?:[.,]\d+)?\s?%")
@@ -9645,6 +9645,92 @@ def _v97_freeform_social_ok(excerpt, found, full_text, typ='', trig=''):
             return False
     return not _v97_evidence_nearby(c,full_text)
 
+# v98: social assurances in everyday wording. The fixed phrase lists find "we do not tolerate child labour" but not "we never use forced
+# labour", "nobody in our chain is forced to work", "every garment worker earns enough to live on" or "our partners are carefully
+# selected". A sentence is reported as a social claim when it holds (a) a social TOPIC (forced or child labour, fair pay, trade unions,
+# safety and health, suppliers and partners, respect and dignity, community, diversity), (b) an ASSURANCE frame for that topic
+# (never / no / policy / ethical / carefully selected / support / at the heart of ...), and (c) a first-person or collective subject
+# (we, our, everyone, nobody, staff ...). It must not be about the world in general ("child labour is a known risk"). The existing
+# conditions of the free-form pass still apply: no evidence next to it, no vacancy, no second person, not a question, not reported twice.
+_V98_FORCED_TERM_RE = re.compile(r"forced (?:to )?(?:work|labou?r)|child labou?r|child works?|slave labou?r|modern slavery|emploi\w* (?:pas |jamais )?d.enfants|kinderarbeid|dwangarbeid|gedwongen|moderne slavernij|travail (?:forc[e\u00e9]|des enfants)|esclavage moderne|aucun enfant|forc[e\u00e9]s? de travailler|geen enkel kind|(?:employ|use|exploit)\w* children", re.I)
+_V98_FIRST_PERSON_RE = re.compile(r"\b(?:we|our|ours|us|wij|ons|onze|nous|notre|nos)\b", re.I)
+_V98_COLLECTIVE_RE = re.compile(r"\b(?:everyone|everybody|nobody|no one|all|every|each|staff|workers?|employees?|iedereen|niemand|alle|elke|medewerkers|werknemers|personeel|chacun|personne|tous|toutes|chaque|employ[e\u00e9]s|travailleurs|personnel|aucun)\b", re.I)
+_V98_WORLD_RE = re.compile(r"\b(?:risk|risks|problem|challenge|issue|issues|widespread|worldwide|globally|according to|studies|research|requires?|regulation|directive|law|risque|probl[e\u00e8]me|d[e\u00e9]fi|wereldwijd|probleem|uitdaging|risico|wetgeving|verordening)\b|with respect to|met betrekking tot|en ce qui concerne", re.I)
+# a hedge ("we are not aware of any forced labour") and the description of a document ("our policy covers child labour and wages") are no
+# assurance about practice
+_V98_HEDGE_RE = re.compile(r"\b(?:not aware|unaware|no evidence|none found|not found|niet op de hoogte|geen aanwijzing\w*|geen bewijs|pas (?:au courant|connaissance)|aucune preuve)\b", re.I)
+_V98_DOCUMENT_META_RE = re.compile(r"\b(?:polic(?:y|ies)|code|charter|document|report|standard|beleid|gedragscode|handvest|rapport|politique|charte|rapport)\b.{0,40}\b(?:cover|covers|include|includes|address|addresses|deal with|deals with|set out|sets out|outline|outlines|describe|describes|dekt|omvat|behandelt|beschrijft|couvre|inclut|aborde|d[e\u00e9]crit)\b", re.I)
+
+_V98_SPECS = [
+    # (type, topic, frame or None, subject: 'fp' = first person, 'any' = first person or collective)
+    ('Forced-labour product or supply-chain claim', _V98_FORCED_TERM_RE,
+     re.compile(r"\b(?:never|no|not|nobody|no one|nowhere|none|zero|bans?|banned|prohibit\w*|forbid\w*|free (?:from|of)|without|polic(?:y|ies)|against|ensure\w*|guarantee\w*|don't|doesn't|nooit|geen|niet|nergens|niemand|verbied\w*|verbod|verboden|beleid|tegen|vrij van|zonder|garandeer\w*|jamais|aucun\w*|nulle part|personne|interdi\w*|politique|contre|exempt\w*|sans|garanti\w*)\b|n'|\bne\b", re.I), 'any'),
+    ('Human-rights or labour-rights claim',
+     re.compile(r"fair (?:salary|salaries|wages?|pay)|(?:paid|pay|earns?|earn) (?:\w+ )?(?:fairly|a fair)|enough to live on|living wages?|(?:salar(?:y|ies)|wages?) .{0,25}(?:fair|decent)|(?:fair|decent) (?:salary|salaries|wages?)|eerlijk(?:e)? (?:loon|lonen|salaris|salarissen)|eerlijk betaald|leefbaar loon|genoeg om van te leven|lonen .{0,30}eerlijk|salaires? (?:[e\u00e9]quitables?|d[e\u00e9]cents?|vital)|pay[e\u00e9]s? [e\u00e9]quitablement|gagne de quoi vivre|r[e\u00e9]mun[e\u00e9]r\w+ [e\u00e9]quitablement|salaires .{0,30}[e\u00e9]quitables", re.I), None, 'any'),
+    ('Human-rights or labour-rights claim',
+     re.compile(r"trade unions?|\bunions?\b|collective bargaining|freedom of association|vakbond\w*|vrijheid van vereniging|collectieve onderhandel\w*|syndicats?|libert[e\u00e9] d.association|n[e\u00e9]gociation collective", re.I),
+     re.compile(r"\b(?:join|organi[sz]e|form|right|freedom|free|welcome|respect\w*|recogni[sz]\w*|support\w*|allow\w*|aansluiten|vrij\w*|recht|welkom|respecteer\w*|erken\w*|steun\w*|adh[e\u00e9]r\w*|droit|libres?|bienvenus?|respectons|reconna\w+)\b", re.I), 'any'),
+    ('Human-rights or labour-rights claim',
+     re.compile(r"human rights|dignity|treat\w* (?:all |every |our )?(?:workers|employees|people|staff)\w* with respect|with respect\b|respect(?:s|ed)? (?:all|every|our) (?:workers|employees|people|staff)|mensenrechten|waardigheid|met respect|droits humains|droits de l.homme|dignit[e\u00e9]|avec respect", re.I), None, 'fp'),
+    ('Health, safety or worker-welfare claim',
+     re.compile(r"\bsafety\b|\bsafe (?:place|places|workplace|workplaces|working|environment|plants?|sites?|factories|conditions)\b|health (?:and safety )?of our|(?:get|gets|getting) hurt|injur\w+|working conditions|veiligheid|veilige (?:werk\w*|arbeids\w*|fabriek\w*|plek\w*)|gezondheid|gewond|werkomstandigheden|arbeidsomstandigheden|s[e\u00e9]curit[e\u00e9]|lieux? de travail s[u\u00fb]rs?|conditions de travail|sant[e\u00e9]|bless[e\u00e9]\w*", re.I),
+     re.compile(r"\b(?:not negotiable|first|priority|top|always|never|everyone|everybody|nobody|no one|care\w*|ensure\w*|guarantee\w*|zero|best|highest|safe|committed|proud|niet onderhandelbaar|voorop|prioriteit|altijd|nooit|iedereen|niemand|zorg\w*|geven veel om|beste|hoogste|veilig\w*|garandeer\w*|pas n[e\u00e9]gociable|priorit[e\u00e9]|toujours|jamais|chacun|personne|soucions|meilleur\w*|s[u\u00fb]rs?|garanti\w*|passe avant|premier)\b|geef\w* om", re.I), 'any'),
+    ('Supply-chain or supplier-responsibility claim',
+     re.compile(r"\bsuppliers?\b|\bpartners?\b|supply chain|leveranciers?|toeleveringsketen|\bketen\b|fournisseurs?|partenaires?|cha[i\u00ee]ne", re.I),
+     re.compile(r"\b(?:ethical\w*|highest|strict\w*|carefully|vetted|screened|verified|audited|certified|compl(?:y|ies|iant)|responsib\w+|code of conduct|held to|only work\w*|selected|chosen|ethisch\w*|hoogste|strikte?|zorgvuldig|gescreend|geverifieerd|geauditeerd|gecertificeerd|voldoen|verantwoord\w*|gedragscode|enkel met|alleen met|gekozen|geselecteerd|[e\u00e9]thiques?|plus (?:strictes?|[e\u00e9]lev[e\u00e9]es?)|choisis?|s[e\u00e9]lectionn[e\u00e9]\w*|v[e\u00e9]rifi[e\u00e9]s?|audit[e\u00e9]s?|certifi[e\u00e9]s?|respectent|code de conduite|uniquement avec|qu.avec)\b", re.I), 'fp'),
+    ('Broad social-impact claim',
+     re.compile(r"communit(?:y|ies)|neighbou?rhoods?|local schools?|buurt\w*|gemeenschap\w*|quartiers?|communaut\w+|[e\u00e9]coles? locales?|scholen", re.I),
+     re.compile(r"\b(?:support\w*|back|backs|invest\w*|give back|contribut\w*|help\w*|fund\w*|sponsor\w*|steun\w*|ondersteun\w*|investeer\w*|bijdrag\w*|soutien\w*|soutenons|soutient|investi\w+|contribu\w+|aide\w*)\b", re.I), 'fp'),
+    ('Diversity, equality and inclusion claim',
+     re.compile(r"diversity|inclusion|inclusive|equal opportunit\w+|equal pay|belong|discriminat\w+|diversiteit|inclusie|inclusief|gelijke kansen|diversit[e\u00e9]|inclusi\w+|[e\u00e9]galit[e\u00e9]", re.I),
+     re.compile(r"\b(?:heart|core|central|value\w*|promot\w*|champion\w*|embrac\w*|celebrat\w*|proud|commit\w*|foster\w*|zero tolerance|do not|never|centraal|waarder\w*|bevorder\w*|omarm\w*|trots|erbij|nultolerantie|employer|workplace|culture|company|everybody|everyone|welcome\w*|werkgever|werkplek|cultuur|bedrijf|iedereen|employeur|lieu de travail|entreprise|chacun|tous|valoris\w*|favoris\w*|fiers?|engag\w*|tol[e\u00e9]rance z[e\u00e9]ro)\b|au c[o\u0153]ur", re.I), 'fp'),
+]
+
+def _v98_assertion_ok(sentence, spec):
+    """The sentence is an ASSURANCE for the topic of `spec`: its frame is there, its subject is first-person (or collective) and it is not
+    a statement about the world."""
+    c=_normalize_apostrophes(str(sentence or '')).lower()
+    _typ,_topic,frame,subject=spec
+    if frame is not None and not frame.search(c):
+        return False
+    if _V98_WORLD_RE.search(c) or _V98_HEDGE_RE.search(c) or _V98_DOCUMENT_META_RE.search(c):
+        return False
+    if _V98_FIRST_PERSON_RE.search(c):
+        return True
+    return subject=='any' and bool(_V98_COLLECTIVE_RE.search(c))
+
+def _v98_family_reported(excerpt, found, typ):
+    """The sentence already has a finding of this claim family. The fixed lists say 'Human-rights / labour-rights claim', the free-form
+    ones 'Human-rights or labour-rights claim': one family, one finding per sentence."""
+    fam=lambda t: re.sub(r'\W+',' ',str(t or '').lower().replace(' / ',' or ')).strip()
+    key=re.sub(r'\W+',' ',_normalize_apostrophes(str(excerpt or '').lower())).strip()
+    for f in found:
+        other=re.sub(r'\W+',' ',_normalize_apostrophes(str(f.get('full_claim_text') or f.get('claim') or '').lower())).strip()
+        if other and (key in other or other in key) and fam(f.get('type'))==fam(typ):
+            return True
+    return False
+
+def _v98_social_assurances(text, fs, seen):
+    """Adds the findings of the compositional social pass (see the v98 note above). Evidence and de-duplication rules are those of the
+    free-form pass (_v97_freeform_social_ok)."""
+    low=_normalize_apostrophes(str(text or '').lower())
+    by_type={t:(r,i,w) for t,r,_trg,i,w in V97_SOCIAL_FREEFORM_PATTERNS}
+    claim_row={t:(r,i,w) for _g,t,r,i,w in [(None,t,r,i,w) for _tr,t,r,i,w in CLAIMS]}
+    for spec in _V98_SPECS:
+        typ,topic_re=spec[0],spec[1]
+        row=by_type.get(typ) or claim_row.get(typ)
+        if not row: continue
+        risk,issue,rewrite=row
+        tried=set(); hits=0
+        for m in topic_re.finditer(low):
+            trig=m.group(0).strip()
+            if not trig or trig in tried: continue
+            tried.add(trig)
+            extra=lambda c,_spec=spec,_trig=trig: _v98_assertion_ok(c,_spec) and not _v98_family_reported(c,fs,_spec[0]) and _v97_freeform_social_ok(c,fs,text,_spec[0],_trig)
+            if _v55_add_finding(fs, seen, text, trig, typ, 'Medium', issue, rewrite, 'social', 38, extra_check=extra):
+                hits+=1
+                if hits>=6: break
+
 V55_NAV_CONTEXT_EXCLUSIONS = [
     'cookie', 'privacy', 'terms', 'login', 'sign in', 'menu', 'navigation', 'subscribe', 'newsletter',
     'download report', 'annual report', 'sustainability report', 'press release archive',
@@ -9868,6 +9954,10 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
         # excluded from the negation match with a lookahead rather than removed from it entirely,
         # so an unrelated negation elsewhere in the same window still works normally.
         is_negated=bool(re.search(r"\b(not|never|no|cannot)\b(?!\s+(only|doubt))|n't|niet(?!\s+alleen)|geen(?!\s+twijfel)|nooit",neg_before)) or bool(fr_negator and fr_pas)
+        # v98: for forced and child labour the negation IS the assurance ("we never use forced labour", "farms that do not use child
+        # labour"); only a negated ASSURANCE ("we cannot guarantee ...") is not a claim
+        if is_negated and dimension=='social' and _V98_FORCED_TERM_RE.search(trig) and not _V98_HEDGE_RE.search(c) and not re.search(r"cannot|can't|unable|no guarantee|not guarantee|not claim|kunnen niet|ne pouvons pas",neg_before):
+            is_negated=False
         if is_negated:
             continue
         # v87: a conditional/hypothetical sentence ("If our packaging were fully recyclable, it
@@ -9919,6 +10009,10 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     # without having to name the specific product.
     _short_excerpt_has_first_person_claim=bool(re.search(r'\b(we|our|us|wij|ons|onze|nous|notre|nos)\b',c)) and bool(
         re.search(r"\b(is|are|'s|zijn|ben|bent|sont|est|était|étaient|sommes|êtes)\b",c))
+    # v98: a short first-person ASSURANCE about people ("We never use forced labour.") has no copula and no product noun, so this rule
+    # took it for a heading. A social sentence of four words or more with a first-person pronoun is a statement, not a heading.
+    if dimension=='social' and len(c.split())>=4 and re.search(r'\b(we|our|us|wij|ons|onze|nous|notre|nos)\b',c):
+        _short_excerpt_has_first_person_claim=True
     if len(c.split()) <= 5 and not (_short_excerpt_has_first_person_claim or any(x in c for x in ['product','packaging','material','supplier','sourcing','rights','wage','community','recycled','recyclable','net zero','carbon',
         'product','verpakking','materiaal','leverancier','rechten','loon','gemeenschap','gerecycleerd','recycleerbaar','koolstof',
         'produit','emballage','matériau','fournisseur','droits','salaire','communauté','recyclé','recyclable','carbone'])):
@@ -10682,6 +10776,8 @@ def detect_claims(text):
                 if _v55_add_finding(fs, seen, text, _normalize_apostrophes(trig), typ, risk, issue, rewrite, 'social', 38, extra_check=extra_check):
                     hits += 1
                     if hits >= 2: break
+    # v98: social assurances in everyday wording (see _V98_SPECS)
+    _v98_social_assurances(text, fs, seen)
     # v93.31: see the matching note in detect_green_claims() -- this cap moved out of the
     # analysis layer. The 200 ceiling here is a pathological-input safety bound, not a
     # display limit; the report's display-only top-12 selection happens separately.
