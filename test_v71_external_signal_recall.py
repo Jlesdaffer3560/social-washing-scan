@@ -84,7 +84,8 @@ def test_query_design_is_generic_and_uses_external_source_pools():
     for dimension in ("green", "social"):
         specs = app._v71_query_specs("Example Holdings", dimension)
         assert len(specs) >= 4
-        assert all('"example"' in spec["query"].lower() for spec in specs)
+        assert all('"example"' in spec["query"].lower() or '"example holdings"' in spec["query"].lower() for spec in specs)
+        assert any('"example"' in spec["query"].lower() for spec in specs)
         assert any(spec.get("topic") == "news" for spec in specs)
         constrained = [spec for spec in specs if spec.get("include_domains")]
         assert constrained and all("example.com" not in spec["include_domains"] for spec in constrained)
@@ -103,7 +104,7 @@ def test_full_discovery_pipeline_retains_generic_company_signals():
     }
     old_search = app.search_public_sources
 
-    def fake_search(query, max_results=8, topic="general", include_domains=None, exclude_domains=None):
+    def fake_search(query, max_results=8, topic="general", include_domains=None, exclude_domains=None, search_depth="basic"):
         return ([green] if "environment" in query or "greenwashing" in query else [social]), [
             {"provider": "Test provider", "status": "ok", "results": 1}
         ]

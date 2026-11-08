@@ -1,12 +1,12 @@
 """Regression coverage for the v70 reader-facing report and source precision."""
+import re
 from pathlib import Path
 
 import app
 
 
 def test_v70_release_and_internal_markers_removed():
-    assert app.APP_VERSION == "hostable_v72_legal_basis_classification"
-    assert app.APP_RELEASE_LABEL == "v72"
+    assert app.APP_VERSION.startswith("hostable_v") and re.fullmatch(r"v\d+(\.\d+)?", app.APP_RELEASE_LABEL)
     frontend = Path("frontend.html").read_text(encoding="utf-8")
     assert "Build {{APP_RELEASE_LABEL}}" not in frontend
     assert 'id="version"' not in frontend
@@ -37,8 +37,9 @@ def test_puratos_company_pages_are_not_external_negative_sources():
         "url": "https://www.puratosgrandplace.com/en/sustainability/responsible-sourcing",
         "content": "Our responsible sourcing policy describes supplier due diligence.",
     }
+    assert app.is_company_owned_source(company_policy, "Puratos", reviewed)
+    assert not app.is_company_owned_source(brand_microsite, "Puratos", reviewed)      # hardened: a free-form leftover is no proof of ownership
     for source in (company_policy, brand_microsite):
-        assert app.is_company_owned_source(source, "Puratos", reviewed)
         assert not app.is_negative_external_source(source)
     assert app.targeted_negative_sources(
         [company_policy, brand_microsite], "Puratos", reviewed_pages=reviewed

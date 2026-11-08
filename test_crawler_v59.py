@@ -10,16 +10,16 @@ def test_continues_after_first_three_failures():
     original_discover=app.discover_sitemap_urls
     original_fetch_page=app.fetch_page_content
     try:
-        app.fetch_html=lambda url,timeout=7: '<html><body>'+('sustainability evidence '*100)+links+'</body></html>'
+        app.fetch_html=lambda url,timeout=7: ('<html><body>'+('sustainability evidence '*100)+links+'</body></html>', url)
         app.discover_sitemap_urls=lambda url,limit=160,deadline=None: []
         def fake_fetch(url,timeout=7):
             number=int(url.rsplit('page',1)[1])
             if number <= 3:
                 raise ValueError('blocked')
-            return 'Evidence '*100,'html','direct'
+            return 'Evidence '*100,'html','direct',[],url,url      # (text, kind, method, links, link_base, final_url) since the redirect-aware crawler
         app.fetch_page_content=fake_fetch
         log=[]
-        _,pages=app.crawl('https://example.com',max_extra_pages=4,deadline=time.time()+10,log=log)
+        _,pages,_chunks=app.crawl('https://example.com',max_extra_pages=4,deadline=time.time()+10,log=log)
         assert len(pages)==5, pages
         assert sum(not x['ok'] for x in log)>=3
     finally:
