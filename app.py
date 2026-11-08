@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_1_environmental_claims_in_everyday_wording"
-APP_RELEASE_LABEL="v98.1"
+APP_VERSION="hostable_v98_2_social_claims_not_hidden_by_environmental_report_reference"
+APP_RELEASE_LABEL="v98.2"
 APP_RELEASE_DATE="2026-11-07"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -9442,9 +9442,22 @@ def _v97_drop_other_entity(text):
     parts = re.split(r'(?<=[.!?])\s+|\n+', str(text or ''))
     return ' '.join(x for x in parts if not _V97_OTHER_ENTITY_RE.search(x))
 
+# narrower than _V981_ENV_TOPIC_RE: words of the physical environment only; "sustainability report" is a pointer for any topic
+_V982_ENV_ONLY_RE = re.compile(r"[e\u00e9]mission\w*|uitstoot|carbon|koolstof|carbone|\bco2\b|co\u2082|climate|klimaat|climat|net[- ]zero|netto[- ]nul|\benergy\b|energie|[e\u00e9]nergie|renewable|hernieuwbaar\w*|renouvelable\w*|\bwaste\b|afval|d[e\u00e9]chets?|plastic\w*|plastique\w*|recycl\w+|footprint|voetafdruk|empreinte|\bwater\b|fossi\w+", re.I)
+
 def _v97_referral(text):
-    """A pointer to more explanation ("see our sustainability report") -- not a pointer to an unrelated document ("read our returns policy")."""
-    return any(not _V97_REFERRAL_NOISE_RE.search(m.group(0)) for m in _V97_REFERRAL_RE.finditer(str(text or '')))
+    """A pointer to more explanation ("see our sustainability report") -- not a pointer to an unrelated document ("read our returns policy"),
+    and, v98.2, not a pointer that sits in a sentence about the environment only ("... reduced our CO2 emissions by 31%, as reported in our
+    2023 report"): that report is no explanation of a social claim two sentences away."""
+    for sentence in re.split(r'(?<=[.!?])\s+|\n+', str(text or '')):
+        if not sentence.strip():
+            continue
+        if _V982_ENV_ONLY_RE.search(sentence) and not (_V97_TOPIC_OTHER_SOCIAL_RE.search(sentence) or _V97_TOPIC_SAFETY_RE.search(sentence)
+                                                         or _V97_TOPIC_TRAINING_RE.search(sentence)):
+            continue
+        if any(not _V97_REFERRAL_NOISE_RE.search(m.group(0)) for m in _V97_REFERRAL_RE.finditer(sentence)):
+            return True
+    return False
 
 def _v97_evidence_hit(text, topic):
     t = _v97_clean_for_topic(_v97_drop_loose_percentages(_v97_strip_markers(text)), topic)

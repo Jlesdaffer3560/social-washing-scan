@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v98_1_environmental_claims_in_everyday_wording'
+    assert app.APP_VERSION == 'hostable_v98_2_social_claims_not_hidden_by_environmental_report_reference'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -9389,3 +9389,13 @@ def test_v981_self_made_labels_are_found_but_public_schemes_and_plain_logos_are_
     for text in ['Look for the EU Ecolabel on every box.', 'Cherchez l\u2019\u00c9colabel europ\u00e9en sur chaque bo\u00eete.', 'Look for the Fairtrade mark on our coffee.',
                  'Our logo was designed in 1998.', 'Our new green logo has a different colour.']:
         assert not _v981_findings(text), (text, _v981_findings(text))
+
+
+def test_v982_an_environmental_report_reference_does_not_hide_social_claims():
+    """Found in a double check of the live pipeline: 'Since 2020 we have reduced our CO2 emissions by 31%, as reported in our 2023 report.' counted
+    as a pointer to an explanation for every social claim on the page, and all of them disappeared (also in v97.15). A pointer in a sentence
+    about the environment only is no explanation of a social claim; a pointer in a social sentence still is."""
+    social = 'We never use forced labour. Nobody in our supply chain is forced to work. We pay our staff a fair salary.'
+    env = ' Since 2020 we have reduced our CO2 emissions by 31%, as reported in our 2023 report.'
+    assert len(_v98_phrases(social + env)) == 3, _v98_phrases(social + env)
+    assert not _v98_phrases(social + ' Read how we audit our suppliers in our supplier code of conduct report.'), 'a social pointer still backs the claim'
