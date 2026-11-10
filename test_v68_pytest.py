@@ -2079,18 +2079,18 @@ def test_access_code_gate_rejects_wrong_or_missing_code_when_configured(monkeypa
 
 
 def test_access_code_gate_tolerates_smart_punctuation_dash_substitution(monkeypatch):
-    """v93.65: the access code is a date ("27-09-2026"); a phone keyboard, word processor or
+    """v93.65: the access code is a date ("03-11-2031"); a phone keyboard, word processor or
     messaging app's "smart punctuation" routinely swaps a plain hyphen for a visually similar
     Unicode dash (en dash, em dash, minus sign, non-breaking hyphen) when a code is typed or
     pasted through it -- invisible to the person doing it, but a hard mismatch against a
     strict comparison. Reported live: an invited user with the objectively correct code could
     not get in. Both sides must be normalised so this cosmetic substitution doesn't matter,
     without weakening the actual code content required."""
-    monkeypatch.setattr(app,'ACCESS_CODE','27-09-2026')
-    assert app._access_code_ok({'access_code':'27–09–2026'})  # en dashes
-    assert app._access_code_ok({'access_code':'27—09—2026'})  # em dashes
-    assert app._access_code_ok({'access_code':'27−09−2026'})  # minus signs
-    assert app._access_code_ok({'access_code':' 27-09-2026 '})  # stray whitespace
+    monkeypatch.setattr(app,'ACCESS_CODE','03-11-2031')
+    assert app._access_code_ok({'access_code':'03–11–2031'})  # en dashes
+    assert app._access_code_ok({'access_code':'03—11—2031'})  # em dashes
+    assert app._access_code_ok({'access_code':'03−11−2031'})  # minus signs
+    assert app._access_code_ok({'access_code':' 03-11-2031 '})  # stray whitespace
     # still a real check -- the digits themselves must match, not just the dash style
     assert not app._access_code_ok({'access_code':'28–09–2026'})
     assert not app._access_code_ok({'access_code':'27–10–2026'})
@@ -9192,13 +9192,13 @@ def test_v9712_cleanup_removes_the_owners_rows_and_only_the_developers_live_chec
 
 def test_v9712_shared_code_is_never_recorded_but_given_codes_are(monkeypatch):
     import threading as _th, time as _t, datetime as dt
-    monkeypatch.setattr(app, 'ACCESS_CODE', '27-09-2026')
+    monkeypatch.setattr(app, 'ACCESS_CODE', '03-11-2031')
     monkeypatch.setattr(app, 'DATABASE_URL', 'postgresql://example/db')
     monkeypatch.delenv('EXTRA_ACCESS_CODES', raising=False)
     monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 11, 3))
     seen = []
     monkeypatch.setattr(app, '_v96_record_access_usage', lambda *a: seen.append(a))
-    own = {'access_code': '27-09-2026'}
+    own = {'access_code': '03-11-2031'}
     assert app._access_code_ok(own)
     app._v96_note_access(own, 'scan', 'https://example.com', '1.2.3.4'); _t.sleep(0.3)
     assert seen == []
