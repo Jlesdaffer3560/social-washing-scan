@@ -6671,7 +6671,7 @@ def _client_ip(handler):
     return handler.client_address[0] if handler.client_address else 'unknown'
 
 
-# v93.65: the access code is a date ("27-09-2026"), and a plain ASCII hyphen typed or pasted
+# v93.65: the access code is a date written with hyphens, and a plain ASCII hyphen typed or pasted
 # through a word processor, phone keyboard or messaging app's "smart punctuation" is routinely
 # auto-replaced with a visually near-identical but different Unicode dash (en dash "-", em
 # dash, minus sign, non-breaking hyphen) -- invisible to the person typing it, but a hard
