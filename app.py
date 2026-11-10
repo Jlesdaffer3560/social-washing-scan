@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_2_social_claims_not_hidden_by_environmental_report_reference"
-APP_RELEASE_LABEL="v98.2"
+APP_VERSION="hostable_v98_3_false_positive_and_rewrite_language_fixes"
+APP_RELEASE_LABEL="v98.3"
 APP_RELEASE_DATE="2026-11-07"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -624,7 +624,11 @@ class Parser(HTMLParser):
             cues=[]
             for key in ["alt","title","aria-label","class","id","src"]:
                 val=attr_map.get(key,"")
-                if val and any(t in val.lower() for t in ["green","eco","leaf","tree","planet","earth","recycl","sustain","carbon","climate","water-drop","waterdrop","badge","label"]):
+                # v98.3: "label" and "badge" are ordinary interface words in class names ("p-hero__label", "promo-badge"): they count as a cue
+                # only in text meant for people (alt, title, aria-label); in class, id and src only an environmental word counts
+                _env_tokens=["green","eco","leaf","tree","planet","earth","recycl","sustain","carbon","climate","water-drop","waterdrop"]
+                _tokens=_env_tokens+(["badge","label"] if key in ("alt","title","aria-label") else [])
+                if val and any(t in val.lower() for t in _tokens):
                     cues.append(val)
             if cues:
                 # A visual-cue marker is a synthetic signal, not running prose -- keep it out
@@ -959,7 +963,7 @@ def _canonical_url(url):
     for part in (p.query or '').split('&'):
         if not part: continue
         key=part.split('=',1)[0].lower()
-        if key.startswith('utm_') or key in {'gclid','fbclid','mc_cid','mc_eid'}:
+        if key.startswith('utm_') or key in {'gclid','fbclid','mc_cid','mc_eid','zone','icid','cid','msclkid','yclid','igshid','mkt_tok','_hsenc','_hsmi'}:
             continue
         query_parts.append(part)
     query='&'.join(query_parts)
@@ -1843,6 +1847,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
     # with the homepage's own final URL so a later candidate that redirects back to the
     # homepage is recognised as a duplicate too.
     seen_final={_canonical_url(homepage_trusted_host_base or url)}
+    seen_text_hash=set()          # v98.3: the same page under another URL ("?zone=footer-3") is read once, not twice
 
     candidates=[]; seen={_canonical_url(url)}
     def add_candidate(candidate,source,allow_cross_domain=False):
@@ -1986,6 +1991,11 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                         # relative hrefs.
                         final_canon=_canonical_url((final_url or link).split('#')[0])
                         is_duplicate_final=bool(final_canon) and final_canon in seen_final
+                        _text_hash=hash(re.sub(r'\s+',' ',t).strip()) if len(t)>400 else None
+                        if _text_hash is not None and _text_hash in seen_text_hash:
+                            is_duplicate_final=True
+                        elif _text_hash is not None and not is_duplicate_final:
+                            seen_text_hash.add(_text_hash)
                         if is_duplicate_final:
                             _log_fetch_skipped_duplicate(log,link,len(t),final_canon,source=source,content_kind=kind)
                         elif stale_year is not None and stale_year<DOCUMENT_SCREENING_CUTOFF_YEAR:
@@ -3609,6 +3619,7 @@ def assign_claim_sources(claims, page_segments, documents):
             # distinctive-word-overlap scoring below, and ultimately to an explicit "source
             # could not be confidently matched" rather than a confident wrong answer.
             probe_lengths=sorted({len(words)} | {n for n in (60,40,30,20,14,10,7,5) if len(words)>=n}, reverse=True)
+            same_text_on=None
             for n in probe_lengths:
                 probe=' '.join(words[:n])
                 if not probe:
@@ -3617,6 +3628,13 @@ def assign_claim_sources(claims, page_segments, documents):
                 if len(matches)==1:
                     best=matches[0]
                     break
+                if len(matches)>1 and n==len(words) and same_text_on is None:
+                    same_text_on=list(dict.fromkeys(matches))
+            if not best and same_text_on:
+                # v98.3: the WHOLE sentence is on several pages ("100% recyclable packaging." on three product pages): it is not unclear where
+                # the claim is, it is in all of them. Show the first page and say where else it appears.
+                best=same_text_on[0]
+                c['source_also_on']=same_text_on[1:6]
             if not best and len(words)>=14:
                 mid=len(words)//3
                 probe=' '.join(words[mid:mid+8])
@@ -4397,6 +4415,19 @@ _REWRITE_NL_WORDS=frozenset("""tegen gebruiken hernieuwbare duurzaam duurzame ve
 _REWRITE_FR_WORDS=frozenset("""nous notre nos énergie durables produits entreprise émissions réduire fournisseurs sont avons
     vert verte respectueux respectueuse emballage emballages dans avec sans pour déchets neutre carbone""".split())
 
+# v98.3: a short Dutch or French claim ("We werken enkel met ethische partners.", "Le label garantit un produit durable.") has too few of the
+# common function words for _v96_guess_language and was read as English, so its rewrite came out in English. The fallback now counts a wider
+# vocabulary (claim words, not only function words), Dutch/French suffixes and French accents; "we", "in", "is", "a" ... belong to several
+# languages and count for none.
+_REWRITE_NL_MORE=frozenset("""werken enkel alleen ethische ethisch elk elke dan groener duurzamer concurrerend concurrenten merk vestiging vestigingen mogen zich
+    vrij organiseren vakbond vakbonden werknemers eerlijk eerlijke loon lonen kinderarbeid dwangarbeid veiligheid gezondheid iedereen niemand
+    nooit altijd goed beter beste hun hebben kunnen moeten tot als maar of zo meer minder alle geen over onder tussen na zonder gedragscode
+    keurmerk zegel verpakt verpakkingen gemaakt garandeert zorgvuldig gekozen deze""".split())
+_REWRITE_FR_MORE=frozenset("""travaillons qu avec partenaires éthiques éthique garantit garantie produit chaque toute tous toutes chacun personne
+    jamais toujours sécurité santé salaire salaires équitable équitables syndicat syndicats enfants travail forcé qui ont être avoir faire
+    leur leurs mais où aucun aucune sceau emballage fabriqués soin choisis""".split())
+_REWRITE_EN_STRICT=frozenset("the and our with that this are from your their by for to of it its has have will can not no any all".split())
+
 def _rewrite_lang(text):
     """'nl' or 'fr' when the claim is clearly Dutch or French, else 'en': the rewrite follows the language of the claim."""
     t=re.sub(r'\s+',' ',str(text or ''))
@@ -4406,9 +4437,11 @@ def _rewrite_lang(text):
     if lang=='en':
         return 'en'
     words=re.findall(r"[a-zà-ÿ]+",t.lower())
-    nl=sum(1 for w in words if w in _REWRITE_NL_WORDS)
-    fr=sum(1 for w in words if w in _REWRITE_FR_WORDS)
-    en=sum(1 for w in words if w in _LANG_WORDS['en'])
+    nl=sum(1 for w in words if w in _REWRITE_NL_WORDS or w in _REWRITE_NL_MORE or (w in _LANG_WORDS['nl'] and w not in _LANG_WORDS['en'] and len(w)>2)
+           or (len(w)>6 and w.endswith(('heid','lijk','lijke','ische','eren','ingen','vrij'))))
+    fr=sum(1 for w in words if w in _REWRITE_FR_WORDS or w in _REWRITE_FR_MORE or (w in _LANG_WORDS['fr'] and len(w)>2)
+           or (len(w)>4 and bool(re.search(r"[àâçèéêëîïôùûœ]",w))))
+    en=sum(1 for w in words if w in _REWRITE_EN_STRICT)
     if nl>fr and nl>en:
         return 'nl'
     if fr>nl and fr>en:
@@ -9710,6 +9743,8 @@ def _v98_assertion_ok(sentence, spec):
         return False
     if _V98_WORLD_RE.search(c) or _V98_HEDGE_RE.search(c) or _V98_DOCUMENT_META_RE.search(c):
         return False
+    if _typ.startswith('Health') and _V983_CYBER_RE.search(c):
+        return False
     if _V98_FIRST_PERSON_RE.search(c):
         return True
     return subject=='any' and bool(_V98_COLLECTIVE_RE.search(c))
@@ -9759,7 +9794,7 @@ def _v98_social_assurances(text, fs, seen):
 #     the sentence (EU Ecolabel, FSC ...) keeps the label out, as before.
 _V981_YEAR_RE = re.compile(r"\b20(?:2[6-9]|[3-5]\d)\b")
 _V981_HORIZON_RE = re.compile(r"(?:\b(?:by|before|towards|tegen|voor|d.ici|en|in|bis|vers|pour)\s+)?\b20(?:2[6-9]|[3-5]\d)\b", re.I)
-_V981_ENV_TOPIC_RE = re.compile(r"[e\u00e9]mission\w*|uitstoot|carbon|koolstof|carbone|\bco2\b|co\u2082|climate|klimaat|climat|net[- ]zero|netto[- ]nul|z[e\u00e9]ro net|neutral\w*|neutre\w*|\bwaste\b|afval|d[e\u00e9]chets?|plastic\w*|plastique\w*|\benergy\b|energie|[e\u00e9]nergie|renewable|hernieuwbaar\w*|hernieuwbare|renouvelable\w*|recycl\w+|footprint|voetafdruk|empreinte|packag\w+|verpakking\w*|emballages?|deforestation|ontbossing|d[e\u00e9]forestation|biodivers\w+|fossi\w+|sustainab\w+|duurzaam\w*|\bdurables?\b|\bwater\b|electri\w*|elektri\w*|[e\u00e9]lectri\w*|\bsolar\b|zonne\w*|solaire\w*|\bwind\w*|hydrogen|waterstof|hydrog[e\u00e8]ne|zero-?emission|emissievrij|z[e\u00e9]ro[- ][e\u00e9]mission", re.I)
+_V981_ENV_TOPIC_RE = re.compile(r"[e\u00e9]mission\w*|uitstoot|carbon|koolstof|carbone|\bco2\b|co\u2082|climate|klimaat|climat|net[- ]zero|netto[- ]nul|z[e\u00e9]ro net|neutral\w*|neutre\w*|\bwaste\b|afval|d[e\u00e9]chets?|plastic\w*|plastique\w*|\benergy\b|energie|[e\u00e9]nergie|renewable|hernieuwbaar\w*|hernieuwbare|renouvelable\w*|recycl\w+|footprint|voetafdruk|empreinte|packag\w+|verpakking\w*|emballages?|deforestation|ontbossing|d[e\u00e9]forestation|biodivers\w+|fossi\w+|\bwater\b|electri\w*|elektri\w*|[e\u00e9]lectri\w*|\bsolar\b|zonne\w*|solaire\w*|\bwind\w*|hydrogen|waterstof|hydrog[e\u00e8]ne|zero-?emission|emissievrij|z[e\u00e9]ro[- ][e\u00e9]mission", re.I)
 _V981_FUTURE_VERB_RE = re.compile(r"\b(?:will|shall|going to|aim\w*|target\w*|goal|ambition\w*|commit\w*|plan(?:s|ned|ning)?|intend\w*|want to|strive\w*|zullen|zal|gaan|streven\w*|doel\w*|ambiti\w*|willen|plannen|engag\w+|visons|vis\w+|objectif\w*|voulons|souhaitons|sera|serons|seront|aurons|auront|\w+(?:erons|eront|irons|iront))\b", re.I)
 _V981_ACHIEVED_RE = re.compile(r"\b(?:have|has|had|reduced|achieved|reached|hebben|heeft|verminderd|bereikt|avons|ont|a r[e\u00e9]duit|r[e\u00e9]duit|atteint)\b", re.I)
 
@@ -9776,13 +9811,16 @@ def _v981_future_goal(sentence):
         return None
     if _V98_WORLD_RE.search(c) or _V98_HEDGE_RE.search(c) or _V981_LEGAL_RE.search(c):
         return None
+    # a target that is validated by a third party, or quantified against a stated baseline, is specific and measurable: no vague future claim
+    if re.search(r"\b(?:validated|verified|assured|audited|certified|approved by|sbti|science[- ]based|gevalideerd|geverifieerd|goedgekeurd|valid[e\u00e9]\w*|v[e\u00e9]rifi\w*|certifi\w*)\b", c) or (re.search(r"\d\s?%", c) and re.search(r"\b(?:baseline|compared (?:with|to)|versus|base year|ten opzichte van|t\.o\.v|par rapport|r[e\u00e9]f[e\u00e9]rence|basisjaar|since 20\d\d|sinds 20\d\d|depuis 20\d\d)\b", c)):
+        return None
     if max(years) < 2027 and (not _V981_FUTURE_VERB_RE.search(c) or _V981_ACHIEVED_RE.search(c)):
         return None
     m = _V981_HORIZON_RE.search(_normalize_apostrophes(str(sentence or '')))
     return m.group(0).strip() if m else None
 
 _V981_ADJ_RECYCLABLE = r"recyclable|recycleerbaar|recyclebaar|recyclables?|compostables?|composteerbaar|reusable|herbruikbaar|r[e\u00e9]utilisables?"
-_V981_ADJ_OTHER = r"biodegradable|biologisch afbreekbaar|biod[e\u00e9]gradables?|natural|natuurlijke?|naturel(?:le)?s?|sustainable|duurzame?|durables?|eco-?friendly|ecological|[e\u00e9]cologiques?|ecologische?|milieuvriendelijk\w*|green|groene?|verte?s?|renewable|hernieuwbare?|renouvelables?|non-?toxic|toxic-?free|plastic-?free|plasticvrij|chemical-?free|clean|pure|pur"
+_V981_ADJ_OTHER = r"biodegradable|biologisch afbreekbaar|biod[e\u00e9]gradables?|natural|natuurlijke?|naturel(?:le)?s?|sustainable|duurzame?|durables?|eco-?friendly|ecological|[e\u00e9]cologiques?|ecologische?|milieuvriendelijk\w*|green|groene?|verte?s?|renewable|hernieuwbare?|renouvelables?|non-?toxic|toxic-?free|plastic-?free|plasticvrij|chemical-?free|clean|pure(?!\s+(?:wool|cotton|leather|silk|linen|cashmere|cocoa|chocolate|butter|honey|gold|silver|juice|olive|laine|coton|cuir|soie|lin|miel|beurre|argent|wol|katoen|leder|zijde|linnen|goud|zilver|boter))|pur(?!\s+(?:wool|cotton|leather|silk|linen|cashmere|cocoa|chocolate|butter|honey|gold|silver|juice|olive|laine|coton|cuir|soie|lin|miel|beurre|argent|wol|katoen|leder|zijde|linnen|goud|zilver|boter))"
 _V981_ABS_RE = re.compile(r"(?<![\w.,])100(?:[.,]0+)?\s*%\s*(?P<adj>" + _V981_ADJ_RECYCLABLE + "|" + _V981_ADJ_OTHER + r")\b|\b(?P<adj2>" + _V981_ADJ_RECYCLABLE + "|" + _V981_ADJ_OTHER + r")\s+[\u00e0a]\s+100\s*%", re.I)
 _V981_RECYCLABLE_RE = re.compile(r"^(?:" + _V981_ADJ_RECYCLABLE + r")$", re.I)
 
@@ -9885,6 +9923,88 @@ def _v981_green_extras(text, fs, seen):
                 if _v55_add_finding(fs, seen, text, trig, TL, risk, issue, rewrite, 'green', 74,
                                     extra_check=lambda c: not _v981_reported(c, fs, [TL])):
                     budget[TL] += 1
+
+# v98.3: false positives found when the scan was run on real company sites (KBC, Proximus, Colruyt, Umicore, Ontex):
+#   - consumer advice ("6 tips for choosing eco-friendly devices", "it is easy to buy environmentally friendly appliances") is no claim about
+#     the company's own product;
+#   - the three pillars of sustainability ("a balance between economic, ecological and social factors") is a definition, not a claim;
+#   - an expectation ("customers expect our products to become more sustainable") is no claim;
+#   - a job title ("Group Responsible Sourcing Specialist") is no claim about sourcing;
+#   - "Zero Harm to biodiversity" is an environmental slogan, not an occupational-safety claim;
+#   - cyber security / digital safety is no worker-safety claim;
+#   - a run-on "sentence" of 60+ words with hardly any punctuation (PDF columns read through each other, menus, lists of headings).
+_V983_ADVICE_RE = re.compile(r"\b(?:tips?|advice|how to (?:choose|buy|spot|recogni[sz]e)|guide to|choosing|conseils?|astuces?|tips voor|advies)\b", re.I)
+_V983_EXPECT_RE = re.compile(r"\b(?:expect(?:s|ed|ing)?|verwacht\w*|attend(?:ent|re)?|s.attendent|demand(?:s|ed)?)\b", re.I)
+_V983_ROLE_RE = re.compile(r"^\W*(?:[\w&-]+\W+){0,3}?(?:specialist|manager|director|officer|leader|lead|head|coordinator|analyst|advis[eo]r|engineer|responsable|directeur|directrice|verantwoordelijke|co[o\u00f6]rdinator|adviseur)\b", re.I)
+_V983_CYBER_RE = re.compile(r"cyber\w*|digital\w*|digitaal|digitale|num[e\u00e9]rique\w*|\bonline\b|en ligne|internet|\bdata\b|gegevens|donn[e\u00e9]es|netwerk|r[e\u00e9]seau|network|wachtwoord|password|payment|betaling\w*|paiement\w*|fraud\w*|fraude|phishing|software|informatique|\bit security\b|\bapps?\b", re.I)
+_V983_BIODIVERSITY_RE = re.compile(r"zero harm (?:to|for|aan|voor|pour|\u00e0)\s+(?:\w+\s+){0,2}(?:biodiversity|nature|environment|ecosystems?|planet|biodiversiteit|natuur|milieu|[e\u00e9]cosyst[e\u00e8]mes?|environnement)", re.I)
+
+_V983_TITLE_TAIL_RE = re.compile(r"\s[|\u2013\u2014]\s*[A-Z][\w&.' -]{1,30}\.?\s*$")
+
+def _v983_is_navigation_text(text):
+    """A breadcrumb ("Home / Expert insights / Sustainability / ..."), a page title with the site name ("... | Umicore.") or a list of document
+    names in title case ("Global supplier and vendor handbook Ontex Supplier Code of Conduct Ethical sourcing requirements ...")."""
+    t=str(text or '').strip()
+    if not t:
+        return False
+    if re.match(r"^(?:home|accueil|startpagina|start)\s*/", t, re.I) or t.count(' / ')>=2:
+        return True
+    words=t.split()
+    if len(words)>=15 and not re.search(r"[.!?;:](?:\s|$)",t):
+        caps=sum(1 for w in words[1:] if w[:1].isupper())/max(1,len(words)-1)
+        if caps>=0.30:
+            return True
+    return False
+
+def _v983_looks_garbled(text):
+    """A long passage that is a menu / list of headings or PDF columns read through each other: 60+ words, hardly any full stops and either many
+    capitalised words, stray symbols (> = + : (1)) or table figures. A long real sentence has none of these."""
+    t=str(text or '')
+    words=t.split()
+    if len(words)<60 or len(re.findall(r"[.!?](?:\s|$)",t))>3:
+        return False
+    caps=sum(1 for w in words[1:] if w[:1].isupper())/max(1,len(words)-1)
+    symbols=sum(1 for w in words if w in {'>','<','=','+',':','|','\u00bb','\u2022','\u2013','\u2014','&'} or re.fullmatch(r"\(\d\)",w))
+    digits=sum(1 for w in words if re.search(r"\d",w))/len(words)
+    return caps>=0.25 or symbols>=2 or digits>=0.10
+
+# a risk or dependency statement ("lack of availability and/or increased cost of certified sustainable material", "sustainable materials and
+# processes may raise cost of goods", "dependencies on recycled material") describes a business risk, not a claim; and an instruction in a
+# reporting standard ("(5.4.2) Quantify the percentage share of your spending ... aligned with sustainable finance") is no claim either
+_V983_RISK_RE = re.compile(r"\b(?:lack of|shortage of|may (?:raise|increase|affect|impact|reduce)|could (?:raise|increase|offset|affect|impact)|increased cost|higher cost|rising cost|cost of|costs? (?:of|for)|dependenc(?:y|ies)|vulnerabilit(?:y|ies)|exposure to|affecting margins|at risk|risks? (?:of|to|that)|availability of|supply risk)\b", re.I)
+_V983_INSTRUCTION_RE = re.compile(r"^\W*(?:\d+\.?\s*)?(?:\(\d[\d.]*\)\s*)?(?:quantify|describe|provide|disclose|report|explain|indicate|state|specify|list|identify|please)\b", re.I)
+
+def _v983_not_a_claim_context(c, trig, dimension, excerpt=None):
+    """True when the sentence only looks like a claim (see the v98.3 note above). `c` is lower case."""
+    if not c or not trig:
+        return False
+    # a "sentence" of 60+ words with at most one full stop is not a sentence: columns of a PDF read through each other, or a menu / list of
+    # headings ("... Zero emission transport for goods ... More sustainable cotton ...") -- the trigger word in it says nothing
+    if _v983_looks_garbled(excerpt) or _v983_is_navigation_text(excerpt):
+        return True
+    if dimension=='social' and _V983_TITLE_TAIL_RE.search(str(excerpt or '')) and len(str(excerpt or '').split())<=12:
+        return True                       # a page title with the site name ("Responsible Sourcing of Battery Materials | Umicore.") is no assertion
+    has_first_person=bool(re.search(r"\b(?:we|our|us|wij|ons|onze|nous|notre|nos)\b", c))
+    if _V983_INSTRUCTION_RE.match(c) and re.search(r"\b(?:your|you|uw|votre|vos)\b", c):
+        return True
+    pos=c.find(trig)
+    while pos!=-1:
+        _near=c[max(0,pos-80):pos+len(trig)+80]
+        if _V983_RISK_RE.search(_near) and not re.search(r"\b(?:we|our|wij|onze|nous|notre)\b[^.]{0,40}\b(?:reduc|lower|cut|improv|increas|use|source|ensure|achiev|reach|verminder|verlag|gebruik|r[e\u00e9]duis|utilis)", _near):
+            return True
+        before=c[max(0,pos-90):pos]; after=c[pos+len(trig):pos+len(trig)+70]
+        if _V983_EXPECT_RE.search(before):
+            return True
+        if not has_first_person and _V983_ADVICE_RE.search(c):
+            return True
+        if _V983_ROLE_RE.match(after):
+            return True
+        pos=c.find(trig,pos+len(trig))
+    if dimension=='green' and re.search(r"ecolog|\u00e9cologi", trig) and re.search(r"econom|\u00e9conom", c) and re.search(r"\bsocia", c):
+        return True
+    if dimension=='social' and _V983_BIODIVERSITY_RE.search(c):
+        return True
+    return False
 
 V55_NAV_CONTEXT_EXCLUSIONS = [
     'cookie', 'privacy', 'terms', 'login', 'sign in', 'menu', 'navigation', 'subscribe', 'newsletter',
@@ -10039,6 +10159,8 @@ def _v55_claim_context_ok(excerpt, trigger, dimension):
     if _looks_like_toc_or_index(excerpt):
         return False
     if _looks_like_impersonal_non_claim(excerpt):
+        return False
+    if _v983_not_a_claim_context(c,trig,dimension,excerpt):          # v98.3
         return False
     # v77: a negation immediately around the matched trigger flips it into the opposite of a
     # claim ("These components are NOT recyclable materials", "NOT all suppliers comply with

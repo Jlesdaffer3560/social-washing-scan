@@ -16,7 +16,7 @@ def test_continues_after_first_three_failures():
             number=int(url.rsplit('page',1)[1])
             if number <= 3:
                 raise ValueError('blocked')
-            return 'Evidence '*100,'html','direct',[],url,url      # (text, kind, method, links, link_base, final_url) since the redirect-aware crawler
+            return 'Evidence '*100+url,'html','direct',[],url,url      # (text, kind, method, links, link_base, final_url) since the redirect-aware crawler
         app.fetch_page_content=fake_fetch
         log=[]
         _,pages,_chunks=app.crawl('https://example.com',max_extra_pages=4,deadline=time.time()+10,log=log)

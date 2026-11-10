@@ -411,6 +411,10 @@ def claim_source(claim, max_name=None):
     page = clean_text(claim.get("source_page") or "")
     if page:
         source = f"{source}, {page}"
+    # v98.3: the same sentence is on more pages ("100% recyclable packaging." on three product pages): say so instead of "source unclear"
+    also = claim.get("source_also_on") or []
+    if isinstance(also, (list, tuple)) and also:
+        source = f"{source} (+{len(also)} more page{'s' if len(also) != 1 else ''})"
     return source
 
 

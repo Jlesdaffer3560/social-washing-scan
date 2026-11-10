@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v98_2_social_claims_not_hidden_by_environmental_report_reference'
+    assert app.APP_VERSION == 'hostable_v98_3_false_positive_and_rewrite_language_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -6953,7 +6953,7 @@ def test_crawl_retries_a_page_that_timed_out_once_and_clears_the_failure(monkeyp
             raise ValueError('404')
         if url.endswith('/p1') and calls[url] == 1:
             raise TimeoutError('The read operation timed out')
-        return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+        return ('Genuine sustainable product claims on this page. ' * 20 + url, 'html', 'direct', [], url, url)   # unique per URL: identical text counts as a duplicate page (v98.3)
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'fetch_page_content', flaky_fetch_page_content)
     monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
@@ -6975,7 +6975,7 @@ def test_crawl_gives_up_on_a_page_that_keeps_timing_out_after_one_retry(monkeypa
             raise TimeoutError('The read operation timed out')
         if '/sustainability/ok' not in url:
             raise ValueError('404')
-        return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+        return ('Genuine sustainable product claims on this page. ' * 20 + url, 'html', 'direct', [], url, url)   # unique per URL: identical text counts as a duplicate page (v98.3)
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'fetch_page_content', fetch)
     monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
@@ -6995,7 +6995,7 @@ def test_crawl_keeps_the_same_pages_when_a_slower_page_answers_after_a_faster_on
     def make_fetch(slow_first):
         def fetch(url, timeout=8):
             if url.endswith('/p0') and slow_first: _time.sleep(0.4)
-            return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+            return ('Genuine sustainable product claims on this page. ' * 20 + url, 'html', 'direct', [], url, url)   # unique per URL: identical text counts as a duplicate page (v98.3)
         return fetch
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
@@ -7026,7 +7026,7 @@ def test_crawl_extends_its_budget_once_for_a_slow_site(monkeypatch):
         if calls[url] == 1:
             fake_now['offset'] += 3.0
             raise TimeoutError('The read operation timed out')
-        return ('Genuine sustainable product claims on this page. ' * 20, 'html', 'direct', [], url, url)
+        return ('Genuine sustainable product claims on this page. ' * 20 + url, 'html', 'direct', [], url, url)   # unique per URL: identical text counts as a duplicate page (v98.3)
     monkeypatch.setattr(app, 'fetch_html', fake_fetch_html)
     monkeypatch.setattr(app, 'fetch_page_content', fetch)
     monkeypatch.setattr(app, 'discover_sitemap_urls', lambda *a, **k: [])
@@ -8082,7 +8082,7 @@ def test_slow_homepage_gets_one_longer_retry_and_skips_guessed_paths(monkeypatch
     monkeypatch.setattr(app, 'SLOW_SITE_SECONDS', -1)
     links = ''.join(f'<a href="/about/sustainable-{i}">s{i}</a>' for i in range(4))
     html = '<html lang="nl"><body>' + links + '</body></html>' + 'y' * 10
-    texts = {f'https://www.shop.be/about/sustainable-{i}': 'Duurzaam beleid van Shop. ' * 20 for i in range(4)}
+    texts = {f'https://www.shop.be/about/sustainable-{i}': f'Duurzaam beleid van Shop {i}. ' * 20 for i in range(4)}
     pages, log, fetched, state = _crawl_with(monkeypatch, html, texts, home_error_first=True)
     assert state['n'] == 2                                  # the homepage was retried once
     assert len(pages) >= 4                                  # homepage + linked pages were read
@@ -9399,3 +9399,89 @@ def test_v982_an_environmental_report_reference_does_not_hide_social_claims():
     env = ' Since 2020 we have reduced our CO2 emissions by 31%, as reported in our 2023 report.'
     assert len(_v98_phrases(social + env)) == 3, _v98_phrases(social + env)
     assert not _v98_phrases(social + ' Read how we audit our suppliers in our supplier code of conduct report.'), 'a social pointer still backs the claim'
+
+
+def test_v983_a_short_dutch_or_french_claim_gets_a_rewrite_in_its_own_language():
+    """Found in the v98.3 audit: short claims without common function words were read as English and got an English rewrite."""
+    for text, lang in [('We werken enkel met ethische partners.', 'nl'), ('Het is groener dan elk concurrerend merk.', 'nl'),
+                       ('Elke vestiging is tegen 2030 netto nul.', 'nl'), ('Medewerkers mogen zich vrij organiseren in vakbond', 'nl'),
+                       ('Le label garantit un produit durable.', 'fr'), ('Nous ne travaillons qu\u2019avec des partenaires \u00e9thiques.', 'fr'),
+                       ('We only work with ethical partners.', 'en'), ('Our packaging is eco-friendly.', 'en'), ('We use cookies.', 'en')]:
+        assert app._rewrite_lang(text) == lang, (text, app._rewrite_lang(text))
+
+
+def test_v983_false_positives_found_on_real_company_sites_are_gone():
+    """Real sentences (KBC, Proximus, Colruyt, Umicore, Ontex) that looked like claims but are not."""
+    for text in ['6 tips for choosing eco-friendly devices.', 'Thanks to various labels and tips, it is easy to buy environmentally friendly appliances.',
+                 'For us, sustainable entrepreneurship means seeking a balance between economic, ecological and social factors.',
+                 'Customers expect our products not only to be affordable and readily available, but also to become more sustainable.',
+                 'Growing our business with Zero Harm to biodiversity.',
+                 'Gr\u00e2ce \u00e0 des solutions de cybers\u00e9curit\u00e9 de pointe, nous rendons votre monde en ligne plus s\u00fbr.',
+                 'Our 2030 targets for Scope 1, 2 and 3 emissions were validated by the SBTi in 2022.',
+                 'We are on track to achieve a 50% reduction in Scope 1 and 2 emissions by 2030, compared with the 2019 baseline.']:
+        got = [f.get('matched_phrase') for f in app.detect_green_claims(text) + app.detect_claims(text) if f.get('matched_phrase')]
+        assert not got, (text, got)
+    got = [f.get('matched_phrase') for f in app.detect_claims('\u201cOur goal is to build awareness,\u201d says Jessica Paz, Group Responsible Sourcing Specialist.') if f.get('matched_phrase')]
+    assert not got, got
+
+
+def test_v983_real_claims_next_to_the_look_alikes_are_still_found():
+    for text in ['Fiber: an ultra-fast, environmentally friendly connection.', 'Our packaging is eco-friendly.', 'We aim to cut our emissions in half by 2030.',
+                 'Our products are more sustainable.', 'We never use forced labour.']:
+        got = [f.get('matched_phrase') for f in app.detect_green_claims(text) + app.detect_claims(text) if f.get('matched_phrase')]
+        assert got, text
+
+
+def test_v983_the_same_page_under_a_tracking_parameter_is_one_page():
+    a = app._canonical_url('https://www.kbc.be/particuliers/fr/durabilite/ensemble-plus-durable.html?zone=footer-3')
+    b = app._canonical_url('https://www.kbc.be/particuliers/fr/durabilite/ensemble-plus-durable.html')
+    assert a == b
+
+
+def test_v983_a_run_on_list_or_garbled_pdf_text_is_no_claim_but_a_long_real_sentence_is():
+    menu = ('Our energy reduction plan Stunned slaughter and audits at slaughterhouses Preventing type 2 diabetes Zero emission transport for goods '
+            'Support in preventive health care Direct collaboration with Belgian farmers Pioneering with vertical farming Sea farm for Belgian mussels '
+            'Courteous and safe freight transport Production renewable electricity More Belgian fruit and vegetables Sustainable charcoal with FSC label '
+            'More sustainable cotton Moroccan Medjoul dates Belgian fair trade')
+    assert not [f for f in app.detect_green_claims(menu) if f.get('matched_phrase')]
+    real = ('By 2030, we will reduce direct emissions from our buildings, machinery and vehicles by 42% and become fully carbon neutral through afforestation.')
+    assert [f for f in app.detect_green_claims(real) if f.get('matched_phrase')]
+
+
+def test_v983_a_sentence_on_several_pages_gets_a_source_and_the_profile_says_where_else():
+    segs = [{'url': 'https://example.com/a', 'text': 'Intro. 100% recyclable packaging. More text.'},
+            {'url': 'https://example.com/b', 'text': 'Other. 100% recyclable packaging. Text.'},
+            {'url': 'https://example.com/c', 'text': 'No claim here at all.'}]
+    claims = app.assign_claim_sources([{'claim_text': '100% recyclable packaging.', 'full_claim_text': '100% recyclable packaging.'}], segs, [])
+    c = claims[0]
+    assert c['source_url'] == 'https://example.com/a', c
+    assert c['source_also_on'] == ['https://example.com/b']
+    import report_pdf as rp
+    assert '(+1 more page)' in rp.claim_source(c)
+
+
+def test_v983_pure_wool_is_a_material_and_pure_soap_is_a_claim():
+    assert not [f for f in app.detect_green_claims('Pure cotton, 100% pure wool and genuine leather. Hand wash only.') if f.get('matched_phrase')]
+    assert [f for f in app.detect_green_claims('Our soap is 100% pure and 100% natural.') if f.get('matched_phrase')]
+
+
+def test_v983_breadcrumbs_title_lines_and_document_lists_are_navigation_not_claims():
+    for text in ['Home / Expert insights / Sustainability / Working together to protect human rights across our own operations and value chain.',
+                 'Responsible Sourcing of Battery Materials | Umicore.',
+                 'Global supplier and vendor handbook Ontex Supplier Code of Conduct Ethical sourcing requirements Restricted substances list Packaging restricted substances list Supplier handbook']:
+        assert not [f for f in app.detect_claims(text) if f.get('matched_phrase')], text
+    assert [f for f in app.detect_claims('We work together to protect human rights across our own operations and value chain.') if f.get('matched_phrase')]
+
+
+def test_v983_business_risk_wording_reporting_instructions_and_css_class_names_are_no_claims():
+    for text in ['Lack of availability and/or increased cost of certified sustainable material.',
+                 'FINANCIAL PERFORMANCE \u2022 Sustainable materials and processes may raise cost of goods sold.',
+                 'In this process, we also recognise the critical dependencies on key resources, such as the quality and availability of recycled material.',
+                 '128. (5.4.2) Quantify the percentage share of your spending that was associated with eligible and aligned sustainable finance.']:
+        got = [f.get('matched_phrase') for f in app.detect_green_claims(text) if f.get('matched_phrase')]
+        assert not got, (text, got)
+    for text in ['R&D efforts aimed to increase the use of recycled materials in our products.', 'We reduce the cost of our packaging by using recycled material.']:
+        assert [f for f in app.detect_green_claims(text) if f.get('matched_phrase')], text
+    html = '<html><body><h2>Responsible Sourcing</h2><div class="p-hero__label p-margin-left-sm"><p>Text.</p></div><div class="eco-badge">x</div></body></html>'
+    text = app.parse_html(html)[0]
+    assert 'p-hero__label' not in text and 'eco-badge' in text, text
