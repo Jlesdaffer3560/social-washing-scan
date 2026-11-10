@@ -100,7 +100,7 @@ _psycopg_import_error = None
 
 APP_VERSION="hostable_v98_3_false_positive_and_rewrite_language_fixes"
 APP_RELEASE_LABEL="v98.3"
-APP_RELEASE_DATE="2026-11-07"
+APP_RELEASE_DATE="2026-11-10"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
