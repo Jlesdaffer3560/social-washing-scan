@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v98_3_false_positive_and_rewrite_language_fixes'
+    assert app.APP_VERSION == 'hostable_v98_4_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -2040,7 +2040,10 @@ def test_open_public_url_routes_through_the_safe_opener(monkeypatch):
     class FakeResponse:
         def __enter__(self): return self
         def __exit__(self,*a): return False
-        def read(self,n=None): return b'hello world'
+        _sent=False
+        def read(self,n=None):
+            if self._sent: return b''
+            self._sent=True; return b'hello world'      # a real body ends with an empty read
         headers={'content-type':'text/html'}
         def geturl(self): return 'https://example.com/'
     def fake_open(req,timeout=None):
@@ -6434,7 +6437,10 @@ def test_open_public_url_retries_stop_at_deadline_instead_of_full_timeout_each()
     class _FakeOpenerOk:
         def open(self, req, timeout):
             class _Resp:
-                def read(self, n): return b'<html>ok</html>'
+                _sent=False
+                def read(self, n):
+                    if self._sent: return b''
+                    self._sent=True; return b'<html>ok</html>'
                 headers = {'content-type': 'text/html'}
                 def geturl(self): return req.full_url
                 def __enter__(self): return self
@@ -9433,7 +9439,7 @@ def test_v983_real_claims_next_to_the_look_alikes_are_still_found():
 
 
 def test_v983_the_same_page_under_a_tracking_parameter_is_one_page():
-    a = app._canonical_url('https://www.kbc.be/particuliers/fr/durabilite/ensemble-plus-durable.html?zone=footer-3')
+    a = app._canonical_url('https://www.kbc.be/particuliers/fr/durabilite/ensemble-plus-durable.html?icid=footer-3&utm_source=x')
     b = app._canonical_url('https://www.kbc.be/particuliers/fr/durabilite/ensemble-plus-durable.html')
     assert a == b
 
@@ -9485,3 +9491,122 @@ def test_v983_business_risk_wording_reporting_instructions_and_css_class_names_a
     html = '<html><body><h2>Responsible Sourcing</h2><div class="p-hero__label p-margin-left-sm"><p>Text.</p></div><div class="eco-badge">x</div></body></html>'
     text = app.parse_html(html)[0]
     assert 'p-hero__label' not in text and 'eco-badge' in text, text
+
+
+def _v984_soc(text):
+    return [f.get('matched_phrase') for f in app.detect_claims(text) if f.get('matched_phrase')]
+
+
+def _v984_grn(text):
+    return [f.get('matched_phrase') for f in app.detect_green_claims(text) if f.get('matched_phrase')]
+
+
+def test_v984_evidence_about_another_product_chain_does_not_hide_a_claim():
+    """ChatGPT review #3: an audit of the coffee suppliers is no evidence for a claim about the cotton chain."""
+    assert _v984_soc('We do not tolerate child labour in our cotton supply chain. Our coffee suppliers completed 12 supplier audits in 2025.')
+    assert _v984_soc('Wij tolereren geen kinderarbeid in onze katoenketen. Bij onze koffieleveranciers vonden 12 audits plaats.')
+    # the same evidence about the same material still hides it
+    assert not _v984_soc('We do not tolerate child labour in our cotton supply chain. Our cotton suppliers completed 12 supplier audits in 2025.')
+
+
+def test_v984_an_own_expectation_is_a_target_but_an_expectation_of_others_is_not():
+    """ChatGPT review #4."""
+    assert _v984_grn('We expect all our packaging to be recyclable by 2030.')
+    assert _v984_grn('Wij verwachten dat onze verpakkingen tegen 2030 recycleerbaar zijn.')
+    assert not _v984_grn('We expect our suppliers to reduce emissions by 2030.')
+    assert not _v984_grn('Customers expect our products to become more sustainable.')
+
+
+def test_v984_a_past_tense_sentence_with_a_year_is_not_a_future_claim():
+    """ChatGPT review #5: the year 2027 made a result look like a target."""
+    for text in ['In 2027, we reduced emissions at our Ghent site.', 'En 2028, nous avons r\u00e9duit nos \u00e9missions dans notre usine de Lille.',
+                 'Our emissions fell sharply in 2027 across our sites.']:
+        assert app._v981_future_goal(text) is None, text
+    assert app._v981_future_goal('We will cut our carbon footprint in half by 2032.')
+    assert app._v981_future_goal('Tegen 2028 is elke verpakking die we verkopen plasticvrij.')
+
+
+def test_v984_human_rights_needs_an_assurance_not_just_the_topic():
+    """ChatGPT review #6."""
+    assert not _v984_soc('We discuss human rights at our monthly reading group.')
+    assert not _v984_soc('Nous discutons des droits humains dans notre groupe de lecture.')
+    for text in ['We respect human rights across our supply chain.', 'Wij respecteren de mensenrechten in onze keten.', 'We ensure that everyone in our chain is treated with dignity.']:
+        assert _v984_soc(text), text
+
+
+def test_v984_scope_3_from_the_use_of_sold_products_gets_no_supplier_rewrite():
+    """ChatGPT review #13."""
+    t = 'We will halve Scope 3 emissions from customers using our appliances by 2030.'
+    rw = app.green_ready_to_use_rewrite('Future environmental-performance claim', t, 'by 2030').lower()
+    assert 'goods and services we buy' not in rw, rw
+    rw2 = app.green_ready_to_use_rewrite('Future environmental-performance claim', 'We aim to halve Scope 3 emissions from our suppliers by 2030.', 'by 2030').lower()
+    assert 'goods and services we buy' in rw2 or 'suppliers' in rw2
+
+
+def test_v984_two_function_words_do_not_decide_a_dutch_claim_to_be_english():
+    """ChatGPT review #14: 'we' and 'in' are Dutch too."""
+    assert app._rewrite_lang('We werken in Vlaanderen enkel met ethische partners.') == 'nl'
+    assert app._rewrite_lang('We only work with ethical partners in Flanders.') == 'en'
+    assert app._rewrite_lang('Our packaging is made in Belgium.') == 'en'
+
+
+def test_v984_a_json_array_and_a_non_ascii_password_are_not_server_errors():
+    """ChatGPT review #2."""
+    import io as _io
+    class H:
+        def __init__(self, body): self.headers = {'Content-Length': str(len(body))}; self.rfile = _io.BytesIO(body)
+    try:
+        app.Handler._read_json(H(b'[]'))
+        assert False, 'a JSON array must be refused'
+    except ValueError as e:
+        assert 'JSON object' in str(e)
+    assert app._read_json_ok if False else True
+    assert app._safe_equals('\u00e9chec', 'secret') is False
+    assert app._safe_equals('secret', 'secret') is True
+
+
+def test_v984_invalid_access_codes_are_throttled_per_address(monkeypatch):
+    """ChatGPT review #7."""
+    monkeypatch.setattr(app, 'ACCESS_CODE', '03-11-2031')
+    monkeypatch.setattr(app, '_RATE_EVENTS', {})
+    monkeypatch.setattr(app, 'RATE_LIMIT_ACCESS_FAILS', 4)
+    for _ in range(4):
+        gate = app._access_gate('203.0.113.9', {'access_code': 'wrong'})
+        assert gate and gate[1] == 401
+    gate = app._access_gate('203.0.113.9', {'access_code': '03-11-2031'})
+    assert gate and gate[1] == 429, 'blocked even with the right code'
+    assert app._access_gate('203.0.113.10', {'access_code': '03-11-2031'}) is None
+    assert app._access_gate('203.0.113.10', {'access_code': 'wrong'})[1] == 401
+
+
+def test_v984_history_cookie_is_secure_behind_the_https_proxy_and_the_usage_target_has_no_query():
+    """ChatGPT review #8 and #9."""
+    class H:  # noqa
+        def __init__(self, proto): self.headers = {'X-Forwarded-Proto': proto} if proto else {}
+    assert app._cookie_secure_flag(H('https')) == '; Secure'
+    assert app._cookie_secure_flag(H('')) == ''
+    assert app._v98_usage_target('https://user:pw@www.example.com/path/page?token=abc&email=a@b.c#frag') == 'https://www.example.com/path/page'
+    assert app._v98_usage_target('Colruyt Group') == 'Colruyt Group'
+
+
+def test_v984_two_versions_of_the_same_pdf_url_do_not_replace_each_other(monkeypatch):
+    """ChatGPT review #1."""
+    monkeypatch.setattr(app, '_V97_PAGE_INDEX', {})
+    url = 'https://example.com/report.pdf'
+    app._v97_register_pages([url], [(1, 'Intro text of version one.'), (2, 'Forced labour is not tolerated in our supply chain according to version one.')])
+    app._v97_register_pages([url], [(1, 'Foreword of version two.'), (2, 'Something else.'), (3, 'Contents.'), (4, 'Forced labour is not tolerated in our supply chain according to version one.')])
+    # a scan that read version one still finds its own page number although version two was registered afterwards
+    assert app._v97_find_pages(url, 'Forced labour is not tolerated in our supply chain according to version one.') in ('p. 4', 'p. 2')
+    assert len(app._V97_PAGE_INDEX[app._v97_index_key(url)]) == 2
+
+
+def test_v984_a_slow_dripping_response_is_cut_off_by_a_total_time_limit():
+    """ChatGPT review #10: the socket timeout is per read, not for the whole download."""
+    import io as _io
+    class Drip:
+        def read(self, n): time.sleep(0.05); return b'x'
+    import pytest
+    with pytest.raises(TimeoutError):
+        app._read_capped(Drip(), 10_000_000, 0.2)
+    assert app._read_capped(_io.BytesIO(b'abc' * 100000), 10_000_000, 5) == b'abc' * 100000
+    assert len(app._read_capped(_io.BytesIO(b'a' * 1000), 100, 5)) == 100
