@@ -6844,7 +6844,10 @@ def _rate_limit_blocked(client,bucket,maximum):
     """True when `client` already has `maximum` events in `bucket` inside the window. Only looks, does not record."""
     now=time.time(); key=(client,bucket)
     with _RATE_LOCK:
-        recent=[t for t in _RATE_EVENTS.get(key,[]) if now-t<RATE_LIMIT_WINDOW_SECONDS]
+        events=_RATE_EVENTS.get(key)
+        if not events:
+            return False                     # no entry is created for an address that has never failed
+        recent=[t for t in events if now-t<RATE_LIMIT_WINDOW_SECONDS]
         _RATE_EVENTS[key]=recent
         return len(recent)>=maximum
 
