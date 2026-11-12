@@ -9575,6 +9575,7 @@ def test_v984_invalid_access_codes_are_throttled_per_address(monkeypatch):
         assert gate and gate[1] == 401
     gate = app._access_gate('203.0.113.9', {'access_code': '03-11-2031'})
     assert gate and gate[1] == 429, 'blocked even with the right code'
+    assert 'access_denied' not in gate[0] and gate[0].get('rate_limited'), 'the page must not clear a stored code that may be valid'
     assert app._access_gate('203.0.113.10', {'access_code': '03-11-2031'}) is None
     assert app._access_gate('203.0.113.10', {'access_code': 'wrong'})[1] == 401
 

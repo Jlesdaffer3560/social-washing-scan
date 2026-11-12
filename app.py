@@ -6855,7 +6855,7 @@ def _access_gate(client,data):
     if not ACCESS_CODE:
         return None
     if _rate_limit_blocked(client,'access_fail',RATE_LIMIT_ACCESS_FAILS):
-        return ({'error':'Too many invalid access codes from this address. Try again later.','access_denied':True},429)
+        return ({'error':'Too many invalid access codes from this address. Try again later.','rate_limited':True},429)   # no access_denied: the web page would clear a stored code that may be valid
     if _access_code_ok(data):
         return None
     _rate_limit_allowed(client,'access_fail',10**9)        # records the failure
