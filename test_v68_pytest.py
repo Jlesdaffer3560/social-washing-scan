@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v98_4_review_fixes'
+    assert app.APP_VERSION == 'hostable_v98_5_second_review_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -8077,7 +8077,7 @@ def test_crawl_also_reads_the_other_language_of_a_multilingual_site(monkeypatch)
     html = ('<html lang="fr"><head><link rel="alternate" hreflang="nl" href="https://www.shop.be/nl/"></head><body>'
             '<a href="/fr/durabilite">Durabilité</a></body></html>' + 'x' * 10)
     nl_text = 'Duurzaamheid bij Shop. Wij verminderen verpakkingen. ' * 6
-    pages, log, fetched, _ = _crawl_with(monkeypatch, html, {'https://www.shop.be/nl': nl_text, 'https://www.shop.be/fr/durabilite': 'Durabilité chez Shop. ' * 20})
+    pages, log, fetched, _ = _crawl_with(monkeypatch, html, {'https://www.shop.be/nl/': nl_text, 'https://www.shop.be/fr/durabilite': 'Durabilité chez Shop. ' * 20})
     assert any(p.rstrip('/').endswith('/nl') for p in pages)
     assert fetched[0].rstrip('/').endswith('/nl')  # the other language is tried before guessed paths
 
@@ -8179,7 +8179,7 @@ def test_access_code_use_is_recorded_per_code_without_storing_the_code(monkeypat
     import datetime as dt
     monkeypatch.setattr(app, '_today_brussels', lambda: dt.date(2026, 11, 3))
     app._v96_note_access({'access_code': 'gaasch-test1-code2'}, 'scan', 'https://gaaschpack.eu', '1.2.3.4')
-    assert done.wait(3) and seen == [('Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.4')]
+    assert done.wait(3) and seen == [('Gaasch Packaging', 'scan', 'https://gaaschpack.eu', '1.2.3.0')]   # v98.5: the last part of the address is not stored
     done.clear(); seen.clear()
     app._v96_note_access({'access_code': 'letmein'}, 'lookup', 'Gaasch Packaging', '1.2.3.4')
     done.wait(0.3)
@@ -9107,8 +9107,8 @@ def test_v977_language_subject_and_grammatical_number_of_the_rewrites():
     generic = 'Generic environmental claim'
     one = app._green_pick(generic, 'Our product is eco-friendly.', 'eco-friendly')[0]
     many = app._green_pick(generic, 'Our durable products.', 'durable')[0]
-    assert '“contains 40%' in one and '“is certified' in one
-    assert '“contain 40%' in many and '“are certified' in many
+    assert '“contains [X]%' in one and '“is certified' in one      # v98.5: an example inside a fill-in field names no concrete value
+    assert '“contain [X]%' in many and '“are certified' in many
     assert '„bevatten' in app._green_pick(generic, 'Onze producten zijn duurzaam.', 'duurzaam')[0]
     assert 'contiennent' in app._green_pick(generic, 'Nos produits sont durables.', 'durables')[0]
     forced = 'Forced-labour product or supply-chain claim'
@@ -9611,3 +9611,116 @@ def test_v984_a_slow_dripping_response_is_cut_off_by_a_total_time_limit():
         app._read_capped(Drip(), 10_000_000, 0.2)
     assert app._read_capped(_io.BytesIO(b'abc' * 100000), 10_000_000, 5) == b'abc' * 100000
     assert len(app._read_capped(_io.BytesIO(b'a' * 1000), 100, 5)) == 100
+
+
+def test_v985_a_clause_without_risk_wording_is_a_claim_even_after_a_cost_clause():
+    """Second ChatGPT review #3."""
+    assert _v984_grn('Despite the higher cost, this bottle is carbon neutral.')
+    assert _v984_grn('Our packaging is eco-friendly despite the increased cost.')
+    assert not _v984_grn('Lack of availability and/or increased cost of certified sustainable material.')
+    assert not _v984_grn('Sustainable materials and processes may raise cost of goods sold.')
+
+
+def test_v985_evidence_about_another_kind_of_supplier_does_not_hide_a_supplier_claim():
+    """Second ChatGPT review #4."""
+    assert _v984_soc('We carefully select every cotton supplier. Our office cleaning contractor completed an independent audit.')
+    assert _v984_soc('Nous s\u00e9lectionnons soigneusement tous nos fournisseurs de coton. Notre prestataire de nettoyage a fait l\u2019objet d\u2019un audit ind\u00e9pendant.')
+
+
+def test_v985_a_year_needs_a_performance_and_the_target_year_is_not_a_baseline():
+    """Second ChatGPT review #8."""
+    assert app._v981_future_goal('We discuss packaging at our 2031 board meeting.') is None
+    assert app._v981_future_goal('We bespreken verpakkingen op onze vergadering in 2031.') is None
+    assert app._v981_future_goal('Compared with 2027, we will halve emissions by 2032.') == 'by 2032'
+    assert app._v981_future_goal('We will cut our carbon footprint in half by 2032.')
+    assert app._v981_future_goal('Tous nos magasins fonctionneront \u00e0 l\u2019\u00e9nergie renouvelable d\u2019ici 2030.')
+
+
+def test_v985_a_supplier_word_far_from_the_assurance_word_is_no_assurance():
+    """Second ChatGPT review #9."""
+    assert not _v984_soc('We carefully archived the emails from our suppliers.')
+    assert not _v984_soc('Nous avons choisi le dessert apr\u00e8s le d\u00e9part de nos fournisseurs.')
+    for text in ['Our partners are carefully selected.', 'Nos partenaires sont choisis avec soin.', 'Onze partners worden zorgvuldig gekozen.', 'We only work with ethical partners.',
+                 'We carefully select every cotton supplier.']:
+        assert _v984_soc(text), text
+
+
+def test_v985_an_invalid_port_skips_the_link_and_the_trailing_slash_is_kept():
+    """Second ChatGPT review #10 and #11."""
+    assert app._canonical_url('https://example.com:abc/path') == ''
+    assert app._canonical_url('https://example.com/duurzaamheid/') != app._canonical_url('https://example.com/duurzaamheid')
+    assert app._canonical_url('https://example.com/') == 'https://example.com/'
+
+
+def test_v985_a_number_in_a_text_field_is_a_400_not_a_500():
+    """Second ChatGPT review #6."""
+    import io as _io
+    class H:
+        def __init__(self, body): self.headers = {'Content-Length': str(len(body))}; self.rfile = _io.BytesIO(body)
+    import pytest
+    with pytest.raises(ValueError):
+        app.Handler._read_json(H(b'{"email": 12345}'))
+    assert app.Handler._read_json(H(b'{"email": "a@b.co", "source_total_pages": 12}'))['source_total_pages'] == 12
+
+
+def test_v985_shared_address_ranges_and_mapped_addresses_are_blocked():
+    """Second ChatGPT review #12."""
+    import ipaddress
+    for ip in ['100.64.0.1', '100.127.255.254', '10.0.0.1', '127.0.0.1', '169.254.1.1', '::ffff:10.0.0.1', '::ffff:127.0.0.1', '224.0.0.1', 'fe80::1']:
+        assert app._ip_blocked(ipaddress.ip_address(ip)), ip
+    for ip in ['93.184.216.34', '8.8.8.8', '2606:4700:4700::1111']:
+        assert not app._ip_blocked(ipaddress.ip_address(ip)), ip
+
+
+def test_v985_the_access_gate_counts_and_compares_in_one_step(monkeypatch):
+    """Second ChatGPT review #7: many parallel wrong guesses cannot all pass a limit of N."""
+    import threading as _th
+    monkeypatch.setattr(app, 'ACCESS_CODE', '03-11-2031')
+    monkeypatch.setattr(app, '_RATE_EVENTS', {})
+    monkeypatch.setattr(app, 'RATE_LIMIT_ACCESS_FAILS', 5)
+    results = []
+    def guess(): results.append(app._access_gate('198.51.100.7', {'access_code': 'nope'})[1])
+    threads = [_th.Thread(target=guess) for _ in range(40)]
+    [x.start() for x in threads]; [x.join() for x in threads]
+    assert results.count(401) == 5 and results.count(429) == 35, (results.count(401), results.count(429))
+
+
+def test_v985_usage_is_noted_after_the_gate_through_a_bounded_queue_with_a_short_address():
+    """Second ChatGPT review #2."""
+    assert app._v98_pseudo_ip('203.0.113.77') == '203.0.113.0'
+    assert app._v98_pseudo_ip('2001:db8:1:2:3:4:5:6') == '2001:db8:1:2::'
+    assert app._v98_usage_target('example.com/page?token=abc#x') == 'example.com/page'
+    assert app._v98_usage_target('Colruyt Group?') == 'Colruyt Group?'
+    assert app._USAGE_QUEUE is None or app._USAGE_QUEUE.maxsize == 100
+
+
+def test_v985_a_legacy_signed_report_payload_must_be_fresh_and_the_history_cookie_follows_the_password(monkeypatch):
+    """Second ChatGPT review #14 and the cookie note."""
+    import datetime
+    today = datetime.date.today()
+    assert app._legacy_report_is_fresh({'analysis_date': today.isoformat()})
+    assert not app._legacy_report_is_fresh({'analysis_date': (today - datetime.timedelta(days=30)).isoformat()})
+    assert not app._legacy_report_is_fresh({})
+    monkeypatch.setattr(app, 'HISTORY_ADMIN_PASSWORD', 'old-password')
+    cookie = app._v92_history_cookie_value()
+    assert app._v92_valid_history_cookie(app._HISTORY_COOKIE_NAME + '=' + cookie)
+    monkeypatch.setattr(app, 'HISTORY_ADMIN_PASSWORD', 'new-password')
+    assert not app._v92_valid_history_cookie(app._HISTORY_COOKIE_NAME + '=' + cookie)
+
+
+def test_v985_a_page_excluded_as_outdated_does_not_block_a_valid_copy_and_the_template_has_no_concrete_value():
+    """Second ChatGPT review #5 (structure) and #13."""
+    import inspect
+    src = inspect.getsource(app.crawl)
+    assert src.index('seen_text_hash.add(_text_hash)') > src.index('_log_fetch_skipped_other_entity'), 'the hash is added only after the exclusions'
+    rw = app.green_ready_to_use_rewrite('Generic environmental claim', 'Our new collection is sustainable', 'sustainable')
+    assert '40%' not in rw, rw
+
+
+def test_v985_outdated_sitemap_addresses_are_not_fetched_at_all():
+    """Found on umicore.com: eight archive pages (2016-2021) from the sitemap were fetched and then excluded as outdated."""
+    import inspect
+    assert app._v93_extract_report_year('https://www.umicore.com/en/x/2019-due-diligence-compliance-report-archive/', '', 'html') < app.DOCUMENT_SCREENING_CUTOFF_YEAR
+    assert app._v93_extract_report_year('https://www.umicore.com/en/sustainability/climate-action/', '', 'html') is None
+    src = inspect.getsource(app.crawl)
+    assert src.index("_uy<DOCUMENT_SCREENING_CUTOFF_YEAR") < src.index("add_candidate(u,'sitemap')"), 'the check comes before the candidate is added'

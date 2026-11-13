@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_4_review_fixes"
-APP_RELEASE_LABEL="v98.4"
-APP_RELEASE_DATE="2026-11-11"
+APP_VERSION="hostable_v98_5_second_review_fixes"
+APP_RELEASE_LABEL="v98.5"
+APP_RELEASE_DATE="2026-11-13"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -957,7 +957,7 @@ def related_group_sites(url, max_sites=2):
             out.append(c)
     return out[:max_sites]
 
-def _canonical_url(url):
+def _canonical_url_impl(url):
     """Normalise a candidate URL for de-duplication without changing its meaning."""
     p=urlparse(url)
     scheme=(p.scheme or 'https').lower()
@@ -965,8 +965,8 @@ def _canonical_url(url):
     if not host:
         return url
     path=re.sub(r'/+','/',p.path or '/')
-    if path != '/':
-        path=path.rstrip('/')
+    # v98.5: the trailing slash is NOT removed any more: a server may treat /duurzaamheid/ and /duurzaamheid differently, and the normalised
+    # address is also the one that is requested. Real duplicates are caught by the final (redirect) address and by the page content.
     # Marketing/tracking parameters create duplicate candidates without adding content.
     query_parts=[]
     for part in (p.query or '').split('&'):
@@ -984,14 +984,23 @@ def _canonical_url(url):
     return p._replace(scheme=scheme,netloc=netloc,path=path,query=query,fragment='').geturl()
 
 
+def _canonical_url(url):
+    """_canonical_url_impl() that never raises: an address urlparse() cannot handle (a port that is no number) is no candidate ('')."""
+    try:
+        return _canonical_url_impl(url)
+    except ValueError:
+        return ''
+
+
 def _read_capped(response, max_bytes, time_limit):
     """Reads a response body in pieces with a limit on the TOTAL time. The socket timeout of urllib applies to every single read, so a server
     that sends a few bytes every few seconds could keep one fetch busy far longer than the time budget of the scan (v98.4)."""
     end=time.time()+max(1,time_limit); total=0; pieces=[]
+    reader=getattr(response,'read1',None) or response.read     # read1() comes back after one socket read; read(n) waits until n bytes have arrived
     while total<max_bytes:
         if time.time()>end:
             raise TimeoutError('The page took too long to download.')
-        piece=response.read(min(65536,max_bytes-total))
+        piece=reader(min(65536,max_bytes-total))
         if not piece:
             break
         pieces.append(piece); total+=len(piece)
@@ -1042,7 +1051,10 @@ def _open_public_url(url, timeout=7, accept='text/html,application/xhtml+xml,app
         try:
             req=Request(url,headers=_browser_headers(url,accept,user_agent=ua))
             with _SAFE_OPENER.open(req,timeout=attempt_timeout) as r:
-                return _read_capped(r,max_bytes,max(10,attempt_timeout*2)), r.headers.get('content-type','').lower(), r.geturl()
+                _body_limit=max(10,attempt_timeout*2)
+                if deadline is not None:
+                    _body_limit=max(2,min(_body_limit,deadline-time.time()))      # v98.5: the body never gets more time than the caller has left
+                return _read_capped(r,max_bytes,_body_limit), r.headers.get('content-type','').lower(), r.geturl()
         except HTTPError as e:
             last_error=e
             # Authentication/permission failures are unlikely to improve through repeated
@@ -1143,6 +1155,18 @@ def replace_tld_with_be(url):
     return parsed._replace(netloc=netloc).geturl()
 
 
+def _ip_blocked(ip):
+    """True for every address the scan must not connect to: anything that is not a globally routable unicast address (also the shared
+    carrier-grade NAT range 100.64.0.0/10), and an IPv4-mapped IPv6 address is judged by its IPv4 part (v98.5)."""
+    try:
+        mapped=getattr(ip,'ipv4_mapped',None)
+        if mapped is not None:
+            ip=mapped
+        return (not ip.is_global) or ip.is_multicast or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+    except Exception:
+        return True
+
+
 def is_private(host):
     """SSRF guard: True means "do not fetch this host". v93.31: a DNS/resolution failure
     used to return False (treated as safe/public), the wrong default for a security check --
@@ -1154,7 +1178,7 @@ def is_private(host):
     try:
         for r in socket.getaddrinfo(host,None):
             ip=ipaddress.ip_address(r[4][0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved: return True
+            if _ip_blocked(ip): return True
     except Exception: return True
     return False
 
@@ -1232,7 +1256,7 @@ def _resolve_pinned_ip(host):
             ip=ipaddress.ip_address(ip_str)
         except ValueError:
             continue
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        if _ip_blocked(ip):
             raise _DNSRebindingBlocked(_blocked_host_message(host))
         if ip_str not in ips:
             ips.append(ip_str)
@@ -1909,6 +1933,15 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
             # loop always keeps a guaranteed share of the budget.
             sitemap_deadline=min(deadline,time.time()+max(4,min(10,remaining()*0.5)))
             for u in discover_sitemap_urls(homepage_trusted_host_base,deadline=sitemap_deadline):
+                # v98.5: a sitemap address that names a year before the screening cut-off ("/2019-due-diligence-compliance-report-archive/") is
+                # not fetched at all: it would only be read to be excluded afterwards, and it took places from current pages (umicore.com read
+                # eight archive pages of 30-50 KB each)
+                try:
+                    _uy=_v93_extract_report_year(u,'','html')
+                except Exception:
+                    _uy=None
+                if _uy is not None and _uy<DOCUMENT_SCREENING_CUTOFF_YEAR:
+                    continue
                 add_candidate(u,'sitemap'); sitemap_count+=1
         except Exception:
             pass
@@ -2019,8 +2052,6 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                         _text_hash=hash(re.sub(r'\s+',' ',t).strip()) if len(t)>400 else None
                         if _text_hash is not None and _text_hash in seen_text_hash:
                             is_duplicate_final=True
-                        elif _text_hash is not None and not is_duplicate_final:
-                            seen_text_hash.add(_text_hash)
                         if is_duplicate_final:
                             _log_fetch_skipped_duplicate(log,link,len(t),final_canon,source=source,content_kind=kind)
                         elif stale_year is not None and stale_year<DOCUMENT_SCREENING_CUTOFF_YEAR:
@@ -2029,6 +2060,7 @@ def crawl(url,max_extra_pages=None,deadline=None,log=None,candidate_source='prim
                             _log_fetch_skipped_other_entity(log,link,len(t),_v96_document_about_other_entity(link,t,host)[1],source=source,content_kind=kind)
                         else:
                             if final_canon: seen_final.add(final_canon)
+                            if _text_hash is not None: seen_text_hash.add(_text_hash)       # v98.5: only after the page passed the age and entity exclusions
                             if fail_count.get(link) and log is not None: log[:]=[e for e in log if not (e.get('url')==link and e.get('ok') is False)]
                             _log_fetch_success(log,link,len(t),method=method,source=source,content_kind=kind)
                             _doc_rel=_v96_document_about_other_entity(link,t,host)
@@ -4423,7 +4455,7 @@ _SUBJ_GREEN_ADJ=re.compile(r"\b(?:sustainable|eco[- ]?friendly|green(?:er)?|ecol
 _SUBJ_RE=re.compile(r"\b("+_SUBJ_DET+r")\s+((?:[\w'\u2019\-]+\s+){0,3}?)("+_SUBJ_PRODUCT+r")\b",re.I)
 _SUBJ_COMPANY_RE=re.compile(r"\b(our|the|onze|ons|notre|nos)\s+("+_SUBJ_COMPANY+r")\b",re.I)
 _GENERIC_SUBJECT_TEMPLATES={
-    'product':('"{S} [a concrete fact with a number, e.g. \u201ccontains 40% recycled cotton\u201d or \u201cis certified under a '
+    'product':('"{S} [a concrete fact with a number, e.g. \u201ccontains [X]% recycled [material]\u201d or \u201cis certified under a '
                'named scheme\u201d]. This is measured with [name of the method or standard], applies to [exactly which '
                'products: one named model / the whole range] and dates from [month and year]. Full details: [link]."'),
     'company':('"{S} [a concrete fact with a number, e.g. \u201cemitted X% less CO2 in [year]\u201d]. This is measured with [name '
@@ -6709,6 +6741,8 @@ def _near_sentence(text, trigger, max_len=620):
         out=' '.join(text[max(0,i-80):min(len(text),i+len(trig)+160)].split()).strip()
     return out[:max_len]+('...' if len(out)>max_len else '')
 
+_JSON_TEXT_FIELDS=('email','url','name','company_name','company_number','access_code','chosen_url','filename','content_base64','mime_type','extracted_text','report_token','_report_token')
+
 def _safe_equals(a,b):
     """hmac.compare_digest on UTF-8 bytes: on two str it raises TypeError as soon as one of them holds a non-ASCII character (a password
     like "échec" typed by a visitor), which became a 500."""
@@ -6852,16 +6886,22 @@ def _rate_limit_blocked(client,bucket,maximum):
         return len(recent)>=maximum
 
 def _access_gate(client,data):
-    """None when the request may go on, else (payload, status). v98.4: an invalid code used to be refused BEFORE any rate limit, so a code could
-    be guessed without limit. Failures are now counted per address; after RATE_LIMIT_ACCESS_FAILS of them the address is refused for the window
-    (also with a correct code, so a guess cannot be confirmed while blocked)."""
+    """None when the request may go on, else (payload, status). v98.4: an invalid code used to be refused BEFORE any rate limit, so a code could be
+    guessed without limit. Failures are counted per address; after RATE_LIMIT_ACCESS_FAILS of them the address is refused for the window (also with a
+    correct code, so a guess cannot be confirmed while blocked). v98.5: counting, comparing and recording happen in one step under one lock, so
+    parallel requests just below the limit cannot all get through. The check itself is a few hashes; no database work happens under the lock."""
     if not ACCESS_CODE:
         return None
-    if _rate_limit_blocked(client,'access_fail',RATE_LIMIT_ACCESS_FAILS):
-        return ({'error':'Too many invalid access codes from this address. Try again later.','rate_limited':True},429)   # no access_denied: the web page would clear a stored code that may be valid
-    if _access_code_ok(data):
-        return None
-    _rate_limit_allowed(client,'access_fail',10**9)        # records the failure
+    now=time.time(); key=(client,'access_fail')
+    with _RATE_LOCK:
+        recent=[t for t in _RATE_EVENTS.get(key,[]) if now-t<RATE_LIMIT_WINDOW_SECONDS]
+        if len(recent)>=RATE_LIMIT_ACCESS_FAILS:
+            _RATE_EVENTS[key]=recent
+            return ({'error':'Too many invalid access codes from this address. Try again later.','rate_limited':True},429)   # no access_denied: the web page would clear a stored code that may be valid
+        if _access_code_ok(data):
+            if recent: _RATE_EVENTS[key]=recent
+            return None
+        recent.append(now); _RATE_EVENTS[key]=recent
     return ({'error':_access_denied_message(data),'access_denied':True},401)
 
 def _rate_limit_allowed(client,bucket,maximum):
@@ -7012,6 +7052,15 @@ def attach_report_signature(payload):
         payload['_report_token']=create_report_token(payload)
     return payload
 
+
+def _legacy_report_is_fresh(payload):
+    """v98.5: a payload signed in the old format carries no issue time, only its (signed) analysis date: it is accepted for the same period as a
+    token (today and yesterday), so an old payload cannot be used for ever."""
+    try:
+        d=datetime.date.fromisoformat(str((payload or {}).get('analysis_date') or '')[:10])
+        return 0<=(datetime.date.today()-d).days<=max(1,REPORT_TOKEN_MAX_AGE_SECONDS//86400+1)
+    except Exception:
+        return False
 
 def verify_report_signature(payload):
     supplied=str((payload or {}).get('_report_signature') or '')
@@ -7289,6 +7338,34 @@ def _v96_record_access_usage(label,action,target,client_ip):
         try: conn.close()
         except Exception: pass
 
+_USAGE_QUEUE=None
+_USAGE_QUEUE_LOCK=threading.Lock()
+
+def _usage_enqueue(label,action,target,client_ip):
+    """One daemon worker and a queue of at most 100 items (v98.5): a slow database can no longer pile up one thread per request."""
+    global _USAGE_QUEUE
+    import queue as _queue
+    with _USAGE_QUEUE_LOCK:
+        if _USAGE_QUEUE is None:
+            _USAGE_QUEUE=_queue.Queue(maxsize=100)
+            def _worker():
+                while True:
+                    item=_USAGE_QUEUE.get()
+                    try: _v96_record_access_usage(*item)
+                    except Exception: pass
+            threading.Thread(target=_worker,daemon=True).start()
+    try: _USAGE_QUEUE.put_nowait((label,action,target,client_ip))
+    except _queue.Full: pass
+
+def _v98_pseudo_ip(client_ip):
+    """The last part of the address is not stored (a.b.c.0 / the first four groups of an IPv6 address): enough to see a network, not a person."""
+    t=str(client_ip or '').strip()
+    if re.fullmatch(r'\d{1,3}(?:\.\d{1,3}){3}',t):
+        return '.'.join(t.split('.')[:3]+['0'])
+    if ':' in t:
+        return ':'.join(t.split(':')[:4])+'::'
+    return t[:64]
+
 def _v98_usage_target(target):
     """A scanned web address is stored without its query string, fragment and user:password part (they can hold personal data or tokens)."""
     t=str(target or '').strip()
@@ -7299,6 +7376,8 @@ def _v98_usage_target(target):
             return (u.scheme+'://'+host+(u.path or '')).rstrip('/')[:200] if host else t.split('?')[0].split('#')[0][:200]
         except Exception:
             return t.split('?')[0].split('#')[0][:200]
+    if t and not re.search(r'\s',t):
+        t=t.split('?')[0].split('#')[0]          # "example.com/page?token=abc" without a scheme: no query string either
     return t[:200]
 
 def _v96_note_access(data,action,target,client_ip):
@@ -7309,7 +7388,7 @@ def _v96_note_access(data,action,target,client_ip):
         label,expired=_access_code_match(data)
         if label in UNLOGGED_CODE_LABELS: return
         if not label or not str(target or '').strip(): return   # a request with nothing to look up or scan is not use of the tool
-        threading.Thread(target=_v96_record_access_usage,args=(label,'expired attempt' if expired else action,_v98_usage_target(target),client_ip),daemon=True).start()
+        _usage_enqueue(label,'expired attempt' if expired else action,_v98_usage_target(target),_v98_pseudo_ip(client_ip))
     except Exception:
         pass
 
@@ -8346,12 +8425,16 @@ def _v92_rows_to_csv(rows):
         writer.writerow([_v93_csv_safe_cell(str(r.get(c,'') if r.get(c) is not None else '')) for c in _V92_EXPORT_COLUMNS])
     return b'\xef\xbb\xbf'+buf.getvalue().encode('utf-8')
 
+def _history_password_tag():
+    """v98.5: the history cookie is signed together with a fingerprint of the password, so a new password makes every old cookie invalid."""
+    return hashlib.sha256(str(HISTORY_ADMIN_PASSWORD or '').encode('utf-8')).hexdigest()[:16]
+
 def _v92_history_cookie_value():
     """HMAC-signed, timestamped token proving the shared history password was supplied
     correctly -- reuses the same signing-key infrastructure already used for report
     tokens, so no new secret material is introduced for this feature."""
     ts=str(int(time.time()))
-    sig=hmac.new(_REPORT_SIGNING_KEY,('history-auth:'+ts).encode(),hashlib.sha256).hexdigest()
+    sig=hmac.new(_REPORT_SIGNING_KEY,('history-auth:'+ts+':'+_history_password_tag()).encode(),hashlib.sha256).hexdigest()
     return f'{ts}.{sig}'
 
 def _v92_valid_history_cookie(cookie_header):
@@ -8368,7 +8451,7 @@ def _v92_valid_history_cookie(cookie_header):
         return False
     if time.time()-ts>_HISTORY_SESSION_SECONDS:
         return False
-    expected=hmac.new(_REPORT_SIGNING_KEY,('history-auth:'+ts_str).encode(),hashlib.sha256).hexdigest()
+    expected=hmac.new(_REPORT_SIGNING_KEY,('history-auth:'+ts_str+':'+_history_password_tag()).encode(),hashlib.sha256).hexdigest()
     return _safe_equals(expected,sig)
 
 def _v92_parse_cookies(header):
@@ -8921,6 +9004,9 @@ class Handler(BaseHTTPRequestHandler):
         try: parsed=json.loads(self.rfile.read(n).decode('utf-8') or '{}')
         except Exception as exc: raise ValueError('Request body is not valid JSON.') from exc
         if not isinstance(parsed,dict): raise ValueError('Request body must be a JSON object.')      # v98.4: a JSON array gave an AttributeError (500)
+        for _k in _JSON_TEXT_FIELDS:                                                                 # v98.5: a number in a text field gave an AttributeError (500)
+            if parsed.get(_k) is not None and not isinstance(parsed.get(_k),str):
+                raise ValueError(f'The field "{_k}" must be text.')
         return parsed
 
     def _resolve_report_payload(self,data):
@@ -8932,7 +9018,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc: return None,self._json({'error':str(exc)},403)
         # Backward-compatible path for a v68 result that has not passed through JavaScript
         # numeric normalisation. New v69 scans use report_token.
-        if verify_report_signature(data): return data,None
+        if verify_report_signature(data) and _legacy_report_is_fresh(data): return data,None
         return None,self._json({'error':'The report download token is missing or invalid. Run a new scan before downloading the report.'},403)
 
     def _respond_pdf(self,scan_result):
@@ -9262,8 +9348,8 @@ class Handler(BaseHTTPRequestHandler):
             data=self._read_json()
             if self.path=='/api/resolve/company':
                 # Cheap look-up (search + a few live checks, no crawl): same access code as a scan, own rate-limit bucket.
-                _v96_note_access(data,'lookup',str(data.get('name','') or '')[:200],client)
                 _gate=_access_gate(client,data)
+                if _gate is None or _gate[1]!=429: _v96_note_access(data,'lookup',str(data.get('name','') or '')[:200],client)
                 if _gate is not None: return self._json(_gate[0],_gate[1])
                 if not _rate_limit_allowed(client,'resolve',RATE_LIMIT_SCANS*4): return self._json({'error':'Too many look-ups. Try again later.'},429)
                 return self._json(resolve_company_candidates(str(data.get('name','') or '')[:200]))
@@ -9271,8 +9357,8 @@ class Handler(BaseHTTPRequestHandler):
                 # v93.43: checked before the rate limit and concurrency semaphore so a wrong/
                 # missing access code never consumes either -- an invited tester's own budget
                 # shouldn't shrink because someone else is guessing codes.
-                _v96_note_access(data,'scan',str(data.get('url') or data.get('company_name') or data.get('filename') or data.get('company_number') or '')[:200],client)
                 _gate=_access_gate(client,data)
+                if _gate is None or _gate[1]!=429: _v96_note_access(data,'scan',str(data.get('url') or data.get('company_name') or data.get('filename') or data.get('company_number') or '')[:200],client)
                 if _gate is not None: return self._json(_gate[0],_gate[1])
                 _label=_access_code_label(data) if ACCESS_CODE else None
                 if _label and _label!='shared': print(f"[access] scan started with the code of: {_label}",flush=True)
@@ -9597,7 +9683,8 @@ _V983_SCOPE_GROUPS={
     'cotton':r"cotton|katoen|coton",'coffee':r"coffee|koffie|caf[e\u00e9]",'cocoa':r"cocoa|cacao|chocolate|chocolade|chocolat",'palm':r"palm",
     'leather':r"leather|leder|cuir",'wool':r"wool|wol|laine",'timber':r"timber|wood|hout|bois",'paper':r"paper|papier",
     'fish':r"fish|seafood|vis|poisson",'soy':r"soy|soja",'sugar':r"sugar|suiker|sucre",'tea':r"\btea\b|thee|th[e\u00e9]",
-    'rubber':r"rubber|caoutchouc",'cobalt':r"cobalt|kobalt",'steel':r"steel|staal|acier",'fruit':r"\bfruit|vegetables|groenten|l[e\u00e9]gumes",
+    'rubber':r"rubber|caoutchouc",'cleaning':r"cleaning|schoonmaak|nettoyage",'catering':r"catering|canteen|kantine|cantine",
+    'logistics':r"logistics|freight|logistiek|vervoer|logistique",'packaging':r"packaging|verpakking|emballage",'cobalt':r"cobalt|kobalt",'steel':r"steel|staal|acier",'fruit':r"\bfruit|vegetables|groenten|l[e\u00e9]gumes",
 }
 _V983_SCOPE_RES={k:re.compile(r"(?<!\w)(?:"+v+r")\w*",re.I) for k,v in _V983_SCOPE_GROUPS.items()}
 
@@ -9853,7 +9940,7 @@ _V98_SPECS = [
      re.compile(r"\b(?:not negotiable|first|priority|top|always|never|everyone|everybody|nobody|no one|care\w*|ensure\w*|guarantee\w*|zero|best|highest|safe|committed|proud|niet onderhandelbaar|voorop|prioriteit|altijd|nooit|iedereen|niemand|zorg\w*|geven veel om|beste|hoogste|veilig\w*|garandeer\w*|pas n[e\u00e9]gociable|priorit[e\u00e9]|toujours|jamais|chacun|personne|soucions|meilleur\w*|s[u\u00fb]rs?|garanti\w*|passe avant|premier)\b|geef\w* om", re.I), 'any'),
     ('Supply-chain or supplier-responsibility claim',
      re.compile(r"\bsuppliers?\b|\bpartners?\b|supply chain|leveranciers?|toeleveringsketen|\bketen\b|fournisseurs?|partenaires?|cha[i\u00ee]ne", re.I),
-     re.compile(r"\b(?:ethical\w*|highest|strict\w*|carefully|vetted|screened|verified|audited|certified|compl(?:y|ies|iant)|responsib\w+|code of conduct|held to|only work\w*|selected|chosen|ethisch\w*|hoogste|strikte?|zorgvuldig|gescreend|geverifieerd|geauditeerd|gecertificeerd|voldoen|verantwoord\w*|gedragscode|enkel met|alleen met|gekozen|geselecteerd|[e\u00e9]thiques?|plus (?:strictes?|[e\u00e9]lev[e\u00e9]es?)|choisis?|s[e\u00e9]lectionn[e\u00e9]\w*|v[e\u00e9]rifi[e\u00e9]s?|audit[e\u00e9]s?|certifi[e\u00e9]s?|respectent|code de conduite|uniquement avec|qu.avec)\b", re.I), 'fp'),
+     re.compile(r"\b(?:ethical\w*|highest|strict\w*|vetted|screened|select\w*|choos\w*|vet\w*|screen\w*|s[e\u00e9]lectionn\w*|choisiss\w*|selecteer\w*|kiez\w*|verified|audited|certified|compl(?:y|ies|iant)|responsib\w+|code of conduct|held to|only work\w*|selected|chosen|ethisch\w*|hoogste|strikte?|zorgvuldig|gescreend|geverifieerd|geauditeerd|gecertificeerd|voldoen|verantwoord\w*|gedragscode|enkel met|alleen met|gekozen|geselecteerd|[e\u00e9]thiques?|plus (?:strictes?|[e\u00e9]lev[e\u00e9]es?)|choisis?|s[e\u00e9]lectionn[e\u00e9]\w*|v[e\u00e9]rifi[e\u00e9]s?|audit[e\u00e9]s?|certifi[e\u00e9]s?|respectent|code de conduite|uniquement avec|qu.avec)\b", re.I), 'fp'),
     ('Broad social-impact claim',
      re.compile(r"communit(?:y|ies)|neighbou?rhoods?|local schools?|buurt\w*|gemeenschap\w*|quartiers?|communaut\w+|[e\u00e9]coles? locales?|scholen", re.I),
      re.compile(r"\b(?:support\w*|back|backs|invest\w*|give back|contribut\w*|help\w*|fund\w*|sponsor\w*|steun\w*|ondersteun\w*|investeer\w*|bijdrag\w*|soutien\w*|soutenons|soutient|investi\w+|contribu\w+|aide\w*)\b", re.I), 'fp'),
@@ -9873,6 +9960,12 @@ def _v98_assertion_ok(sentence, spec):
         return False
     if _typ.startswith('Health') and _V983_CYBER_RE.search(c):
         return False
+    if frame is not None and (_typ.startswith('Supply-chain') or _typ.startswith('Broad social')):
+        # v98.5: "We carefully archived the emails from our suppliers" has a supplier word, a first person and an adverb somewhere in the same
+        # sentence, but says nothing about the suppliers. The frame word has to stand within 28 characters of the topic word.
+        _tm=[m for m in _topic.finditer(c)]; _fm=[m for m in frame.finditer(c)]
+        if not any(max(f.start()-t.end(),t.start()-f.end())<=28 for t in _tm for f in _fm):
+            return False
     if _V98_FIRST_PERSON_RE.search(c):
         return True
     return subject=='any' and bool(_V98_COLLECTIVE_RE.search(c))
@@ -9931,6 +10024,18 @@ _V981_OWN_OPERATIONS_RE = re.compile(r"\b(?:every|each|all|alle|elke|al|chaque|t
 # a legal obligation about packaging, energy ... in general is no claim of the company: "De EU verplicht dat alle verpakkingen tegen 2030 recycleerbaar zijn"
 _V981_LEGAL_RE = re.compile(r"\b(?:must|obliged|obliges?|mandatory|compulsory|required?|requirements?|verplicht\w*|vereist\w*|vereisten|moet|moeten|verplichting\w*|exige\w*|oblig\w+|impose\w*|doivent|doit|exigences?|eu|ue|union|europeese|europ\w+)\b", re.I)
 
+_V981_PERFORMANCE_RE = re.compile(r"reduc|\bcut\b|halv|eliminat|achiev|reach|becom|\bbe\b|neutral|neutraal|neutre|net[- ]zero|netto[- ]nul|\bzero\b|\bnul\b|z[e\u00e9]ro|\bfree\b|vrij\b|\bsans\b|renewable|hernieuwbaar|renouvelable|recyclab|recycleerbaar|compostab|biodegrad|electric|elektrisch|[e\u00e9]lectrique|fossil|\d\s?%|\bhalf\b|helft|moiti[e\u00e9]|\ball\b|\bevery\b|\belk\w*|\balle\b|\btous\b|\btoutes\b|\bchaque\b|\brun(?:s)? on\b|\bpower\w*|\bsourc\w+|\bus(?:e|ing)\b|gebruik|draai|rijd|fonctionn|roul|utilis|verminder|bereik|worden|devenir|atteindre|r[e\u00e9]duir|diviser|supprim|\bstop|phase out|\bban\b|double|increas|improv|lower|decreas|plastic-?free|waste-?free|\bwill be\b", re.I)
+_V981_BASELINE_BEFORE_RE = re.compile(r"(?:compared (?:with|to)|versus|\bvs\.?|since|sinds|depuis|from|baseline|base year|basisjaar|ten opzichte van|par rapport [\u00e0a])\s*$", re.I)
+
+def _v981_target_year(sentence):
+    """The year phrase that belongs to the target: not a baseline year ("compared with 2027, we will halve emissions by 2032" -> by 2032)."""
+    s=_normalize_apostrophes(str(sentence or ''))
+    matches=[m for m in _V981_HORIZON_RE.finditer(s)]
+    ok=[m for m in matches if not _V981_BASELINE_BEFORE_RE.search(s[max(0,m.start()-24):m.start()]) and int(re.search(r"20\d\d",m.group(0)).group(0))>datetime.date.today().year]
+    with_prep=[m for m in ok if re.match(r"(?:by|before|towards|tegen|voor|d.ici|en|in|bis|vers|pour)\b",m.group(0),re.I)]
+    pick=(with_prep or ok or matches or [None])[0]
+    return pick.group(0).strip() if pick else None
+
 def _v981_future_goal(sentence):
     """The year phrase (str) when the sentence reads as a future environmental-performance claim, else None."""
     c = _normalize_apostrophes(str(sentence or '')).lower()
@@ -9947,8 +10052,9 @@ def _v981_future_goal(sentence):
         return None                      # v98.4: "In 2027, we reduced emissions" is a result, whatever the year is
     if max(years) <= datetime.date.today().year and (not _future_verb or _V981_ACHIEVED_RE.search(c)):
         return None                      # v98.4: "ahead of today" is relative to today, not the fixed year 2027
-    m = _V981_HORIZON_RE.search(_normalize_apostrophes(str(sentence or '')))
-    return m.group(0).strip() if m else None
+    if not _V981_PERFORMANCE_RE.search(c):
+        return None                      # v98.5: "We discuss packaging at our 2031 board meeting" names a year and a topic but promises nothing
+    return _v981_target_year(sentence)
 
 _V981_ADJ_RECYCLABLE = r"recyclable|recycleerbaar|recyclebaar|recyclables?|compostables?|composteerbaar|reusable|herbruikbaar|r[e\u00e9]utilisables?"
 _V981_ADJ_OTHER = r"biodegradable|biologisch afbreekbaar|biod[e\u00e9]gradables?|natural|natuurlijke?|naturel(?:le)?s?|sustainable|duurzame?|durables?|eco-?friendly|ecological|[e\u00e9]cologiques?|ecologische?|milieuvriendelijk\w*|green|groene?|verte?s?|renewable|hernieuwbare?|renouvelables?|non-?toxic|toxic-?free|plastic-?free|plasticvrij|chemical-?free|clean|pure(?!\s+(?:wool|cotton|leather|silk|linen|cashmere|cocoa|chocolate|butter|honey|gold|silver|juice|olive|laine|coton|cuir|soie|lin|miel|beurre|argent|wol|katoen|leder|zijde|linnen|goud|zilver|boter))|pur(?!\s+(?:wool|cotton|leather|silk|linen|cashmere|cocoa|chocolate|butter|honey|gold|silver|juice|olive|laine|coton|cuir|soie|lin|miel|beurre|argent|wol|katoen|leder|zijde|linnen|goud|zilver|boter))"
@@ -10106,6 +10212,16 @@ def _v983_looks_garbled(text):
 _V983_RISK_RE = re.compile(r"\b(?:lack of|shortage of|may (?:raise|increase|affect|impact|reduce)|could (?:raise|increase|offset|affect|impact)|increased cost|higher cost|rising cost|cost of|costs? (?:of|for)|dependenc(?:y|ies)|vulnerabilit(?:y|ies)|exposure to|affecting margins|at risk|risks? (?:of|to|that)|availability of|supply risk)\b", re.I)
 _V983_INSTRUCTION_RE = re.compile(r"^\W*(?:\d+\.?\s*)?(?:\(\d[\d.]*\)\s*)?(?:quantify|describe|provide|disclose|report|explain|indicate|state|specify|list|identify|please)\b", re.I)
 
+_V983_CLAUSE_SPLIT_RE = re.compile(r"[,;:()]|\s(?:despite|although|though|even though|while|whereas|but|however|ondanks|hoewel|maar|malgr[e\u00e9]|bien que|mais)\s", re.I)
+
+def _v983_clause_around(c, pos, length):
+    """The clause of `c` that holds the trigger at pos: "Despite the higher cost, THIS BOTTLE IS CARBON NEUTRAL." -> the second part (v98.5)."""
+    start=0
+    for m in _V983_CLAUSE_SPLIT_RE.finditer(c,0,pos):
+        start=m.end()
+    m2=_V983_CLAUSE_SPLIT_RE.search(c,pos+length)
+    return c[start:(m2.start() if m2 else len(c))]
+
 def _v983_not_a_claim_context(c, trig, dimension, excerpt=None):
     """True when the sentence only looks like a claim (see the v98.3 note above). `c` is lower case."""
     if not c or not trig:
@@ -10121,7 +10237,7 @@ def _v983_not_a_claim_context(c, trig, dimension, excerpt=None):
         return True
     pos=c.find(trig)
     while pos!=-1:
-        _near=c[max(0,pos-80):pos+len(trig)+80]
+        _near=_v983_clause_around(c,pos,len(trig))
         if _V983_RISK_RE.search(_near) and not re.search(r"\b(?:we|our|wij|onze|nous|notre)\b[^.]{0,40}\b(?:reduc|lower|cut|improv|increas|use|source|ensure|achiev|reach|verminder|verlag|gebruik|r[e\u00e9]duis|utilis)", _near):
             return True
         before=c[max(0,pos-90):pos]; after=c[pos+len(trig):pos+len(trig)+70]
