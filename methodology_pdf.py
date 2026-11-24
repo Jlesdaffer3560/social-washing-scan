@@ -528,7 +528,7 @@ def build_methodology_pdf():
     flow.append(section_table(gloss_rows, [W * 0.26, W * 0.74]))
     flow.append(Spacer(1, 8))
     flow.append(Paragraph(
-        '&copy; Durably - proprietary Sustainability Claims Risk Scan methodology. Indicative first-pass assessment only; results '
+        '&copy; Durably, in collaboration with Novarisq Consulting. Sustainability Claims Risk Scan methodology. Indicative first-pass assessment only; results '
         'require legal, compliance and subject-matter review before external use.', STY['foot']))
 
     doc.build(flow, onFirstPage=draw_footer, onLaterPages=draw_footer)

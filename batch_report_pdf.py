@@ -486,8 +486,10 @@ def _draw_footer(canvas, doc):
     canvas.setFillColor(GREY_500)
     disclaimer = ('Indicative screening only — not legal advice. Aggregated from individually scanned '
                   'companies; verify each result before external use.')
-    canvas.drawString(MARGIN_X, 5.4 * mm, disclaimer)
-    canvas.drawRightString(PAGE_W - MARGIN_X, 5.4 * mm, f'© Durably · Scan Summary Report · Page {page}')
+    canvas.drawString(MARGIN_X, 6.0 * mm, disclaimer)
+    canvas.drawRightString(PAGE_W - MARGIN_X, 6.0 * mm, f'Page {page}')
+    # v98.6: the copyright with the collaboration on its own line (the disclaimer is long)
+    canvas.drawString(MARGIN_X, 3.0 * mm, '© Durably, in collaboration with Novarisq Consulting · Scan Summary Report')
     canvas.restoreState()
 
 

@@ -1789,19 +1789,19 @@ def draw_footer(canvas, doc):
     disclaimer = "Indicative screening only — not legal advice. Results require legal, compliance and subject-matter review before external use."
     total = getattr(doc, 'total_pages_hint', None)
     page_label = f"Page {page} of {total}" if total else f"Page {page}"
-    right_text = f"© Durably · {company_name(getattr(doc, 'report_data', {}) or {})} · {page_label}"
-    # The disclaimer (left, drawString) and the company/page label (right, drawRightString)
-    # were both drawn at the same y-coordinate with no width check against each other --
-    # for a long company/legal name the two visually collided. Reserve a fixed gap and cap
-    # the variable-length right side to at most 45% of the footer width so a long name never
-    # eats into the disclaimer's space, then fit the disclaimer to whatever remains.
+    # v98.6: two lines. Line 1: the disclaimer (always complete) and the page number. Line 2: the copyright with the collaboration and the
+    # company name (the name is shortened when the line is too narrow). One line was too narrow for the disclaimer AND the collaboration.
     available_w = PAGE_W - 2*MARGIN_X
     gap = 6*mm
-    right_text = _fit_text_to_width(right_text, font, size, available_w*0.45)
-    right_w = stringWidth(right_text, font, size)
-    disclaimer = _fit_text_to_width(disclaimer, font, size, available_w - right_w - gap)
-    canvas.drawString(MARGIN_X, 5.4*mm, disclaimer)
-    canvas.drawRightString(PAGE_W-MARGIN_X, 5.4*mm, right_text)
+    page_w = stringWidth(page_label, font, size)
+    disclaimer = _fit_text_to_width(disclaimer, font, size, available_w - page_w - gap)
+    canvas.drawString(MARGIN_X, 6.0*mm, disclaimer)
+    canvas.drawRightString(PAGE_W-MARGIN_X, 6.0*mm, page_label)
+    credit = "\u00a9 Durably, in collaboration with Novarisq Consulting"
+    name = company_name(getattr(doc, 'report_data', {}) or {})
+    room = available_w - stringWidth(credit + " \u00b7 ", font, size)
+    credit_line = credit + (" \u00b7 " + _fit_text_to_width(name, font, size, room) if name and room > 15*mm else "")
+    canvas.drawString(MARGIN_X, 3.0*mm, credit_line)
     canvas.restoreState()
 
 
