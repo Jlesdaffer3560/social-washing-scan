@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_6_novarisq_footer"
-APP_RELEASE_LABEL="v98.6"
-APP_RELEASE_DATE="2026-11-13"
+APP_VERSION="hostable_v98_7_access_code_flavia"
+APP_RELEASE_LABEL="v98.7"
+APP_RELEASE_DATE="2026-11-26"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -6802,6 +6802,7 @@ _EXTRA_ACCESS_CODES={
     'Sofie':{'hash':'c10e2758596849eea2dfe1e203041add873a3e00f1424ce27bb2a9bccb1a7957','valid_until':'2026-11-30'},
     'Cristina':{'hash':'4e767095b30ef81c46cfef6619ef3b366b20f6071a739ac3da49bf2c7d599bf8','valid_until':'2026-11-30'},
     'Alex Kuch':{'hash':'3061dbbc09b5e56cb39fe121490b608808e5bc7e20630ccfbec5058e32c1dc64','valid_until':'2026-11-30'},
+    'Flavia':{'hash':'1e1b669ed14f8c55b9c8075bf7761ac9b947aa98d0fed474452c4765b89fe593','valid_until':'2026-11-30'},
 }
 
 def _access_code_digest(value):
