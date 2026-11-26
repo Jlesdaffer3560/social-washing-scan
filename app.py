@@ -98,8 +98,8 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_8_flavia_valid_until_15_december"
-APP_RELEASE_LABEL="v98.8"
+APP_VERSION="hostable_v98_9_codes_extended_to_10_december"
+APP_RELEASE_LABEL="v98.9"
 APP_RELEASE_DATE="2026-11-26"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
@@ -6798,10 +6798,10 @@ def _access_code_ok(data):
 # More codes can also be added without a release through the EXTRA_ACCESS_CODES environment variable:
 # "label=CODE,label2=CODE2@2026-12-31" (the part after @ is the optional last valid day).
 _EXTRA_ACCESS_CODES={
-    'Gaasch Packaging':{'hash':'b4dc6c04c73ffa02993e42c16cdc2d2d99262d15a3b9c90ff9aef4896d6bf934','valid_until':'2026-11-30'},
-    'Sofie':{'hash':'c10e2758596849eea2dfe1e203041add873a3e00f1424ce27bb2a9bccb1a7957','valid_until':'2026-11-30'},
-    'Cristina':{'hash':'4e767095b30ef81c46cfef6619ef3b366b20f6071a739ac3da49bf2c7d599bf8','valid_until':'2026-11-30'},
-    'Alex Kuch':{'hash':'3061dbbc09b5e56cb39fe121490b608808e5bc7e20630ccfbec5058e32c1dc64','valid_until':'2026-11-30'},
+    'Gaasch Packaging':{'hash':'b4dc6c04c73ffa02993e42c16cdc2d2d99262d15a3b9c90ff9aef4896d6bf934','valid_until':'2026-12-10'},
+    'Sofie':{'hash':'c10e2758596849eea2dfe1e203041add873a3e00f1424ce27bb2a9bccb1a7957','valid_until':'2026-12-10'},
+    'Cristina':{'hash':'4e767095b30ef81c46cfef6619ef3b366b20f6071a739ac3da49bf2c7d599bf8','valid_until':'2026-12-10'},
+    'Alex Kuch':{'hash':'3061dbbc09b5e56cb39fe121490b608808e5bc7e20630ccfbec5058e32c1dc64','valid_until':'2026-12-10'},
     'Flavia':{'hash':'1e1b669ed14f8c55b9c8075bf7761ac9b947aa98d0fed474452c4765b89fe593','valid_until':'2026-12-15'},
 }
 
