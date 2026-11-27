@@ -4,7 +4,7 @@ import app
 
 
 def test_release_and_security_signature():
-    assert app.APP_VERSION == 'hostable_v98_9_codes_extended_to_10_december'
+    assert app.APP_VERSION == 'hostable_v98_10_performance_and_robustness_fixes'
     payload={'company':{'company':'Example'},'global_score':50}
     app.attach_report_signature(payload)
     assert app.verify_report_signature(payload)
@@ -9724,3 +9724,89 @@ def test_v985_outdated_sitemap_addresses_are_not_fetched_at_all():
     assert app._v93_extract_report_year('https://www.umicore.com/en/sustainability/climate-action/', '', 'html') is None
     src = inspect.getsource(app.crawl)
     assert src.index("_uy<DOCUMENT_SCREENING_CUTOFF_YEAR") < src.index("add_candidate(u,'sitemap')"), 'the check comes before the candidate is added'
+
+
+def test_v985_text_without_full_stops_cannot_make_the_detection_run_for_minutes():
+    """Full check of 27 November 2026: 100 KB of brackets took 58 s and 50 KB of repeated triggers 19 s (quadratic regular expressions on one huge
+    'sentence'). A hundred-kilobyte flood must now finish in a few seconds, and a normal claim next to it is still found."""
+    import time as _t
+    for text in ['(' * 50000 + 'eco-friendly' + ')' * 50000, 'child labour we never use ' * 4000, ', ' * 40000 + 'eco-friendly', 'we ' * 30000]:
+        t0 = _t.time(); app.detect_green_claims(text); app.detect_claims(text)
+        assert _t.time() - t0 < 20, (text[:20], _t.time() - t0)      # was 58 s / 19 s before the fix; a few seconds now
+    assert _v984_grn('Our packaging is eco-friendly.')
+    capped = app._v985_cap_excerpt('word ' * 5000 + 'eco-friendly ' + 'word ' * 5000, 'eco-friendly', 1100)
+    assert 'eco-friendly' in capped and len(capped) < 2500
+    short = 'Our packaging is eco-friendly.'
+    assert app._v985_cap_excerpt(short, 'eco-friendly') == short
+
+
+def test_v985_a_table_of_thousands_of_product_rows_is_not_quadratic():
+    """Full check of 27 November 2026: 10,000 rows of '| eco-friendly | 100% natural |' took 59 s on 40 KB (every sentence made the whole text be read
+    again). A webshop page of that kind must stay in seconds, and the first rows are still reported."""
+    import time as _t
+    text = '| a | b |\n|---|---|\n' + '| eco-friendly | 100% natural |\n' * 1500
+    t0 = _t.time(); found = _v984_grn(text); dt_ = _t.time() - t0
+    assert dt_ < 10, dt_
+    assert found, 'the claims in the table are still reported'
+    rows = ''.join(f'Product {i}: 100% recyclable packaging. ' for i in range(1500))
+    t0 = _t.time(); found = _v984_grn(rows); dt_ = _t.time() - t0
+    assert dt_ < 10 and found, dt_
+
+
+def test_v985_many_distinct_claims_in_one_long_page_do_not_make_the_detection_quadratic():
+    """Full check of 27 November 2026: 2,500 distinct claim sentences (150 KB) took 358 s (social) and 88 s (green): every candidate was compared with
+    all findings so far, each normalised again with regular expressions. The same page must now take seconds, and still be reported."""
+    import time as _t
+    social = ''.join(f'Site {i}: we pay our staff a fair salary and our partners are carefully selected. ' for i in range(900))
+    green = ''.join(f'Model {i} is 100% recyclable and greener than model {i - 1}. ' for i in range(900))
+    t0 = _t.time(); s_found = _v984_soc(social); g_found = _v984_grn(green); dt_ = _t.time() - t0
+    assert dt_ < 25, dt_
+    assert s_found and g_found
+    assert app._v985_norm_key("It\u2019s  A  Test!") == app._v985_norm_key("it's a test")
+
+
+def test_v985_detection_has_a_time_budget_and_a_cap_per_trigger(monkeypatch):
+    """A page that would take minutes returns what was found within the budget (possibly little, never a hang)."""
+    import time as _t
+    monkeypatch.setattr(app, 'DETECTION_BUDGET_SECONDS', 3)
+    social = ''.join(f'Site {i}: we pay our staff a fair salary and our partners are carefully selected. ' for i in range(2500))
+    t0 = _t.time(); _v984_soc(social); dt_ = _t.time() - t0
+    assert dt_ < 20, dt_
+    # deterministic part: past the deadline no candidate is examined, with the deadline in the future the same sentence is a finding
+    app._V985_TL.deadline = _t.time() - 1
+    assert app._v985_detection_out_of_time()
+    assert app._v55_add_finding([], set(), 'Our packaging is eco-friendly.', 'eco-friendly', 'Generic environmental claim', 'High', 'i', 'r', 'green', 70) == 0
+    app._V985_TL.deadline = _t.time() + 60
+    assert not app._v985_detection_out_of_time()
+    assert app._v55_add_finding([], set(), 'Our packaging is eco-friendly.', 'eco-friendly', 'Generic environmental claim', 'High', 'i', 'r', 'green', 70) == 1
+    app._V985_TL.deadline = None
+
+
+def test_v985_an_address_that_cannot_be_valid_is_refused_at_once():
+    """Full check of 27 November 2026: 'http://example.com:abc/' took 14-18 seconds of failed look-ups before the error came."""
+    import time as _t
+    for bad in ['http://example.com:abc/', 'http://example.com:99999/', 'https://exa mple.com', 'http://\x00evil.com']:
+        t0 = _t.time()
+        try:
+            app.resolve_scan_input(bad)
+            assert False, bad
+        except ValueError as e:
+            assert 'not valid' in str(e), (bad, str(e))
+        assert _t.time() - t0 < 1.0
+    assert app._v985_invalid_url_message('https://www.example.com/path?x=1') == ''
+    assert app._v985_invalid_url_message('Colruyt Group') == ''
+    assert app._v985_invalid_url_message('example.com') == ''
+    assert app._v985_invalid_url_message('https://example.com:8443/') == ''
+
+
+def test_v985_a_very_long_company_name_still_gives_a_pdf_report():
+    """Full check of 27 November 2026: a name of 6,000 characters without a space gave a LayoutError and no report."""
+    import io as _io
+    import pypdf
+    import report_pdf as rp
+    for name in ['AB' * 3000, 'A' * 400, 'Koninklijke ' * 40]:
+        r = app.analyse_uploaded_document('t.txt', 'Our packaging is eco-friendly. We never use forced labour.', name, '', document_coverage=None)
+        pdf = rp.build_company_report_pdf(app._unsigned_report_payload(app.decode_report_token(app.create_report_token(r))))
+        assert pdf[:5] == b'%PDF-' and len(pypdf.PdfReader(_io.BytesIO(pdf)).pages) >= 1
+    assert len(rp.company_name({'company': {'company': 'AB' * 3000}})) <= 160
+    assert rp.company_name({'company': {'company': 'Puratos'}}) == 'Puratos'

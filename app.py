@@ -98,9 +98,9 @@ def _get_psycopg():
 _psycopg_module = None
 _psycopg_import_error = None
 
-APP_VERSION="hostable_v98_9_codes_extended_to_10_december"
-APP_RELEASE_LABEL="v98.9"
-APP_RELEASE_DATE="2026-11-26"
+APP_VERSION="hostable_v98_10_performance_and_robustness_fixes"
+APP_RELEASE_LABEL="v98.10"
+APP_RELEASE_DATE="2026-11-27"
 MAX_REQUEST_BYTES=max(1_000_000, min(25_000_000, int(os.environ.get("MAX_REQUEST_BYTES", "12000000"))))
 # How much text of ONE uploaded document the scan analyses. The cap used to be a fixed 90,000 characters (about
 # 40 pages), so long annual/ESG reports were analysed only in part. Analysis time grows linearly (about 24 s for
@@ -892,12 +892,30 @@ def _v93_unverified_company_number_note(company_number_raw):
             'note':(f'The company number "{(company_number_raw or "").strip()}" could not be verified against the Belgian KBO/BCE '
                     'public register (not found, or not a recognised Belgian enterprise-number format) and was not used.')}
 
+def _v985_invalid_url_message(raw):
+    """A message when `raw` starts with a scheme but cannot be a web address (a port that is no number or out of range, a space or control character
+    in the host part), else ''. Plain company names and bare domains are not judged here."""
+    t=str(raw or '').strip()
+    if not re.match(r'^[A-Za-z][A-Za-z0-9+.-]*://',t):
+        return ''
+    try:
+        u=urlparse(t)
+        u.port
+    except ValueError:
+        return 'The web address is not valid: the port number is wrong. Check the address and try again.'
+    authority=t.split('://',1)[1].split('/',1)[0].split('?',1)[0].split('#',1)[0]
+    if not authority or re.search(r'[\s\x00-\x1f]',authority):
+        return 'The web address is not valid: it holds a space or an unreadable character. Check the address and try again.'
+    return ''
+
 def resolve_scan_input(raw):
     """Accepts a bare company name, a bare domain, or a full URL/page and returns
     (url, resolution_note). resolution_note is None when the input was already a
     usable domain or URL and needed no resolution."""
     raw=(raw or '').strip()
     if not raw: raise ValueError("Please enter a company name or website.")
+    _bad=_v985_invalid_url_message(raw)
+    if _bad: raise ValueError(_bad)           # v98.5: refused at once; an invalid port used to take 14-18 seconds of failed look-ups
     if looks_like_domain_or_url(raw):
         return norm_url(raw), None
     return resolve_company_website(raw)
@@ -5736,6 +5754,7 @@ def analyse_uploaded_document(filename, text, company_name_hint='', company_numb
     share a file name never read each other's page numbers."""
     scope=uuid.uuid4().hex
     _V97_SCOPE.id=scope
+    company_name_hint=str(company_name_hint or '')[:200]       # v98.5: a name is no document; the length is bounded here and again in the PDF
     try:
         return _analyse_uploaded_document_impl(filename, text, company_name_hint, company_number, document_coverage)
     finally:
@@ -9896,7 +9915,7 @@ def _v97_freeform_social_ok(excerpt, found, full_text, typ='', trig=''):
         return False
     key=re.sub(r'\W+',' ',c).strip()
     for f in found:
-        other=re.sub(r'\W+',' ',_normalize_apostrophes(str(f.get('full_claim_text') or f.get('claim') or '').lower())).strip()
+        other=_v985_norm_key(f.get('full_claim_text') or f.get('claim') or '')
         if not other or not (key in other or other in key):
             continue
         if not typ or f.get('type')==typ:
@@ -9971,13 +9990,40 @@ def _v98_assertion_ok(sentence, spec):
         return True
     return subject=='any' and bool(_V98_COLLECTIVE_RE.search(c))
 
+_V985_TL=threading.local()
+DETECTION_BUDGET_SECONDS=max(8,int(os.environ.get("DETECTION_BUDGET_SECONDS","20")))
+
+def _v985_start_detection_clock():
+    """v98.5: a soft time budget for one run of detect_green_claims() / detect_claims(). Past it no new candidates are examined and what has been found
+    so far is returned: a very long page full of claims gives a partial result in seconds instead of a scan that runs for minutes."""
+    _V985_TL.deadline=time.time()+DETECTION_BUDGET_SECONDS
+
+def _v985_detection_out_of_time():
+    d=getattr(_V985_TL,'deadline',None)
+    return bool(d) and time.time()>d
+
+_V985_KEY_CACHE={}
+
+def _v985_norm_key(text):
+    """Lower-case, apostrophes normalised, everything but letters and digits as single spaces. Cached: every candidate sentence is compared with every
+    finding so far, and normalising each finding again and again made the detection quadratic in the number of findings (358 s for 150 KB with
+    2,500 distinct claims)."""
+    t=str(text or '')
+    k=_V985_KEY_CACHE.get(t)
+    if k is None:
+        if len(_V985_KEY_CACHE)>20000:
+            _V985_KEY_CACHE.clear()
+        k=re.sub(r'\W+',' ',_normalize_apostrophes(t.lower())).strip()
+        _V985_KEY_CACHE[t]=k
+    return k
+
 def _v98_family_reported(excerpt, found, typ):
     """The sentence already has a finding of this claim family. The fixed lists say 'Human-rights / labour-rights claim', the free-form
     ones 'Human-rights or labour-rights claim': one family, one finding per sentence."""
     fam=lambda t: re.sub(r'\W+',' ',str(t or '').lower().replace(' / ',' or ')).strip()
-    key=re.sub(r'\W+',' ',_normalize_apostrophes(str(excerpt or '').lower())).strip()
+    key=_v985_norm_key(excerpt)
     for f in found:
-        other=re.sub(r'\W+',' ',_normalize_apostrophes(str(f.get('full_claim_text') or f.get('claim') or '').lower())).strip()
+        other=_v985_norm_key(f.get('full_claim_text') or f.get('claim') or '')
         if other and (key in other or other in key) and fam(f.get('type'))==fam(typ):
             return True
     return False
@@ -10118,20 +10164,34 @@ def _v981_green_extras(text, fs, seen):
                           'Sustainability label / certification claim', 'Recycled / recyclable material claim')
     sentences = [x.strip() for x in re.split(r'(?<=[.!?])\s+|\n+', str(text or '')) if x and x.strip()]
     budget = {TF: 0, TA: 0, TC: 0, TL: 0}
+    # v98.5: every _v55_add_finding() call reads the WHOLE text again to find the sentences with the trigger. A page of thousands of product rows
+    # ("| eco-friendly | 100% natural |" x 10,000) made that quadratic: 59 s on 40 KB. The same sentence is handled once, no more than 60
+    # attempts per kind of claim are made (an attempt that adds nothing does not count in `budget`), and the pass stops after 4 seconds.
+    attempts = {TF: 0, TA: 0, TC: 0, TL: 0}
+    done_sentences = set()
+    started = time.time()
     for sent in sentences[:4000]:
         if len(sent) > 600:
             continue
+        _key = sent.lower()
+        if _key in done_sentences:
+            continue
+        done_sentences.add(_key)
+        if time.time() - started > 4:
+            break
         # future goals
-        if budget[TF] < 6 and _V981_YEAR_RE.search(sent):
+        if budget[TF] < 6 and attempts[TF] < 60 and _V981_YEAR_RE.search(sent):
             trig = _v981_future_goal(sent)
             if trig and TF in rows:
                 risk, issue, rewrite = rows[TF]
+                attempts[TF] += 1
                 if _v55_add_finding(fs, seen, text, trig, TF, risk, issue, rewrite, 'green', 68,
                                     extra_check=lambda c: _v981_future_goal(c) is not None and not _v981_reported(c, fs, [TF])):
                     budget[TF] += 1
         # 100 % + environmental adjective
-        if budget[TA] < 6 and '%' in sent:
+        if budget[TA] < 6 and attempts[TA] < 60 and '%' in sent:
             for m in _V981_ABS_RE.finditer(sent):
+                attempts[TA] += 1
                 adj = (m.group('adj') or m.group('adj2') or '').strip()
                 recyclable = bool(_V981_RECYCLABLE_RE.match(adj))
                 typ = TR if recyclable else TA
@@ -10145,19 +10205,21 @@ def _v981_green_extras(text, fs, seen):
                     budget[TA] += 1
                     break
         # comparatives
-        if budget[TC] < 6:
+        if budget[TC] < 6 and attempts[TC] < 60:
             m = _V981_COMPARATIVE_RE.search(_normalize_apostrophes(sent))
             if m and TC in rows:
                 risk, issue, rewrite = rows[TC]
+                attempts[TC] += 1
                 trig = sent[m.start():m.end()].strip()
                 if _v55_add_finding(fs, seen, text, trig, TC, risk, issue, rewrite, 'green', 68,
                                     extra_check=lambda c: not _v981_reported(c, fs, [TC]) and not _V98_WORLD_RE.search(c.lower())):
                     budget[TC] += 1
         # self-made labels
-        if budget[TL] < 4:
+        if budget[TL] < 4 and attempts[TL] < 60:
             trig = _v981_label_phrase(sent)
             if trig and TL in rows:
                 risk, issue, rewrite = rows[TL]
+                attempts[TL] += 1
                 if _v55_add_finding(fs, seen, text, trig, TL, risk, issue, rewrite, 'green', 74,
                                     extra_check=lambda c: not _v981_reported(c, fs, [TL])):
                     budget[TL] += 1
@@ -10237,8 +10299,12 @@ def _v983_not_a_claim_context(c, trig, dimension, excerpt=None):
     if _V983_INSTRUCTION_RE.match(c) and re.search(r"\b(?:your|you|uw|votre|vos)\b", c):
         return True
     pos=c.find(trig)
-    while pos!=-1:
-        _near=_v983_clause_around(c,pos,len(trig))
+    _advice_in_sentence=bool(_V983_ADVICE_RE.search(c))
+    _seen_occurrences=0
+    while pos!=-1 and _seen_occurrences<20:
+        _seen_occurrences+=1
+        _lo=max(0,pos-400)
+        _near=_v983_clause_around(c[_lo:pos+len(trig)+400],pos-_lo,len(trig))
         if _V983_RISK_RE.search(_near) and not re.search(r"\b(?:we|our|wij|onze|nous|notre)\b[^.]{0,40}\b(?:reduc|lower|cut|improv|increas|use|source|ensure|achiev|reach|verminder|verlag|gebruik|r[e\u00e9]duis|utilis)", _near):
             return True
         before=c[max(0,pos-90):pos]; after=c[pos+len(trig):pos+len(trig)+70]
@@ -10249,7 +10315,7 @@ def _v983_not_a_claim_context(c, trig, dimension, excerpt=None):
             _own=re.search(r"\b(?:we|wij|nous)\b",before[max(0,_exp.start()-25):_exp.start()]) and re.search(r"\b(?:our|onze|ons|notre|nos)\s+(\w+)",before[_exp.end():]+' '+trig)
             if not (_own and _own.group(1) not in _V983_THIRD_PARTIES):
                 return True
-        if not has_first_person and _V983_ADVICE_RE.search(c):
+        if not has_first_person and _advice_in_sentence:
             return True
         if _V983_ROLE_RE.match(after):
             return True
@@ -10320,6 +10386,8 @@ def _looks_like_bare_document_title(c):
     one phrase, since this pattern recurs across many companies' sites."""
     if any(sig in c for sig in ASSERTION_SIGNALS):
         return False
+    if len(c)>400:
+        return False                    # v98.5: a title is short; the decoration regexes below are quadratic on a long run of brackets
     stripped=_strip_title_decoration(c.strip().rstrip('.').strip())
     words=stripped.split()
     if not words:
@@ -11092,6 +11160,24 @@ def enrich_social_finding(f, trigger=''):
     f['pre_publication_decision']='Do not publish/reuse without legal/compliance and evidence review.' if f.get('risk')=='High' and not is_placeholder_finding(f.get('type','')) else 'Can normally proceed only after standard evidence and wording review.'
     return f
 
+def _v985_cap_excerpt(text, trig, half=1100):
+    """v98.5: text without full stops (a menu, PDF columns, a flood of characters) came through as ONE sentence of hundreds of kilobytes and made
+    several checks run for minutes (quadratic regular expressions: 58 s on 100 KB of brackets). Such an excerpt is cut to `half` characters on each
+    side of the trigger, at word boundaries. A normal sentence is far below the limit and is never touched."""
+    t=str(text or '')
+    low=_normalize_apostrophes(t.lower())
+    i=low.find(_normalize_apostrophes(str(trig or '').lower())) if trig else -1
+    if i<0:
+        i=0
+    a=max(0,i-half); b=min(len(t),i+len(str(trig or ''))+half)
+    if a>0:
+        k=t.find(' ',a)
+        a=k+1 if 0<=k<i else a
+    if b<len(t):
+        k=t.rfind(' ',i,b)
+        b=k if k>i else b
+    return t[a:b].strip()
+
 def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension, score, extra_check=None):
     """Returns the number of findings actually added for this trigger (0 if none) --
     callers must only count a trigger phrase towards their per-type hit budget when this is
@@ -11117,6 +11203,9 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
     the existing per-type hit budget (3 distinct trigger phrases) and the final top-12
     display cap in detect_claims()/detect_green_claims() still bound what is actually shown."""
     added=0
+    if len(fs)>=400 or _v985_detection_out_of_time():
+        return 0              # v98.5: the result is cut to the 200 best findings anyway; more candidates only make every later check slower
+    examined=0
     for candidate in _v55_all_matches_sentences(text, trig):
         # v57n: "VISUAL CLAIM CUE: " is an internal marker prepended during HTML parsing to
         # feed image alt-text / aria-label / CSS-class values (e.g. a leaf icon's alt text)
@@ -11125,11 +11214,16 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
         # rather than quoted page content. Strip it from the displayed excerpt; the underlying
         # detected wording is unaffected.
         cleaned=candidate
+        if len(cleaned)>2500:
+            cleaned=_v985_cap_excerpt(cleaned,trig,1100)
         if 'VISUAL CLAIM CUE: ' in cleaned:
             cleaned=re.sub(r'\s*VISUAL CLAIM CUE:\s*', ' ', cleaned).strip()
             cleaned=re.sub(r'\s+', ' ', cleaned)
         if (typ, cleaned.lower()) in seen:
             continue                              # v97.6: the same sentence again is skipped before the (costly) checks, not after
+        examined+=1
+        if examined>200 or (examined%20==0 and _v985_detection_out_of_time()):
+            break                                 # v98.5: at most 200 distinct sentences per trigger are examined
         if extra_check is not None and not extra_check(cleaned):
             continue
         if not _v55_claim_context_ok(cleaned, trig, dimension):
@@ -11205,6 +11299,7 @@ def _v55_add_finding(fs, seen, text, trig, typ, risk, issue, rewrite, dimension,
     return added
 
 def detect_green_claims(text):
+    _v985_start_detection_clock()
     low=_normalize_apostrophes((text or '').lower()); fs=[]; seen=set()
     # 1) direct / high-priority taxonomy from previous versions
     for triggers,typ,risk,issue,rewrite in GREEN_CLAIMS:
@@ -11285,6 +11380,7 @@ def detect_green_claims(text):
     return fs
 
 def detect_claims(text):
+    _v985_start_detection_clock()
     low=_normalize_apostrophes((text or '').lower()); fs=[]; seen=set()
     for triggers,typ,risk,issue,rewrite in CLAIMS:
         hits=0

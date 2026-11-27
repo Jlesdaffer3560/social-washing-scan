@@ -779,6 +779,11 @@ def company_name(data):
         name = clean_text(comp.get("company") or comp.get("name"))
     else:
         name = clean_text(comp)
+    # v98.5: a name of thousands of characters without a space made the page layout fail (LayoutError) and the user got no report at all. A very long
+    # name is cut at 150 characters and a run of 40+ characters without a space gets break points.
+    name = re.sub(r"(\S{40})(?=\S)", r"\1 ", name or "")
+    if len(name) > 150:
+        name = name[:147].rstrip() + "..."
     return name if name and name.lower() != "company reviewed" else "Company"
 
 
